@@ -1,0 +1,35 @@
+# Workspace orchestration and local automation
+.github/
+docs/.archive/
+repos
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.cache
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node/TypeScript artifacts
+node_modules/
+dist/
+coverage/
+
+# .NET artifacts
+bin/
+obj/
+TestResults/
+
+# Build/package artifacts
+*.nupkg
+*.snupkg
