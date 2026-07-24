@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A decision surface is the explicit place where application code delegates a runtime choice to Polari.
+A decision surface is the explicit place where application code delegates a runtime choice to flaggo.
 
 It answers:
 
@@ -22,7 +22,7 @@ Examples:
 - `llm.modelRoute`
 - `workflow.escalationAction`
 
-A surface should describe the decision, not the implementation mechanism. For example, `tetris.dropInterval` is better than `callPolariForGameSpeed`, because the former names the runtime choice and the latter names an implementation detail.
+A surface should describe the decision, not the implementation mechanism. For example, `tetris.dropInterval` is better than `callFlaggoForGameSpeed`, because the former names the runtime choice and the latter names an implementation detail.
 
 ## What a decision surface owns
 
@@ -53,7 +53,7 @@ A decision surface should not directly own:
 - telemetry storage,
 - model internals.
 
-Those belong to Polari services such as state, telemetry/evidence, policy, and audit.
+Those belong to Flaggo services such as state, telemetry/evidence, policy, and audit.
 
 ## Naming guidance
 
@@ -86,7 +86,7 @@ bad: getRemoteValueForInterval
 
 A decision surface should make the expected result shape explicit.
 
-The initial Polari design should keep result shapes intentionally small:
+The initial Flaggo design should keep result shapes intentionally small:
 
 - **boolean**: choose true or false,
 - **number**: choose a bounded numeric value,
@@ -131,11 +131,11 @@ allowedValues:
 default: gpt-4.1-mini
 ```
 
-Polari should avoid structured-object results in the first design. If a complex result is needed, the developer can represent a known configuration or action by string and resolve it in application code. This keeps the decision surface stable, auditable, and easy to validate.
+Flaggo should avoid structured-object results in the first design. If a complex result is needed, the developer can represent a known configuration or action by string and resolve it in application code. This keeps the decision surface stable, auditable, and easy to validate.
 
 ## Relationship to application code
 
-Application code owns execution. Polari owns decision support.
+Application code owns execution. Flaggo owns decision support.
 
 The code should call a decision surface, receive a governed result, and then execute application behavior:
 
@@ -146,7 +146,7 @@ application code -> asks decision surface -> receives governed decision -> appli
 The surface should make adaptive behavior discoverable:
 
 ```text
-What decisions does this application delegate to Polari?
+What decisions does this application delegate to Flaggo?
 ```
 
 That question should be answerable from registered decision surfaces.
@@ -171,10 +171,10 @@ The application asks:
 What drop interval should this game session use now?
 ```
 
-Polari answers with a governed numeric value and supporting explanation.
+Flaggo answers with a governed numeric value and supporting explanation.
 
 ## Design rule
 
-> A decision surface is the stable contract between application execution and Polari decisioning.
+> A decision surface is the stable contract between application execution and Flaggo decisioning.
 
 Everything else can evolve behind that surface: evidence sources, policies, models, state, and operator controls.

@@ -1,4 +1,4 @@
-# Polari Manifesto: AI-Native Runtime Decisioning
+# Flaggo Manifesto: AI-Native Runtime Decisioning
 
 ## The premise
 
@@ -6,7 +6,7 @@ Software is increasingly written with AI, reviewed with AI, tested with AI, and 
 
 AI has entered the software production process, but it has not yet become a first-class runtime decision primitive.
 
-Polari starts from a simple question:
+Flaggo starts from a simple question:
 
 > What if software could delegate selected runtime decisions to an AI-native decisioning layer, the same way it delegates storage to databases, delivery to queues, search to indexes, and configuration to feature flag systems?
 
@@ -47,11 +47,11 @@ AI-native runtime decisioning asks a broader question:
 
 The distinction matters. A flag system externalizes a variable. A decisioning system externalizes part of the judgment around that variable.
 
-Polari is motivated by the belief that the next abstraction is not a smarter flag. It is a runtime decision layer for software systems.
+Flaggo is motivated by the belief that the next abstraction is not a smarter flag. It is a runtime decision layer for software systems.
 
 ## The vision
 
-Polari imagines a future where programs can call a decisioning layer as naturally as they call a database or service API.
+Flaggo imagines a future where programs can call a decisioning layer as naturally as they call a database or service API.
 
 In that future, selected runtime choices are not buried in static branches or scattered across dashboards, scripts, and manual processes. They are explicit, observable, governed decisions.
 
@@ -73,7 +73,7 @@ It should mean:
 - human intent remains encoded in goals and boundaries,
 - fallback behavior exists when confidence, evidence, or safety is insufficient.
 
-This is the standard Polari should hold itself to: not "AI makes choices" but "software gains a governed decision interface that can use AI where AI is appropriate."
+This is the standard Flaggo should hold itself to: not "AI makes choices" but "software gains a governed decision interface that can use AI where AI is appropriate."
 
 ## Why now
 
@@ -89,7 +89,7 @@ The missing layer is a disciplined runtime decision abstraction that connects in
 
 ## The aspiration
 
-Polari exists to explore that missing layer.
+Flaggo exists to explore that missing layer.
 
 It should help software move from static branching toward governed runtime judgment; from isolated flags toward contextual decisions; from manual tuning toward closed-loop adaptation; from opaque automation toward auditable autonomy.
 
@@ -103,4 +103,4 @@ Not every branch should become a decision call. Not every decision needs AI. Not
 
 But for the decisions that are contextual, evidence-driven, high-change, and policy-constrained, software deserves a better primitive than hard-coded logic plus manual operations.
 
-Polari is the attempt to define that primitive.
+Flaggo is the attempt to define that primitive.

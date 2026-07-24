@@ -1,6 +1,6 @@
-# Polari Component Design Index
+# Flaggo Component Design Index
 
-This folder contains focused design documents for Polari system components.
+This folder contains focused design documents for Flaggo system components.
 
 Top-level product framing remains in:
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Polari needs a clear vocabulary for what drives a runtime decision. Without this, terms like "context", "telemetry", "policy", and "intent" can collapse into one vague bucket.
+Flaggo needs a clear vocabulary for what drives a runtime decision. Without this, terms like "context", "telemetry", "policy", and "intent" can collapse into one vague bucket.
 
 This document defines the main categories of decision-driving factors for AI-native runtime decisioning.
 
@@ -25,7 +25,7 @@ decision surface
 
 ## 1. Decision surface
 
-The decision surface is the place where software delegates a runtime choice to Polari.
+The decision surface is the place where software delegates a runtime choice to flaggo.
 
 It answers:
 
@@ -112,7 +112,7 @@ telemetry evidence: mobile users had a 28% early-loss rate over the last hour
 
 ### Evidence from different OpenTelemetry signals
 
-Polari should treat OpenTelemetry as an evidence source, not as a single uniform data shape. Different OTel signals answer different decision questions.
+Flaggo should treat OpenTelemetry as an evidence source, not as a single uniform data shape. Different OTel signals answer different decision questions.
 
 | Signal | What it contributes | Decisioning considerations |
 |---|---|---|
@@ -122,11 +122,11 @@ Polari should treat OpenTelemetry as an evidence source, not as a single uniform
 | **Logs** | Timestamped structured records. | Useful for domain events, debugging, and audit correlation. Logs are flexible but can be noisy and expensive if used as the only evidence source. |
 | **Baggage/context propagation** | Cross-service contextual metadata. | Useful for propagating decision IDs, tenant, experiment, or scope, but should avoid sensitive or high-cardinality values unless intentionally governed. |
 
-Polari can expose a developer-facing concept like **domain event** even if OpenTelemetry represents it as a structured log, span event, or metric input. The product abstraction should be domain-friendly while remaining compatible with OTel transport and correlation models.
+Flaggo can expose a developer-facing concept like **domain event** even if OpenTelemetry represents it as a structured log, span event, or metric input. The product abstraction should be domain-friendly while remaining compatible with OTel transport and correlation models.
 
 ### Local evidence vs decision-time aggregation
 
-Polari needs to support multiple evidence scopes because not every decision should be based on the same aggregation boundary.
+Flaggo needs to support multiple evidence scopes because not every decision should be based on the same aggregation boundary.
 
 #### Local/context-scoped evidence
 
@@ -163,7 +163,7 @@ Local evidence also has risks:
 - client trust and tampering concerns,
 - overfitting to a single session.
 
-Polari should treat local evidence as useful but uncertainty-bearing.
+Flaggo should treat local evidence as useful but uncertainty-bearing.
 
 #### Decision-time/server aggregation
 
@@ -187,7 +187,7 @@ Decision-time aggregation is useful when:
 - the system needs cohort comparisons,
 - local context is insufficient or biased.
 
-Polari should be able to compute or retrieve decision-time evidence from ingested events, OpenTelemetry metric streams, traces, logs, observability queries, or its own evidence store.
+Flaggo should be able to compute or retrieve decision-time evidence from ingested events, OpenTelemetry metric streams, traces, logs, observability queries, or its own evidence store.
 
 #### Design implication
 
@@ -207,7 +207,7 @@ serviceLatencyP95: scope=service, window=10m
 
 The important design rule:
 
-> Developers define what evidence means. Polari determines whether that evidence comes from local observations, OpenTelemetry aggregation, decision-time server queries, or a combination of sources.
+> Developers define what evidence means. Flaggo determines whether that evidence comes from local observations, OpenTelemetry aggregation, decision-time server queries, or a combination of sources.
 
 ## 4. Goals and human intent
 
@@ -229,11 +229,11 @@ Examples:
 
 Goals are not the same as policies. Goals describe desired direction. Policies define hard boundaries and safety rules.
 
-For Polari, human intent should remain encoded in goals and boundaries. The system should not infer open-ended intent like "make the game better" without explicit objective definitions.
+For Flaggo, human intent should remain encoded in goals and boundaries. The system should not infer open-ended intent like "make the game better" without explicit objective definitions.
 
 ## 5. Policy constraints
 
-Policy constraints are rules that govern what Polari is allowed to do.
+Policy constraints are rules that govern what Flaggo is allowed to do.
 
 They answer:
 
@@ -254,7 +254,7 @@ Policies are first-class decision inputs. They should be deterministic, explaina
 
 ## 6. System state
 
-System state is the current state of Polari and the controlled decision.
+System state is the current state of Flaggo and the controlled decision.
 
 It answers:
 
@@ -282,7 +282,7 @@ Uncertainty describes how reliable the decision evidence is.
 
 It answers:
 
-> How much should Polari trust the current evidence?
+> How much should Flaggo trust the current evidence?
 
 Examples:
 
@@ -297,11 +297,11 @@ Examples:
 - cold-start state,
 - segment drift.
 
-Uncertainty should not be hidden. It should influence whether Polari applies, suggests, blocks, or falls back.
+Uncertainty should not be hidden. It should influence whether Flaggo applies, suggests, blocks, or falls back.
 
 ## 8. Action space
 
-The action space defines what Polari is allowed to return.
+The action space defines what Flaggo is allowed to return.
 
 It answers:
 
@@ -321,7 +321,7 @@ The action space should be explicit and bounded. AI-native decisioning should no
 
 ## 9. Fallback contract
 
-The fallback contract defines what happens when Polari cannot safely decide.
+The fallback contract defines what happens when Flaggo cannot safely decide.
 
 It answers:
 
@@ -383,7 +383,7 @@ For the Tetris hero scenario:
 
 ## Design guidance
 
-Polari should not overload the word "context". Instead:
+Flaggo should not overload the word "context". Instead:
 
 - use **runtime context** for current facts passed at decision time,
 - use **telemetry evidence** for observed behavior over time,

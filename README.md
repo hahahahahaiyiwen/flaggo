@@ -1,6 +1,6 @@
-# Polari
+# Flaggo
 
-Polari is an exploration of **AI-native runtime decisioning**: a governed way for running software to ask for contextual decisions when static code, feature flags, and manual tuning are too rigid.
+Flaggo is an exploration of **AI-native runtime decisioning**: a governed way for running software to ask for contextual decisions when static code, feature flags, and manual tuning are too rigid.
 
 The core question is:
 
@@ -10,7 +10,7 @@ The core question is:
 
 AI is increasingly used to write, review, test, and ship code. But once code is running, most behavior is still governed by static `if/else` branches, fixed thresholds, configuration values, and manually operated feature flags.
 
-Polari starts from the belief that AI should not only participate in software creation. It should also become a governed runtime decision primitive where appropriate.
+Flaggo starts from the belief that AI should not only participate in software creation. It should also become a governed runtime decision primitive where appropriate.
 
 ## Beyond feature flags
 
@@ -21,13 +21,13 @@ Is flag X enabled?
 What is config value Y?
 ```
 
-Polari aims to externalize governed runtime judgment:
+Flaggo aims to externalize governed runtime judgment:
 
 ```text
 Given current context, evidence, goals, policies, and uncertainty, what safe behavior should this system choose?
 ```
 
-The application still owns execution. Polari owns the decisioning control plane around selected runtime choices.
+The application still owns execution. Flaggo owns the decisioning control plane around selected runtime choices.
 
 ## Hero scenario: Tetris drop speed
 
@@ -49,9 +49,9 @@ At runtime:
 
 ```text
 game emits telemetry
-  -> game asks Polari for tetris.dropInterval
-  -> Polari evaluates evidence, scope, goals, policy, state, and uncertainty
-  -> Polari returns a governed value or fallback
+  -> game asks Flaggo for tetris.dropInterval
+  -> Flaggo evaluates evidence, scope, goals, policy, state, and uncertainty
+  -> Flaggo returns a governed value or fallback
   -> game applies the value
 ```
 

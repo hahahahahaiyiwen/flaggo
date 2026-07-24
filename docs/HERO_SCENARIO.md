@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document describes the first design artifact for Polari from the user's point of view. It is not an implementation design. It defines what the product should feel like when an application uses AI-native runtime decisioning as a software primitive.
+This document describes the first design artifact for Flaggo from the user's point of view. It is not an implementation design. It defines what the product should feel like when an application uses AI-native runtime decisioning as a software primitive.
 
 The hero scenario uses a Tetris game because the decision is concrete, observable, and easy to reason about:
 
@@ -17,7 +17,7 @@ A Tetris frontend emits gameplay telemetry. Instead of hard-coding one global dr
 - which direction the desired metrics should move,
 - what bounds and fallback values keep the experience safe.
 
-At runtime, the game asks Polari for the current `dropInterval` decision. Polari uses runtime context, telemetry evidence, goals, policy constraints, system state, and uncertainty to return a governed value. The game applies the value, emits outcomes, and Polari learns from subsequent behavior.
+At runtime, the game asks Flaggo for the current `dropInterval` decision. Flaggo uses runtime context, telemetry evidence, goals, policy constraints, system state, and uncertainty to return a governed value. The game applies the value, emits outcomes, and Flaggo learns from subsequent behavior.
 
 The scenario uses the decision-factor vocabulary from [Decision Factors for AI-Native Runtime Decisioning](DECISION_FACTORS.md):
 
@@ -42,17 +42,17 @@ The developer should not have to build an experimentation platform, telemetry pi
 
 The developer should be able to express three application-owned things in code:
 
-1. **Telemetry emission**: the runtime events Polari should observe.
-2. **Metrics**: the server-side aggregations Polari should calculate from those events.
-3. **Decision primitive**: the runtime value or behavior that Polari may decide.
+1. **Telemetry emission**: the runtime events Flaggo should observe.
+2. **Metrics**: the server-side aggregations Flaggo should calculate from those events.
+3. **Decision primitive**: the runtime value or behavior that Flaggo may decide.
 
-The important experience is that telemetry is declared and emitted through the Polari library. The application records meaningful domain events, and Polari handles delivery, aggregation, decision evidence, and audit linkage.
+The important experience is that telemetry is declared and emitted through the Flaggo library. The application records meaningful domain events, and Flaggo handles delivery, aggregation, decision evidence, and audit linkage.
 
 Example intent, not final API:
 
 ```ts
-const polari = createPolariClient({
-  serviceUrl: "https://polari.example.com",
+const flaggo = createFlaggoClient({
+  serviceUrl: "https://flaggo.example.com",
   appId: "tetris-demo",
   telemetry: {
     exporter: "opentelemetry",
@@ -67,7 +67,7 @@ const polari = createPolariClient({
 The developer defines domain events once:
 
 ```ts
-const hardDropPressed = polari.events.define("hard_drop_pressed", {
+const hardDropPressed = flaggo.events.define("hard_drop_pressed", {
   properties: {
     userId: "string",
     sessionId: "string",
@@ -77,7 +77,7 @@ const hardDropPressed = polari.events.define("hard_drop_pressed", {
   }
 });
 
-const piecePlaced = polari.events.define("piece_placed", {
+const piecePlaced = flaggo.events.define("piece_placed", {
   properties: {
     userId: "string",
     sessionId: "string",
@@ -87,7 +87,7 @@ const piecePlaced = polari.events.define("piece_placed", {
   }
 });
 
-const gameEnded = polari.events.define("game_ended", {
+const gameEnded = flaggo.events.define("game_ended", {
   properties: {
     userId: "string",
     sessionId: "string",
@@ -117,7 +117,7 @@ function onHardDrop(piece: Tetromino) {
 The developer then defines metrics as server-side aggregations over emitted events:
 
 ```ts
-const gameSignals = polari.metrics.define({
+const gameSignals = flaggo.metrics.define({
   hardDropRate: {
     numerator: hardDropPressed.count(),
     denominator: piecePlaced.count(),
@@ -139,12 +139,12 @@ const gameSignals = polari.metrics.define({
 });
 ```
 
-Polari receives the events, aggregates the metrics, and uses those metrics as decision evidence. The application does not need to compute `hardDropRate` locally or coordinate a separate analytics job before asking for a decision.
+Flaggo receives the events, aggregates the metrics, and uses those metrics as decision evidence. The application does not need to compute `hardDropRate` locally or coordinate a separate analytics job before asking for a decision.
 
 Finally, the developer declares the decision primitive that uses those metrics:
 
 ```ts
-const dropInterval = polari.decision.number("tetris.dropInterval", {
+const dropInterval = flaggo.decision.number("tetris.dropInterval", {
   actionSpace: {
     default: 800,
     min: 200,
@@ -169,7 +169,7 @@ const dropInterval = polari.decision.number("tetris.dropInterval", {
 });
 ```
 
-System state is intentionally not declared by the application. Polari owns state such as the current active value, previous decision, cooldown status, operator mode, and rollback state.
+System state is intentionally not declared by the application. Flaggo owns state such as the current active value, previous decision, cooldown status, operator mode, and rollback state.
 
 At runtime, application code should feel simple:
 
@@ -205,7 +205,7 @@ For `tetris.dropInterval`, the operator should see:
 - whether the decision is observing, suggesting, or applying changes,
 - controls to pause, resume, override, or roll back.
 
-The operator experience matters because Polari is not just a metric optimizer. It is a governed runtime decision layer. Human intent must remain visible in goals, boundaries, and operating mode.
+The operator experience matters because Flaggo is not just a metric optimizer. It is a governed runtime decision layer. Human intent must remain visible in goals, boundaries, and operating mode.
 
 ### End-user experience
 
@@ -216,7 +216,7 @@ The player should not experience random or chaotic changes. The game should feel
 - if evidence is weak or contradictory, the game should remain stable,
 - if policies block adaptation, the player should receive the safe fallback behavior.
 
-The end user does not need to know Polari exists, but they should benefit from behavior that is more contextual than static configuration.
+The end user does not need to know Flaggo exists, but they should benefit from behavior that is more contextual than static configuration.
 
 ## How the scenario covers the manifesto principles
 
@@ -258,7 +258,7 @@ Policy is not an afterthought. It is part of the decision contract.
 
 ### Uncertainty is acknowledged instead of ignored
 
-Polari should not pretend every recommendation is equally reliable.
+Flaggo should not pretend every recommendation is equally reliable.
 
 For each decision, the system should expose:
 
@@ -269,7 +269,7 @@ For each decision, the system should expose:
 - whether the decision was applied, suggested, or blocked,
 - why fallback was used.
 
-In the Tetris example, high hard-drop rate may mean the game is too slow, but it may also mean an expert player is intentionally playing fast. Polari must represent this uncertainty instead of converting weak evidence into automatic action.
+In the Tetris example, high hard-drop rate may mean the game is too slow, but it may also mean an expert player is intentionally playing fast. Flaggo must represent this uncertainty instead of converting weak evidence into automatic action.
 
 ### Decisions are explainable and auditable
 
@@ -290,7 +290,7 @@ Auditability means the team can reconstruct what happened, why it happened, whic
 
 ### Human intent remains encoded in goals and boundaries
 
-The developer and operator do not ask Polari to "make the game better" in an open-ended way.
+The developer and operator do not ask Flaggo to "make the game better" in an open-ended way.
 
 They encode intent:
 
@@ -304,7 +304,7 @@ AI-native decisioning should amplify human intent, not replace it.
 
 ### Fallback behavior exists when confidence, evidence, or safety is insufficient
 
-The game must always have a safe behavior even when Polari cannot decide.
+The game must always have a safe behavior even when Flaggo cannot decide.
 
 Fallback should be used when:
 
@@ -331,11 +331,11 @@ Developer declares events, metrics, decision surface, action space, goals, polic
         ↓
 Application emits telemetry
         ↓
-Application asks Polari for runtime decision with runtime context
+Application asks Flaggo for runtime decision with runtime context
         ↓
-Polari evaluates runtime context, telemetry evidence, goals, policy constraints, system state, and uncertainty
+Flaggo evaluates runtime context, telemetry evidence, goals, policy constraints, system state, and uncertainty
         ↓
-Polari returns value + explanation + audit record
+Flaggo returns value + explanation + audit record
         ↓
 Application applies value or fallback
         ↓
@@ -360,7 +360,7 @@ Those should come later. The purpose here is to anchor the design around the des
 
 ## Design implication
 
-The first Polari design should be organized around this question:
+The first Flaggo design should be organized around this question:
 
 > What is the smallest complete system that lets a developer declare a governed runtime decision, lets an application ask for that decision, and lets an operator understand why the decision happened?
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The contract registry stores the declared meaning of Polari decision surfaces.
+The contract registry stores the declared meaning of Flaggo decision surfaces.
 
 It owns the server-side resources that application code references at runtime:
 
@@ -19,7 +19,7 @@ The registry exists so runtime decision requests can stay small and governed. Ap
 
 ## Design principle
 
-> Treat Polari resources as versioned, append-only contracts with lifecycle state, not as things to hard-delete automatically.
+> Treat Flaggo resources as versioned, append-only contracts with lifecycle state, not as things to hard-delete automatically.
 
 Decision resources are part of audit history. Old decisions must remain explainable after code changes, rollbacks, and policy updates.
 
@@ -69,7 +69,7 @@ Small metadata changes can be mutable if they do not affect decision semantics, 
 
 The client SDK or build tooling should produce a resource ownership manifest.
 
-The manifest declares which Polari resources are owned by a codebase, app, environment, and source path.
+The manifest declares which Flaggo resources are owned by a codebase, app, environment, and source path.
 
 Example shape:
 
@@ -79,7 +79,7 @@ Example shape:
   "environment": "dev",
   "source": {
     "repository": "tetris-frontend",
-    "path": "src/polari",
+    "path": "src/Flaggo",
     "commit": "abc123"
   },
   "surfaces": [
@@ -93,7 +93,7 @@ Example shape:
 }
 ```
 
-The manifest lets Polari compare declared resources in code with registered resources on the server.
+The manifest lets Flaggo compare declared resources in code with registered resources on the server.
 
 ## Sync behavior
 
@@ -120,7 +120,7 @@ Recommended behavior:
 
 ## Missing resources should not auto-delete
 
-If a surface disappears from code, Polari should not immediately delete or retire it.
+If a surface disappears from code, Flaggo should not immediately delete or retire it.
 
 Reasons:
 
@@ -181,7 +181,7 @@ Recommended flow:
 ```text
 developer writes decision declarations in code
   -> build/CI extracts ownership manifest
-  -> polari sync registers or validates resources
+  -> Flaggo sync registers or validates resources
   -> deployed app calls runtime Decision API
 ```
 

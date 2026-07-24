@@ -1,24 +1,24 @@
-# Polari High-Level Design
+# Flaggo High-Level Design
 
 ## Purpose
 
-This document describes the high-level design for Polari: an AI-native runtime decisioning system that fulfills the vision in [MANIFESTO.md](MANIFESTO.md) and supports the first product experience in [HERO_SCENARIO.md](HERO_SCENARIO.md).
+This document describes the high-level design for Flaggo: an AI-native runtime decisioning system that fulfills the vision in [MANIFESTO.md](MANIFESTO.md) and supports the first product experience in [HERO_SCENARIO.md](HERO_SCENARIO.md).
 
 This is intentionally not a detailed component specification. Specific API, SDK, storage, policy, telemetry, frontend, and agent designs should live in focused sub-documents later.
 
 ## Product thesis
 
-Polari gives running software a governed way to ask:
+Flaggo gives running software a governed way to ask:
 
 > Given this decision surface, this scope, current runtime context, available evidence, goals, policies, system state, uncertainty, action space, and fallback contract, what should happen now?
 
-The application still owns execution. Polari owns the decisioning control plane around selected runtime choices.
+The application still owns execution. Flaggo owns the decisioning control plane around selected runtime choices.
 
 ## Core concepts
 
 ### Decision surface
 
-A decision surface is the explicit place where application code delegates a runtime choice to Polari. It answers: **what is being decided?**
+A decision surface is the explicit place where application code delegates a runtime choice to flaggo. It answers: **what is being decided?**
 
 Examples include `tetris.dropInterval`, `checkout.fraudReviewRequired`, `api.retryPolicy`, `llm.modelRoute`, and `workflow.escalationAction`.
 
@@ -54,7 +54,7 @@ decision surface + decision scope
 
 ### Governed decision
 
-A governed decision is the output Polari returns to application code.
+A governed decision is the output Flaggo returns to application code.
 
 It should include:
 
@@ -83,11 +83,11 @@ Action space: numeric interval from 200ms to 1500ms
 Fallback contract: 800ms default
 ```
 
-This scenario should prove the smallest useful version of Polari:
+This scenario should prove the smallest useful version of Flaggo:
 
 1. A developer can declare telemetry and a decision surface.
 2. The app can emit evidence and ask for a scoped decision.
-3. Polari can evaluate evidence, goals, policy, state, and uncertainty.
+3. Flaggo can evaluate evidence, goals, policy, state, and uncertainty.
 4. The app can safely apply a value or fallback.
 5. An operator can inspect why the decision happened.
 
@@ -104,7 +104,7 @@ Responsibilities:
 - define or emit domain telemetry,
 - pass runtime context when asking for decisions,
 - receive decision responses,
-- apply fallback behavior when Polari is unavailable or blocks a decision,
+- apply fallback behavior when Flaggo is unavailable or blocks a decision,
 - integrate with OpenTelemetry where configured.
 
 The client library should make the runtime primitive feel natural:
@@ -143,7 +143,7 @@ Responsibilities:
 - expose evidence snapshots to the Decision API,
 - preserve enough evidence lineage for explanations and audits.
 
-The service should support both direct Polari ingestion and integration through OpenTelemetry pipelines.
+The service should support both direct Flaggo ingestion and integration through OpenTelemetry pipelines.
 
 ### 4. Contract and registry service
 
@@ -189,7 +189,7 @@ Responsibilities:
 - paused/resumed mode,
 - rollback state.
 
-State lets Polari avoid stateless one-off guesses and prevents thrashing or conflicting decisions.
+State lets Flaggo avoid stateless one-off guesses and prevents thrashing or conflicting decisions.
 
 ### 7. Decision reasoning engine
 
@@ -233,7 +233,7 @@ Responsibilities:
 - approve, reject, or roll back changes,
 - observe evidence quality and uncertainty.
 
-The console should make Polari feel governed rather than magical.
+The console should make Flaggo feel governed rather than magical.
 
 ## High-level runtime flow
 
@@ -260,7 +260,7 @@ Application code
 
 ## Scope resolution model
 
-Scope resolution is central to Polari.
+Scope resolution is central to flaggo.
 
 For a request like:
 
@@ -269,7 +269,7 @@ surface = tetris.dropInterval
 scope = user:123
 ```
 
-Polari may resolve factors through:
+Flaggo may resolve factors through:
 
 ```text
 user:123 -> segment:new_players -> global
@@ -283,7 +283,7 @@ That means:
 - state may be user-specific,
 - fallback may use a user override or global default.
 
-This is what lets Polari support both personalization and broader operational decisions without changing the core model.
+This is what lets Flaggo support both personalization and broader operational decisions without changing the core model.
 
 ## Initial boundaries
 

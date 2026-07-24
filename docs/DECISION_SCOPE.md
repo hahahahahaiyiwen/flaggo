@@ -25,11 +25,11 @@ surface = tetris.dropInterval
 scope = user:123
 ```
 
-Polari then resolves the applicable factors for that surface and scope.
+Flaggo then resolves the applicable factors for that surface and scope.
 
 ## Minimal built-in primitives
 
-Polari should standardize scope mechanics, not dictate every domain hierarchy.
+Flaggo should standardize scope mechanics, not dictate every domain hierarchy.
 
 The built-in scope primitives should stay intentionally small:
 
@@ -58,11 +58,11 @@ llm.modelRoute:
   custom:tenant -> custom:workflow -> global
 ```
 
-The hierarchy defines how Polari resolves inherited or fallback factor configuration.
+The hierarchy defines how Flaggo resolves inherited or fallback factor configuration.
 
 ## Ownership model
 
-Polari owns:
+Flaggo owns:
 
 - scope primitive format,
 - resolution mechanics,
@@ -89,7 +89,7 @@ requested scope = session:abc
 resolution chain = session:abc -> user:123 -> segment:new_players -> global
 ```
 
-Polari may resolve:
+Flaggo may resolve:
 
 - user/session telemetry evidence,
 - segment-level fallback evidence,
@@ -98,7 +98,7 @@ Polari may resolve:
 - session-specific active state,
 - global fallback value.
 
-Scope resolution lets Polari support personalization and broader operational decisions with the same conceptual model.
+Scope resolution lets Flaggo support personalization and broader operational decisions with the same conceptual model.
 
 ## Relationship to runtime context
 
@@ -136,7 +136,7 @@ newPlayerHardDropRate: scope=segment:new_players
 globalHardDropRate: scope=global
 ```
 
-Different scopes can produce different evidence. If local/session evidence conflicts with segment/global evidence, Polari should treat that as uncertainty rather than blindly choosing one source.
+Different scopes can produce different evidence. If local/session evidence conflicts with segment/global evidence, Flaggo should treat that as uncertainty rather than blindly choosing one source.
 
 ## Relationship to policy and fallback
 
@@ -169,7 +169,7 @@ For `tetris.dropInterval`, the likely first hierarchy is:
 session -> user -> segment -> global
 ```
 
-This lets Polari decide at a user/session boundary while falling back to broader evidence and policy when local evidence is weak.
+This lets Flaggo decide at a user/session boundary while falling back to broader evidence and policy when local evidence is weak.
 
 Example:
 
@@ -191,6 +191,6 @@ resolution:
 
 ## Design rule
 
-> Polari should standardize scope mechanics, while users define scope hierarchy and domain meaning.
+> Flaggo should standardize scope mechanics, while users define scope hierarchy and domain meaning.
 
 This keeps the core system simple while allowing advanced domains to extend through `custom`.

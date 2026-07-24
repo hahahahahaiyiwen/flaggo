@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Decision API is the runtime service applications call when they need a governed decision from Polari.
+The Decision API is the runtime service applications call when they need a governed decision from flaggo.
 
 It receives a decision surface, scope/runtime context, and optional request metadata. It resolves the applicable decision contract and factors, evaluates evidence and policy, records audit context, and returns a value or fallback guidance.
 
@@ -42,19 +42,19 @@ Intent-level shape, not final wire contract:
 POST /v1/decisions/{surface}:decide
 ```
 
-Polari-owned REST APIs should use path-based versioning:
+Flaggo-owned REST APIs should use path-based versioning:
 
 ```text
 /v1/...
 ```
 
-Version query parameters should be avoided for Polari APIs. Query parameters should be reserved for filtering, pagination, and optional read behavior.
+Version query parameters should be avoided for Flaggo APIs. Query parameters should be reserved for filtering, pagination, and optional read behavior.
 
-OpenTelemetry ingestion should follow standard OTLP conventions where possible rather than inventing Polari-specific versioning around telemetry transport.
+OpenTelemetry ingestion should follow standard OTLP conventions where possible rather than inventing Flaggo-specific versioning around telemetry transport.
 
 ## API groups
 
-Polari should separate runtime APIs from management APIs.
+Flaggo should separate runtime APIs from management APIs.
 
 ### Runtime APIs
 
@@ -82,7 +82,7 @@ Possible endpoints depend on the OTLP transport selected:
 /v1/logs
 ```
 
-or Polari may expose these behind a dedicated ingest host/path if needed:
+or Flaggo may expose these behind a dedicated ingest host/path if needed:
 
 ```text
 /otel/v1/traces
@@ -92,13 +92,13 @@ or Polari may expose these behind a dedicated ingest host/path if needed:
 
 Design rule:
 
-> Use OpenTelemetry standards for telemetry transport; use Polari APIs for decision semantics.
+> Use OpenTelemetry standards for telemetry transport; use Flaggo APIs for decision semantics.
 
-Polari-specific telemetry management can come later for app registration, source validation, sampling policy, retention, and expected event/metric declarations.
+Flaggo-specific telemetry management can come later for app registration, source validation, sampling policy, retention, and expected event/metric declarations.
 
 ### Management APIs
 
-Management APIs configure what Polari knows and governs.
+Management APIs configure what Flaggo knows and governs.
 
 Initial resource groups:
 
@@ -238,7 +238,7 @@ Response:
 
 Resolution fallback response:
 
-This means Polari could not use the most specific requested scope, but it still made an approved decision from a broader scope in the resolution chain.
+This means Flaggo could not use the most specific requested scope, but it still made an approved decision from a broader scope in the resolution chain.
 
 ```json
 {
@@ -279,7 +279,7 @@ This means Polari could not use the most specific requested scope, but it still 
 
 Decision fallback response:
 
-This means Polari could not safely make an approved decision at any applicable scope and returned the configured fallback value.
+This means Flaggo could not safely make an approved decision at any applicable scope and returned the configured fallback value.
 
 ```json
 {
@@ -374,7 +374,7 @@ resolution chain: session:game-456 -> user:user-123 -> segment:new_players -> gl
 
 The resolved scope and resolution chain should be included in the response for auditability.
 
-Resolution fallback should not be treated as a failed decision. If Polari falls back from `user` to `segment` and returns an approved segment-level value, the response should still be an approved decision with a confidence score for the resolved evidence scope.
+Resolution fallback should not be treated as a failed decision. If Flaggo falls back from `user` to `segment` and returns an approved segment-level value, the response should still be an approved decision with a confidence score for the resolved evidence scope.
 
 ## Policy gate
 
@@ -398,13 +398,13 @@ Policy reason codes should be stable because clients, audits, and the operator c
 The API should distinguish two fallback types:
 
 1. **Resolution fallback**
-   - Polari could not use the requested or most-specific scope.
-   - Polari resolved to a broader scope, such as `segment` or `global`.
+   - Flaggo could not use the requested or most-specific scope.
+   - Flaggo resolved to a broader scope, such as `segment` or `global`.
    - A real decision may still be approved.
    - Confidence should be present when the broader-scope decision is approved.
 
 2. **Decision fallback**
-   - Polari could not safely approve a decision.
+   - Flaggo could not safely approve a decision.
    - The returned value is the configured fallback.
    - Confidence should be `null` or omitted because no evidence-backed decision was approved.
 

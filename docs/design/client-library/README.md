@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The client library is the developer-facing integration point for Polari. It lets application code declare decision surfaces, emit telemetry evidence, pass runtime context, ask for governed decisions, and safely apply returned values or fallbacks.
+The client library is the developer-facing integration point for flaggo. It lets application code declare decision surfaces, emit telemetry evidence, pass runtime context, ask for governed decisions, and safely apply returned values or fallbacks.
 
 For the hero scenario, the first client library target is TypeScript for the Tetris frontend.
 
@@ -33,7 +33,7 @@ create client
 The client library should support:
 
 1. **Client configuration**
-   - Polari runtime API base URL.
+   - Flaggo runtime API base URL.
    - Application ID.
    - Environment.
    - API version.
@@ -81,8 +81,8 @@ The client library should support:
 This is intent-level pseudo-code, not final API.
 
 ```ts
-const polari = createPolariClient({
-  serviceUrl: "https://polari.example.com",
+const flaggo = createFlaggoClient({
+  serviceUrl: "https://flaggo.example.com",
   appId: "tetris-demo",
   environment: "dev",
   apiVersion: "v1",
@@ -115,7 +115,7 @@ Design rule:
 ### Domain events
 
 ```ts
-const hardDropPressed = polari.events.define("hard_drop_pressed", {
+const hardDropPressed = flaggo.events.define("hard_drop_pressed", {
   properties: {
     userId: "string",
     sessionId: "string",
@@ -125,7 +125,7 @@ const hardDropPressed = polari.events.define("hard_drop_pressed", {
   }
 });
 
-const piecePlaced = polari.events.define("piece_placed", {
+const piecePlaced = flaggo.events.define("piece_placed", {
   properties: {
     userId: "string",
     sessionId: "string",
@@ -153,7 +153,7 @@ function onHardDrop(piece: Tetromino) {
 ### Evidence metrics
 
 ```ts
-const gameEvidence = polari.metrics.define({
+const gameEvidence = flaggo.metrics.define({
   hardDropRate: {
     numerator: hardDropPressed.count(),
     denominator: piecePlaced.count(),
@@ -168,7 +168,7 @@ const gameEvidence = polari.metrics.define({
 ### Decision surface
 
 ```ts
-const dropInterval = polari.decision.number("tetris.dropInterval", {
+const dropInterval = flaggo.decision.number("tetris.dropInterval", {
   scopeHierarchy: ["session", "user", "segment", "global"],
   actionSpace: {
     min: 200,
@@ -260,13 +260,13 @@ type DecisionResult<T> = {
 };
 ```
 
-`confidence` is `null` when Polari returns a static decision fallback because no evidence-backed decision was approved. If only resolution fallback happened, confidence should still be present and should refer to the returned decision at `evidenceScope`.
+`confidence` is `null` when Flaggo returns a static decision fallback because no evidence-backed decision was approved. If only resolution fallback happened, confidence should still be present and should refer to the returned decision at `evidenceScope`.
 
 ## Contract declaration and registration
 
-The client library may support code-first decision declarations, but Polari should not require production applications to mutate management state during normal runtime startup.
+The client library may support code-first decision declarations, but Flaggo should not require production applications to mutate management state during normal runtime startup.
 
-Decision declarations should be extractable into a resource ownership manifest. Build or deployment tooling can sync that manifest to Polari management APIs.
+Decision declarations should be extractable into a resource ownership manifest. Build or deployment tooling can sync that manifest to Flaggo management APIs.
 
 Recommended lifecycle:
 
@@ -300,7 +300,7 @@ Initial telemetry modes:
 | Mode | Behavior |
 |---|---|
 | `opentelemetry` | Emit via OTel-compatible exporter/collector. |
-| `direct` | Send to a Polari development/demo ingestion endpoint. |
+| `direct` | Send to a Flaggo development/demo ingestion endpoint. |
 | `disabled` | Do not emit telemetry; decisions rely on existing server evidence or fallback. |
 
 Domain events should be developer-friendly. The SDK may map them to structured logs, span events, or metric measurements under the hood.
