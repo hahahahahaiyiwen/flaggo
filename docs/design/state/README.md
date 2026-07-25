@@ -1,4 +1,101 @@
 # State Design
 
-Placeholder for detailed active value, previous decision, cooldown, rollout, override, pause/resume, and rollback state design.
+## Purpose
 
+The state component owns live runtime authority for a decision surface and scope. Contracts describe what a decision means; state describes what is currently active.
+
+For the MVP, state is intentionally small and local-first. It should support the Tetris `dropInterval` adaptive strategy without requiring cloud storage.
+
+Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
+
+## MVP responsibility
+
+State stores:
+
+- active value or active strategy,
+- previous value,
+- last decision time,
+- cooldown deadline,
+- pause state,
+- operator override,
+- contract version tied to the active state.
+
+MVP state should support in-memory storage first. A later persistent implementation can use SQLite, PostgreSQL, Redis, or a cloud store behind the same interface.
+
+## Core port
+
+```ts
+interface IStateStore {
+  getActiveState(input: StateRequest): Promise<DecisionState | null>;
+  updateActiveState(input: StateUpdate): Promise<void>;
+}
+
+type StateRequest = {
+  surface: string;
+  scope: ScopeRef;
+};
+
+type StateUpdate = {
+  surface: string;
+  scope: ScopeRef;
+  expectedContractVersion?: string;
+  nextState: DecisionState;
+  reason: string;
+};
+```
+
+## Runtime behavior
+
+```text
+Decision API
+  -> resolves scope
+  -> loads active state for resolved scope, if present
+  -> checks override or pause
+  -> executes active strategy or active value
+  -> updates lastDecisionAt/cooldown when needed
+```
+
+Precedence:
+
+1. Retired contract forces fallback.
+2. Pause state forces fallback or existing safe value.
+3. Operator override takes precedence over active strategy.
+4. Active strategy produces adaptive runtime value.
+5. Active value returns fixed governed value.
+6. Missing state returns contract fallback.
+
+## Tetris MVP state
+
+Example active state:
+
+```json
+{
+  "surface": "tetris.dropInterval",
+  "scope": {
+    "type": "segment",
+    "id": "new_players"
+  },
+  "contractVersion": "1",
+  "lifecycle": "active",
+  "activeStrategy": {
+    "kind": "numeric-rule",
+    "id": "strategy-tetris-new-players-v1",
+    "baseValue": 800,
+    "min": 600,
+    "max": 1100,
+    "step": 50,
+    "cooldownSeconds": 20,
+    "rules": []
+  },
+  "previousValue": 800
+}
+```
+
+## MVP non-goals
+
+- Distributed locking.
+- Multi-region consistency.
+- Complex rollout state.
+- Long-term state history beyond audit.
+
+Those can be added later behind `IStateStore` and audit records.

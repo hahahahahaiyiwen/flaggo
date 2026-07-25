@@ -15,6 +15,10 @@ It receives a decision surface, scope/runtime context, and optional request meta
 - Support scope resolution.
 - Support deterministic policy gating before any candidate action is returned as approved.
 - Avoid assuming every decision requires an LLM.
+- Execute approved strategies quickly for real-time adaptive decisions.
+
+MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
+Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 
 ## Runtime responsibility
 
@@ -28,8 +32,9 @@ request(surface, runtime context, optional requested scope)
   -> fetch telemetry evidence
   -> fetch system state
   -> assess uncertainty
-  -> generate candidate decision
-  -> apply policy gate
+  -> load active governed value, strategy, experiment, override, or fallback
+  -> execute active strategy when present
+  -> apply governance stage
   -> record audit/explanation
   -> return decision or fallback
 ```
@@ -107,6 +112,7 @@ Initial resource groups:
 /v1/surfaces
 /v1/contracts
 /v1/policies
+/v1/strategies
 ```
 
 Responsibilities:
@@ -118,7 +124,8 @@ Responsibilities:
 - define scope hierarchy,
 - define evidence requirements,
 - define goals and fallback contracts,
-- register policy constraints.
+- register policy constraints,
+- register governed decision strategies produced by async intelligence or operator tooling.
 
 Decision resources should be managed as versioned, append-only contracts with a simplified lifecycle:
 
@@ -143,6 +150,7 @@ Initial resource groups:
 Responsibilities:
 
 - inspect active values,
+- inspect active strategies,
 - pause or resume decisions,
 - apply operator overrides,
 - clear overrides,
@@ -177,6 +185,7 @@ Example:
 
 ```json
 {
+  "surface": "tetris.dropInterval",
   "requestedScope": {
     "type": "session",
     "id": "game-456"
@@ -185,7 +194,10 @@ Example:
     "userId": "user-123",
     "sessionId": "game-456",
     "currentLevel": 3,
-    "deviceType": "mobile"
+    "deviceType": "mobile",
+    "boardPressure": "high",
+    "recentPlacementTimeMs": 1300,
+    "recoveryFailures": 2
   },
   "client": {
     "appId": "tetris-demo",
@@ -195,6 +207,8 @@ Example:
   }
 }
 ```
+
+For the HTTP route `POST /v1/decisions/{surface}:decide`, the path supplies the surface. The service should normalize the route parameter and body into the shared `DecideRequest` shape used internally by the Decision API core.
 
 Response:
 
@@ -217,6 +231,8 @@ Response:
   ],
   "value": 700,
   "valueType": "number",
+  "decisionMode": "strategy",
+  "strategyId": "strategy-tetris-new-players-v1",
   "confidence": 0.72,
   "evidenceScope": {
     "type": "session",
@@ -229,9 +245,10 @@ Response:
   },
   "policy": {
     "result": "approved",
-    "reasons": []
+    "reasons": [],
+    "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
-  "reason": "Hard-drop rate remained above target with sufficient recent evidence.",
+  "reason": "Approved strategy slowed the drop interval because board pressure was high and recent placement time was slow.",
   "auditId": "audit-789"
 }
 ```
@@ -258,6 +275,8 @@ This means Flaggo could not use the most specific requested scope, but it still 
   ],
   "value": 750,
   "valueType": "number",
+  "decisionMode": "strategy",
+  "strategyId": "strategy-tetris-new-players-v1",
   "confidence": 0.78,
   "evidenceScope": {
     "type": "segment",
@@ -270,7 +289,8 @@ This means Flaggo could not use the most specific requested scope, but it still 
   },
   "policy": {
     "result": "approved",
-    "reasons": []
+    "reasons": [],
+    "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
   "reason": "User-level evidence was insufficient; segment-level evidence for new_players supported the returned drop interval.",
   "auditId": "audit-791"
@@ -303,6 +323,7 @@ This means Flaggo could not safely make an approved decision at any applicable s
   },
   "value": 800,
   "valueType": "number",
+  "decisionMode": "fallback",
   "confidence": null,
   "fallback": {
     "resolutionFallbackUsed": true,
@@ -311,7 +332,8 @@ This means Flaggo could not safely make an approved decision at any applicable s
   },
   "policy": {
     "result": "fallback",
-    "reasons": ["insufficient_evidence_all_scopes"]
+    "reasons": ["insufficient_evidence_all_scopes"],
+    "appliedConstraints": ["min-confidence", "min-sample-size"]
   },
   "reason": "No scope in the resolution chain had sufficient evidence for a safe decision.",
   "auditId": "audit-790"
@@ -341,6 +363,8 @@ The response should provide:
 
 - selected value,
 - value type,
+- decision mode,
+- strategy ID when an approved strategy produced the value,
 - fallback status separated into resolution fallback and decision fallback,
 - resolved scope,
 - evidence scope,
@@ -393,6 +417,34 @@ Policy may block or force fallback because of:
 
 Policy reason codes should be stable because clients, audits, and the operator console may depend on them.
 
+## Strategy execution
+
+For real-time adaptive decisions, the Decision API should execute an active governed strategy rather than run deep analysis in the online request path.
+
+MVP strategy execution:
+
+```text
+active strategy
+  -> evaluate runtime conditions against request context and evidence snapshot
+  -> calculate candidate value
+  -> clamp to action space and strategy bounds
+  -> check max delta and cooldown
+  -> pass candidate to policy
+  -> return approved value or fallback
+```
+
+The first strategy executor can support only numeric rule strategies for `tetris.dropInterval`. Future executors can add fixed value, scoring, bandit, model, or experiment strategies behind the same interface.
+
+Intent-level service port:
+
+```ts
+interface IStrategyExecutor {
+  execute(input: StrategyExecutionRequest): Promise<StrategyExecutionResult>;
+}
+```
+
+The Decision API should treat strategy execution as a bounded operation. It should not call an unbounded agent loop in the normal online path unless a specific surface is explicitly configured for that behavior.
+
 ## Fallback and confidence semantics
 
 The API should distinguish two fallback types:
@@ -422,7 +474,7 @@ The audit record should correlate:
 - runtime context summary,
 - evidence snapshot,
 - system state summary,
-- candidate action,
+- active value, strategy, or candidate action,
 - policy result,
 - returned value,
 - fallback usage,
@@ -439,7 +491,8 @@ For the Tetris hero scenario, the first Decision API should support:
 - confidence and policy result fields,
 - audit ID generation,
 - simple evidence snapshot integration,
-- deterministic policy gate.
+- deterministic policy evaluation,
+- active numeric rule strategy execution.
 
 ## Open design questions
 

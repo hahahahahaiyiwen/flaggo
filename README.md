@@ -50,7 +50,8 @@ At runtime:
 ```text
 game emits telemetry
   -> game asks Flaggo for tetris.dropInterval
-  -> Flaggo evaluates evidence, scope, goals, policy, state, and uncertainty
+  -> Flaggo executes an approved adaptive strategy against live game context
+  -> Flaggo applies governance and fallback rules
   -> Flaggo returns a governed value or fallback
   -> game applies the value
 ```
@@ -73,6 +74,7 @@ game emits telemetry
 - [Decision Surface](docs/DECISION_SURFACE.md)
 - [Decision Scope](docs/DECISION_SCOPE.md)
 - [Decision Factors](docs/DECISION_FACTORS.md)
+- [MVP Implementation Guide](docs/IMPLEMENTATION_GUIDE.md)
 - [Component Design Index](docs/design/README.md)
 
 ## Repository layout
@@ -81,4 +83,3 @@ game emits telemetry
 docs/          Product, concept, and component design documents
 repos/         Related implementation repositories and experiments
 ```
-

@@ -52,6 +52,18 @@ decision surface + decision scope
   -> return decision or fallback
 ```
 
+### Decision intelligence
+
+Decision intelligence is the AI-native reasoning layer that turns resolved surfaces, scopes, factors, evidence, goals, state, and uncertainty into a candidate decision proposal. For real-time adaptive decisions, the proposal may be a decision strategy rather than one fixed value.
+
+It answers: **how should Flaggo reason about what to do next before governance decides whether it is safe to apply?**
+
+This is the layer that makes Flaggo more than a dynamic configuration or feature flag service. It can behave like an embedded data scientist or operator assistant: observe telemetry, compare outcomes, choose an analysis strategy, propose experiments, value changes, or bounded adaptation strategies, explain uncertainty, and recommend whether to hold, change, test, roll back, or fall back.
+
+Decision intelligence should produce a **decision proposal**, not an automatically final runtime decision. A proposal can be a single value, an experiment, or a governed strategy that online runtime executes quickly against live context. The proposal is then checked by policy, scope limits, lifecycle state, cooldowns, confidence floors, approval requirements, and fallback rules before becoming a governed decision or active strategy.
+
+Detailed concept design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md).
+
 ### Governed decision
 
 A governed decision is the output Flaggo returns to application code.
@@ -66,6 +78,16 @@ It should include:
 - audit correlation ID.
 
 The application should be able to apply the result without knowing the internals of evidence aggregation, policy evaluation, or AI reasoning.
+
+At a high level:
+
+```text
+decision surface + decision scope + decision factors
+  -> decision intelligence
+  -> candidate value, experiment, or strategy proposal
+  -> policy, scope, and safety governance
+  -> governed decision or fallback
+```
 
 ## Hero scenario design target
 
@@ -88,8 +110,11 @@ This scenario should prove the smallest useful version of Flaggo:
 1. A developer can declare telemetry and a decision surface.
 2. The app can emit evidence and ask for a scoped decision.
 3. Flaggo can evaluate evidence, goals, policy, state, and uncertainty.
-4. The app can safely apply a value or fallback.
-5. An operator can inspect why the decision happened.
+4. Async intelligence can produce a candidate value or adaptive strategy proposal.
+5. Policy and scope governance can approve, limit, hold, roll back, fall back, or activate the strategy.
+6. The online runtime path can execute the active strategy against live game context.
+7. The app can safely apply a value or fallback.
+8. An operator can inspect why the decision happened.
 
 ## System components
 
@@ -193,13 +218,15 @@ State lets Flaggo avoid stateless one-off guesses and prevents thrashing or conf
 
 ### 7. Decision reasoning engine
 
-The decision reasoning engine proposes or selects the next safe action.
+The decision reasoning engine executes the decision intelligence model and proposes the next candidate action.
 
 Responsibilities:
 
 - interpret evidence relative to goals,
 - account for uncertainty,
-- compare candidate actions within the action space,
+- compare candidate values and strategies within the action space,
+- choose an analysis mode such as qualitative reasoning, heuristic rules, experiment analysis, bandits, statistical models, or LLM-assisted reasoning,
+- produce decision proposals or strategy proposals rather than directly applying runtime decisions,
 - produce a rationale,
 - hand candidate decisions to policy before application.
 
@@ -235,7 +262,11 @@ Responsibilities:
 
 The console should make Flaggo feel governed rather than magical.
 
-## High-level runtime flow
+## High-level runtime and intelligence flow
+
+Flaggo has two primary execution paths plus a downstream governance stage.
+
+The **online runtime path** serves application requests:
 
 ```text
 Application code
@@ -247,9 +278,8 @@ Decision API
   -> resolves scope chain
   -> fetches telemetry evidence
   -> fetches system state
-  -> evaluates goals and uncertainty
-  -> asks reasoning engine for candidate action
-  -> applies policy gate
+  -> uses active governed value, approved strategy, approved experiment, fallback, or case-specific runtime reasoning
+  -> applies governance stage
   -> records audit/explanation
   -> returns decision or fallback
 
@@ -257,6 +287,35 @@ Application code
   -> applies returned value/action
   -> emits outcome telemetry
 ```
+
+The **async intelligence path** analyzes evidence outside the application's request/response path:
+
+```text
+Telemetry changes, schedule, operator request, or decision drift
+  -> decision intelligence
+  -> observe evidence and state
+  -> interpret findings
+  -> choose analysis mode
+  -> generate and evaluate candidate values or strategies
+  -> produce value, experiment, or strategy proposal
+  -> governance stage
+  -> active value, active strategy, experiment, hold, rollback, or fallback
+```
+
+The **governance stage** is downstream of both paths. It is not a peer runtime path. It applies policy, scope authority, lifecycle state, cooldowns, approval requirements, overrides, and fallback rules before a proposal or runtime candidate affects application behavior.
+
+Supporting lifecycle flows keep the system declared, evidenced, operated, audited, and improved over time:
+
+| Flow | Purpose |
+| --- | --- |
+| Contract sync | Validates and registers versioned surfaces, scopes, policies, telemetry definitions, and fallbacks from code/deploy manifests. |
+| Telemetry ingestion | Turns application and OpenTelemetry signals into scoped evidence snapshots. |
+| Operator intervention | Lets humans pause, resume, override, approve, reject, or roll back governed decisions. |
+| Experiment lifecycle | Manages controlled exposure, outcome measurement, analysis, promotion, stop, or rollback. |
+| Audit and explanation | Records decision requests, proposals, policy outcomes, evidence references, fallbacks, and explanations. |
+| Feedback and learning | Feeds runtime outcomes back into evidence, future proposals, models, heuristics, and experiment design. |
+
+Detailed lifecycle design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md#supporting-lifecycle-flows).
 
 ## Scope resolution model
 
@@ -293,7 +352,8 @@ The first design should stay narrow:
 - one client library: TypeScript,
 - one default Decision API,
 - one telemetry/evidence path,
-- one policy gate,
+- one deterministic policy evaluator and governance stage,
+- one approved numeric rule strategy executor,
 - one audit trail,
 - one basic operator view.
 
@@ -325,6 +385,7 @@ Later sub-documents should define:
 - client SDK design,
 - decision request/response API,
 - decision contract schema,
+- decision intelligence model,
 - scope and resolution rules,
 - telemetry/evidence model,
 - policy model,

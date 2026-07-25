@@ -17,6 +17,8 @@ It owns the server-side resources that application code references at runtime:
 
 The registry exists so runtime decision requests can stay small and governed. Applications should call a pre-registered surface instead of sending all decision semantics inline on every request.
 
+Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
+
 ## Design principle
 
 > Treat Flaggo resources as versioned, append-only contracts with lifecycle state, not as things to hard-delete automatically.
@@ -94,6 +96,32 @@ Example shape:
 ```
 
 The manifest lets Flaggo compare declared resources in code with registered resources on the server.
+
+## MVP runtime port
+
+The runtime Decision API should depend on a registry port, not a concrete database or cloud service.
+
+```ts
+interface IContractRegistry {
+  getActiveContract(ref: DecisionSurfaceRef): Promise<DecisionContract>;
+  validateManifest(manifest: ResourceOwnershipManifest): Promise<ManifestValidationResult>;
+}
+
+type ManifestValidationResult = {
+  result: "valid" | "invalid";
+  errors: string[];
+  warnings: string[];
+};
+```
+
+MVP implementation:
+
+- local in-memory registry,
+- optional JSON fixture for `tetris.dropInterval`,
+- validate-only manifest support,
+- no production runtime mutation.
+
+Future implementations can use SQLite, PostgreSQL, cloud SQL, document stores, or object storage behind the same port.
 
 ## Sync behavior
 
@@ -199,4 +227,3 @@ For the Tetris hero scenario, the first registry design should support:
 - active/deprecated/retired lifecycle,
 - append-only contract revisions,
 - ownership manifest sync in validate or create mode.
-

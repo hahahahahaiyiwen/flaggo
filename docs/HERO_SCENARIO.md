@@ -17,7 +17,9 @@ A Tetris frontend emits gameplay telemetry. Instead of hard-coding one global dr
 - which direction the desired metrics should move,
 - what bounds and fallback values keep the experience safe.
 
-At runtime, the game asks Flaggo for the current `dropInterval` decision. Flaggo uses runtime context, telemetry evidence, goals, policy constraints, system state, and uncertainty to return a governed value. The game applies the value, emits outcomes, and Flaggo learns from subsequent behavior.
+At runtime, the game asks Flaggo for the current `dropInterval` decision. Flaggo uses runtime context, recent session telemetry, approved decision strategy, goals, policy constraints, system state, and uncertainty to return a governed value. The game applies the value, emits outcomes, and Flaggo learns from subsequent behavior.
+
+The key product behavior is real-time adaptation, not just choosing a better initial default. Async intelligence can learn and propose a bounded strategy for how drop speed should adapt. The online runtime path can then execute that approved strategy quickly during gameplay.
 
 The scenario uses the decision-factor vocabulary from [Decision Factors for AI-Native Runtime Decisioning](DECISION_FACTORS.md):
 
@@ -30,7 +32,7 @@ The scenario uses the decision-factor vocabulary from [Decision Factors for AI-N
 | Policy constraints | min/max value, max delta, cooldown, confidence floor, sample-size minimum |
 | System state | current interval, previous decision, cooldown state, operator mode |
 | Uncertainty | confidence, sample size, data freshness, conflicting signals |
-| Action space | numeric interval from `200ms` to `1500ms` in `50ms` steps |
+| Action space | numeric interval from `200ms` to `1500ms` in `50ms` steps; strategy may further narrow range for a segment |
 | Fallback contract | use `800ms` when decisioning is unavailable or unsafe |
 | Audit/explanation | returned value, reason, evidence snapshot, policy result |
 
@@ -158,9 +160,18 @@ const dropInterval = flaggo.decision.number("tetris.dropInterval", {
   ],
   policy: {
     maxDelta: 50,
-    cooldown: "5m",
+    cooldown: "20s",
     minSampleSize: 30,
     minConfidence: 0.7
+  },
+  onlineStrategy: {
+    mode: "approved-strategy",
+    liveInputs: [
+      "currentLevel",
+      "boardPressure",
+      "recentPlacementTimeMs",
+      "recoveryFailures"
+    ]
   },
   fallback: {
     value: 800,
@@ -179,7 +190,10 @@ const interval = await dropInterval.decide({
     userId,
     sessionId,
     currentLevel,
-    deviceType
+    deviceType,
+    boardPressure,
+    recentPlacementTimeMs,
+    recoveryFailures
   }
 });
 
@@ -187,6 +201,26 @@ gameEngine.updateConfig({ dropInterval: interval.value });
 ```
 
 The important design principle is that the decision is declared directly and explicitly. The application does not hide adaptive behavior behind scattered `if/else` branches. It names the decision surface, runtime context shape, telemetry evidence, goals, action space, policy constraints, and fallback contract.
+
+In the adaptive version of the scenario, the developer still asks for one value:
+
+```ts
+gameEngine.updateConfig({ dropInterval: interval.value });
+```
+
+But Flaggo may produce that value by executing an approved strategy:
+
+```text
+current value = 800ms
+board pressure = high
+recent placement time = slow
+recovery failures = 2
+approved strategy = slow down by one step when pressure is high and recovery is poor
+
+returned value = 850ms
+```
+
+This keeps the game code simple while allowing runtime behavior to adapt to the current session.
 
 ### Operator and product experience
 
@@ -203,6 +237,8 @@ For `tetris.dropInterval`, the operator should see:
 - the uncertainty state: confidence, evidence freshness, sample size, and conflicting signals,
 - recent decisions and explanations,
 - whether the decision is observing, suggesting, or applying changes,
+- the active decision strategy, if one is approved,
+- the latest strategy proposal and why it was accepted, limited, or rejected,
 - controls to pause, resume, override, or roll back.
 
 The operator experience matters because Flaggo is not just a metric optimizer. It is a governed runtime decision layer. Human intent must remain visible in goals, boundaries, and operating mode.
@@ -215,6 +251,22 @@ The player should not experience random or chaotic changes. The game should feel
 - if the game is too punishing, pieces may fall slower,
 - if evidence is weak or contradictory, the game should remain stable,
 - if policies block adaptation, the player should receive the safe fallback behavior.
+
+For example:
+
+```text
+New session starts:
+  return 800ms
+
+Player is near the top of the board and placing pieces slowly:
+  return 850ms or 900ms within max-delta and cooldown limits
+
+Player stabilizes after recovery:
+  return 800ms or 750ms as pressure decreases
+
+Player is skilled and consistently stable:
+  return 700ms if the active strategy allows speed-up
+```
 
 The end user does not need to know Flaggo exists, but they should benefit from behavior that is more contextual than static configuration.
 

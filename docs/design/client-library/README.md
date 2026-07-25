@@ -15,6 +15,10 @@ For the hero scenario, the first client library target is TypeScript for the Tet
 - Make fallback behavior part of the decision declaration.
 - Integrate with OpenTelemetry where configured.
 - Avoid forcing developers to build metrics aggregation, policy checks, or audit correlation manually.
+- Keep SDK interfaces stable while server-side strategies, evidence, and intelligence evolve.
+
+MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
+Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 
 ## Developer mental model
 
@@ -59,6 +63,7 @@ The client library should support:
    - Define policy hints or referenced policy.
    - Define fallback contract.
    - Define scope hierarchy or referenced scope profile.
+   - Define online strategy mode and live runtime inputs when the decision is adaptive.
 
 5. **Decision request**
    - Pass runtime context.
@@ -181,9 +186,18 @@ const dropInterval = flaggo.decision.number("tetris.dropInterval", {
   ],
   policy: {
     maxDelta: 50,
-    cooldown: "5m",
+    cooldown: "20s",
     minSampleSize: 30,
     minConfidence: 0.7
+  },
+  onlineStrategy: {
+    mode: "approved-strategy",
+    liveInputs: [
+      "currentLevel",
+      "boardPressure",
+      "recentPlacementTimeMs",
+      "recoveryFailures"
+    ]
   },
   fallback: {
     value: 800,
@@ -204,7 +218,10 @@ const decision = await dropInterval.decide({
     userId,
     sessionId,
     currentLevel,
-    deviceType
+    deviceType,
+    boardPressure,
+    recentPlacementTimeMs,
+    recoveryFailures
   }
 });
 
@@ -227,40 +244,48 @@ if (decision.fallback.resolutionFallbackUsed) {
 
 ## Expected decision response shape
 
-The library should expose a simple typed response:
+The library should expose the shared runtime response shape with a developer-friendly alias:
 
 ```ts
-type DecisionResult<T> = {
-  value: T;
-  valueType: "boolean" | "number" | "string";
-  confidence: number | null;
-  reason?: string;
-  auditId: string;
-  requestedScope?: {
-    type: string;
-    id: string;
-  };
-  resolvedScope: {
-    type: string;
-    id: string;
-  };
-  evidenceScope?: {
-    type: string;
-    id: string;
-  };
-  fallback: {
-    resolutionFallbackUsed: boolean;
-    decisionFallbackUsed: boolean;
-    reason: string | null;
-  };
-  policy: {
-    result: "approved" | "blocked" | "fallback";
-    reasons: string[];
-  };
-};
+type DecisionResult<T> = DecideResponse<T>;
 ```
 
 `confidence` is `null` when Flaggo returns a static decision fallback because no evidence-backed decision was approved. If only resolution fallback happened, confidence should still be present and should refer to the returned decision at `evidenceScope`.
+
+`decisionMode` tells the application how the value was produced without exposing internal implementation details. For the Tetris adaptive MVP, the expected mode is usually `strategy`: the server executed an approved strategy against live runtime context and returned an immediate numeric value.
+
+## MVP SDK interfaces
+
+The first TypeScript SDK should keep a small interface surface:
+
+```ts
+interface IFlaggoClient {
+  decision: IDecisionBuilder;
+  events: IEventBuilder;
+  metrics: IMetricBuilder;
+  manifest: IContractManifestProvider;
+}
+
+interface IDecisionBuilder {
+  number(name: string, declaration: NumberDecisionDeclaration): INumberDecision;
+}
+
+interface INumberDecision {
+  decide(request: {
+    requestedScope?: ScopeRef;
+    runtimeContext: RuntimeContext;
+    correlationId?: string;
+  }): Promise<DecisionResult<number>>;
+
+  fallbackValue(): number;
+}
+
+interface IContractManifestProvider {
+  exportManifest(): ResourceOwnershipManifest;
+}
+```
+
+The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are declaration, telemetry, manifest export, runtime request, typed response, and local fallback when the service is unavailable.
 
 ## Contract declaration and registration
 
@@ -324,6 +349,7 @@ For the Tetris hero scenario, the first client library design should support:
 - Domain event emission.
 - Simple evidence metric declarations.
 - Runtime context.
+- Approved online strategy declaration with live input names.
 - Session/user/segment/global scope hierarchy.
 - Explicit fallback value.
 - Decision API call with a typed response.
