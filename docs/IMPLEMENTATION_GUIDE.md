@@ -285,7 +285,7 @@ interface IFlaggoClient {
   decision: IDecisionBuilder;
   events: IEventBuilder;
   metrics: IMetricBuilder;
-  manifest: IContractManifestProvider;
+  contracts: IContractBundleProvider;
 }
 
 interface IDecisionBuilder {
@@ -295,19 +295,22 @@ interface IDecisionBuilder {
 interface INumberDecision {
   decide(request: {
     requestedScope?: ScopeRef;
-    runtimeContext: Record<string, boolean | number | string | null>;
+    runtimeContext: RuntimeContext;
     correlationId?: string;
+    expectedContractDigest?: string;
+    expectedContractRevision?: string;
   }): Promise<DecideResponse<number>>;
 
   fallbackValue(): number;
 }
 
-interface IContractManifestProvider {
-  exportManifest(): ResourceOwnershipManifest;
+interface IContractBundleProvider {
+  exportBundle(): ContractBundle;
+  getExpectedIdentity(): ContractIdentity | undefined;
 }
 ```
 
-The SDK should not own decision intelligence, policy, or state. It should declare contracts, send runtime context, emit telemetry, and expose typed responses.
+The SDK should not own decision intelligence, policy, or state. It should declare contracts, optionally export a canonical contract bundle, send runtime context and compact contract identity, emit telemetry, and expose typed responses.
 
 ## Decision API service interfaces
 
@@ -320,7 +323,8 @@ interface IDecisionService {
 
 interface IContractRegistry {
   getActiveContract(ref: DecisionSurfaceRef): Promise<DecisionContract>;
-  validateManifest(manifest: ResourceOwnershipManifest): Promise<ManifestValidationResult>;
+  validateBundle(bundle: ContractBundle): Promise<ContractBundleValidationResult>;
+  applyBundle(bundle: ContractBundle): Promise<RegistrationReceipt>;
 }
 
 interface IScopeResolver {
@@ -444,7 +448,7 @@ Deliverables:
 
 Decision rule: if a new contributor cannot run the MVP locally without cloud setup, the foundation is not portable enough.
 
-### Phase 1: Shared contracts and manifest
+### Phase 1: Shared contracts, contract bundle, and receipt
 
 Goal: define the stable shapes that SDK, server, tests, and future adapters share.
 
@@ -453,14 +457,19 @@ Deliverables:
 - `DecisionValue`, `ActionSpace`, `ScopeRef`, `DecideRequest`, and `DecideResponse`,
 - `DecisionStrategy` with `fixed-value` and `numeric-rule`,
 - `DecisionProposal` with at least `StrategyProposal`,
-- resource ownership manifest schema,
+- canonical `ContractBundle` schema,
+- deterministic bundle digest,
+- `RegistrationReceipt`,
+- compact contract identity fields for runtime,
+- `contract.integrity` response shape,
 - JSON examples for `tetris.dropInterval`.
 
 Validation:
 
 - schema examples round-trip successfully,
 - invalid strategy/action-space combinations are rejected,
-- manifest can represent the Tetris surface without cloud-specific fields.
+- contract bundle can represent the Tetris surface without cloud-specific fields,
+- direct REST clients can carry expected digest/revision without any SDK.
 
 ### Phase 2: Decision API core with local adapters
 
@@ -469,6 +478,7 @@ Goal: implement the online runtime path behind provider-neutral interfaces.
 Deliverables:
 
 - `POST /v1/decisions/{surface}:decide`,
+- runtime contract identity verification,
 - `IContractRegistry` local implementation,
 - `IScopeResolver`,
 - `IStateStore` local implementation,
@@ -483,7 +493,7 @@ Validation:
 - fixed fallback response works when no active strategy exists,
 - active numeric rule strategy returns adaptive values from runtime context,
 - policy blocks out-of-range and cooldown-violating candidates,
-- every response includes `auditId`, `decisionMode`, scope fields, and fallback fields.
+- every response includes `auditId`, `decisionMode`, scope fields, fallback fields, and contract integrity status.
 
 ### Phase 3: TypeScript client library
 
@@ -496,7 +506,8 @@ Deliverables:
 - `decide(...)`,
 - local fallback behavior when the server is unavailable,
 - domain event definition and emit API,
-- manifest export,
+- contract bundle export or reference,
+- expected contract digest/revision propagation,
 - OpenTelemetry-compatible telemetry mode stub or first implementation.
 
 Validation:
@@ -504,7 +515,8 @@ Validation:
 - Tetris code can declare `tetris.dropInterval`,
 - Tetris code can call `decide` with live context,
 - SDK exposes typed `DecisionResult<number>`,
-- SDK does not mutate production management state at runtime.
+- SDK does not mutate production management state at runtime,
+- runtime calls send compact identity rather than the full bundle.
 
 ### Phase 4: Tetris adaptive demo
 
@@ -570,7 +582,7 @@ Validation:
 4. Build the TypeScript SDK decision call.
 5. Wire Tetris to the SDK and server.
 6. Add local telemetry/audit visibility.
-7. Add manifest export and validate-only flow.
+7. Add contract bundle export/reference and validate/apply flow.
 8. Add scripted strategy proposal activation.
 9. Package local startup and document quickstart.
 10. Add optional cloud adapter designs only after the local MVP is stable.

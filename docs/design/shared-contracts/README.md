@@ -315,6 +315,7 @@ type DecideRequest = {
   surface: string;
   requestedScope?: ScopeRef;
   runtimeContext: RuntimeContext;
+  expectedContract?: ContractIdentity;
   client: {
     appId: string;
     environment: string;
@@ -343,6 +344,7 @@ type DecideResponse<T extends DecisionValue = DecisionValue> = {
     reason: string | null;
   };
   policy: PolicyEvaluationResult;
+  contract: ContractRuntimeStatus;
 };
 ```
 
@@ -352,6 +354,45 @@ Rules:
 - `decisionMode` explains how the value was produced without exposing internals.
 - `confidence` is `null` for static decision fallback.
 - Resolution fallback can still return a real confidence score if a broader scope produced an approved decision.
+- `contract.integrity` indicates whether the client expectation matched a registered compatible contract.
+- The full contract bundle is not sent with each request; only compact identity is sent.
+
+## Contract identity and integrity
+
+```ts
+type ContractIdentity = {
+  digest?: string;
+  revision?: string;
+  deploymentId?: string;
+};
+
+type ContractIntegrityState =
+  | "verified"
+  | "compatible-drift"
+  | "unknown-client-contract"
+  | "incompatible-drift"
+  | "unknown-surface"
+  | "retired-surface";
+
+type ContractRuntimeStatus = {
+  revision?: string;
+  digest?: string;
+  integrity: ContractIntegrityState;
+  compatibility?: ContractCompatibility;
+};
+
+type ContractCompatibility =
+  | "identical"
+  | "backward-compatible"
+  | "requires-client-update"
+  | "unsafe";
+```
+
+Rules:
+
+- `verified` and `compatible-drift` may return approved decisions.
+- `unknown-client-contract`, `incompatible-drift`, `unknown-surface`, and `retired-surface` should fall back in production enforcement mode.
+- Browser-provided contract identity is useful for drift detection, not as a security boundary.
 
 ## Proposal contracts
 
@@ -452,44 +493,62 @@ Rules:
 - Audit should be local-first in MVP, such as console, file, or SQLite.
 - Cloud audit sinks should implement `IAuditSink`; they should not change the audit contract.
 
-## Resource ownership manifest
+## Contract bundle and registration receipt
 
 ```ts
-type ResourceOwnershipManifest = {
-  manifestVersion: "v1";
-  appId: string;
-  environment: string;
+type ContractBundle = {
+  format: "flaggo.contract-bundle/v1";
+  application: {
+    id: string;
+    environment: string;
+  };
   source: {
     repository?: string;
     path?: string;
     commit?: string;
   };
-  surfaces: ManifestSurface[];
+  surfaces: ContractBundleSurface[];
 };
 
-type ManifestSurface = {
+type ContractBundleSurface = {
   name: string;
   owner?: string;
-  contractRevision: string | "local";
   valueType: ValueType;
   actionSpace: ActionSpace;
   scopeHierarchy: string[];
+  runtimeContextSchema?: RuntimeContextSchema;
   fallback: FallbackContract;
   onlineStrategy?: OnlineStrategyDeclaration;
 };
 
-type ManifestValidationResult = {
+type ContractBundleValidationResult = {
   result: "valid" | "invalid";
+  digest?: string;
   errors: string[];
   warnings: string[];
 };
+
+type RegistrationReceipt = {
+  application: string;
+  environment: string;
+  bundleDigest: string;
+  registeredRevision: string;
+  compatibility: ContractCompatibility;
+  status: "approved" | "rejected" | "requires-approval";
+};
+
+type ResourceOwnershipManifest = ContractBundle;
+type ManifestValidationResult = ContractBundleValidationResult;
 ```
 
 Rules:
 
-- Manifest sync creates or validates contract revisions.
-- Missing manifest resources become deprecation candidates, not deletes.
-- Manifest data must remain provider-neutral.
+- `ContractBundle` is the canonical language-neutral sync artifact.
+- SDK-generated declarations, hand-authored JSON/YAML, GitOps workflows, and registry exports should all produce or reference the same bundle shape.
+- Bundle sync creates or validates contract revisions.
+- Missing bundle resources become deprecation candidates, not deletes.
+- Bundle data must remain provider-neutral.
+- `ResourceOwnershipManifest` is retained only as a compatibility alias while the design migrates to `ContractBundle`.
 
 ## Tetris MVP contract example
 
@@ -558,7 +617,10 @@ For the first implementation, treat these as frozen:
 - `DecideResponse`,
 - `PolicyEvaluationResult`,
 - `AuditRecord`,
-- `ResourceOwnershipManifest`,
-- `ManifestValidationResult`.
+- `ContractBundle`,
+- `RegistrationReceipt`,
+- `ContractIdentity`,
+- `ContractRuntimeStatus`,
+- `ContractCompatibility`.
 
 Future changes should be additive unless an MVP implementation proves a contract is unusable.

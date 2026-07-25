@@ -6,6 +6,8 @@ The Decision API is the runtime service applications call when they need a gover
 
 It receives a decision surface, scope/runtime context, and optional request metadata. It resolves the applicable decision contract and factors, evaluates evidence and policy, records audit context, and returns a value or fallback guidance.
 
+The runtime API should also verify compact contract identity when the client or deployment provides it. A decision must not be returned as approved when the active registered contract is incompatible with what the workload was built to handle.
+
 ## Design goals
 
 - Provide a small runtime API for application decision calls.
@@ -27,6 +29,7 @@ At a high level:
 ```text
 request(surface, runtime context, optional requested scope)
   -> validate surface
+  -> verify expected contract digest/revision when supplied
   -> resolve scope chain
   -> load decision contract
   -> fetch telemetry evidence
@@ -199,6 +202,11 @@ Example:
     "recentPlacementTimeMs": 1300,
     "recoveryFailures": 2
   },
+  "expectedContract": {
+    "digest": "sha256:8fc...",
+    "revision": "42",
+    "deploymentId": "tetris-web-2026-07-25.1"
+  },
   "client": {
     "appId": "tetris-demo",
     "environment": "dev",
@@ -248,6 +256,12 @@ Response:
     "reasons": [],
     "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
+  "contract": {
+    "revision": "42",
+    "digest": "sha256:8fc...",
+    "integrity": "verified",
+    "compatibility": "identical"
+  },
   "reason": "Approved strategy slowed the drop interval because board pressure was high and recent placement time was slow.",
   "auditId": "audit-789"
 }
@@ -292,6 +306,12 @@ This means Flaggo could not use the most specific requested scope, but it still 
     "reasons": [],
     "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
+  "contract": {
+    "revision": "42",
+    "digest": "sha256:8fc...",
+    "integrity": "compatible-drift",
+    "compatibility": "backward-compatible"
+  },
   "reason": "User-level evidence was insufficient; segment-level evidence for new_players supported the returned drop interval.",
   "auditId": "audit-791"
 }
@@ -335,6 +355,11 @@ This means Flaggo could not safely make an approved decision at any applicable s
     "reasons": ["insufficient_evidence_all_scopes"],
     "appliedConstraints": ["min-confidence", "min-sample-size"]
   },
+  "contract": {
+    "revision": "42",
+    "digest": "sha256:8fc...",
+    "integrity": "unknown-client-contract"
+  },
   "reason": "No scope in the resolution chain had sufficient evidence for a safe decision.",
   "auditId": "audit-790"
 }
@@ -347,6 +372,7 @@ The request should provide:
 - decision surface,
 - requested scope when the client knows it,
 - runtime context,
+- expected contract digest/revision when available,
 - client/app metadata,
 - optional correlation IDs.
 
@@ -369,6 +395,7 @@ The response should provide:
 - resolved scope,
 - evidence scope,
 - policy result,
+- contract integrity status,
 - confidence/evidence status,
 - human-readable reason,
 - audit correlation ID.
@@ -400,7 +427,7 @@ The resolved scope and resolution chain should be included in the response for a
 
 Resolution fallback should not be treated as a failed decision. If Flaggo falls back from `user` to `segment` and returns an approved segment-level value, the response should still be an approved decision with a confidence score for the resolved evidence scope.
 
-## Policy gate
+## Policy evaluation
 
 The Decision API must not return a candidate as approved until policy passes.
 
@@ -416,6 +443,23 @@ Policy may block or force fallback because of:
 - missing required evidence.
 
 Policy reason codes should be stable because clients, audits, and the operator console may depend on them.
+
+## Contract integrity
+
+The Decision API should compare the request's expected contract identity with registry state before approving a decision.
+
+Initial integrity states:
+
+| State | Runtime behavior |
+| --- | --- |
+| `verified` | Expected digest/revision matches registered compatible contract; decide normally. |
+| `compatible-drift` | Expected contract is older but compatible; decide normally and emit diagnostics. |
+| `unknown-client-contract` | No known expected identity; allow in local/dev, fallback in production enforce mode. |
+| `incompatible-drift` | Expected identity is incompatible with active contract; return fallback and audit. |
+| `unknown-surface` | Surface is not registered; return fallback or controlled error. |
+| `retired-surface` | Surface is retired; return fallback or controlled error. |
+
+The full contract bundle should not be sent on each runtime request.
 
 ## Strategy execution
 

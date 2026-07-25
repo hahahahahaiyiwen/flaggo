@@ -40,22 +40,35 @@ The scenario uses the decision-factor vocabulary from [Decision Factors for AI-N
 
 ### Developer experience
 
-The developer should not have to build an experimentation platform, telemetry pipeline, metrics aggregation layer, policy engine, or decision loop by hand.
+The developer should not have to build an experimentation platform, telemetry pipeline, metrics aggregation layer, policy engine, contract registry workflow, or decision loop by hand before seeing value.
 
-The developer should be able to express three application-owned things in code:
+The primary developer loop should stay small:
 
-1. **Telemetry emission**: the runtime events Flaggo should observe.
-2. **Metrics**: the server-side aggregations Flaggo should calculate from those events.
-3. **Decision primitive**: the runtime value or behavior that Flaggo may decide.
+```text
+declare -> decide -> observe
+```
 
-The important experience is that telemetry is declared and emitted through the Flaggo library. The application records meaningful domain events, and Flaggo handles delivery, aggregation, decision evidence, and audit linkage.
+The TypeScript hero path should ask the developer to express only three things:
 
-Example intent, not final API:
+1. **Declare** the bounded runtime value and its safety envelope.
+2. **Decide** by asking for a value with live gameplay context.
+3. **Observe** meaningful outcomes after the value is used.
+
+This code-first path is an ergonomic authoring mode, not the only control-plane model. The same decision contract should also be expressible through a language-neutral `flaggo.contract-bundle.json` for bundle-first, registry-first, GitOps, or direct REST-client workflows.
+
+The important experience is that the adaptive value is easy to declare and use in application code, while contract synchronization, registry revisions, runtime compatibility checks, strategy activation, evidence correlation, policy expansion, and audit linkage remain control-plane concerns.
+
+Example setup intent, not final API:
 
 ```ts
 const flaggo = createFlaggoClient({
   serviceUrl: "https://flaggo.example.com",
   appId: "tetris-demo",
+  environment: "dev",
+  contract: {
+    expectedDigest: process.env.FLAGGO_CONTRACT_DIGEST,
+    expectedRevision: process.env.FLAGGO_CONTRACT_REVISION
+  },
   telemetry: {
     exporter: "opentelemetry",
     otlpEndpoint: "https://otel-collector.example.com",
@@ -66,146 +79,59 @@ const flaggo = createFlaggoClient({
 });
 ```
 
-The developer defines domain events once:
+The runtime SDK carries only compact contract identity, such as expected digest or revision. It does not send the full contract bundle on every decision request.
+
+The developer declares one adaptive value:
 
 ```ts
-const hardDropPressed = flaggo.events.define("hard_drop_pressed", {
-  properties: {
-    userId: "string",
-    sessionId: "string",
-    pieceType: "string",
-    dropInterval: "number",
-    level: "number"
-  }
-});
-
-const piecePlaced = flaggo.events.define("piece_placed", {
-  properties: {
-    userId: "string",
-    sessionId: "string",
-    placementTimeMs: "number",
-    placementMethod: "string",
-    dropInterval: "number"
-  }
-});
-
-const gameEnded = flaggo.events.define("game_ended", {
-  properties: {
-    userId: "string",
-    sessionId: "string",
-    endReason: "string",
-    durationSeconds: "number",
-    dropInterval: "number"
-  }
+const dropInterval = flaggo.tune.number("tetris.dropInterval", {
+  default: 800,
+  range: [200, 1500],
+  step: 50,
+  optimize: "challenging-but-playable",
+  safety: "gradual"
 });
 ```
 
-When the player presses hard drop, the game emits the event through the library. The developer does not hand-roll a telemetry pipeline:
-
-```ts
-function onHardDrop(piece: Tetromino) {
-  gameEngine.hardDrop();
-
-  hardDropPressed.emit({
-    userId,
-    sessionId,
-    pieceType: piece.type,
-    dropInterval: gameEngine.config.dropInterval,
-    level: gameEngine.level
-  });
-}
-```
-
-The developer then defines metrics as server-side aggregations over emitted events:
-
-```ts
-const gameSignals = flaggo.metrics.define({
-  hardDropRate: {
-    numerator: hardDropPressed.count(),
-    denominator: piecePlaced.count(),
-    window: "5m",
-    direction: "target",
-    target: 0.45
-  },
-  placementTimeMs: {
-    value: piecePlaced.property("placementTimeMs").average(),
-    window: "5m",
-    direction: "minimize"
-  },
-  earlyGameOverRate: {
-    numerator: gameEnded.where({ endReason: "early_loss" }).count(),
-    denominator: gameEnded.count(),
-    window: "5m",
-    direction: "minimize"
-  }
-});
-```
-
-Flaggo receives the events, aggregates the metrics, and uses those metrics as decision evidence. The application does not need to compute `hardDropRate` locally or coordinate a separate analytics job before asking for a decision.
-
-Finally, the developer declares the decision primitive that uses those metrics:
-
-```ts
-const dropInterval = flaggo.decision.number("tetris.dropInterval", {
-  actionSpace: {
-    default: 800,
-    min: 200,
-    max: 1500,
-    step: 50
-  },
-  goals: [
-    gameSignals.hardDropRate.near(0.45),
-    gameSignals.placementTimeMs.minimize(),
-    gameSignals.earlyGameOverRate.minimize()
-  ],
-  policy: {
-    maxDelta: 50,
-    cooldown: "20s",
-    minSampleSize: 30,
-    minConfidence: 0.7
-  },
-  onlineStrategy: {
-    mode: "approved-strategy",
-    liveInputs: [
-      "currentLevel",
-      "boardPressure",
-      "recentPlacementTimeMs",
-      "recoveryFailures"
-    ]
-  },
-  fallback: {
-    value: 800,
-    strategy: "use-default"
-  }
-});
-```
-
-System state is intentionally not declared by the application. Flaggo owns state such as the current active value, previous decision, cooldown status, operator mode, and rollback state.
+`default` is the safe value returned when Flaggo cannot provide an approved value. The developer should not need to declare a second fallback value in the basic path.
 
 At runtime, application code should feel simple:
 
 ```ts
-const interval = await dropInterval.decide({
-  runtimeContext: {
-    userId,
-    sessionId,
-    currentLevel,
-    deviceType,
-    boardPressure,
-    recentPlacementTimeMs,
-    recoveryFailures
-  }
+const sessionDropInterval = dropInterval.forSession(sessionId);
+
+const interval = await sessionDropInterval.get({
+  level: game.level,
+  boardPressure,
+  recentPlacementTimeMs,
+  recoveryFailures
 });
 
-gameEngine.updateConfig({ dropInterval: interval.value });
+gameEngine.updateConfig({ dropInterval: interval });
 ```
 
-The important design principle is that the decision is declared directly and explicitly. The application does not hide adaptive behavior behind scattered `if/else` branches. It names the decision surface, runtime context shape, telemetry evidence, goals, action space, policy constraints, and fallback contract.
-
-In the adaptive version of the scenario, the developer still asks for one value:
+Then the game reports what happened:
 
 ```ts
-gameEngine.updateConfig({ dropInterval: interval.value });
+sessionDropInterval.observe("piece_placed", {
+  placementTimeMs,
+  hardDrop: placementMethod === "hard_drop"
+});
+
+sessionDropInterval.observe("session_ended", {
+  reason: endReason,
+  durationSeconds
+});
+```
+
+The SDK automatically associates observations with the decision surface, returned value, session scope, decision correlation ID, timestamp, and contract revision. The developer does not manually include `dropInterval`, `userId`, or `sessionId` on every observation unless they need to override inferred values.
+
+The important design principle is that the decision is declared directly and explicitly. The application does not hide adaptive behavior behind scattered `if/else` branches. It names or references the decision surface, action space, safety preset, and optimization intent. The control plane expands those into contracts, policy, evidence requirements, approved strategies, and audit records.
+
+In the adaptive version of the scenario, the developer still applies one value:
+
+```ts
+gameEngine.updateConfig({ dropInterval: interval });
 ```
 
 But Flaggo may produce that value by executing an approved strategy:
@@ -221,6 +147,61 @@ returned value = 850ms
 ```
 
 This keeps the game code simple while allowing runtime behavior to adapt to the current session.
+
+### Advanced evidence and governance mode
+
+Once a team needs exact control, it can graduate to explicit evidence and governance configuration:
+
+```ts
+const dropInterval = flaggo.tune.number("tetris.dropInterval", {
+  default: 800,
+  range: [200, 1500],
+  step: 50,
+  optimize: {
+    primary: signals.earlyLossRate.minimize(),
+    secondary: [
+      signals.hardDropRate.near(0.45),
+      signals.placementTimeMs.minimize()
+    ]
+  },
+  policy: {
+    maxDelta: 50,
+    cooldown: "20s",
+    minSampleSize: 30,
+    minConfidence: 0.7
+  }
+});
+```
+
+This retains the system's depth without charging every user the full conceptual cost on day one. Named domain events, reusable metric definitions, OpenTelemetry bindings, and warehouse-backed evidence should be advanced evidence modes, not prerequisites for the first successful adaptive value.
+
+System state and strategy are intentionally not declared by the application in the basic path. Flaggo owns state such as the current active value, previous decision, cooldown status, operator mode, rollback state, and active strategy. The developer says what should be optimized and what is safe; Flaggo and operators decide whether that is currently served by a fixed value, numeric rule, experiment, learned strategy, or fallback-only mode.
+
+The declaration can produce or contribute to a canonical contract bundle during build or release:
+
+```text
+TypeScript declarations, hand-authored YAML/JSON, or registry export
+  -> flaggo.contract-bundle.json
+  -> flaggo contracts validate
+  -> flaggo contracts apply
+  -> registration receipt
+  -> deployed workload carries expected digest/revision
+```
+
+### Software lifecycle experience
+
+Flaggo should support different owners and systems across the software lifecycle. The SDK is important in development and runtime, but it should not be the only way to synchronize contracts.
+
+| Stage | Developer or platform action | Flaggo artifact | SDK/runtime role |
+| --- | --- | --- | --- |
+| Development | Author decision declaration in TypeScript, JSON/YAML, or registry UI. | Local declaration or draft contract bundle. | SDK provides ergonomic code-first declarations and local fallback typing. |
+| Build | Extract or assemble canonical contract bundle. | `flaggo.contract-bundle.json` plus stable digest. | SDK extractor may generate the bundle, but manifest-first and registry-first workflows can produce the same artifact without SDK execution. |
+| CI/release | Validate and apply/promote bundle. | Registration receipt with revision and digest. | Standalone CLI or automation talks to registry; application runtime SDK is not required. |
+| Deployment | Attach compact contract identity to workload. | Expected digest, expected revision, build/deployment ID. | Identity can be injected via environment variables, generated constants, container labels, annotations, or direct REST headers. |
+| Runtime | Ask for decisions and emit telemetry. | `DecideRequest` with expected contract identity; `DecideResponse` with contract integrity status. | SDK sends compact identity, runtime context, and telemetry; Decision API verifies integrity before approval. |
+| Observe/operate | Inspect drift, audit, fallback, and strategy behavior. | Audit records, diagnostics, integrity metrics, operator warnings. | SDK exposes response fields; control plane owns audit, strategy, policy, and operator actions. |
+
+This lifecycle supports TypeScript-first development without making TypeScript SDK extraction a global architectural requirement.
 
 ### Operator and product experience
 

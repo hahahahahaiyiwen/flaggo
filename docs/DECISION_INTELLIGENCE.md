@@ -411,9 +411,9 @@ Supporting lifecycle flows:
 The contract sync flow keeps Flaggo's registry aligned with what application code declares.
 
 ```text
-Developer declares surfaces, scopes, telemetry, policies, and fallbacks
-  -> SDK/build tool produces ownership manifest
-  -> CI or deployment validates manifest
+Developer, platform, or registry declares surfaces, scopes, telemetry, policies, and fallbacks
+  -> SDK extractor, manifest authoring, or registry export produces ContractBundle
+  -> CI, release, GitOps, or operator workflow validates/applies bundle
   -> registry records versioned contract changes
   -> runtime and intelligence paths consume approved contracts
 ```

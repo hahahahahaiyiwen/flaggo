@@ -67,18 +67,21 @@ Examples of revision-worthy changes:
 
 Small metadata changes can be mutable if they do not affect decision semantics, but the first design can keep this conservative.
 
-## Resource ownership manifest
+## Contract bundle
 
-The client SDK or build tooling should produce a resource ownership manifest.
+The Contract Registry accepts a canonical, language-neutral `ContractBundle`.
 
-The manifest declares which Flaggo resources are owned by a codebase, app, environment, and source path.
+SDK extraction, hand-authored JSON/YAML, GitOps workflows, and registry-first tooling should all produce or reference this same bundle shape. The bundle declares which Flaggo resources are owned by a codebase, app, environment, and source path.
 
 Example shape:
 
 ```json
 {
-  "appId": "tetris-demo",
-  "environment": "dev",
+  "format": "flaggo.contract-bundle/v1",
+  "application": {
+    "id": "tetris-demo",
+    "environment": "dev"
+  },
   "source": {
     "repository": "tetris-frontend",
     "path": "src/Flaggo",
@@ -87,15 +90,14 @@ Example shape:
   "surfaces": [
     {
       "name": "tetris.dropInterval",
-      "contractRevision": "local",
-      "resultType": "number",
+      "valueType": "number",
       "scopeHierarchy": ["session", "user", "segment", "global"]
     }
   ]
 }
 ```
 
-The manifest lets Flaggo compare declared resources in code with registered resources on the server.
+The bundle lets Flaggo compare declared resources with registered resources on the server without depending on application source code or a language SDK.
 
 ## MVP runtime port
 
@@ -104,11 +106,13 @@ The runtime Decision API should depend on a registry port, not a concrete databa
 ```ts
 interface IContractRegistry {
   getActiveContract(ref: DecisionSurfaceRef): Promise<DecisionContract>;
-  validateManifest(manifest: ResourceOwnershipManifest): Promise<ManifestValidationResult>;
+  validateBundle(bundle: ContractBundle): Promise<ContractBundleValidationResult>;
+  applyBundle(bundle: ContractBundle): Promise<RegistrationReceipt>;
 }
 
-type ManifestValidationResult = {
+type ContractBundleValidationResult = {
   result: "valid" | "invalid";
+  digest?: string;
   errors: string[];
   warnings: string[];
 };
@@ -118,21 +122,25 @@ MVP implementation:
 
 - local in-memory registry,
 - optional JSON fixture for `tetris.dropInterval`,
-- validate-only manifest support,
+- validate/apply support for `ContractBundle`,
+- stable digest generation,
+- registration receipt output,
 - no production runtime mutation.
 
 Future implementations can use SQLite, PostgreSQL, cloud SQL, document stores, or object storage behind the same port.
 
 ## Sync behavior
 
-Resource sync should classify changes, not blindly overwrite.
+Bundle sync should classify changes, not blindly overwrite.
 
 ```text
-code declarations + ownership manifest
+code declarations, hand-authored bundle, or registry export
   -> compare with registered resources
+  -> classify compatibility
   -> create new resources/revisions
   -> mark missing resources as deprecation candidates
   -> require explicit retirement
+  -> return registration receipt
 ```
 
 Recommended behavior:
@@ -142,7 +150,7 @@ Recommended behavior:
 | New surface | Create active surface and initial contract revision. |
 | Compatible metadata change | Update metadata or create revision based on policy. |
 | Semantic contract change | Create a new revision. |
-| Resource missing from manifest | Mark as deprecation candidate; do not delete. |
+| Resource missing from bundle | Mark as deprecation candidate; do not delete. |
 | Deprecated resource with no active clients | Allow explicit retirement. |
 | Active runtime usage exists | Block retirement unless forced by operator policy. |
 
@@ -161,7 +169,7 @@ Reasons:
 Default behavior should be:
 
 ```text
-missing from manifest -> deprecation candidate -> explicit deprecate -> explicit retire
+missing from bundle -> deprecation candidate -> explicit deprecate -> explicit retire
 ```
 
 ## Runtime behavior by lifecycle state
@@ -187,7 +195,8 @@ POST /v1/surfaces
 GET /v1/surfaces/{surface}
 POST /v1/contracts
 GET /v1/contracts/{surface}/revisions
-POST /v1/manifests:sync
+POST /v1/contracts/bundles:validate
+POST /v1/contracts/bundles:apply
 POST /v1/surfaces/{surface}:deprecate
 POST /v1/surfaces/{surface}:retire
 ```
@@ -195,7 +204,8 @@ POST /v1/surfaces/{surface}:retire
 Exact routes can change later. The important design is:
 
 - create/register is explicit,
-- sync is manifest-driven,
+- sync is bundle-driven,
+- registration returns a receipt with digest and revision,
 - semantic updates create revisions,
 - deprecation/retirement are lifecycle transitions,
 - hard delete is not part of the normal lifecycle.
@@ -207,13 +217,14 @@ The runtime client library should not mutate registry resources during normal pr
 Recommended flow:
 
 ```text
-developer writes decision declarations in code
-  -> build/CI extracts ownership manifest
-  -> Flaggo sync registers or validates resources
+developer writes decision declarations in code, JSON/YAML, or registry UI
+  -> build/CI/release creates or selects ContractBundle
+  -> Flaggo validates/applies bundle and returns receipt
+  -> deployment carries expected digest/revision
   -> deployed app calls runtime Decision API
 ```
 
-Local development may support `register-dev`, but production should prefer manifest sync or explicit management tooling.
+Local development may support local-only or explicit local registration workflows, but production should prefer bundle validation/application through explicit management, release, or GitOps tooling.
 
 ## First slice
 
@@ -226,4 +237,5 @@ For the Tetris hero scenario, the first registry design should support:
 - session/user/segment/global hierarchy,
 - active/deprecated/retired lifecycle,
 - append-only contract revisions,
-- ownership manifest sync in validate or create mode.
+- contract bundle validate/apply flow,
+- registration receipt with digest and revision.
