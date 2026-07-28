@@ -152,15 +152,29 @@ type EventSignalDeclaration = {
   schemaDigest?: string;
 };
 
-type MetricSignalDeclaration = {
+type MetricSignalDeclaration =
+  | AppEmittedMetricSignalDeclaration
+  | DerivedMetricSignalDeclaration;
+
+type AppEmittedMetricSignalDeclaration = {
   kind: "metric";
   key: string;
   type: "boolean" | "number" | "string";
-  source: "app-emitted" | "derived";
+  source: "app-emitted";
   unit?: string;
-  from?: SignalRef[];
-  aggregation?: string;
-  window?: string;
+  range?: [number, number];
+  schemaDigest?: string;
+};
+
+type DerivedMetricSignalDeclaration = {
+  kind: "metric";
+  key: string;
+  type: "boolean" | "number" | "string";
+  source: "derived";
+  unit?: string;
+  from: SignalRef[];
+  aggregation: string;
+  window: string;
   range?: [number, number];
   schemaDigest?: string;
 };
@@ -405,6 +419,7 @@ Rules:
 - The MVP can use in-memory or fixture evidence.
 - Evidence details should be available to audit, but runtime responses should stay compact.
 - Missing evidence should not crash runtime; it should flow into policy and fallback semantics.
+- `window` is allowed for raw events and app-emitted metrics. It must be omitted for a fixed-window derived signal because that signal's immutable key already owns its aggregation window.
 
 ## Runtime API contracts
 
@@ -472,6 +487,42 @@ Rules:
 - `exposure.confirmToken` lets an SDK confirm exposure after the application applies or renders the returned value. The initial `RuntimeDecisionResult` must not include an `exposureId`; exposure identity is created by confirmation.
 - `definitionStatus.integrity` indicates whether the client expectation matched a registered known contract definition.
 - The full definition bundle is not sent with each request; only compact identity is sent.
+
+## Canonical definition normalization and digest
+
+Every authoring surface must normalize into the same language-neutral `DecisionDefinition` before compatibility comparison or hashing. Combined code-first and explicit forms that express the same semantics must produce byte-identical canonical definitions and therefore the same digest.
+
+Normalization:
+
+1. Remove all bound runtime values.
+2. Convert each bound signal input into its immutable `SignalRef`.
+3. Convert each typed target binding into a runtime-context schema entry. The original object property name is the canonical context field name; for example, `sessionId: flaggo.target.session(value)` becomes `sessionId: { type: "string", target: "session" }`.
+4. Materialize generated fields such as `signals.allowed` from role references.
+5. Omit undefined fields and normalize equivalent optional/default forms according to the contract version.
+6. Sort JSON object keys recursively.
+7. Reject duplicate signal keys, duplicate context fields, or conflicting role/schema declarations.
+8. Serialize with RFC 8785 JSON Canonicalization Scheme.
+9. Compute SHA-256 over the canonical UTF-8 bytes and encode the identity as `sha256:<lowercase-hex>`.
+
+Order-sensitive arrays retain authored order because order changes behavior:
+
+- `targetHierarchy`,
+- `inference.fallbackOrder`,
+- prioritized objective lists such as `intent.secondary`,
+- rollout stages,
+- tuple-like values such as numeric ranges.
+
+Order-insensitive collections are duplicate-free sets and are sorted by immutable signal key:
+
+- `signals.evidence`,
+- `signals.guardrails`,
+- generated `signals.allowed`,
+- canonical `inference.inputs`,
+- signal declarations in a bundle.
+
+For `bundleDigest`, decision definitions are sorted by stable decision key after each definition has been normalized. Duplicate decision keys with different definition digests are a `contract-conflict`; identical duplicates are deduplicated.
+
+Runtime wire `inputs` are also key-sorted for deterministic transport and audit comparison. Duplicate signal keys are invalid; clients and servers must reject them rather than applying first-wins or last-wins behavior.
 
 ## Contract identity and integrity
 
@@ -736,7 +787,7 @@ Signal declarations are extracted from producer-owned typed handles:
   },
   {
     "kind": "metric",
-    "key": "tetris.earlyLossRate",
+    "key": "tetris.earlyLossRate24h",
     "type": "number",
     "source": "derived",
     "from": [{ "key": "tetris.sessionEnded" }],
@@ -745,7 +796,7 @@ Signal declarations are extracted from producer-owned typed handles:
   },
   {
     "kind": "metric",
-    "key": "tetris.hardDropRate",
+    "key": "tetris.hardDropRate24h",
     "type": "number",
     "source": "derived",
     "from": [{ "key": "tetris.piecePlaced" }],
@@ -794,8 +845,8 @@ The decision definition references those signal identities without redefining th
       { "key": "tetris.currentLevel" },
       { "key": "tetris.piecePlaced" },
       { "key": "tetris.sessionEnded" },
-      { "key": "tetris.earlyLossRate" },
-      { "key": "tetris.hardDropRate" }
+      { "key": "tetris.earlyLossRate24h" },
+      { "key": "tetris.hardDropRate24h" }
     ]
   },
   "inference": {
@@ -810,9 +861,9 @@ The decision definition references those signal identities without redefining th
   },
   "intent": {
     "type": "metric-objective",
-    "primary": { "signal": { "key": "tetris.earlyLossRate" }, "direction": "minimize" },
+    "primary": { "signal": { "key": "tetris.earlyLossRate24h" }, "direction": "minimize" },
     "secondary": [
-      { "signal": { "key": "tetris.hardDropRate" }, "direction": "target", "target": 0.45 },
+      { "signal": { "key": "tetris.hardDropRate24h" }, "direction": "target", "target": 0.45 },
       { "signal": { "key": "tetris.recentPlacementTimeMs" }, "direction": "minimize" }
     ],
     "rationale": "Keep gameplay challenging but playable while reducing early frustration."

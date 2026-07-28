@@ -186,7 +186,7 @@ export const sessionEndedEvent = flaggo.event({
 });
 
 export const earlyLossRateSignal = flaggo.metric.derived({
-  key: "tetris.earlyLossRate",
+  key: "tetris.earlyLossRate24h",
   type: "number",
   from: sessionEndedEvent,
   aggregation: "rate(endReason == 'early_loss')",
@@ -194,7 +194,7 @@ export const earlyLossRateSignal = flaggo.metric.derived({
 });
 
 export const hardDropRateSignal = flaggo.metric.derived({
-  key: "tetris.hardDropRate",
+  key: "tetris.hardDropRate24h",
   type: "number",
   from: piecePlacedEvent,
   aggregation: "rate(hardDrop == true)",
@@ -244,8 +244,8 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   },
   requestedApproval: "automatic",
   context: {
-    session: flaggo.target.session(sessionId),
-    user: flaggo.target.user(userId),
+    sessionId: flaggo.target.session(sessionId),
+    userId: flaggo.target.user(userId),
     cohort: flaggo.target.cohort(playerCohort),
     deviceType: device.type
   }
@@ -256,6 +256,42 @@ await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 ```
 
 The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`, and the receipt carries `decisionId`/confirmation metadata for exposure attribution. Signal schemas are defined once near producers and reused through typed handles. Bound inference inputs combine a signal declaration reference with its current value, while typed target wrappers combine target schema with the current ID. Tooling partitions this object into an immutable extracted definition and a compact runtime request; runtime values never enter the definition digest. Emitting a signal does not associate it with every decision in the program.
+
+### Extractable code-first subset
+
+MVP extraction must be deterministic and intentionally conservative. The extractor accepts:
+
+- a literal decision key passed directly to `flaggo.tune.*(...)`,
+- object literals for definition semantics,
+- literal arrays of directly imported signal handles,
+- `signal.input(runtimeExpression)` for bound inference values,
+- `flaggo.target.<kind>(runtimeExpression)` for bound target IDs,
+- plain context properties only when the TypeScript checker resolves an exact supported primitive type,
+- arbitrary runtime expressions inside the value position of signal/target bindings.
+
+The extractor rejects static semantics built with:
+
+- object or array spreads,
+- computed property names,
+- conditional definition fields or conditional signal inputs,
+- loops or dynamically constructed signal arrays,
+- helper-returned definition fragments,
+- mutation of a declaration after construction,
+- a non-literal or dynamically computed decision key.
+
+If a plain context expression's type cannot be resolved unambiguously, authors must use an explicit typed context binding supplied by the SDK. Unsupported syntax is a build/CI error, not a best-effort extraction. Tooling must not derive a definition from whichever runtime branch happened to execute. In production enforcement mode, a request carrying an unknown or conflicting definition identity receives governed fallback.
+
+### Repeated-call behavior
+
+`tune.number(...)` may run on every game update, but static extraction and digest calculation must not. Build tooling should generate a static descriptor for each call site. Runtime execution evaluates only bound input/context values and attaches the cached definition identity.
+
+Rules:
+
+- identical canonical definitions for the same decision key within one build are deduplicated,
+- two call sites in one build that use the same decision key with different canonical definitions fail the build with `contract-conflict`,
+- development runtime extraction may memoize by decision key, but must reject a second digest for that key,
+- different deployed builds may carry different registered revisions for the same stable key,
+- the server returns governed fallback for unknown or conflicting identities rather than registering runtime-dependent semantics.
 
 ### Basic evidence emission
 
@@ -450,7 +486,7 @@ type CodeFirstNumberTuneRequest = {
 type ExplicitNumberTuneRequest = {
   definition: AdvancedNumberTuneDefinition;
   context: RuntimeContext;
-  inputs?: SignalInput[];
+  inputs?: AnyBoundSignalInput[];
 };
 
 type AdvancedNumberTuneDefinition = {
@@ -482,10 +518,6 @@ type RuntimeContextSchema = Record<
 
 type RuntimeContextValue = string | number | boolean | null;
 
-type SignalInput = {
-  signal: InferenceSignalHandle;
-  value: RuntimeContextValue;
-};
 type RuntimeContext = Record<string, RuntimeContextValue>;
 type BoundRuntimeContext = Record<
   string,
@@ -498,29 +530,44 @@ type TargetBinding = {
 };
 
 type DecisionSignalReferences = {
-  evidence?: SignalHandle[];
-  guardrails?: SignalHandle[];
+  evidence?: SignalIdentity[];
+  guardrails?: SignalIdentity[];
 };
 
-type SignalHandle = {
-  key: string;
-  schemaDigest?: string;
-  emit?: (input: unknown) => void;
+type SignalIdentity = {
+  readonly key: string;
+  readonly schemaDigest?: string;
 };
 
-type InferenceSignalHandle = SignalHandle & {
-  input: (value: unknown) => SignalInput;
+type SignalHandle<T> = SignalIdentity & {
+  emit(value: T): void;
 };
+
+type InferenceValue = boolean | number | string;
+
+type InferenceSignalHandle<T extends InferenceValue> = SignalHandle<T> & {
+  input(value: T): BoundSignalInput<T>;
+};
+
+type BoundSignalInput<T extends InferenceValue> = {
+  readonly signal: InferenceSignalHandle<T>;
+  readonly value: T;
+};
+
+type AnyBoundSignalInput =
+  | BoundSignalInput<boolean>
+  | BoundSignalInput<number>
+  | BoundSignalInput<string>;
 
 type InferenceDeclaration = {
   target: "global" | "segment" | "cohort" | "user" | "session" | "level" | string;
-  inputs?: InferenceSignalHandle[];
+  inputs?: SignalIdentity[];
   fallbackOrder?: string[];
 };
 
 type BoundInferenceDeclaration = {
   target: "global" | "segment" | "cohort" | "user" | "session" | "level" | string;
-  inputs?: SignalInput[];
+  inputs?: AnyBoundSignalInput[];
   fallbackOrder?: string[];
 };
 
@@ -541,7 +588,7 @@ type MetricObjectiveIntent = {
 };
 
 type MetricObjective = {
-  signal: SignalHandle;
+  signal: SignalIdentity;
   direction: "minimize" | "maximize" | "target";
   target?: number;
 };
@@ -550,6 +597,22 @@ interface IDefinitionBundleProvider {
   exportBundle(): DecisionDefinitionBundle;
   getExpectedIdentity(): ContractIdentity | undefined;
 }
+```
+
+Constructor generics preserve producer-side type safety:
+
+```ts
+declare const boardPressureSignal: InferenceSignalHandle<number>;
+declare const piecePlacedEvent: SignalHandle<{
+  placementTimeMs: number;
+  hardDrop: boolean;
+}>;
+
+boardPressureSignal.input(0.82);
+piecePlacedEvent.emit({ placementTimeMs: 420, hardDrop: true });
+
+boardPressureSignal.input("high"); // TypeScript error
+piecePlacedEvent.emit({ placementTimeMs: 420, hardDrop: "yes" }); // TypeScript error
 ```
 
 The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are definition extraction from static request fields, telemetry, optional definition bundle export, runtime request, compact definition identity propagation, typed response, and local fallback when the service is unavailable.

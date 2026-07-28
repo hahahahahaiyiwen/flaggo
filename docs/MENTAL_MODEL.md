@@ -57,15 +57,15 @@ DecisionDefinition
       - tetris.recentPlacementTimeMs
       - tetris.piecePlaced
       - tetris.sessionEnded
-      - tetris.earlyLossRate
-      - tetris.hardDropRate
+      - tetris.earlyLossRate24h
+      - tetris.hardDropRate24h
   intent:
       type: metric-objective
       primary:
-        signal: tetris.earlyLossRate
+        signal: tetris.earlyLossRate24h
         direction: minimize
       secondary:
-        - signal: tetris.hardDropRate
+        - signal: tetris.hardDropRate24h
           direction: target
           target: 0.45
       rationale: Keep the game challenging while reducing early frustration.
@@ -102,7 +102,7 @@ Notes:
 - Signal definitions are owned outside individual decisions, usually near the producer. A signal key such as `tetris.boardPressure` is the immutable semantic identity for its schema, type, units, range, and meaning.
 - A decision definition does not redefine signal schemas. It explicitly allows the signal handles it may use and assigns them roles as objectives, inference inputs, evidence, or guardrails.
 - `targetHierarchy` defines meaningful target levels for signal aggregation, evidence views, learning, inference, governance, and fallback.
-- Derived signals must be declared separately from decisions and must state how they are derived from available signals.
+- Derived signals must be declared separately from decisions and must state how they are derived from available signals. Their aggregation and fixed window are part of the immutable signal meaning, so a change from `24h` to `7d` requires a new key.
 - `inference.target` describes the desired online inference target kind, not a concrete target instance.
 - `inference.inputs` identifies allowed app-emitted metrics and supplies their current pre-aggregated values. Code-first SDKs may express both through bound handles such as `boardPressureSignal.input(boardPressure)`; extracted definitions retain only the signal references, while runtime requests carry the values.
 - `inference.fallbackOrder` makes broader fallback levels explicit.
@@ -110,7 +110,7 @@ Notes:
 - Natural-language intent is advisory metadata unless paired with metric objectives or typed policy constraints.
 - Safety should use typed constraints when behavior must be machine-enforced. Labels such as `gradual` can remain presets only if they expand to concrete constraints.
 - Application-authored definitions can request an approval mode, but deployment or environment policy grants authority. A definition cannot grant itself automatic approval.
-- Evidence views are derived from the decision definition revision, referenced signal definitions, target hierarchy, and time/window needs; they do not need to be manually bound as a separate concept in the definition.
+- Evidence views are derived from the decision definition revision, referenced signal definitions, target hierarchy, and filter/window needs; they do not need to be manually bound as a separate concept in the definition. A view may select a window for a raw event or app-emitted metric, but must not override a fixed-window derived signal.
 
 ## Decision evidence
 

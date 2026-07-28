@@ -57,18 +57,19 @@ Decision definitions reference signal handles by role. Tooling can derive an exp
 derived allowed signals:
   - tetris.piecePlaced
   - tetris.boardPressure
-  - tetris.earlyLossRate
+  - tetris.earlyLossRate24h
 ```
 
 Evidence views are derived from immutable signal keys, target hierarchy, and time/window/filter needs:
 
 ```text
 tetris.dropInterval@2
-  signal: tetris.earlyLossRate
+  signal: tetris.earlyLossRate24h
   target: cohort:new_players
-  window: 24h
   filters: {}
 ```
+
+For a fixed-window derived signal such as `tetris.earlyLossRate24h`, the window is already part of the immutable signal semantics and the evidence view omits `window`. For a raw event or app-emitted metric, the evidence-role/view may select a window. A view must never override a derived signal's declared aggregation window.
 
 This lets multiple decision definitions reuse compatible observed signals without sharing governed state or requiring separate evidence binding declarations.
 
@@ -207,7 +208,7 @@ Evidence can be reused across decision definition revisions when semantics match
 | Evidence views | Reusable when signal key, target, window, and filters match. |
 | Governed state | Not reused automatically; it belongs to decision intelligence/governance. |
 
-Example: `tetris.dropInterval@2` may add a new signal such as `tetris.recoveryFailures`. It can reuse historical `tetris.recentPlacementTimeMs` and `tetris.earlyLossRate` views, while the new signal warms up.
+Example: `tetris.dropInterval@2` may add a new signal such as `tetris.recoveryFailures`. It can reuse historical `tetris.recentPlacementTimeMs` and `tetris.earlyLossRate24h` views, while the new signal warms up.
 
 ## OpenTelemetry relationship
 

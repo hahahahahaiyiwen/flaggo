@@ -96,7 +96,7 @@ export const sessionEndedEvent = flaggo.event({
 });
 
 export const earlyLossRateSignal = flaggo.metric.derived({
-  key: "tetris.earlyLossRate",
+  key: "tetris.earlyLossRate24h",
   type: "number",
   from: sessionEndedEvent,
   aggregation: "rate(endReason == 'early_loss')",
@@ -104,7 +104,7 @@ export const earlyLossRateSignal = flaggo.metric.derived({
 });
 
 export const hardDropRateSignal = flaggo.metric.derived({
-  key: "tetris.hardDropRate",
+  key: "tetris.hardDropRate24h",
   type: "number",
   from: piecePlacedEvent,
   aggregation: "rate(hardDrop == true)",
@@ -124,6 +124,8 @@ piecePlacedEvent.emit({
 ```
 
 Any signal schema or semantic change requires a new key, such as `tetris.boardPressurePercent`. A signal key is immutable; schema digests can detect conflicting duplicate definitions under the same key, but a changed digest must not silently mutate that key's meaning. There is no separate public signal name or revision.
+
+A derived signal's aggregation and window are part of that immutable meaning. For example, `tetris.earlyLossRate24h` always means the declared 24-hour rate. Changing its aggregation or window requires a new key such as `tetris.earlyLossRate7d`; an evidence view must not override the fixed window of a derived signal. Raw events and app-emitted metrics may still be viewed over decision-specific windows.
 
 ## SDK-facing shape
 
@@ -173,8 +175,8 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   },
   requestedApproval: "automatic",
   context: {
-    session: flaggo.target.session(sessionId),
-    user: flaggo.target.user(userId),
+    sessionId: flaggo.target.session(sessionId),
+    userId: flaggo.target.user(userId),
     cohort: flaggo.target.cohort(playerCohort),
     deviceType: device.type
   }
@@ -185,6 +187,10 @@ await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 ```
 
 The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Plain values remain runtime metadata. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while `.decisionId` supports exposure confirmation.
+
+Code-first extraction is fail-closed. Static semantics must use the SDK's extractable literal subset; spreads, conditional definition fields, computed keys, dynamic signal arrays, helper-returned fragments, and post-construction mutation are invalid for MVP extraction. Runtime expressions are permitted only where the extractor can separate them from static semantics, such as signal/target bindings or statically typed context values. Unsupported syntax fails build/CI instead of producing a runtime-dependent definition.
+
+Tooling extracts and hashes each call site's static descriptor once. Repeated runtime calls rebuild only bound values and attach the cached identity. Identical canonical definitions for the same decision key within one build are deduplicated; different canonical digests for the same key are a `contract-conflict` build error. Combined and explicit authoring forms use the same [canonical normalization and digest rules](design/shared-contracts/README.md#canonical-definition-normalization-and-digest).
 
 Automatic approval requires executable objectives. If a definition requests `requestedApproval: "automatic"`, the definition should use `intent.type: "metric-objective"` and typed policy constraints; natural-language-only intent should require human approval or policy-default handling.
 
@@ -285,12 +291,12 @@ DecisionDefinition
       - tetris.sessionEnded
       - tetris.boardPressure
       - tetris.recentPlacementTimeMs
-      - tetris.earlyLossRate
-      - tetris.hardDropRate
+      - tetris.earlyLossRate24h
+      - tetris.hardDropRate24h
   intent:
     type: metric-objective
     primary:
-      signal: tetris.earlyLossRate
+      signal: tetris.earlyLossRate24h
       direction: minimize
   inference:
     target: session

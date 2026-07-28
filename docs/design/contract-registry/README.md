@@ -104,7 +104,7 @@ Example shape:
       },
       "intent": {
         "type": "metric-objective",
-        "primary": { "signal": { "key": "tetris.earlyLossRate" }, "direction": "minimize" }
+        "primary": { "signal": { "key": "tetris.earlyLossRate24h" }, "direction": "minimize" }
       }
     }
   ]
@@ -172,8 +172,8 @@ flaggo.tune.number("tetris.dropInterval", {
     maxModelUncertainty: 0.35
   },
   context: {
-    session: flaggo.target.session(sessionId),
-    user: flaggo.target.user(userId),
+    sessionId: flaggo.target.session(sessionId),
+    userId: flaggo.target.user(userId),
     cohort: flaggo.target.cohort(playerCohort)
   }
 });
@@ -185,6 +185,11 @@ Tooling extracts signal identities and target schemas from the bindings above, d
 - If only metadata changed, it records a metadata revision.
 - If semantics changed, it rejects auto-overwrite and either asks for approval to mint a new semantic revision/ID or returns a suggested ID such as `tetris.dropInterval@2`.
 - Old builds continue using the old identity; new builds use the new identity.
+- Within one build, repeated declarations of the same decision key must normalize to the same canonical digest. Identical definitions are deduplicated; different digests are a `contract-conflict` build error.
+- Runtime calls attach a build-generated or memoized descriptor and evaluate only bound values. They must not recalculate or register static definition semantics on each call.
+- Unsupported or runtime-dependent extraction is invalid. Production runtime must fall back for an unknown/conflicting identity rather than deriving management state from an executed branch.
+
+The registry and SDK use the canonicalization rules in [Shared Contracts](../shared-contracts/README.md#canonical-definition-normalization-and-digest), including RFC 8785 serialization, order-sensitive hierarchy/precedence arrays, key-sorted signal-role sets, and duplicate rejection.
 
 ## MVP runtime port
 

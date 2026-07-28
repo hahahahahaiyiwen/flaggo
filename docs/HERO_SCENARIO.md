@@ -123,7 +123,7 @@ export const sessionEndedEvent = flaggo.event({
 });
 
 export const earlyLossRateSignal = flaggo.metric.derived({
-  key: "tetris.earlyLossRate",
+  key: "tetris.earlyLossRate24h",
   type: "number",
   from: sessionEndedEvent,
   aggregation: "rate(endReason == 'early_loss')",
@@ -131,7 +131,7 @@ export const earlyLossRateSignal = flaggo.metric.derived({
 });
 
 export const hardDropRateSignal = flaggo.metric.derived({
-  key: "tetris.hardDropRate",
+  key: "tetris.hardDropRate24h",
   type: "number",
   from: piecePlacedEvent,
   aggregation: "rate(hardDrop == true)",
@@ -184,8 +184,8 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     maxModelUncertainty: 0.35
   },
   context: {
-    session: flaggo.target.session(sessionId),
-    user: flaggo.target.user(userId),
+    sessionId: flaggo.target.session(sessionId),
+    userId: flaggo.target.user(userId),
     cohort: flaggo.target.cohort(playerCohort),
     deviceType: device.type
   }

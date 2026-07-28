@@ -375,7 +375,7 @@ runtime target: session:game-456
 control target: cohort:new_players
 evidence views:
   tetris.recentPlacementTimeMs / session:game-456 / 2m / filters:{}
-  tetris.earlyLossRate / cohort:new_players / 24h / filters:{}
+  tetris.earlyLossRate24h / cohort:new_players / fixed-window / filters:{}
 policy: cohort:new_players -> global
 fallback: global 800ms
 ```
