@@ -27,7 +27,7 @@ interface IStrategyExecutor {
 }
 
 type StrategyExecutionRequest = {
-  contract: DecisionContract;
+  definition: DecisionDefinition;
   state: DecisionState;
   evidence: EvidenceSnapshot;
   runtimeContext: RuntimeContext;
@@ -38,7 +38,7 @@ type StrategyExecutionResult = {
   value: DecisionValue;
   decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
   strategyId?: string;
-  confidence: number | null;
+  confidence: ConfidenceReport | null;
   reason: string;
 };
 ```
@@ -106,7 +106,7 @@ range = 600..1100
 step = 50
 cooldown = 20s
 
-if boardPressure == high and recentPlacementTimeMs >= 1200:
+if boardPressure >= 0.7 and recentPlacementTimeMs >= 1200:
   adjust +50
 
 if boardPressure == low and recentPlacementTimeMs <= 700:

@@ -2,16 +2,23 @@
 
 ## Purpose
 
-Decision intelligence is the AI-native reasoning layer that turns resolved Flaggo inputs into decision proposals. For real-time adaptive decisions, those proposals often describe a **decision strategy**, not just one immediate value.
+Decision intelligence is the AI-native reasoning layer that operates over decision definitions and decision evidence. For real-time adaptive decisions, async intelligence often produces a **decision strategy proposal**, while online inference consumes governed state to return one immediate value.
 
 It sits between the declarative parts of the system and the governed runtime result:
 
 ```text
-decision surface + decision scope + decision factors
+decision definition
+  + decision evidence
   -> decision intelligence
-  -> candidate decision proposal or strategy proposal
+
+async path:
+  -> proposal
   -> governance
-  -> governed decision or fallback
+  -> governed state
+
+online path:
+  -> consume governed state when available
+  -> runtime decision result, possibly containing fallback
 ```
 
 This layer is what makes Flaggo different from a smart feature flag service. A feature flag service usually answers whether a configured value is enabled. Flaggo should reason about which safe value, behavior, or bounded adaptation strategy best serves the declared goal under current evidence, uncertainty, policy, and scope.
@@ -20,7 +27,7 @@ This layer is what makes Flaggo different from a smart feature flag service. A f
 
 Decision intelligence should behave like an embedded data scientist and operator assistant for runtime decisions.
 
-For a decision surface such as `tetris.dropInterval`, a human data scientist might:
+For a decision key such as `tetris.dropInterval`, a human data scientist might:
 
 1. Understand the product goal.
 2. Inspect available telemetry.
@@ -49,7 +56,7 @@ A proposal may recommend:
 - assign traffic among candidate values,
 - roll back to a previous value,
 - hold because evidence is insufficient,
-- fall back because no safe decision is available.
+- recommend fallback-only governed state because no adaptive decision is safe.
 
 The proposal must then pass through governance:
 
@@ -60,7 +67,7 @@ decision proposal
   -> lifecycle state
   -> cooldown and rollout limits
   -> operator overrides or approval requirements
-  -> governed decision or fallback
+  -> GovernedDecisionState or no state
 ```
 
 This separation keeps the system AI-native without letting AI bypass safety controls.
@@ -110,7 +117,7 @@ Strategy proposals may take several forms:
 | Fixed value | Return one active governed value. |
 | Rule table | Apply approved conditions and thresholds to current context. |
 | Scoring function | Score candidates within the action space and return the best allowed value. |
-| Small model | Run bounded inference over current context and precomputed features. |
+| Small model | Run bounded inference over current context and declared precomputed metrics. |
 | Bandit policy | Allocate among candidates according to approved exploration/exploitation rules. |
 | Experiment assignment | Return the assigned candidate for the request's scope or exposure bucket. |
 | LLM-backed strategy | Use bounded AI reasoning only where latency and policy allow it. |
@@ -123,19 +130,21 @@ Decision intelligence operates on resolved inputs, not raw unbounded prompts.
 
 Core inputs include:
 
-- **Decision surface**: the named decision being reasoned about.
-- **Decision scope**: the scope where the proposal would apply.
+- **Decision definition**: the versioned semantic contract being reasoned about.
+- **Control target**: the boundary where a proposal would apply.
+- **Runtime target**: the entity receiving a runtime decision when the online path is involved.
 - **Runtime context**: request-time facts supplied by the application.
-- **Telemetry evidence**: observed behavior, metrics, traces, logs, and derived evidence snapshots.
+- **Inference inputs**: declared metrics supplied with the decision request for fast online inference.
+- **Evidence views**: observed behavior, metrics, traces, logs, and derived evidence snapshots sliced by target and time.
 - **Goals**: the desired outcome or optimization intent.
 - **Policy constraints**: known safety, compliance, and operating limits.
-- **System state**: active value, previous values, cooldowns, overrides, rollout state, and historical proposals.
+- **Governed decision state**: active value, previous values, cooldowns, overrides, rollout state, and historical proposals.
 - **Uncertainty**: confidence, evidence quality, sample size, freshness, variance, and missing data.
 - **Action space**: valid boolean, number, or string values and their constraints.
 - **Decision strategy**: optional approved rules, thresholds, model, candidate set, or assignment plan used to make fast runtime decisions.
-- **Fallback contract**: the safe value to return when no governed decision can be made.
+- **Fallback contract**: the safe value to return when no `GovernedDecisionState` or safe `RuntimeDecisionResult` can be made.
 
-The agentic reasoning process should be constrained by these contracts. It should not invent new action types, ignore scope, or exceed declared bounds.
+The agentic reasoning process should be constrained by these contracts. It should not invent new action types, ignore target boundaries, or exceed declared bounds.
 
 ## Runtime hierarchy
 
@@ -146,7 +155,7 @@ Async intelligence path
   -> may run agentic decision loop
   -> produces value proposal or strategy proposal
   -> governance stage
-  -> active governed value, strategy, experiment, hold, rollback, or fallback
+  -> active governed value, strategy, experiment, hold, or fallback-only state
 
 Online runtime path
   -> serves application request
@@ -164,9 +173,10 @@ Agentic reasoning is expected to be most common in the async intelligence path, 
 The async intelligence path performs deeper analysis outside the application's request/response critical path.
 
 ```text
-Telemetry changes, schedule, operator request, or decision drift
-  -> decision intelligence agent
-  -> observe evidence and state
+Telemetry changes, schedule, operator request, definition activation, rollout review, or decision drift
+  -> create intelligence work item
+  -> decision definition + control target + trigger
+  -> observe evidence views and governed state
   -> interpret findings
   -> choose analysis mode
   -> generate and evaluate candidate values or strategies
@@ -174,7 +184,7 @@ Telemetry changes, schedule, operator request, or decision drift
   -> governance stage
 ```
 
-This path is where Flaggo can behave most like an AI-assisted data scientist. It can spend more time comparing history, evaluating experiments, synthesizing evidence, and explaining recommendations.
+This path is where Flaggo can behave most like an AI-assisted data scientist. It can spend more time comparing history, evaluating experiments, synthesizing evidence, and explaining recommendations. For inference inputs, it should learn from the corresponding declared metrics and from exposure-captured input values used by prior decisions.
 
 The async path is the primary home of the agentic decision loop because it can tolerate longer-running reasoning, tool use, multi-step analysis, and proposal generation. For real-time adaptive surfaces, its most useful deliverable is often an approved strategy that online runtime can execute quickly, not a single initial value.
 
@@ -195,7 +205,7 @@ observe
 
 ### 1. Observe
 
-Collect the current evidence snapshot for the surface and scope.
+Collect the current evidence views for the decision definition and target.
 
 Observation includes:
 
@@ -258,7 +268,7 @@ Compare candidates against goals, evidence, uncertainty, and known risks.
 Evaluation should consider:
 
 - expected impact,
-- confidence,
+- confidence by meaning, such as evidence quality, model uncertainty, expected outcome, and policy eligibility,
 - evidence quality,
 - blast radius,
 - reversibility,
@@ -275,9 +285,9 @@ Example shape:
 
 ```json
 {
-  "surface": "tetris.dropInterval",
-  "requestedScope": "user:123",
-  "proposalScope": "segment:new_players",
+  "definition": "tetris.dropInterval@2",
+  "runtimeTarget": "session:game-456",
+  "controlTarget": "cohort:new_players",
   "proposalType": "activate_strategy",
   "currentValue": 800,
   "strategy": {
@@ -290,7 +300,7 @@ Example shape:
     "cooldown": "20s",
     "rules": [
       {
-        "when": "boardPressure == high && recentPlacementTime == slow",
+        "when": "boardPressure >= 0.70 && recentPlacementTimeMs >= 1200",
         "adjustBy": 50
       },
       {
@@ -300,8 +310,12 @@ Example shape:
     ]
   },
   "expectedImpact": "Adapt drop speed during a session so new players get recovery time under pressure without making stable play too slow",
-  "confidence": 0.72,
-  "evidenceStatus": "sufficient_for_segment_scope",
+  "confidence": {
+    "evidenceQuality": 0.82,
+    "modelUncertainty": 0.31,
+    "expectedOutcome": 0.72
+  },
+  "evidenceStatus": "sufficient_for_control_target",
   "analysisMode": "qualitative_plus_metric_threshold_strategy",
   "alternativesConsidered": [
     "fixed_800ms",
@@ -319,12 +333,12 @@ This proposal is not yet the application response. It still needs policy and sta
 
 ### 7. Monitor outcome
 
-After a governed decision is applied, Flaggo should observe the result and feed it back into future reasoning.
+After a `RuntimeDecisionResult` is applied, Flaggo should observe the result and feed it back into future reasoning.
 
 Monitoring closes the loop:
 
 ```text
-proposal -> governed decision -> runtime exposure -> outcome telemetry -> future proposal
+DecisionProposal -> GovernedDecisionState -> RuntimeDecisionResult/exposure -> outcome telemetry -> future DecisionProposal
 ```
 
 Without outcome monitoring, Flaggo would only be making one-off recommendations.
@@ -336,25 +350,29 @@ The online path serves application requests and should remain fast, bounded, and
 ```text
 Application
   -> Decision API
+  -> identify decision definition and runtime target
   -> load active governed state
   -> resolve approved experiment or rollout assignment if applicable
   -> fetch fresh-enough evidence if needed and allowed
-  -> execute approved strategy or optionally run case-specific lightweight runtime reasoning
+  -> execute active governed value, approved strategy, approved experiment, or fallback-only state
   -> governance stage
   -> return governed value or fallback
 ```
 
 Most online requests should not run the full agentic loop. They should usually consume state created by prior async intelligence and governance: active values, approved strategies, approved experiments, rollout assignments, operator overrides, and fallback contracts.
 
-However, the design should not forbid online agentic reasoning. Some cases may justify it:
+For the MVP, online reasoning without compatible `GovernedDecisionState` is prohibited. The online path must not invent a new value or strategy from request context alone.
 
-- low-traffic administrative decisions,
-- high-value decisions where latency budget allows analysis,
-- local or edge reasoning over request context,
-- fast model inference over precomputed evidence,
-- conversational or workflow decisions where the application already expects AI latency.
+Future online reasoning can be introduced only as an explicit **ephemeral runtime candidate** model:
 
-If online reasoning is used, it should still be bounded by the same contracts: declared surface, scope, action space, fallback, policy, state, and audit requirements.
+```text
+runtime context + compatible governed permission state
+  -> bounded ephemeral candidate
+  -> governance and policy
+  -> RuntimeDecisionResult
+```
+
+The compatible governed state must authorize the candidate generator, action space, target authority, fallback behavior, audit requirements, and latency budget. If governance rejects the candidate, the response remains a normal `RuntimeDecisionResult` with fallback.
 
 For real-time adaptive scenarios, the common pattern should be:
 
@@ -376,10 +394,10 @@ Decision proposal, strategy proposal, or runtime candidate
   -> scope authority check
   -> lifecycle and cooldown check
   -> approval or override handling
-  -> governed state update, governed response, hold, rollback, or fallback
+  -> governed state update, governed response, hold, rollback transition, or no state
 ```
 
-Governance may approve a proposal as-is, constrain it, require human approval, reject it, convert it into fallback behavior, activate a bounded strategy, or allow a bounded runtime response.
+Governance may approve a proposal as-is, constrain it, require human approval, reject it, activate fallback-only governed state, activate a bounded strategy, or allow a bounded runtime response. A rollback proposal is a transition: it activates a replacement or previous known-safe state and marks the replaced state as rolled back.
 
 Governance may itself use agentic assistance for analysis or explanation. For example, an agent may summarize why a proposal appears risky or recommend which policy reason code applies. That assistance must not replace explicit policy enforcement. The final authority should remain inspectable as policy, scope, lifecycle state, and operator controls.
 
@@ -411,11 +429,11 @@ Supporting lifecycle flows:
 The contract sync flow keeps Flaggo's registry aligned with what application code declares.
 
 ```text
-Developer, platform, or registry declares surfaces, scopes, telemetry, policies, and fallbacks
-  -> SDK extractor, manifest authoring, or registry export produces ContractBundle
+Developer, platform, or registry declares decision keys, target hierarchy, signals, policies, and fallbacks
+  -> SDK extractor, manifest authoring, or registry export produces DecisionDefinitionBundle
   -> CI, release, GitOps, or operator workflow validates/applies bundle
-  -> registry records versioned contract changes
-  -> runtime and intelligence paths consume approved contracts
+  -> registry records versioned definition changes
+  -> runtime and intelligence paths consume approved definitions
 ```
 
 This flow should happen before production runtime whenever possible. Runtime application code should not silently create or mutate production decision contracts.
@@ -427,7 +445,7 @@ The contract sync flow answers:
 - what values are valid,
 - what fallback is safe,
 - which telemetry and goals matter,
-- which scopes and policies apply,
+- which targets and policies apply,
 - which contract version a decision used.
 
 ### Telemetry ingestion flow
@@ -438,11 +456,11 @@ The telemetry ingestion flow turns application observations into evidence that o
 Application emits domain telemetry or OpenTelemetry signals
   -> ingestion pipeline receives events, metrics, traces, or logs
   -> evidence service correlates and aggregates observations
-  -> evidence snapshots become available by surface and scope
+  -> evidence snapshots become available by evidence definition, target, and window
   -> online and async paths use evidence snapshots
 ```
 
-This flow should preserve enough lineage for audit and explanation. A decision should be able to point back to the evidence snapshot, freshness, scope, and quality that influenced it.
+This flow should preserve enough lineage for audit and explanation. A decision should be able to point back to the evidence snapshot, freshness, target, window, and quality that influenced it.
 
 The telemetry ingestion flow answers:
 
@@ -552,8 +570,8 @@ A proposal can resolve to several governed outcomes:
 | `limited` | Proposal is allowed only with reduced blast radius, smaller delta, narrower scope, or slower rollout. |
 | `experiment` | Proposal should run as an experiment before becoming the default. |
 | `hold` | Current state remains active because evidence is insufficient or risk is too high. |
-| `rollback` | Previous known-safe state should be restored. |
-| `fallback` | No safe governed decision exists for the request. |
+| `rollback` | Transition to a replacement or previous known-safe state and mark the replaced state rolled back. |
+| `fallback` | Activate fallback-only governed state, or produce no state if even fallback-only authority is not durable. |
 | `requires_approval` | Human approval is needed before activation. |
 | `rejected` | Proposal violates policy or scope authority. |
 
@@ -565,7 +583,7 @@ Decision intelligence may understand policy context and avoid obviously invalid 
 
 - min/max bounds,
 - allowed string values,
-- confidence floors,
+- evidence quality and model uncertainty limits,
 - sample-size requirements,
 - cooldown windows,
 - maximum deltas,
@@ -576,22 +594,22 @@ Decision intelligence may understand policy context and avoid obviously invalid 
 
 This prevents the reasoning layer from becoming an implicit policy engine.
 
-## Relationship to scope
+## Relationship to targets
 
-Scope affects both reasoning and governance.
+Targets affect both reasoning and governance.
 
-Decision intelligence may propose at a different scope than the request if evidence supports that boundary better.
+Decision intelligence may propose at a different control target than the runtime target if evidence supports that boundary better.
 
 Example:
 
 ```text
-requestedScope = user:123
-evidence is too sparse at user scope
-segment evidence is sufficient for segment:new_players
-proposalScope = segment:new_players
+runtimeTarget = user:123
+evidence is too sparse at user target
+cohort evidence is sufficient for cohort:new_players
+controlTarget = cohort:new_players
 ```
 
-That is a resolution fallback, not a failed decision. Governance must still verify that the proposal is allowed at the segment scope and that the runtime response clearly identifies requested, resolved, and evidence scopes.
+That is a target resolution choice, not a failed decision. Governance must still verify that the proposal is allowed at the control target and that the runtime response clearly identifies runtime target, control target, and evidence views.
 
 ## Relationship to experiments
 
@@ -604,7 +622,7 @@ Decision intelligence may recommend an experiment when:
 - risk is acceptable,
 - the action space is bounded,
 - the outcome metrics are defined,
-- the scope can tolerate exposure splitting.
+- the control target can tolerate exposure splitting.
 
 For simple cases, the system may instead use qualitative analysis or deterministic rules. For mature cases, it may use bandits or models. The key is that the system chooses an appropriate reasoning strategy for the decision maturity and evidence quality.
 
@@ -632,10 +650,10 @@ evaluate:
   but must respect max-delta, cooldown, min/max range, and fallback
 
 produce proposal:
-  propose bounded adaptive strategy for segment:new_players with confidence 0.72
+  propose bounded adaptive strategy for cohort:new_players with expectedOutcome 0.72 and sufficient evidenceQuality
 
 govern:
-  approve if policy allows the range, step, cooldown, confidence, and scope
+  approve if policy allows the range, step, cooldown, confidence report, and control target
 
 online runtime:
   apply approved strategy to live session context and return immediate dropInterval

@@ -37,15 +37,19 @@ Each tool solves part of the problem, but the decision loop remains fragmented. 
 
 Feature flags proved that application behavior does not need to be fully hard-coded. A running program can ask a remote system for a value and change behavior without redeploying.
 
-That was an important step, but it is still mostly a value-delivery model:
+Modern feature-flag and experimentation platforms already do much more than simple booleans: targeting, segmentation, experiments, progressive rollout, approvals, and automated rollout are common. Flaggo should not define itself by pretending those systems are only switches.
 
-> Is flag X enabled? What is config value Y?
+The sharper distinction is the closed loop. Feature-flag systems are strongest at delivering configured values and managing exposure. Flaggo should focus on connecting declared signals, outcomes, objectives, uncertainty, policy, and governed state so the system can learn from evidence and propose bounded changes.
+
+The motivating question is not only:
+
+> Is flag X enabled? What configured value should I deliver?
 
 AI-native runtime decisioning asks a broader question:
 
-> Given context, telemetry, policy, goals, and uncertainty, what should happen now?
+> Given context, evidence, outcomes, objectives, policy, governed state, and uncertainty, what safe behavior should happen now?
 
-The distinction matters. A flag system externalizes a variable. A decisioning system externalizes part of the judgment around that variable.
+The distinction matters. A flag system externalizes and governs a variable. A decisioning system adds explicit closed-loop evidence learning, constrained strategy generation, governed state compatibility, and uncertainty-aware explanations around that variable.
 
 Flaggo is motivated by the belief that the next abstraction is not a smarter flag. It is a runtime decision layer for software systems.
 
@@ -53,11 +57,11 @@ Flaggo is motivated by the belief that the next abstraction is not a smarter fla
 
 Flaggo imagines a future where programs can call a decisioning layer as naturally as they call a database or service API.
 
-In that future, selected runtime choices are not buried in static branches or scattered across dashboards, scripts, and manual processes. They are explicit, observable, governed decisions.
+In that future, selected runtime choices are not buried in static branches or scattered across dashboards, scripts, and manual processes. They are explicit, observable, policy-controlled decision interfaces.
 
 The application still owns execution. The product and platform teams still define intent, boundaries, and accountability. But the decisioning layer helps evaluate context, evidence, goals, and constraints at runtime.
 
-The goal is not to replace code. The goal is to give code a native way to ask for governed decisions when static logic is too rigid, stale, or context-blind.
+The goal is not to replace code. The goal is to give code a native way to ask for policy-gated runtime decision results when static logic is too rigid, stale, or context-blind.
 
 ## What AI-native runtime decisioning should mean
 
@@ -73,7 +77,9 @@ It should mean:
 - human intent remains encoded in goals and boundaries,
 - fallback behavior exists when confidence, evidence, or safety is insufficient.
 
-This is the standard Flaggo should hold itself to: not "AI makes choices" but "software gains a governed decision interface that can use AI where AI is appropriate."
+AI should primarily participate in asynchronous analysis: interpreting evidence, detecting drift, comparing strategies, generating `DecisionProposal` objects, and explaining tradeoffs. Online execution should normally be deterministic, bounded, compatible with approved `GovernedDecisionState`, and policy-gated.
+
+This is the standard Flaggo should hold itself to: not "AI makes choices" but "software gains a policy-gated decision interface that can use AI where AI is appropriate."
 
 ## Why now
 
@@ -96,7 +102,11 @@ It should help software move from static branching toward governed runtime judgm
 The long-term ambition is for AI-native runtime decisioning to become a normal software primitive:
 
 ```text
-context + evidence + policy + goals -> governed runtime decision
+definition + evidence + outcomes + objectives
+  -> proposal -> governance -> governed state
+
+definition + runtime context + compatible governed state + policy
+  -> runtime decision result, possibly containing fallback
 ```
 
 Not every branch should become a decision call. Not every decision needs AI. Not every system should adapt automatically.

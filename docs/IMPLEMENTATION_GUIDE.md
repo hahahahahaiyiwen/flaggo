@@ -26,11 +26,11 @@ The first implementation should include:
 | Area | MVP expectation |
 | --- | --- |
 | Client library | TypeScript SDK for declaring the Tetris decision, emitting telemetry, and calling the runtime API. |
-| Decision API | Runtime endpoint that validates request, resolves scope, executes active value or active strategy, applies governance, audits, and returns a value. |
-| Contract registry | Minimal in-memory or simple persistent contract lookup for registered surfaces. |
+| Decision API | Runtime endpoint that validates request, resolves targets, executes active value or active strategy, applies governance, audits, and returns a value. |
+| Definition registry | Minimal in-memory or simple persistent definition lookup for registered decision keys. |
 | Evidence | Minimal evidence snapshot abstraction; real aggregation can be simple at first. |
-| State | Active value or active strategy per surface/scope. |
-| Policy | Deterministic bounds, max delta, cooldown, fallback, and confidence handling. |
+| State | Active value or active strategy per decision definition and target. |
+| Policy | Deterministic bounds, max delta, cooldown, fallback, and evidence/model confidence handling. |
 | Audit | Structured audit record with correlation ID. |
 | Async intelligence | Can start as manual or scripted strategy proposal generation, but must use the same proposal and strategy interfaces future agents will use. |
 
@@ -51,7 +51,7 @@ The MVP should not require:
 4. **Governance is downstream and mandatory**: a value or strategy is not runtime-authoritative until policy and state allow it.
 5. **Runtime stays bounded**: online execution should use active state, approved strategies, and fast evidence; deep analysis belongs to async intelligence.
 6. **Extensibility through discriminated unions**: new strategy types, evidence sources, and proposal types should extend explicit unions instead of changing every call shape.
-7. **Audit every decision**: every runtime response should be reconstructable from contract version, scope, state, strategy, evidence, policy, and audit ID.
+7. **Audit every decision**: every runtime response should be reconstructable from definition revision, target, state, strategy, evidence, policy, and audit ID.
 
 ## Open-source native and cloud portability principles
 
@@ -111,7 +111,7 @@ Cloud-backed implementations should be additive:
 
 | Port | Local MVP implementation | Future cloud implementation |
 | --- | --- | --- |
-| `IContractRegistry` | in-memory or local JSON/SQLite | PostgreSQL, Azure SQL, DynamoDB, Firestore |
+| `IDefinitionRegistry` | in-memory or local JSON/SQLite | PostgreSQL, Azure SQL, DynamoDB, Firestore |
 | `IStateStore` | in-memory or SQLite | Redis, Cosmos DB, DynamoDB, Cloud SQL |
 | `IEvidenceProvider` | in-memory snapshots or local aggregation | OpenTelemetry pipeline, metrics store, data warehouse |
 | `IAuditSink` | console/file/SQLite | object storage, event hub, managed logging |
@@ -130,19 +130,19 @@ type DecisionValue = boolean | number | string;
 type RuntimeContextValue = boolean | number | string | null;
 type RuntimeContext = Record<string, RuntimeContextValue>;
 
-type BuiltInScopeType = "session" | "user" | "segment" | "global";
-type ScopeType = BuiltInScopeType | (string & {});
+type BuiltInTargetType = "session" | "user" | "cohort" | "global";
+type TargetType = BuiltInTargetType | (string & {});
 
-type ScopeRef = {
-  type: ScopeType;
+type DecisionTargetRef = {
+  type: TargetType;
   id: string;
 };
 
-type DecisionSurfaceRef = {
+type DecisionDefinitionRef = {
   appId: string;
   environment: string;
-  surface: string;
-  contractVersion?: string;
+  key: string;
+  revision: string;
 };
 
 type NumberActionSpace = {
@@ -223,7 +223,7 @@ For the Tetris MVP, the active strategy can be:
       "id": "slow-down-under-pressure",
       "when": {
         "all": [
-          { "fact": "boardPressure", "operator": "eq", "value": "high" },
+          { "fact": "boardPressure", "operator": "gte", "value": 0.7 },
           { "fact": "recentPlacementTimeMs", "operator": "gte", "value": 1200 }
         ]
       },
@@ -238,8 +238,8 @@ For the Tetris MVP, the active strategy can be:
 
 ```ts
 type DecideRequest = {
-  surface: string;
-  requestedScope?: ScopeRef;
+  decisionKey: string;
+  runtimeTarget?: DecisionTargetRef;
   runtimeContext: RuntimeContext;
   client: {
     appId: string;
@@ -251,22 +251,29 @@ type DecideRequest = {
 };
 
 type DecideResponse<T extends DecisionValue = DecisionValue> = {
-  surface: string;
+  decisionKey: string;
+  definition?: DecisionDefinitionRef;
   value: T;
   valueType: ValueType;
   decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
   strategyId?: string;
-  confidence: number | null;
+  confidence: ConfidenceReport | null;
   reason: string;
   auditId: string;
-  requestedScope?: ScopeRef;
-  resolvedScope: ScopeRef;
-  evidenceScope?: ScopeRef;
+  runtimeTarget?: DecisionTargetRef;
+  controlTarget?: DecisionTargetRef;
+  evidenceViews?: EvidenceViewRef[];
   resolutionChain: string[];
   fallback: {
     resolutionFallbackUsed: boolean;
     decisionFallbackUsed: boolean;
     reason: string | null;
+  };
+
+  type ConfidenceReport = {
+    evidenceQuality?: number;
+    modelUncertainty?: number;
+    expectedOutcome?: number;
   };
   policy: {
     result: "approved" | "blocked" | "fallback";
@@ -278,39 +285,28 @@ type DecideResponse<T extends DecisionValue = DecisionValue> = {
 
 ## Client library interfaces
 
-The TypeScript SDK should expose a small public surface:
+The TypeScript SDK should expose a small public API:
 
 ```ts
 interface IFlaggoClient {
-  decision: IDecisionBuilder;
+  tune: ITuneBuilder;
   events: IEventBuilder;
   metrics: IMetricBuilder;
-  contracts: IContractBundleProvider;
+  definitions: IDefinitionBundleProvider;
 }
 
-interface IDecisionBuilder {
-  number(name: string, declaration: NumberDecisionDeclaration): INumberDecision;
+interface ITuneBuilder {
+  number(name: string, request: NumberTuneRequest): Promise<number>;
+  numberDetailed(name: string, request: NumberTuneRequest): Promise<DecideResponse<number>>;
 }
 
-interface INumberDecision {
-  decide(request: {
-    requestedScope?: ScopeRef;
-    runtimeContext: RuntimeContext;
-    correlationId?: string;
-    expectedContractDigest?: string;
-    expectedContractRevision?: string;
-  }): Promise<DecideResponse<number>>;
-
-  fallbackValue(): number;
-}
-
-interface IContractBundleProvider {
-  exportBundle(): ContractBundle;
+interface IDefinitionBundleProvider {
+  exportBundle(): DecisionDefinitionBundle;
   getExpectedIdentity(): ContractIdentity | undefined;
 }
 ```
 
-The SDK should not own decision intelligence, policy, or state. It should declare contracts, optionally export a canonical contract bundle, send runtime context and compact contract identity, emit telemetry, and expose typed responses.
+The SDK should not own decision intelligence, policy, or state. It should declare decision definitions, optionally export a canonical definition bundle, send runtime context and compact definition identity, emit telemetry, and expose typed responses.
 
 ## Decision API service interfaces
 
@@ -321,14 +317,14 @@ interface IDecisionService {
   decide(request: DecideRequest): Promise<DecideResponse>;
 }
 
-interface IContractRegistry {
-  getActiveContract(ref: DecisionSurfaceRef): Promise<DecisionContract>;
-  validateBundle(bundle: ContractBundle): Promise<ContractBundleValidationResult>;
-  applyBundle(bundle: ContractBundle): Promise<RegistrationReceipt>;
+interface IDefinitionRegistry {
+  getActiveDefinition(ref: DecisionDefinitionRef): Promise<DecisionDefinition>;
+  validateBundle(bundle: DecisionDefinitionBundle): Promise<DefinitionBundleValidationResult>;
+  applyBundle(bundle: DecisionDefinitionBundle): Promise<RegistrationReceipt>;
 }
 
-interface IScopeResolver {
-  resolve(request: DecideRequest, contract: DecisionContract): Promise<ResolvedScope>;
+interface ITargetResolver {
+  resolve(request: DecideRequest, definition: DecisionDefinition): Promise<ResolvedTargets>;
 }
 
 interface IEvidenceProvider {
@@ -359,8 +355,8 @@ The online Decision API flow should compose these ports:
 
 ```text
 DecideRequest
-  -> IContractRegistry.getActiveContract
-  -> IScopeResolver.resolve
+  -> IDefinitionRegistry.getActiveDefinition
+  -> ITargetResolver.resolve
   -> IEvidenceProvider.getSnapshot
   -> IStateStore.getActiveState
   -> IStrategyExecutor.execute or fixed active value
@@ -383,10 +379,10 @@ type DecisionProposal =
 
 type StrategyProposal = {
   proposalType: "strategy";
-  surface: string;
-  targetScope: ScopeRef;
+  decisionKey: string;
+  target: DecisionTargetRef;
   strategy: DecisionStrategy;
-  confidence: number | null;
+  confidence: ConfidenceReport | null;
   evidenceStatus: string;
   rationale: string;
   risks: string[];
@@ -406,11 +402,11 @@ For MVP, a script, fixture, or admin action can create the Tetris strategy propo
 ## MVP Tetris flow
 
 ```text
-1. Contract sync
+1. Definition sync
    Register tetris.dropInterval as number, 200-1500ms, step 50, fallback 800.
 
 2. Strategy activation
-   Activate a governed numeric-rule strategy for session/new-player scopes.
+   Activate a governed numeric-rule strategy for session/new-player targets.
 
 3. Runtime decision
    Game calls POST /v1/decisions/tetris.dropInterval:decide with live context:
@@ -423,7 +419,7 @@ For MVP, a script, fixture, or admin action can create the Tetris strategy propo
    Policy checks min/max, step, max delta, cooldown, pause/override, fallback.
 
 6. Response
-   API returns value, decisionMode=strategy, strategyId, scopes, policy result, reason, auditId.
+   API returns value, decisionMode=strategy, strategyId, targets, policy result, reason, auditId.
 
 7. Feedback
    Client emits outcome telemetry for later evidence and async intelligence.
@@ -448,28 +444,28 @@ Deliverables:
 
 Decision rule: if a new contributor cannot run the MVP locally without cloud setup, the foundation is not portable enough.
 
-### Phase 1: Shared contracts, contract bundle, and receipt
+### Phase 1: Shared definitions, definition bundle, and receipt
 
 Goal: define the stable shapes that SDK, server, tests, and future adapters share.
 
 Deliverables:
 
-- `DecisionValue`, `ActionSpace`, `ScopeRef`, `DecideRequest`, and `DecideResponse`,
+- `DecisionValue`, `ActionSpace`, `DecisionTargetRef`, `DecideRequest`, and `DecideResponse`,
 - `DecisionStrategy` with `fixed-value` and `numeric-rule`,
 - `DecisionProposal` with at least `StrategyProposal`,
-- canonical `ContractBundle` schema,
-- deterministic bundle digest,
+- canonical `DecisionDefinitionBundle` schema,
+- deterministic bundle and definition digests,
 - `RegistrationReceipt`,
-- compact contract identity fields for runtime,
-- `contract.integrity` response shape,
+- compact definition identity fields for runtime,
+- `definition.integrity` response shape,
 - JSON examples for `tetris.dropInterval`.
 
 Validation:
 
 - schema examples round-trip successfully,
 - invalid strategy/action-space combinations are rejected,
-- contract bundle can represent the Tetris surface without cloud-specific fields,
-- direct REST clients can carry expected digest/revision without any SDK.
+- definition bundle can represent the Tetris decision key without cloud-specific fields,
+- direct REST clients can carry expected definition/build identity without any SDK.
 
 ### Phase 2: Decision API core with local adapters
 
@@ -477,10 +473,10 @@ Goal: implement the online runtime path behind provider-neutral interfaces.
 
 Deliverables:
 
-- `POST /v1/decisions/{surface}:decide`,
-- runtime contract identity verification,
-- `IContractRegistry` local implementation,
-- `IScopeResolver`,
+- `POST /v1/decisions/{decisionKey}:decide`,
+- runtime definition identity verification,
+- `IDefinitionRegistry` local implementation,
+- `ITargetResolver`,
 - `IStateStore` local implementation,
 - `IEvidenceProvider` local implementation,
 - `IStrategyExecutor` for numeric rules,
@@ -493,7 +489,7 @@ Validation:
 - fixed fallback response works when no active strategy exists,
 - active numeric rule strategy returns adaptive values from runtime context,
 - policy blocks out-of-range and cooldown-violating candidates,
-- every response includes `auditId`, `decisionMode`, scope fields, fallback fields, and contract integrity status.
+- every response includes `auditId`, `decisionMode`, target fields, fallback fields, and definition integrity status.
 
 ### Phase 3: TypeScript client library
 
@@ -506,8 +502,8 @@ Deliverables:
 - `decide(...)`,
 - local fallback behavior when the server is unavailable,
 - domain event definition and emit API,
-- contract bundle export or reference,
-- expected contract digest/revision propagation,
+- definition bundle export or reference,
+- expected definition digest/revision propagation,
 - OpenTelemetry-compatible telemetry mode stub or first implementation.
 
 Validation:
@@ -582,7 +578,7 @@ Validation:
 4. Build the TypeScript SDK decision call.
 5. Wire Tetris to the SDK and server.
 6. Add local telemetry/audit visibility.
-7. Add contract bundle export/reference and validate/apply flow.
+7. Add definition bundle export/reference and validate/apply flow.
 8. Add scripted strategy proposal activation.
 9. Package local startup and document quickstart.
 10. Add optional cloud adapter designs only after the local MVP is stable.
@@ -594,7 +590,7 @@ Before adding features, verify the change extends one of these seams instead of 
 - new result shape: should not be added unless boolean/number/string is insufficient,
 - new strategy type: extend `DecisionStrategy`,
 - new evidence source: implement `IEvidenceProvider`,
-- new storage backend: implement `IContractRegistry` or `IStateStore`,
+- new storage backend: implement `IDefinitionRegistry` or `IStateStore`,
 - new policy rule: extend `IPolicyEvaluator`,
 - new async reasoning mode: implement `IDecisionIntelligence`,
 - new telemetry transport: extend SDK telemetry mode without changing decision calls,

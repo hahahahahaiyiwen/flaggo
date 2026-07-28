@@ -22,7 +22,7 @@ The MVP does not need a polished UI. It should provide inspectable outputs throu
 
 The future operator console should support:
 
-- list decision surfaces,
+- list decision keys and definitions,
 - inspect active contracts and lifecycle state,
 - inspect active values and active strategies,
 - view recent decisions and audit records,

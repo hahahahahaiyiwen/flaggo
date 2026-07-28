@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The client library is the developer-facing integration point for flaggo. It lets application code declare decision surfaces, emit telemetry evidence, pass runtime context, ask for governed decisions, and safely apply returned values or fallbacks.
+The client library is the developer-facing integration point for flaggo. It lets application code declare decision keys and definitions, emit decision evidence, pass runtime context, request `RuntimeDecisionResult` values, and safely apply returned values or fallbacks.
 
 For the hero scenario, the first client library target is TypeScript for the Tetris frontend.
 
@@ -11,12 +11,12 @@ For the hero scenario, the first client library target is TypeScript for the Tet
 - Make AI-native runtime decisioning feel like a normal application primitive.
 - Keep the first API small and explicit.
 - Hide telemetry plumbing without hiding telemetry semantics.
-- Make decision surfaces discoverable in code.
+- Make decision keys and definitions discoverable in code.
 - Make fallback behavior part of the decision declaration.
 - Integrate with OpenTelemetry where configured.
 - Avoid forcing developers to build metrics aggregation, policy checks, or audit correlation manually.
 - Keep SDK interfaces stable while server-side strategies, evidence, and intelligence evolve.
-- Keep contract synchronization language-neutral: SDK declarations can generate a contract bundle, but the control plane must also support manifest-first, registry-first, and direct REST-client workflows.
+- Keep definition synchronization language-neutral: SDK declarations can generate a definition bundle, but the control plane must also support manifest-first, registry-first, and direct REST-client workflows.
 
 MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
@@ -28,12 +28,12 @@ development:
   declare adaptive value
 
 build/release:
-  produce or reference contract bundle
+  produce or reference definition bundle
   validate/apply bundle
   receive registration receipt
 
 deployment:
-  attach expected digest/revision to workload
+  attach expected contract/build identity to workload
 
 runtime:
   get value with live context
@@ -43,7 +43,7 @@ runtime:
 The application-facing loop should still feel like:
 
 ```text
-declare -> decide -> observe
+declare -> decide by observing
 ```
 
 ## Initial responsibilities
@@ -55,12 +55,12 @@ The client library should support:
    - Application ID.
    - Environment.
    - API version.
-   - Expected contract digest/revision when available.
+   - Expected definition ID/digest/revision when available.
    - Telemetry mode.
    - OpenTelemetry export settings.
 
 2. **Decision declaration**
-   - Define surface name.
+   - Define decision key.
    - Define result type: boolean, number, or string.
    - Define default safe value.
    - Define range or allowed values.
@@ -69,13 +69,13 @@ The client library should support:
 
 3. **Scoped decision request**
    - Pass runtime context.
-   - Bind scope once through helpers such as `forSession(...)`.
+   - Pass concrete target identifiers for the configured `inference.target` and signal target hierarchy.
    - Call the versioned runtime Decision API.
-   - Receive governed decision value and metadata.
+   - Receive the runtime decision value directly in the basic path.
 
-4. **Decision-scoped observation**
-   - Record outcomes through `decision.observe(...)`.
-   - Automatically attach decision, scope, value, audit, timestamp, and contract identity when available.
+4. **Decision-linked evidence emission**
+   - Emit typed domain events and metrics through the SDK.
+   - Automatically attach decision, target, value, audit, timestamp, and definition identity when available.
    - Allow advanced users to define typed events and evidence metrics explicitly.
 
 5. **Fallback handling**
@@ -84,8 +84,8 @@ The client library should support:
    - Use explicit fallback when response says decision fallback was required.
    - Preserve application behavior when decisioning fails closed.
 
-6. **Contract bundle support**
-   - Generate or reference a canonical `ContractBundle` in code-first workflows.
+6. **Definition bundle support**
+   - Generate or reference a canonical `DecisionDefinitionBundle` in code-first workflows.
    - Expose bundle digest/revision metadata to runtime calls.
    - Avoid production management writes from normal application startup.
 
@@ -100,8 +100,10 @@ const flaggo = createFlaggoClient({
   environment: "dev",
   apiVersion: "v1",
   contract: {
-    expectedDigest: process.env.FLAGGO_CONTRACT_DIGEST,
-    expectedRevision: process.env.FLAGGO_CONTRACT_REVISION
+    expectedContractDigest: process.env.FLAGGO_CONTRACT_DIGEST,
+    expectedRevision: process.env.FLAGGO_CONTRACT_REVISION,
+    buildId: process.env.BUILD_ID,
+    deploymentId: process.env.DEPLOYMENT_ID
   },
   telemetry: {
     exporter: "opentelemetry",
@@ -115,7 +117,7 @@ const flaggo = createFlaggoClient({
 });
 ```
 
-The SDK should send compact expected contract identity on runtime decision calls when configured. It should not send the full contract bundle with normal runtime requests.
+The SDK should send compact expected definition identity on runtime decision calls when configured. It should not send the full definition bundle with normal runtime requests.
 
 ## API interaction model
 
@@ -123,13 +125,13 @@ The client library should interact with three categories of endpoints, but only 
 
 | Area | Client behavior |
 |---|---|
-| **Runtime Decision API** | Calls `/v1/decisions/{surface}:decide` with runtime context and compact expected contract identity when application code requests a decision. |
+| **Runtime Decision API** | Calls `/v1/decisions/{decisionKey}:decide` with runtime context and compact expected definition identity when application code requests a decision. |
 | **Telemetry ingestion** | Emits telemetry through OpenTelemetry-compatible export when configured. The SDK should not invent a custom telemetry transport unless needed for direct/demo mode. |
-| **Contract tooling / Management APIs** | Generates, validates, or applies canonical contract bundles outside normal runtime. This should be explicit, language-neutral, and not an accidental startup side effect. |
+| **Definition tooling / Management APIs** | Generates, validates, or applies canonical definition bundles outside normal runtime. This should be explicit, language-neutral, and not an accidental startup side effect. |
 
 Design rule:
 
-> Runtime decision calls are part of application execution; contract bundle validation and registration are part of build, release, deployment, GitOps, or operator workflow.
+> Runtime decision calls are part of application execution; definition bundle validation and registration are part of build, release, deployment, GitOps, or operator workflow.
 
 ## Software lifecycle roles
 
@@ -137,86 +139,207 @@ The SDK has different responsibilities at different stages. It should not be req
 
 | Stage | What happens | SDK role | Non-SDK path |
 | --- | --- | --- | --- |
-| Development | Developer declares surfaces, events, metrics, and fallback. | Provide ergonomic TypeScript declarations, local fallback, and typed decision calls. | Author `flaggo.contract-bundle.json` or configure surface in registry. |
-| Build | Contract artifact is produced or selected. | Optional extractor emits canonical `ContractBundle` and digest. | Bundle is maintained as JSON/YAML or exported from registry/platform tooling. |
+| Development | Developer declares decision keys, events, metrics, and fallback. | Provide ergonomic TypeScript declarations, local fallback, and typed decision calls. | Author `flaggo.decision-definition-bundle.json` or configure decision key in registry. |
+| Build | Definition artifact is produced or selected for that build. | Optional extractor emits canonical `DecisionDefinitionBundle`, `definitionDigest`, and build metadata. | Bundle is maintained as JSON/YAML or exported from registry/platform tooling. |
 | CI/release | Bundle is validated/applied/promoted. | No runtime SDK required; generated bundle is just an input artifact. | `flaggo contracts validate/apply`, GitHub Action, GitOps reconciler, or platform pipeline. |
-| Deployment | Accepted contract identity is attached to workload. | SDK can read env vars or generated constants. | Container labels, deployment annotations, injected env vars, or HTTP headers for REST clients. |
-| Runtime | Application asks for decisions and emits telemetry. | Send runtime context, expected digest/revision, and telemetry; apply fallback when needed. | Direct REST client sends the same compact identity and runtime context. |
+| Deployment | Accepted definition/build identity is attached to each workload version. | SDK can read env vars or generated constants. | Container labels, deployment annotations, injected env vars, or HTTP headers for REST clients. |
+| Runtime | Application asks for decisions and emits telemetry. | Send runtime context, expected contract/build identity, and telemetry; apply fallback when needed. | Direct REST client sends the same compact identity and runtime context. |
 | Observe/operate | Teams inspect contract drift, fallback, and strategy outcomes. | Expose response fields and emit diagnostics. | Operator console, audit API, logs, metrics, deployment checks. |
 
 This separation lets TypeScript be the first ergonomic SDK while preserving polyglot and open-source-native portability.
 
-### Basic decision declaration
+### Basic decision and runtime value
 
 ```ts
-const dropInterval = flaggo.tune.number("tetris.dropInterval", {
-  default: 800,
-  range: [200, 1500],
-  step: 50,
-  optimize: "challenging-but-playable",
-  safety: "gradual"
+const dropInterval = await flaggo.tune.number("tetris.dropInterval", {
+  definition: {
+    signals: {
+      targetHierarchy: ["session", "user", "cohort", "global"],
+      definitions: {
+        boardPressure: {
+          kind: "metric",
+          type: "number",
+          source: "app-emitted",
+          range: [0, 1]
+        },
+        recentPlacementTimeMs: {
+          kind: "metric",
+          type: "number",
+          source: "app-emitted"
+        },
+        recoveryFailures: {
+          kind: "metric",
+          type: "number",
+          source: "app-emitted"
+        },
+        piecePlaced: {
+          kind: "event",
+          emitAs: "piece_placed",
+          fields: {
+            placementTimeMs: "number",
+            hardDrop: "boolean"
+          }
+        },
+        sessionEnded: {
+          kind: "event",
+          emitAs: "session_ended",
+          fields: {
+            endReason: "string",
+            durationSeconds: "number"
+          }
+        },
+        earlyLossRate: {
+          kind: "metric",
+          type: "number",
+          source: "service-aggregated",
+          from: "sessionEnded.endReason",
+          aggregation: "rate(endReason == 'early_loss')"
+        },
+        hardDropRate: {
+          kind: "metric",
+          type: "number",
+          source: "service-aggregated",
+          from: "piecePlaced.hardDrop",
+          aggregation: "rate(hardDrop == true)"
+        }
+      }
+    },
+    intent: {
+      type: "natural-language",
+      text: "challenging-but-playable"
+    },
+    inference: {
+      target: "session",
+      inputs: ["boardPressure", "recentPlacementTimeMs", "recoveryFailures"],
+      fallbackOrder: ["cohort", "global"]
+    },
+    output: {
+      default: 800,
+      range: [200, 1500],
+      step: 50
+    },
+    safety: "gradual",
+    requestedApproval: "automatic",
+    context: {
+      sessionId: { type: "string", target: "session" },
+      userId: { type: "string", target: "user" },
+      cohort: { type: "string", target: "cohort" },
+      currentLevel: "number",
+      deviceType: "string",
+      boardPressure: "number",
+      recentPlacementTimeMs: "number",
+      recoveryFailures: "number"
+    }
+  },
+  context: {
+    sessionId,
+    userId,
+    cohort: playerCohort,
+    currentLevel: game.level,
+    deviceType: device.type,
+    boardPressure,
+    recentPlacementTimeMs,
+    recoveryFailures
+  }
 });
+
+gameEngine.updateConfig({ dropInterval });
 ```
 
-### Basic decision call
+The basic API returns a plain `number`. The `definition` block is extractable as a decision definition during build/release. Signals declare target hierarchy, events, app-emitted metrics, and service-aggregated metrics in one place so Flaggo can validate emitted telemetry and derive evidence views from the definition revision. `inference.inputs` are declared app-emitted metrics supplied with the request; the service should not aggregate them on the hot path. The runtime `context` block provides concrete target identifiers and app-emitted current metric values for online inference. The SDK should attach expected definition identity when configured. Direct REST clients can provide the same compact identity explicitly.
+
+### Basic evidence emission
 
 ```ts
-const sessionDropInterval = dropInterval.forSession(sessionId);
+flaggo.metrics.emit("boardPressure", boardPressure);
+flaggo.metrics.emit("recentPlacementTimeMs", recentPlacementTimeMs);
+flaggo.metrics.emit("recoveryFailures", recoveryFailures);
 
-const interval = await sessionDropInterval.get({
-  level: game.level,
-  boardPressure,
-  recentPlacementTimeMs,
-  recoveryFailures
-});
-
-gameEngine.updateConfig({ dropInterval: interval });
-```
-
-The SDK should infer requested scope from `forSession(sessionId)` and attach expected contract identity when configured. Direct REST clients can provide the same compact identity explicitly.
-
-### Basic observation
-
-```ts
-sessionDropInterval.observe("piece_placed", {
+flaggo.events.emit("piece_placed", {
   placementTimeMs,
   hardDrop: placementMethod === "hard_drop"
 });
 
-sessionDropInterval.observe("session_ended", {
-  reason: endReason,
+flaggo.events.emit("session_ended", {
+  endReason,
   durationSeconds
 });
 ```
 
-The SDK should attach decision context automatically when possible:
+The SDK and telemetry pipeline should attach decision context automatically when possible:
 
-- surface,
+- decision key,
+- decision definition revision,
 - returned value,
-- requested/resolved scope,
+- runtime target,
+- resolved control target when known,
 - decision/audit correlation ID,
 - timestamp,
-- contract revision or digest.
+- definition revision or digest,
+- application/build identity.
+
+An explicit decision-scoped observation helper can exist as shorthand for advanced users, but it should not be required in the hero path.
 
 ### Advanced evidence and governance
 
 ```ts
 const dropInterval = flaggo.tune.number("tetris.dropInterval", {
-  default: 800,
-  range: [200, 1500],
-  step: 50,
-  optimize: {
-    primary: signals.earlyLossRate.minimize(),
-    secondary: [
-      signals.hardDropRate.near(0.45),
-      signals.placementTimeMs.minimize()
-    ]
-  },
-  policy: {
-    maxDelta: 50,
-    cooldown: "20s",
-    minSampleSize: 30,
-    minConfidence: 0.7
+  definition: {
+    signals: {
+      targetHierarchy: ["session", "user", "cohort", "global"],
+      definitions: {
+        piecePlaced: {
+          kind: "event",
+          emitAs: "piece_placed",
+          fields: { placementTimeMs: "number", hardDrop: "boolean" }
+        },
+        sessionEnded: {
+          kind: "event",
+          emitAs: "session_ended",
+          fields: { endReason: "string", durationSeconds: "number" }
+        },
+        earlyLossRate: {
+          kind: "metric",
+          type: "number",
+          source: "service-aggregated",
+          from: "sessionEnded.endReason",
+          aggregation: "rate(endReason == 'early_loss')"
+        },
+        hardDropRate: {
+          kind: "metric",
+          type: "number",
+          source: "service-aggregated",
+          from: "piecePlaced.hardDrop",
+          aggregation: "rate(hardDrop == true)"
+        }
+      }
+    },
+    intent: {
+      type: "metric-objective",
+      primary: { signal: "earlyLossRate", direction: "minimize" },
+      secondary: [
+        { signal: "hardDropRate", direction: "target", target: 0.45 },
+        { signal: "recentPlacementTimeMs", direction: "minimize" }
+      ],
+      rationale: "Keep the game challenging while reducing early frustration."
+    },
+    inference: {
+      target: "session",
+      fallbackOrder: ["cohort", "global"]
+    },
+    output: {
+      default: 800,
+      range: [200, 1500],
+      step: 50
+    },
+    requestedApproval: "automatic",
+    policy: {
+      maxDelta: 50,
+      cooldown: "20s",
+      minSampleSize: 30,
+      minEvidenceQuality: 0.7,
+      maxModelUncertainty: 0.35
+    }
   }
 });
 ```
@@ -249,7 +372,7 @@ if (decision.fallback.decisionFallbackUsed) {
 
 if (decision.fallback.resolutionFallbackUsed) {
   console.info(
-    `Decision resolved from ${decision.evidenceScope?.type}:${decision.evidenceScope?.id}`
+    `Decision resolved using ${decision.controlTarget?.type}:${decision.controlTarget?.id}`
   );
 }
 ```
@@ -262,103 +385,150 @@ The library should expose the shared runtime response shape with a developer-fri
 type DecisionResult<T> = DecideResponse<T>;
 ```
 
-`confidence` is `null` when Flaggo returns a static decision fallback because no evidence-backed decision was approved. If only resolution fallback happened, confidence should still be present and should refer to the returned decision at `evidenceScope`.
+`confidence` is `null` when Flaggo returns a static decision fallback because no evidence-backed decision was approved. If only target/evidence resolution fallback happened, confidence should still be present and should refer to the returned decision's evidence views and control target.
 
 `decisionMode` tells the application how the value was produced without exposing internal implementation details. For the Tetris adaptive MVP, the expected mode is usually `strategy`: the server executed an approved strategy against live runtime context and returned an immediate numeric value.
 
-`contract.integrity` should tell the application whether the runtime response was produced under a verified or compatible contract identity, or whether the response fell back because of drift.
+`definition.integrity` should tell the application whether the runtime response was produced under a verified or known definition identity, or whether the response fell back because the definition was unknown, retired, or conflicting.
 
-The basic `get(...)` helper may return `T` for ergonomics, while an advanced `decide(...)` or `getDetailed(...)` helper should expose the full `DecisionResult<T>`.
+The basic `tune.number(...)` helper returns `number` for ergonomics, while an advanced detailed helper should expose the full `DecisionResult<T>`.
 
 ## MVP SDK interfaces
 
-The first TypeScript SDK should keep a small interface surface:
+The first TypeScript SDK should keep a small interface:
 
 ```ts
 interface IFlaggoClient {
-  decision: IDecisionBuilder;
+  tune: ITuneBuilder;
   events: IEventBuilder;
   metrics: IMetricBuilder;
-  contracts: IContractBundleProvider;
+  definitions: IDefinitionBundleProvider;
 }
 
-interface IDecisionBuilder {
-  number(name: string, declaration: NumberTuneDeclaration): INumberDecision;
+interface ITuneBuilder {
+  number(name: string, request: NumberTuneRequest): Promise<number>;
+
+  numberDetailed(name: string, request: NumberTuneRequest): Promise<DecisionResult<number>>;
 }
 
-type NumberTuneDeclaration =
-  | BasicNumberTuneDeclaration
-  | AdvancedNumberTuneDeclaration;
+type NumberTuneRequest =
+  | BasicNumberTuneRequest
+  | AdvancedNumberTuneRequest;
 
-type BasicNumberTuneDeclaration = {
-  default: number;
-  range: [number, number];
-  step?: number;
-  optimize: string;
-  safety: "gradual" | "conservative" | "manual";
+type BasicNumberTuneRequest = {
+  definition: BasicNumberTuneDefinition;
+  context: RuntimeContext;
 };
 
-type AdvancedNumberTuneDeclaration = {
-  default: number;
-  range: [number, number];
-  step?: number;
-  optimize: string | AdvancedOptimizationGoal;
+type AdvancedNumberTuneRequest = {
+  definition: AdvancedNumberTuneDefinition;
+  context: RuntimeContext;
+};
+
+type BasicNumberTuneDefinition = {
+  signals?: SignalDeclarationBlock;
+  inference?: InferenceDeclaration;
+  intent: DecisionIntent;
+  output: NumberOutputContract;
+  safety: "gradual" | "conservative" | "manual";
+  context: RuntimeContextSchema;
+};
+
+type AdvancedNumberTuneDefinition = {
+  signals?: SignalDeclarationBlock;
+  inference?: InferenceDeclaration;
+  intent: DecisionIntent;
+  output: NumberOutputContract;
   safety?: "gradual" | "conservative" | "manual";
   policy?: InlinePolicy;
+  context: RuntimeContextSchema;
 };
 
-type AdvancedOptimizationGoal = {
-  primary: EvidenceGoal;
-  secondary?: EvidenceGoal[];
+type NumberOutputContract = {
+  default: number;
+  range: [number, number];
+  step?: number;
 };
 
-type EvidenceGoal = unknown;
+type RuntimeContextSchema = Record<
+  string,
+  | "string"
+  | "number"
+  | "boolean"
+  | { type: "string" | "number" | "boolean"; target?: string }
+>;
 
-interface INumberDecision {
-  forSession(sessionId: string): IScopedNumberDecision;
+type RuntimeContext = Record<string, unknown>;
 
-  get(context: RuntimeContext): Promise<number>;
+type SignalDeclarationBlock = {
+  targetHierarchy?: string[];
+  definitions: SignalDeclarationMap;
+};
 
-  getDetailed(context: RuntimeContext): Promise<DecisionResult<number>>;
+type SignalDeclarationMap = Record<string, SignalDeclaration>;
 
-  observe(eventName: string, payload: RuntimeContext): void;
+type SignalDeclaration =
+  | EventSignalDeclaration
+  | MetricSignalDeclaration;
 
-  fallbackValue(): number;
-}
+type EventSignalDeclaration = {
+  kind: "event";
+  emitAs?: string;
+  fields: Record<string, "string" | "number" | "boolean">;
+};
 
-interface IScopedNumberDecision {
-  get(context: RuntimeContext): Promise<number>;
+type MetricSignalDeclaration = {
+  kind: "metric";
+  type: "string" | "number" | "boolean";
+  source: "app-emitted" | "service-aggregated";
+  from?: string;
+  aggregation?: string;
+  range?: [number, number];
+};
 
-  getDetailed(context: RuntimeContext): Promise<DecisionResult<number>>;
+type InferenceDeclaration = {
+  target: "global" | "segment" | "cohort" | "user" | "session" | "level" | string;
+  inputs?: string[];
+  fallbackOrder?: string[];
+};
 
-  observe(eventName: string, payload: RuntimeContext): void;
+type DecisionIntent =
+  | NaturalLanguageIntent
+  | MetricObjectiveIntent;
 
-  decide(request: {
-    requestedScope?: ScopeRef;
-    runtimeContext: RuntimeContext;
-    correlationId?: string;
-    expectedContractDigest?: string;
-    expectedContractRevision?: string;
-  }): Promise<DecisionResult<number>>;
+type NaturalLanguageIntent = {
+  type: "natural-language";
+  text: string;
+};
 
-  fallbackValue(): number;
-}
+type MetricObjectiveIntent = {
+  type: "metric-objective";
+  primary: MetricObjective;
+  secondary?: MetricObjective[];
+  rationale?: string;
+};
 
-interface IContractBundleProvider {
-  exportBundle(): ContractBundle;
+type MetricObjective = {
+  signal: string;
+  direction: "minimize" | "maximize" | "target";
+  target?: number;
+};
+
+interface IDefinitionBundleProvider {
+  exportBundle(): DecisionDefinitionBundle;
   getExpectedIdentity(): ContractIdentity | undefined;
 }
 ```
 
-The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are declaration, telemetry, optional contract bundle export, runtime request, compact contract identity propagation, typed response, and local fallback when the service is unavailable.
+The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are definition extraction from static request fields, telemetry, optional definition bundle export, runtime request, compact definition identity propagation, typed response, and local fallback when the service is unavailable.
 
-In the basic path, `default` is the singular safe fallback value. During bundle generation, the SDK can compile it into the lower-level action-space default and fallback contract required by the registry/runtime model.
+In the basic path, `default` is the singular safe fallback value. During bundle generation, the SDK can compile it into the lower-level action-space default and fallback definition required by the registry/runtime model.
 
 ## Contract authoring, bundle, and registration
 
 The client library may support code-first decision declarations, but Flaggo should not require production applications to mutate management state during normal runtime startup.
 
-Decision declarations should be extractable into a canonical `ContractBundle`. Build, release, deployment, GitOps, or operator tooling can validate and apply that bundle to Flaggo management APIs.
+Decision declarations should be extractable into a canonical `DecisionDefinitionBundle`. Build, release, deployment, GitOps, or operator tooling can validate and apply that bundle to Flaggo management APIs.
 
 Recommended code-first lifecycle:
 
@@ -367,7 +537,7 @@ write declaration in code
   -> extract flaggo.contract-bundle.json
   -> validate/apply bundle with contract tooling
   -> receive registration receipt
-  -> deploy app with expected digest/revision
+  -> deploy app with expected contract/build identity
   -> runtime only calls decide and emits telemetry
 ```
 
@@ -375,23 +545,51 @@ Supported authoring modes:
 
 | Mode | Behavior |
 | --- | --- |
-| `code-first` | SDK declarations generate or contribute to a canonical `ContractBundle`. |
+| `code-first` | SDK declarations generate or contribute to a canonical `DecisionDefinitionBundle`. |
 | `bundle-first` | Application or platform uses hand-authored JSON/YAML bundle; SDK may only reference identity. |
-| `registry-first` | Surface is managed in Flaggo registry or operator tooling; SDK references pre-registered surface and expected identity. |
+| `registry-first` | Decision key is managed in Flaggo registry or operator tooling; SDK references pre-registered decision definition and expected identity. |
 | `local-only` | Use declarations and fallback locally without remote validation. Useful for demos and early development. |
 
-The first slice should support TypeScript `code-first` generation for the Tetris demo and direct `bundle-first` REST compatibility at the contract/API layer.
+The first slice should support TypeScript `code-first` generation for the Tetris demo and direct `bundle-first` REST compatibility at the definition/API layer.
 
 Resource lifecycle is owned by the Contract Registry. Client tooling should create or validate resources through bundle sync, but should not hard-delete missing resources. Missing declarations should become deprecation candidates, not deletes.
 
-## Runtime contract identity
+### Versioning UX
 
-The runtime SDK should send compact expected contract identity when available:
+Developers should not need to manually version every decision definition during normal development. The SDK and registry can hide most version management behind validation/apply:
+
+```text
+developer names the decision: tetris.dropInterval
+  -> tooling extracts canonical semantics
+  -> registry compares with existing definition
+  -> unchanged or metadata-only: keep same definition identity
+  -> semantic conflict: reject overwrite or mint approved new semantic identity
+```
+
+The developer-facing name can stay stable for the common case. When semantics change in a way that could make old decision state unsafe, tooling should make the change explicit in PR/CI output:
+
+```text
+tetris.dropInterval
+semantic change detected: added required signal recoveryFailures
+state reuse: no
+telemetry reuse: boardPressure and placementTimeMs evidence can be reused
+new evidence warmup: recoveryFailures
+suggested definition: tetris.dropInterval@2
+```
+
+This keeps the normal UX simple while still preventing accidental sharing of active strategies across incompatible contracts.
+
+## Runtime definition identity
+
+The runtime SDK should send compact expected definition identity when available:
 
 ```ts
 const decision = await dropInterval.decide({
-  expectedContractDigest: flaggo.contracts.getExpectedIdentity()?.digest,
-  expectedContractRevision: flaggo.contracts.getExpectedIdentity()?.revision,
+  expectedDefinitionId: flaggo.definitions.getExpectedIdentity()?.definitionId,
+  expectedDefinitionDigest: flaggo.definitions.getExpectedIdentity()?.definitionDigest,
+  expectedDefinitionRevision: flaggo.definitions.getExpectedIdentity()?.revision,
+  buildId: flaggo.definitions.getExpectedIdentity()?.buildId,
+  deploymentId: flaggo.definitions.getExpectedIdentity()?.deploymentId,
   runtimeContext: {
     userId,
     sessionId,
@@ -401,7 +599,7 @@ const decision = await dropInterval.decide({
 });
 ```
 
-The full `ContractBundle` should not be sent with each runtime request. Runtime identity can come from:
+The full `DecisionDefinitionBundle` should not be sent with each runtime request. Runtime identity can come from:
 
 - SDK build metadata,
 - generated constants,
@@ -409,7 +607,9 @@ The full `ContractBundle` should not be sent with each runtime request. Runtime 
 - deployment annotations or injected config,
 - direct REST headers/body fields.
 
-If the Decision API reports incompatible drift, the SDK should expose the fallback response clearly. It may log or emit diagnostics, but it should not hide the fallback behind a success-shaped local value.
+Different builds of the same service can be deployed at the same time. The SDK should treat expected definition identity as build/deployment metadata attached to each workload.
+
+If the Decision API reports an unknown or conflicting definition, the SDK should expose the fallback response clearly. It may log or emit diagnostics, but it should not hide the fallback behind a success-shaped local value.
 
 ## Telemetry behavior
 
@@ -427,8 +627,8 @@ Domain events should be developer-friendly. The SDK may map them to structured l
 
 ## Open design questions
 
-- What exact `ContractBundle` JSON schema should the TypeScript extractor emit?
-- Should browser SDKs send contract identity on every decision request or use a cached handshake?
+- What exact `DecisionDefinitionBundle` JSON schema should the TypeScript extractor emit?
+- Should browser SDKs send definition identity on every decision request or use a cached handshake?
 - How much local evidence should the browser compute before sending telemetry?
 - Should fallback be applied automatically by the library or explicitly by app code?
 - How should TypeScript types be generated from server-side contracts?
@@ -439,17 +639,17 @@ Domain events should be developer-friendly. The SDK may map them to structured l
 For the Tetris hero scenario, the first client library design should support:
 
 - TypeScript only.
-- Number decision surfaces.
-- Basic `tune.number(...)` declaration.
+- Number decision definitions.
+- Basic `tune.number(...)` call returning a plain number.
 - Safety preset support, starting with `gradual`.
-- Decision-scoped `observe(...)`.
+- Signal declarations plus normal domain event/OpenTelemetry emission.
 - Advanced domain event and metric declarations as optional evidence mode.
 - Runtime context.
-- Scope helper such as `forSession(sessionId)`.
-- Session/user/segment/global scope hierarchy.
+- Concrete target identifiers in the tune request.
+- Session/user/cohort/global target hierarchy.
 - Singular default/fallback value.
-- ContractBundle generation or reference.
-- Expected contract digest/revision propagation.
+- DecisionDefinitionBundle generation or reference.
+- Expected definition digest/revision propagation.
 - Decision API call with a typed response.
 - Runtime API path versioning through `/v1`.
 - OpenTelemetry telemetry mode.

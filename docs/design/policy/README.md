@@ -15,7 +15,9 @@ The MVP policy component should enforce:
 - number step alignment,
 - max delta from previous value,
 - cooldown,
-- minimum confidence when evidence-backed decisioning is required,
+- minimum evidence quality when evidence-backed decisioning is required,
+- maximum model uncertainty when model-backed decisioning is required,
+- minimum expected outcome when optimization estimates are used,
 - minimum sample size when configured,
 - pause state,
 - fallback when no safe candidate exists.
@@ -30,7 +32,7 @@ interface IPolicyEvaluator {
 }
 
 type PolicyEvaluationRequest = {
-  contract: DecisionContract;
+  definition: DecisionDefinition;
   state: DecisionState | null;
   evidence: EvidenceSnapshot;
   candidate: {
@@ -63,7 +65,9 @@ Initial reason codes:
 | `invalid_step` | Numeric value does not align to configured step. |
 | `max_delta_exceeded` | Candidate changes too much from previous value. |
 | `cooldown_active` | Candidate change is too soon after the prior decision. |
-| `insufficient_confidence` | Evidence confidence is below policy requirement. |
+| `insufficient_evidence_quality` | Evidence quality is below policy requirement. |
+| `excessive_model_uncertainty` | Model uncertainty is above policy requirement. |
+| `insufficient_expected_outcome` | Expected outcome estimate is below policy requirement. |
 | `insufficient_sample_size` | Evidence sample size is below policy requirement. |
 | `decision_paused` | Operator pause blocks adaptive decisioning. |
 | `retired_contract` | Contract lifecycle prevents approved decisions. |
@@ -93,6 +97,7 @@ For `tetris.dropInterval`:
 - max delta: `50`
 - cooldown: `20s`
 - fallback: `800`
-- confidence floor: `0.7` when evidence is required
+- minimum evidence quality: `0.7` when evidence is required
+- maximum model uncertainty: `0.35` when model-backed strategy is used
 
 The strategy executor may calculate `850ms`, but policy is still responsible for verifying the value before it is returned.

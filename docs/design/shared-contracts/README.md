@@ -17,11 +17,11 @@ These contracts are open-source native:
 ## MVP contract rules
 
 1. Runtime decision values are only `boolean`, `number`, or `string`.
-2. Decision surfaces must be pre-registered or validated by manifest before production runtime.
+2. Decision keys and definitions must be pre-registered or validated by manifest before production runtime.
 3. Adaptive behavior is represented by a `DecisionStrategy`, not hidden application logic.
 4. Online runtime returns a concrete value, even when that value came from a strategy.
-5. Async intelligence produces proposals; governance activates values, strategies, experiments, holds, rollbacks, or fallbacks.
-6. Runtime responses must include scope, fallback, policy, and audit metadata.
+5. Async intelligence produces proposals; governance activates values, strategies, experiments, holds, or fallback-only states; rollback is a transition that activates a replacement or previous state and marks the replaced state rolled back.
+6. Runtime responses must include target, fallback, policy, and audit metadata.
 7. New strategy types, storage backends, evidence sources, and policy rules must extend explicit interfaces instead of changing the runtime response shape.
 
 ## Primitive types
@@ -31,19 +31,19 @@ type ValueType = "boolean" | "number" | "string";
 type DecisionValue = boolean | number | string;
 type LifecycleState = "active" | "deprecated" | "retired";
 
-type BuiltInScopeType = "session" | "user" | "segment" | "global";
-type ScopeType = BuiltInScopeType | (string & {});
+type BuiltInTargetType = "session" | "user" | "cohort" | "global";
+type TargetType = BuiltInTargetType | (string & {});
 
-type ScopeRef = {
-  type: ScopeType;
+type DecisionTargetRef = {
+  type: TargetType;
   id: string;
 };
 
-type DecisionSurfaceRef = {
+type DecisionDefinitionRef = {
   appId: string;
   environment: string;
-  surface: string;
-  contractVersion?: string;
+  key: string;
+  revision: string;
 };
 
 type RuntimeContextValue = boolean | number | string | null;
@@ -52,9 +52,9 @@ type RuntimeContext = Record<string, RuntimeContextValue>;
 
 Rules:
 
-- `surface` uses stable domain naming such as `tetris.dropInterval`.
+- `key` uses stable domain naming such as `tetris.dropInterval`.
 - `environment` is provider-neutral, such as `dev`, `test`, `prod`.
-- `ScopeRef.type` is extensible, but MVP built-ins are `session`, `user`, `segment`, and `global`.
+- `DecisionTargetRef.type` is extensible, but MVP built-ins are `session`, `user`, `cohort`, and `global`.
 - Runtime context must stay primitive and JSON-serializable for audit and policy evaluation.
 
 ## Action space
@@ -95,16 +95,17 @@ Rules:
 ## Decision contract
 
 ```ts
-type DecisionContract = {
-  ref: DecisionSurfaceRef;
+type DecisionDefinition = {
+  ref: DecisionDefinitionRef;
   lifecycle: LifecycleState;
   valueType: ValueType;
   actionSpace: ActionSpace;
-  scopeHierarchy: string[];
   fallback: FallbackContract;
   runtimeContextSchema?: RuntimeContextSchema;
-  evidenceRequirements?: EvidenceRequirement[];
-  goals?: GoalDefinition[];
+  signals?: SignalDeclarationBlock;
+  inference?: InferenceDeclaration;
+  intent?: DecisionIntent;
+  requestedApproval?: RequestedApprovalMode;
   policy: PolicyReference | InlinePolicy;
   onlineStrategy?: OnlineStrategyDeclaration;
   metadata?: Record<string, string>;
@@ -120,21 +121,65 @@ type RuntimeContextSchema = Record<
   {
     type: "boolean" | "number" | "string";
     required?: boolean;
+    target?: string;
   }
 >;
 
-type EvidenceRequirement = {
-  name: string;
-  source: string;
-  window?: string;
-  scope?: string;
+type SignalDeclarationBlock = {
+  targetHierarchy?: string[];
+  definitions: SignalDeclarationMap;
 };
 
-type GoalDefinition = {
-  name: string;
+type SignalDeclarationMap = Record<string, SignalDeclaration>;
+
+type SignalDeclaration =
+  | EventSignalDeclaration
+  | MetricSignalDeclaration;
+
+type EventSignalDeclaration = {
+  kind: "event";
+  emitAs?: string;
+  fields: Record<string, "boolean" | "number" | "string">;
+};
+
+type MetricSignalDeclaration = {
+  kind: "metric";
+  type: "boolean" | "number" | "string";
+  source: "app-emitted" | "service-aggregated";
+  from?: string;
+  aggregation?: string;
+  range?: [number, number];
+};
+
+type InferenceDeclaration = {
+  target: TargetType;
+  inputs?: string[];
+  fallbackOrder?: string[];
+};
+
+type DecisionIntent =
+  | NaturalLanguageIntent
+  | MetricObjectiveIntent;
+
+type NaturalLanguageIntent = {
+  type: "natural-language";
+  text: string;
+};
+
+type MetricObjectiveIntent = {
+  type: "metric-objective";
+  primary: MetricObjective;
+  secondary?: MetricObjective[];
+  rationale?: string;
+};
+
+type MetricObjective = {
+  signal: string;
   direction: "minimize" | "maximize" | "target";
   target?: number;
 };
+
+type RequestedApprovalMode = "automatic" | "human" | "policy-default";
 
 type PolicyReference = {
   kind: "reference";
@@ -161,7 +206,9 @@ type PolicyConstraint =
   | NumberBoundsConstraint
   | MaxDeltaConstraint
   | CooldownConstraint
-  | ConfidenceConstraint
+  | EvidenceQualityConstraint
+  | ModelUncertaintyConstraint
+  | ExpectedOutcomeConstraint
   | SampleSizeConstraint
   | PauseConstraint;
 
@@ -181,8 +228,18 @@ type CooldownConstraint = {
   seconds: number;
 };
 
-type ConfidenceConstraint = {
-  kind: "min-confidence";
+type EvidenceQualityConstraint = {
+  kind: "min-evidence-quality";
+  value: number;
+};
+
+type ModelUncertaintyConstraint = {
+  kind: "max-model-uncertainty";
+  value: number;
+};
+
+type ExpectedOutcomeConstraint = {
+  kind: "min-expected-outcome";
   value: number;
 };
 
@@ -259,10 +316,22 @@ Rules:
 ## Decision state
 
 ```ts
+type DecisionDefinitionRef = {
+  appId: string;
+  environment: string;
+  key: string;
+  revision: string;
+};
+
+type DecisionTargetRef = {
+  type: string;
+  id: string;
+};
+
 type DecisionState = {
-  surface: string;
-  scope: ScopeRef;
-  contractVersion: string;
+  definition: DecisionDefinitionRef;
+  controlTarget?: DecisionTargetRef;
+  runtimeTarget?: DecisionTargetRef;
   lifecycle: LifecycleState;
   activeValue?: DecisionValue;
   activeStrategy?: DecisionStrategy;
@@ -283,22 +352,37 @@ type OperatorOverride = {
 
 Rules:
 
-- `DecisionState` owns live runtime authority; `DecisionContract` owns declared semantics.
+- `DecisionState` owns live runtime authority; `DecisionDefinition` owns declared semantics.
 - `activeStrategy` is how async intelligence or operator tooling affects online adaptation.
 - Operator override takes precedence over active strategy unless policy says otherwise.
+- Governed control state is keyed by decision definition plus control target.
+- Runtime target state is keyed by decision definition plus runtime target.
 
 ## Evidence snapshot
 
 ```ts
 type EvidenceSnapshot = {
-  surface: string;
-  scope: ScopeRef;
+  definition?: DecisionDefinitionRef;
+  evidenceView: EvidenceViewRef;
   capturedAt: string;
   freshnessSeconds?: number;
   sampleSize?: number;
-  confidence?: number;
+  confidence?: ConfidenceReport;
   metrics: Record<string, number>;
   quality: "missing" | "insufficient" | "sufficient" | "stale" | "conflicting";
+};
+
+type ConfidenceReport = {
+  evidenceQuality?: number;
+  modelUncertainty?: number;
+  expectedOutcome?: number;
+};
+
+type EvidenceViewRef = {
+  evidenceKey: string;
+  revision: string;
+  target: DecisionTargetRef;
+  window?: string;
 };
 ```
 
@@ -312,8 +396,9 @@ Rules:
 
 ```ts
 type DecideRequest = {
-  surface: string;
-  requestedScope?: ScopeRef;
+  decisionKey: string;
+  definition?: DecisionDefinitionRef;
+  runtimeTarget?: DecisionTargetRef;
   runtimeContext: RuntimeContext;
   expectedContract?: ContractIdentity;
   client: {
@@ -326,17 +411,18 @@ type DecideRequest = {
 };
 
 type DecideResponse<T extends DecisionValue = DecisionValue> = {
-  surface: string;
+  decisionKey: string;
+  definition?: DecisionDefinitionRef;
   value: T;
   valueType: ValueType;
   decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
   strategyId?: string;
-  confidence: number | null;
+  confidence: ConfidenceReport | null;
   reason: string;
   auditId: string;
-  requestedScope?: ScopeRef;
-  resolvedScope: ScopeRef;
-  evidenceScope?: ScopeRef;
+  runtimeTarget?: DecisionTargetRef;
+  controlTarget?: DecisionTargetRef;
+  evidenceViews?: EvidenceViewRef[];
   resolutionChain: string[];
   fallback: {
     resolutionFallbackUsed: boolean;
@@ -353,46 +439,73 @@ Rules:
 - The response returns the final concrete value for application code.
 - `decisionMode` explains how the value was produced without exposing internals.
 - `confidence` is `null` for static decision fallback.
-- Resolution fallback can still return a real confidence score if a broader scope produced an approved decision.
-- `contract.integrity` indicates whether the client expectation matched a registered compatible contract.
-- The full contract bundle is not sent with each request; only compact identity is sent.
+- Resolution fallback can still return a real confidence report if a broader target produced an approved decision.
+- `contract.integrity` indicates whether the client expectation matched a registered known contract definition.
+- The full definition bundle is not sent with each request; only compact identity is sent.
 
 ## Contract identity and integrity
 
 ```ts
 type ContractIdentity = {
-  digest?: string;
+  contractId?: string;
+  bundleDigest?: string;
+  contractDigest?: string;
   revision?: string;
+  buildId?: string;
   deploymentId?: string;
+  artifactDigest?: string;
 };
 
 type ContractIntegrityState =
   | "verified"
-  | "compatible-drift"
+  | "known-older-revision"
   | "unknown-client-contract"
-  | "incompatible-drift"
-  | "unknown-surface"
-  | "retired-surface";
+  | "contract-conflict"
+  | "unknown-decision-key"
+  | "retired-decision-key";
 
 type ContractRuntimeStatus = {
   revision?: string;
-  digest?: string;
+  bundleDigest?: string;
+  contractDigest?: string;
+  buildId?: string;
+  deploymentId?: string;
   integrity: ContractIntegrityState;
   compatibility?: ContractCompatibility;
 };
 
 type ContractCompatibility =
   | "identical"
-  | "backward-compatible"
-  | "requires-client-update"
-  | "unsafe";
+  | "metadata-only"
+  | "new-contract-required";
 ```
 
 Rules:
 
-- `verified` and `compatible-drift` may return approved decisions.
-- `unknown-client-contract`, `incompatible-drift`, `unknown-surface`, and `retired-surface` should fall back in production enforcement mode.
-- Browser-provided contract identity is useful for drift detection, not as a security boundary.
+- `verified` and `known-older-revision` may return approved decisions when the registry recognizes the caller's immutable definition revision.
+- `unknown-client-contract`, `contract-conflict`, `unknown-decision-key`, and `retired-decision-key` should fall back in production enforcement mode.
+- Browser-provided definition identity is useful for drift detection, not as a security boundary.
+- Multiple builds of the same service may be deployed at the same time. Runtime integrity must be evaluated against the expected definition identity carried by the calling build, not a singular environment-wide bundle.
+- `contractId` identifies the immutable semantic contract used by the caller. `contractDigest` identifies canonical contract content. `bundleDigest` identifies the full submitted bundle. `buildId`, `deploymentId`, and `artifactDigest` identify the workload instance or release that carries the contract expectation.
+- Semantic contract changes should not overwrite an existing `contractId`. They should be rejected under the old ID and registered as a new contract ID or new explicit semantic version.
+
+## Contract, telemetry, evidence, and state reuse
+
+Flaggo should avoid sharing unsafe learned decision behavior across different contracts, but it should not throw away useful historical observations.
+
+| Layer | Default sharing behavior | Reason |
+| --- | --- | --- |
+| Raw telemetry observations | Share across contracts with the same application, event, target, and schema semantics. | Observations are historical facts, not learned policy. |
+| Derived evidence or signals | Share only when the evidence definition hash matches. | A metric can be reused if it means the same thing. |
+| Decision state or active strategy | Isolate by contract ID and control/runtime target. | A learned value or strategy for one contract may be unsafe for another. |
+
+Rules:
+
+- Telemetry identity should be stable at the event/signal level so a new definition can reuse existing observations for unchanged inputs.
+- Evidence requirements should have deterministic definition hashes based on source event, field mapping, window, aggregation, filters, and target level.
+- A new definition may start in partial-warm mode: reused evidence can contribute immediately, while new signals collect data until policy marks them sufficient.
+- Decision state, active strategies, cooldowns, and operator overrides are keyed by contract ID plus resolved control/runtime target. They are not inherited automatically across contracts.
+- State migration between contract IDs should be an explicit operator or registry action, not an implicit compatibility rule.
 
 ## Proposal contracts
 
@@ -406,10 +519,10 @@ type DecisionProposal =
 
 type ValueProposal = {
   proposalType: "value";
-  surface: string;
-  targetScope: ScopeRef;
+  decisionKey: string;
+  target: DecisionTargetRef;
   value: DecisionValue;
-  confidence: number | null;
+  confidence: ConfidenceReport | null;
   evidenceStatus: string;
   rationale: string;
   risks: string[];
@@ -417,10 +530,10 @@ type ValueProposal = {
 
 type StrategyProposal = {
   proposalType: "strategy";
-  surface: string;
-  targetScope: ScopeRef;
+  decisionKey: string;
+  target: DecisionTargetRef;
   strategy: DecisionStrategy;
-  confidence: number | null;
+  confidence: ConfidenceReport | null;
   evidenceStatus: string;
   rationale: string;
   risks: string[];
@@ -428,8 +541,8 @@ type StrategyProposal = {
 
 type ExperimentProposal = {
   proposalType: "experiment";
-  surface: string;
-  targetScope: ScopeRef;
+  decisionKey: string;
+  target: DecisionTargetRef;
   candidates: DecisionValue[];
   rationale: string;
   risks: string[];
@@ -437,15 +550,15 @@ type ExperimentProposal = {
 
 type HoldProposal = {
   proposalType: "hold";
-  surface: string;
-  targetScope: ScopeRef;
+  decisionKey: string;
+  target: DecisionTargetRef;
   reason: string;
 };
 
 type RollbackProposal = {
   proposalType: "rollback";
-  surface: string;
-  targetScope: ScopeRef;
+  decisionKey: string;
+  target: DecisionTargetRef;
   reason: string;
 };
 
@@ -468,11 +581,12 @@ Rules:
 type AuditRecord = {
   auditId?: string;
   timestamp: string;
-  surface: string;
+  decisionKey: string;
   request?: DecideRequest;
   response?: DecideResponse;
   contractVersion?: string;
-  resolvedScope?: ScopeRef;
+  runtimeTarget?: DecisionTargetRef;
+  controlTarget?: DecisionTargetRef;
   evidence?: EvidenceSnapshot;
   stateSummary?: {
     decisionMode: DecideResponse["decisionMode"];
@@ -496,34 +610,43 @@ Rules:
 ## Contract bundle and registration receipt
 
 ```ts
-type ContractBundle = {
-  format: "flaggo.contract-bundle/v1";
+type DecisionDefinitionBundle = {
+  format: "flaggo.decision-definition-bundle/v1";
   application: {
     id: string;
     environment: string;
+  };
+  build?: {
+    buildId?: string;
+    artifactDigest?: string;
+    version?: string;
   };
   source: {
     repository?: string;
     path?: string;
     commit?: string;
   };
-  surfaces: ContractBundleSurface[];
+  definitions: DecisionDefinitionBundleEntry[];
 };
 
-type ContractBundleSurface = {
-  name: string;
+type DecisionDefinitionBundleEntry = {
+  definitionId: string;
+  key: string;
   owner?: string;
   valueType: ValueType;
   actionSpace: ActionSpace;
-  scopeHierarchy: string[];
   runtimeContextSchema?: RuntimeContextSchema;
+  signals?: SignalDeclarationBlock;
+  inference?: InferenceDeclaration;
+  intent?: DecisionIntent;
   fallback: FallbackContract;
   onlineStrategy?: OnlineStrategyDeclaration;
 };
 
-type ContractBundleValidationResult = {
+type DefinitionBundleValidationResult = {
   result: "valid" | "invalid";
-  digest?: string;
+  bundleDigest?: string;
+  contractDigest?: string;
   errors: string[];
   warnings: string[];
 };
@@ -532,23 +655,30 @@ type RegistrationReceipt = {
   application: string;
   environment: string;
   bundleDigest: string;
-  registeredRevision: string;
+  contractDigest: string;
+  buildId?: string;
+  artifactDigest?: string;
+  registeredRevisions: Record<string, string>;
   compatibility: ContractCompatibility;
   status: "approved" | "rejected" | "requires-approval";
 };
 
-type ResourceOwnershipManifest = ContractBundle;
-type ManifestValidationResult = ContractBundleValidationResult;
+type ResourceOwnershipManifest = DecisionDefinitionBundle;
+type ManifestValidationResult = DefinitionBundleValidationResult;
 ```
 
 Rules:
 
-- `ContractBundle` is the canonical language-neutral sync artifact.
+- `DecisionDefinitionBundle` is the canonical language-neutral sync artifact.
 - SDK-generated declarations, hand-authored JSON/YAML, GitOps workflows, and registry exports should all produce or reference the same bundle shape.
-- Bundle sync creates or validates contract revisions.
+- Bundle sync creates or validates decision definition revisions.
+- Definition IDs are semantic ownership boundaries. A semantic conflict under an existing definition ID is rejected; the caller must create or allow tooling to create a new definition ID/revision.
 - Missing bundle resources become deprecation candidates, not deletes.
 - Bundle data must remain provider-neutral.
-- `ResourceOwnershipManifest` is retained only as a compatibility alias while the design migrates to `ContractBundle`.
+- `ResourceOwnershipManifest` is retained only as a compatibility alias while the design migrates to `DecisionDefinitionBundle`.
+- Build metadata is allowed in the bundle for traceability, but compatibility should be based on canonical definition content, not incidental build metadata. Two different builds with identical decision definitions may share the same `contractDigest` while having different `buildId` or `artifactDigest`.
+- Registration receipts should identify revisions per decision key because one bundle can contain multiple decision definitions.
+- Registry-managed versioning should be the default UX. Developers should not need to hand-name every version; tooling can keep a stable definition ID for metadata-only changes and mint a new semantic revision or ID when the definition changes incompatibly.
 
 ## Tetris MVP contract example
 
@@ -557,8 +687,8 @@ Rules:
   "ref": {
     "appId": "tetris-demo",
     "environment": "dev",
-    "surface": "tetris.dropInterval",
-    "contractVersion": "1"
+    "key": "tetris.dropInterval",
+    "revision": "1"
   },
   "lifecycle": "active",
   "valueType": "number",
@@ -569,7 +699,6 @@ Rules:
     "step": 50,
     "default": 800
   },
-  "scopeHierarchy": ["session", "user", "segment", "global"],
   "fallback": {
     "value": 800,
     "reason": "safe_default_drop_interval"
@@ -578,9 +707,57 @@ Rules:
     "userId": { "type": "string", "required": true },
     "sessionId": { "type": "string", "required": true },
     "currentLevel": { "type": "number" },
-    "boardPressure": { "type": "string" },
+    "deviceType": { "type": "string" },
+    "boardPressure": { "type": "number" },
     "recentPlacementTimeMs": { "type": "number" },
     "recoveryFailures": { "type": "number" }
+  },
+  "signals": {
+    "targetHierarchy": ["session", "user", "cohort", "global"],
+    "definitions": {
+      "boardPressure": { "kind": "metric", "type": "number", "source": "app-emitted", "range": [0, 1] },
+      "recentPlacementTimeMs": { "kind": "metric", "type": "number", "source": "app-emitted" },
+      "recoveryFailures": { "kind": "metric", "type": "number", "source": "app-emitted" },
+      "currentLevel": { "kind": "metric", "type": "number", "source": "app-emitted" },
+      "piecePlaced": {
+        "kind": "event",
+        "emitAs": "piece_placed",
+        "fields": { "placementTimeMs": "number", "hardDrop": "boolean" }
+      },
+      "sessionEnded": {
+        "kind": "event",
+        "emitAs": "session_ended",
+        "fields": { "endReason": "string", "durationSeconds": "number" }
+      },
+      "earlyLossRate": {
+        "kind": "metric",
+        "type": "number",
+        "source": "service-aggregated",
+        "from": "sessionEnded.endReason",
+        "aggregation": "rate(endReason == 'early_loss')"
+      },
+      "hardDropRate": {
+        "kind": "metric",
+        "type": "number",
+        "source": "service-aggregated",
+        "from": "piecePlaced.hardDrop",
+        "aggregation": "rate(hardDrop == true)"
+      }
+    }
+  },
+  "inference": {
+    "target": "session",
+    "inputs": ["boardPressure", "recentPlacementTimeMs", "recoveryFailures", "currentLevel"],
+    "fallbackOrder": ["cohort", "global"]
+  },
+  "intent": {
+    "type": "metric-objective",
+    "primary": { "signal": "earlyLossRate", "direction": "minimize" },
+    "secondary": [
+      { "signal": "hardDropRate", "direction": "target", "target": 0.45 },
+      { "signal": "recentPlacementTimeMs", "direction": "minimize" }
+    ],
+    "rationale": "Keep gameplay challenging but playable while reducing early frustration."
   },
   "onlineStrategy": {
     "mode": "approved-strategy",
@@ -597,7 +774,8 @@ Rules:
       { "kind": "number-bounds", "min": 200, "max": 1500 },
       { "kind": "max-delta", "value": 50 },
       { "kind": "cooldown", "seconds": 20 },
-      { "kind": "min-confidence", "value": 0.7 }
+      { "kind": "min-evidence-quality", "value": 0.7 },
+      { "kind": "max-model-uncertainty", "value": 0.35 }
     ]
   }
 }
@@ -609,15 +787,15 @@ For the first implementation, treat these as frozen:
 
 - result value primitives,
 - action space shapes,
-- `ScopeRef`,
-- `DecisionContract`,
+- `DecisionTargetRef`,
+- `DecisionDefinition`,
 - `DecisionStrategy` with `fixed-value` and `numeric-rule`,
 - `DecisionState`,
 - `DecideRequest`,
 - `DecideResponse`,
 - `PolicyEvaluationResult`,
 - `AuditRecord`,
-- `ContractBundle`,
+- `DecisionDefinitionBundle`,
 - `RegistrationReceipt`,
 - `ContractIdentity`,
 - `ContractRuntimeStatus`,

@@ -4,7 +4,7 @@ Flaggo is an exploration of **AI-native runtime decisioning**: a governed way fo
 
 The core question is:
 
-> Given a decision surface, scope, runtime context, telemetry evidence, goals, policy constraints, system state, uncertainty, action space, and fallback contract, what should happen now?
+> Given a decision definition, decision evidence, and governed state when available, what should happen now?
 
 ## Why this exists
 
@@ -37,13 +37,11 @@ The first product experience uses a Tetris game:
 
 Instead of hard-coding one global speed or manually tuning a feature flag, the developer declares:
 
-- domain telemetry events such as `hard_drop_pressed`, `piece_placed`, and `game_ended`,
-- decision evidence such as hard-drop rate and early-loss rate,
-- a decision surface: `tetris.dropInterval`,
-- an action space: `200ms` to `1500ms`,
-- goals: keep gameplay challenging but playable,
-- policies: max delta, cooldown, sample-size minimum, confidence floor,
-- fallback: `800ms`.
+- a decision key: `tetris.dropInterval`,
+- a decision definition with output contract, target hierarchy, intent, safety, and fallback,
+- decision evidence such as hard-drop rate, placement time, and early-loss rate,
+- async intelligence that can learn a governed strategy,
+- online inference that returns one safe value for the current game session.
 
 At runtime:
 
@@ -71,9 +69,10 @@ game emits telemetry
 - [Manifesto](docs/MANIFESTO.md)
 - [Hero Scenario](docs/HERO_SCENARIO.md)
 - [High-Level Design](docs/DESIGN.md)
-- [Decision Surface](docs/DECISION_SURFACE.md)
-- [Decision Scope](docs/DECISION_SCOPE.md)
-- [Decision Factors](docs/DECISION_FACTORS.md)
+- [Mental Model](docs/MENTAL_MODEL.md)
+- [Decision Definition](docs/DECISION_DEFINITION.md)
+- [Decision Evidence](docs/DECISION_EVIDENCE.md)
+- [Decision Intelligence](docs/DECISION_INTELLIGENCE.md)
 - [MVP Implementation Guide](docs/IMPLEMENTATION_GUIDE.md)
 - [Component Design Index](docs/design/README.md)
 

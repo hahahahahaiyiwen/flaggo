@@ -10,63 +10,86 @@ This is intentionally not a detailed component specification. Specific API, SDK,
 
 Flaggo gives running software a governed way to ask:
 
-> Given this decision surface, this scope, current runtime context, available evidence, goals, policies, system state, uncertainty, action space, and fallback contract, what should happen now?
+> Given this decision definition, available decision evidence, and approved governed state when it exists, what should happen now?
 
 The application still owns execution. Flaggo owns the decisioning control plane around selected runtime choices.
 
+The refined mental model is documented in [MENTAL_MODEL.md](MENTAL_MODEL.md). In short, the top-level concepts are:
+
+```text
+Decision Definition
+  declares what may be decided and how targets/evidence/fallback resolve
+
+Decision Evidence
+  provides runtime facts, observations, evidence views, quality, and provenance
+
+Decision Intelligence
+  learns asynchronously and infers online within the definition and evidence
+```
+
+Canonical loops:
+
+```text
+DecisionDefinition + DecisionEvidence + outcomes + objectives
+  -> DecisionProposal
+  -> governance
+  -> GovernedDecisionState
+
+DecisionDefinition + runtime context + compatible GovernedDecisionState + policy
+  -> RuntimeDecisionResult, possibly containing fallback
+```
+
 ## Core concepts
 
-### Decision surface
+### Decision definition
 
-A decision surface is the explicit place where application code delegates a runtime choice to flaggo. It answers: **what is being decided?**
+A decision key is the stable developer-facing name where application code delegates a runtime choice to Flaggo. It answers: **what decision family is being delegated?**
 
 Examples include `tetris.dropInterval`, `checkout.fraudReviewRequired`, `api.retryPolicy`, `llm.modelRoute`, and `workflow.escalationAction`.
 
-Detailed concept design: [DECISION_SURFACE.md](DECISION_SURFACE.md).
+A decision definition is the versioned semantic contract behind a key. It answers: **what may be decided and how should it resolve for this revision?** It owns signal declarations, typed intent, inference configuration, safety constraints, and output contract/action space. It does not own governed state or concrete runtime results.
 
-### Decision scope
+Detailed concept design: [DECISION_DEFINITION.md](DECISION_DEFINITION.md).
 
-Decision scope is the boundary at which a decision is evaluated, applied, measured, governed, and remembered.
+### Decision evidence
 
-It answers: **for whom, where, or at what aggregation boundary is this decision being made?**
+Decision evidence is what Flaggo knows from runtime facts, observations, telemetry, evidence views, quality signals, uncertainty, target identifiers, and provenance.
 
-Scope is the coordinating concept that resolves applicable runtime context, telemetry evidence, goals, policy constraints, state, uncertainty, action space, and fallback behavior.
+| Evidence concept | Answers | Example |
+| --- | --- | --- |
+| Runtime context | What is true right now? | board pressure is high |
+| Runtime target | Who or what receives this decision now? | `session:game-456` |
+| Evidence view | Which slice of telemetry is relevant? | `placement_time@1` grouped by cohort over 24h |
+| Application/build provenance | Which software artifact is calling for audit/operations? | `service=web`, `build=2026.07.25.1` |
 
-Detailed concept design: [DECISION_SCOPE.md](DECISION_SCOPE.md).
+Detailed concept design: [DECISION_EVIDENCE.md](DECISION_EVIDENCE.md).
 
-### Decision factors
+### Target resolution
 
-Decision factors are the inputs and constraints that shape a governed decision. They are described in detail in [DECISION_FACTORS.md](DECISION_FACTORS.md).
+The decision definition declares a target hierarchy, and resolvers choose path-specific targets from that hierarchy:
 
-At the high level:
-
-```text
-decision surface + decision scope
-  -> resolve runtime context
-  -> resolve telemetry evidence
-  -> resolve goals
-  -> resolve policy constraints
-  -> resolve system state
-  -> assess uncertainty
-  -> select from action space
-  -> return decision or fallback
-```
+| Target role | Chosen by | Example |
+| --- | --- | --- |
+| Runtime target | Online inference | `session:game-456` |
+| Learning target | Async intelligence | `cohort:new_players` |
+| Control target | Governance | `cohort:new_players` |
+| Fallback target | Runtime/governance | `global` |
 
 ### Decision intelligence
 
-Decision intelligence is the AI-native reasoning layer that turns resolved surfaces, scopes, factors, evidence, goals, state, and uncertainty into a candidate decision proposal. For real-time adaptive decisions, the proposal may be a decision strategy rather than one fixed value.
+Decision intelligence is the AI-native reasoning layer that turns decision definitions and decision evidence into `DecisionProposal` objects. For real-time adaptive decisions, async intelligence usually proposes a bounded strategy, while online inference consumes compatible `GovernedDecisionState` to return one concrete `RuntimeDecisionResult`.
 
 It answers: **how should Flaggo reason about what to do next before governance decides whether it is safe to apply?**
 
 This is the layer that makes Flaggo more than a dynamic configuration or feature flag service. It can behave like an embedded data scientist or operator assistant: observe telemetry, compare outcomes, choose an analysis strategy, propose experiments, value changes, or bounded adaptation strategies, explain uncertainty, and recommend whether to hold, change, test, roll back, or fall back.
 
-Decision intelligence should produce a **decision proposal**, not an automatically final runtime decision. A proposal can be a single value, an experiment, or a governed strategy that online runtime executes quickly against live context. The proposal is then checked by policy, scope limits, lifecycle state, cooldowns, confidence floors, approval requirements, and fallback rules before becoming a governed decision or active strategy.
+Decision intelligence should produce a **DecisionProposal**, not an automatically final runtime decision. A proposal can be a single value, an experiment, or a bounded strategy that online runtime executes quickly against live context. The proposal is then checked by policy, target authority, lifecycle state, cooldowns, evidence quality, model uncertainty limits, approval requirements, and fallback rules before becoming `GovernedDecisionState`.
 
 Detailed concept design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md).
 
-### Governed decision
+### Runtime decision result
 
-A governed decision is the output Flaggo returns to application code.
+`RuntimeDecisionResult` is the output Flaggo returns to application code.
 
 It should include:
 
@@ -82,11 +105,11 @@ The application should be able to apply the result without knowing the internals
 At a high level:
 
 ```text
-decision surface + decision scope + decision factors
-  -> decision intelligence
-  -> candidate value, experiment, or strategy proposal
-  -> policy, scope, and safety governance
-  -> governed decision or fallback
+DecisionDefinition + runtime context + compatible GovernedDecisionState
+  -> decision intelligence or approved strategy execution
+  -> candidate value, experiment, or strategy result
+  -> policy, target, and safety checks
+  -> RuntimeDecisionResult, possibly containing fallback
 ```
 
 ## Hero scenario design target
@@ -94,25 +117,27 @@ decision surface + decision scope + decision factors
 The first complete design target is the Tetris `dropInterval` decision.
 
 ```text
-Decision surface: tetris.dropInterval
-Decision scope: user or session, with fallback to segment/global
-Runtime context: userId, sessionId, currentLevel, deviceType
-Telemetry evidence: hard-drop rate, placement time, early game-over rate
+Decision key: tetris.dropInterval
+Decision definition: tetris.dropInterval@2
+Runtime target: session:game-456
+Control target: cohort:new_players or global
+Runtime context: userId, sessionId, cohort, currentLevel, deviceType, boardPressure, recentPlacementTimeMs, recoveryFailures
+Evidence views: hard-drop rate, placement time, early game-over rate by session/cohort/global windows
 Goals: keep gameplay challenging but playable
-Policy constraints: min/max interval, max delta, cooldown, confidence floor
-System state: active value, previous value, cooldown, operator mode
+Policy constraints: min/max interval, max delta, cooldown, min evidence quality, max model uncertainty
+Governed state: active value or strategy, previous value, cooldown, rollout, operator mode
 Action space: numeric interval from 200ms to 1500ms
 Fallback contract: 800ms default
 ```
 
 This scenario should prove the smallest useful version of Flaggo:
 
-1. A developer can declare telemetry and a decision surface.
-2. The app can emit evidence and ask for a scoped decision.
-3. Flaggo can evaluate evidence, goals, policy, state, and uncertainty.
-4. Async intelligence can produce a candidate value or adaptive strategy proposal.
-5. Policy and scope governance can approve, limit, hold, roll back, fall back, or activate the strategy.
-6. The online runtime path can execute the active strategy against live game context.
+1. A developer can declare a stable decision key and bounded decision definition.
+2. The app can emit observations and ask for a decision for a runtime target.
+3. Flaggo can resolve evidence views, governed state, goals, policy, and uncertainty.
+4. Async intelligence can produce a proposal for a decision definition and control target.
+5. Governance can approve, limit, hold, roll back, fall back, or activate the strategy.
+6. The online runtime path can execute governed state against live game context.
 7. The app can safely apply a value or fallback.
 8. An operator can inspect why the decision happened.
 
@@ -124,7 +149,7 @@ The client library is the developer-facing integration point.
 
 Responsibilities:
 
-- define decision surfaces,
+- define decision keys and decision definitions,
 - define action spaces and fallbacks,
 - define or emit domain telemetry,
 - pass runtime context when asking for decisions,
@@ -135,23 +160,23 @@ Responsibilities:
 The client library should make the runtime primitive feel natural:
 
 ```text
-define events -> define evidence metrics -> declare decision -> ask decision -> apply result
+declare -> decide by observing
 ```
 
 For the Tetris hero scenario, the TypeScript client is the first likely library target.
 
 ### 2. Decision API service
 
-The Decision API is the runtime service applications call when they need a governed decision.
+The Decision API is the runtime service applications call when they need a `RuntimeDecisionResult`.
 
 Responsibilities:
 
 - receive decision requests,
-- validate decision surface and scope,
-- resolve applicable contracts and factor configuration,
-- fetch evidence and system state,
+- validate decision key, definition, runtime target, and application identity,
+- resolve applicable decision definitions, target references, and signal configuration,
+- fetch evidence views and governed state,
 - evaluate policy constraints,
-- invoke decision reasoning or deterministic selection logic,
+- execute compatible governed state through deterministic selection or approved strategy logic,
 - return a value/action, explanation, confidence, policy result, and fallback status.
 
 The Decision API must be fast, reliable, and safe-by-default. If it cannot decide safely, it should return fallback guidance rather than pretending confidence exists.
@@ -164,7 +189,7 @@ Responsibilities:
 
 - ingest domain events and OpenTelemetry-compatible signals,
 - correlate events, metrics, traces, logs, and decision records,
-- support local/context-scoped evidence and server-side aggregation,
+- support local/runtime-target evidence and server-side aggregation,
 - expose evidence snapshots to the Decision API,
 - preserve enough evidence lineage for explanations and audits.
 
@@ -176,12 +201,13 @@ The contract/registry service stores the declared meaning of decisions.
 
 Responsibilities:
 
-- register decision surfaces,
+- register stable decision keys,
+- register versioned decision definitions,
 - store action spaces,
 - store fallback contracts,
 - store goal definitions,
-- store telemetry/evidence definitions,
-- store scope rules and resolution chains,
+- store telemetry/evidence definitions and bindings,
+- store target rules and resolution chains,
 - version contract changes.
 
 Contracts should be explicit and versioned because runtime decisions must be explainable after the fact.
@@ -192,9 +218,9 @@ The policy service is the safety gate.
 
 Responsibilities:
 
-- resolve applicable policies by decision surface and scope,
+- resolve applicable policies by decision definition and target,
 - enforce hard constraints,
-- evaluate confidence floors, sample-size requirements, cooldowns, max deltas, approval requirements, and guardrails,
+- evaluate evidence quality, model uncertainty limits, sample-size requirements, cooldowns, max deltas, approval requirements, and guardrails,
 - block or require fallback when safety requirements are not met,
 - produce stable reason codes for audit and operator visibility.
 
@@ -206,13 +232,13 @@ The state service tracks the current and historical state of decisions.
 
 Responsibilities:
 
-- active value/action per surface and scope,
+- active value/action per decision definition and control target,
 - previous decisions,
 - cooldown state,
 - rollout or exposure state,
 - operator overrides,
 - paused/resumed mode,
-- rollback state.
+- rollback transition metadata.
 
 State lets Flaggo avoid stateless one-off guesses and prevents thrashing or conflicting decisions.
 
@@ -247,11 +273,11 @@ Auditability is required for trust. It is not optional observability.
 
 ### 9. Operator console
 
-The operator console is the human governance surface.
+The operator console is the human governance interface.
 
 Responsibilities:
 
-- list decision surfaces,
+- list decision keys and definitions,
 - inspect scopes and resolution chains,
 - view goals, policies, fallbacks, and active state,
 - inspect recent decisions and explanations,
@@ -271,17 +297,17 @@ The **online runtime path** serves application requests:
 ```text
 Application code
   -> emits domain telemetry through client library
-  -> asks Decision API for decision(surface, scope, runtime context)
+  -> asks Decision API for decision(definition, runtime target, runtime context)
 
 Decision API
-  -> loads decision contract
-  -> resolves scope chain
-  -> fetches telemetry evidence
-  -> fetches system state
-  -> uses active governed value, approved strategy, approved experiment, fallback, or case-specific runtime reasoning
-  -> applies governance stage
+  -> loads decision definition
+  -> resolves runtime target, control target, evidence views, policy, and fallback
+  -> fetches evidence snapshots
+  -> fetches compatible GovernedDecisionState
+  -> uses active governed value, approved strategy, approved experiment, or fallback
+  -> applies deterministic online policy checks
   -> records audit/explanation
-  -> returns decision or fallback
+  -> returns RuntimeDecisionResult, possibly containing fallback
 
 Application code
   -> applies returned value/action
@@ -291,58 +317,68 @@ Application code
 The **async intelligence path** analyzes evidence outside the application's request/response path:
 
 ```text
-Telemetry changes, schedule, operator request, or decision drift
+Telemetry changes, schedule, operator request, definition activation, rollout review, or drift
   -> decision intelligence
-  -> observe evidence and state
+  -> select decision definition + control target work item
+  -> observe evidence views and governed state
   -> interpret findings
   -> choose analysis mode
   -> generate and evaluate candidate values or strategies
-  -> produce value, experiment, or strategy proposal
+  -> produce DecisionProposal
   -> governance stage
-  -> active value, active strategy, experiment, hold, rollback, or fallback
+  -> GovernedDecisionState: active value, active strategy, experiment, hold, or fallback-only state
 ```
 
-The **governance stage** is downstream of both paths. It is not a peer runtime path. It applies policy, scope authority, lifecycle state, cooldowns, approval requirements, overrides, and fallback rules before a proposal or runtime candidate affects application behavior.
+The **governance stage** is downstream of async proposals. It applies policy, target authority, lifecycle state, cooldowns, approval requirements, overrides, and fallback rules before a `DecisionProposal` becomes `GovernedDecisionState`. Online inference should normally execute deterministic, bounded, policy-gated state and return a `RuntimeDecisionResult`.
+
+Rollback is not a kind of governed-state payload. A rollback proposal transitions authority by activating a replacement or previous known-safe state and marking the replaced state `rolled-back`.
+
+Governed state lifecycle:
+
+```text
+DecisionProposal: proposed -> validated -> approved | rejected
+GovernedDecisionState: pending -> active -> superseded | expired | rolled-back
+```
+
+Approval can be automatic for low-risk changes within typed constraints and sufficient evidence only when deployment or environment policy grants that authority. Human approval is required for high-impact strategies, policy exceptions, low confidence, overlapping target conflicts, or regulated/business-critical decisions.
 
 Supporting lifecycle flows keep the system declared, evidenced, operated, audited, and improved over time:
 
 | Flow | Purpose |
 | --- | --- |
-| Contract sync | Validates and registers versioned surfaces, scopes, policies, telemetry definitions, and fallbacks from code/deploy manifests. |
-| Telemetry ingestion | Turns application and OpenTelemetry signals into scoped evidence snapshots. |
-| Operator intervention | Lets humans pause, resume, override, approve, reject, or roll back governed decisions. |
+| Contract sync | Validates and registers versioned decision definitions, supported targets, policies, signal declarations, inference configuration, and fallbacks from code/deploy bundles. |
+| Telemetry ingestion | Turns application and OpenTelemetry signals into evidence views and snapshots. |
+| Operator intervention | Lets humans pause, resume, override, approve, reject, or roll back `GovernedDecisionState`. |
 | Experiment lifecycle | Manages controlled exposure, outcome measurement, analysis, promotion, stop, or rollback. |
 | Audit and explanation | Records decision requests, proposals, policy outcomes, evidence references, fallbacks, and explanations. |
 | Feedback and learning | Feeds runtime outcomes back into evidence, future proposals, models, heuristics, and experiment design. |
 
 Detailed lifecycle design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md#supporting-lifecycle-flows).
 
-## Scope resolution model
+## Target and resolution model
 
-Scope resolution is central to flaggo.
+Target and scope resolution are central to Flaggo, but the resolved references have different meanings.
 
 For a request like:
 
 ```text
-surface = tetris.dropInterval
-scope = user:123
+definition = tetris.dropInterval@2
+runtime target = session:game-456
 ```
 
-Flaggo may resolve factors through:
+Flaggo may resolve:
 
 ```text
-user:123 -> segment:new_players -> global
+runtime target: session:game-456
+control target: cohort:new_players
+evidence views:
+  placement_time@1 / session:game-456 / 2m
+  early_loss_rate@1 / cohort:new_players / 24h
+policy: cohort:new_players -> global
+fallback: global 800ms
 ```
 
-That means:
-
-- telemetry evidence may include user/session evidence and segment evidence,
-- policy may be user-specific or fall back to global,
-- goals may be inherited from global unless overridden,
-- state may be user-specific,
-- fallback may use a user override or global default.
-
-This is what lets Flaggo support both personalization and broader operational decisions without changing the core model.
+This is what lets Flaggo approve behavior at manageable control boundaries while applying it safely to high-cardinality runtime targets.
 
 ## Initial boundaries
 
@@ -370,7 +406,7 @@ The goal is not to implement every scenario. The goal is to prove the primitive 
 
 ## Design principles
 
-1. **Explicit over implicit**: decisions, scopes, goals, policies, action spaces, and fallbacks must be named.
+1. **Explicit over implicit**: decisions, definitions, targets, goals, policies, action spaces, and fallbacks must be named.
 2. **Governed over magical**: policy and fallback are first-class.
 3. **Evidence-aware over telemetry-blind**: decisions must be grounded in runtime context and observed behavior.
 4. **Uncertainty-aware over false precision**: weak evidence should block, suggest, or fall back.

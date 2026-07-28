@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The state component owns live runtime authority for a decision surface and scope. Contracts describe what a decision means; state describes what is currently active.
+The state component owns live runtime authority for a decision definition and target. Contracts describe what a decision means; state describes what is currently active.
 
 For the MVP, state is intentionally small and local-first. It should support the Tetris `dropInterval` adaptive strategy without requiring cloud storage.
 
@@ -18,7 +18,7 @@ State stores:
 - cooldown deadline,
 - pause state,
 - operator override,
-- contract version tied to the active state.
+- contract ID/revision tied to the active state.
 
 MVP state should support in-memory storage first. A later persistent implementation can use SQLite, PostgreSQL, Redis, or a cloud store behind the same interface.
 
@@ -31,13 +31,15 @@ interface IStateStore {
 }
 
 type StateRequest = {
-  surface: string;
-  scope: ScopeRef;
+  definition: DecisionDefinitionRef;
+  controlTarget?: DecisionTargetRef;
+  runtimeTarget?: DecisionTargetRef;
 };
 
 type StateUpdate = {
-  surface: string;
-  scope: ScopeRef;
+  definition: DecisionDefinitionRef;
+  controlTarget?: DecisionTargetRef;
+  runtimeTarget?: DecisionTargetRef;
   expectedContractVersion?: string;
   nextState: DecisionState;
   reason: string;
@@ -48,8 +50,9 @@ type StateUpdate = {
 
 ```text
 Decision API
-  -> resolves scope
-  -> loads active state for resolved scope, if present
+  -> resolves runtime target and control target
+  -> loads governed control state for definition + control target, if present
+  -> loads runtime target state for definition + runtime target, if needed
   -> checks override or pause
   -> executes active strategy or active value
   -> updates lastDecisionAt/cooldown when needed
@@ -71,8 +74,9 @@ Example active state:
 ```json
 {
   "surface": "tetris.dropInterval",
-  "scope": {
-    "type": "segment",
+  "definition": "tetris.dropInterval@2",
+  "controlTarget": {
+    "type": "cohort",
     "id": "new_players"
   },
   "contractVersion": "1",
@@ -90,6 +94,17 @@ Example active state:
   "previousValue": 800
 }
 ```
+
+## State isolation across contracts
+
+Decision state is not the same thing as telemetry. State represents live authority: active strategy, active value, cooldown, pause, override, and rollback transition metadata. Governed control state must be isolated by decision definition plus control target. Runtime target state must be isolated by decision definition plus runtime target.
+
+Rules:
+
+- A new semantic decision definition gets a new state namespace by default.
+- Old builds can continue using their known contract ID and state while new builds use a new contract ID or semantic revision.
+- Raw telemetry and matching evidence definitions may be reused to avoid cold start, but active strategy/state should not be copied automatically.
+- If a team wants to seed a new contract from old state, that should be an explicit migration with audit records and policy checks.
 
 ## MVP non-goals
 

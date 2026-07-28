@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The Decision API is the runtime service applications call when they need a governed decision from flaggo.
+The Decision API is the runtime service applications call when they need a `RuntimeDecisionResult` from flaggo.
 
-It receives a decision surface, scope/runtime context, and optional request metadata. It resolves the applicable decision contract and factors, evaluates evidence and policy, records audit context, and returns a value or fallback guidance.
+It receives a decision key, runtime target/context, application identity, and optional request metadata. It resolves the applicable decision definition, control target, evidence views, governed state, and policy, records audit context, and returns a value or fallback guidance.
 
-The runtime API should also verify compact contract identity when the client or deployment provides it. A decision must not be returned as approved when the active registered contract is incompatible with what the workload was built to handle.
+The runtime API should also verify compact contract identity when the client or deployment provides it. A decision must not be returned as approved when the caller's contract ID or revision is unknown, retired, or semantically conflicting.
 
 ## Design goals
 
@@ -33,7 +33,7 @@ request(surface, runtime context, optional requested scope)
   -> resolve scope chain
   -> load decision contract
   -> fetch telemetry evidence
-  -> fetch system state
+  -> fetch governed state
   -> assess uncertainty
   -> load active governed value, strategy, experiment, override, or fallback
   -> execute active strategy when present
@@ -121,14 +121,14 @@ Initial resource groups:
 Responsibilities:
 
 - register applications and environments,
-- register decision surfaces,
+- register decision keys and definitions,
 - manage decision contracts,
 - define result type and action space,
-- define scope hierarchy,
+- define target hierarchy,
 - define evidence requirements,
 - define goals and fallback contracts,
 - register policy constraints,
-- register governed decision strategies produced by async intelligence or operator tooling.
+- register `GovernedDecisionState` strategies produced by async intelligence or operator tooling.
 
 Decision resources should be managed as versioned, append-only contracts with a simplified lifecycle:
 
@@ -181,7 +181,7 @@ Responsibilities:
 
 - list decision history,
 - inspect individual audit records,
-- query by surface, scope, time window, policy result, or fallback status,
+- query by decision key, definition, runtime target, control target, evidence view, time window, policy result, or fallback status,
 - support operator console views.
 
 Example:
@@ -189,7 +189,7 @@ Example:
 ```json
 {
   "surface": "tetris.dropInterval",
-  "requestedScope": {
+  "runtimeTarget": {
     "type": "session",
     "id": "game-456"
   },
@@ -198,13 +198,16 @@ Example:
     "sessionId": "game-456",
     "currentLevel": 3,
     "deviceType": "mobile",
-    "boardPressure": "high",
+    "boardPressure": 0.82,
     "recentPlacementTimeMs": 1300,
     "recoveryFailures": 2
   },
   "expectedContract": {
-    "digest": "sha256:8fc...",
+    "contractId": "tetris.dropInterval",
+    "contractDigest": "sha256:contract...",
+    "bundleDigest": "sha256:bundle...",
     "revision": "42",
+    "buildId": "tetris-web-2026-07-25.1",
     "deploymentId": "tetris-web-2026-07-25.1"
   },
   "client": {
@@ -216,36 +219,44 @@ Example:
 }
 ```
 
-For the HTTP route `POST /v1/decisions/{surface}:decide`, the path supplies the surface. The service should normalize the route parameter and body into the shared `DecideRequest` shape used internally by the Decision API core.
+For the HTTP route `POST /v1/decisions/{surface}:decide`, the path supplies the stable decision key. The service should normalize the route parameter and body into the shared `DecideRequest` shape used internally by the Decision API core, including the resolved decision definition and runtime target.
 
 Response:
 
 ```json
 {
   "surface": "tetris.dropInterval",
-  "requestedScope": {
+  "runtimeTarget": {
     "type": "session",
     "id": "game-456"
   },
-  "resolvedScope": {
-    "type": "session",
-    "id": "game-456"
+  "controlTarget": {
+    "type": "cohort",
+    "id": "new_players"
   },
   "resolutionChain": [
     "session:game-456",
     "user:user-123",
-    "segment:new_players",
+    "cohort:new_players",
     "global"
   ],
   "value": 700,
   "valueType": "number",
   "decisionMode": "strategy",
   "strategyId": "strategy-tetris-new-players-v1",
-  "confidence": 0.72,
-  "evidenceScope": {
-    "type": "session",
-    "id": "game-456"
+  "confidence": {
+    "evidenceQuality": 0.82,
+    "modelUncertainty": 0.31,
+    "expectedOutcome": 0.72
   },
+  "evidenceViews": [
+    {
+      "evidenceKey": "gameplay.placement_time",
+      "revision": "1",
+      "target": { "type": "session", "id": "game-456" },
+      "window": "2m"
+    }
+  ],
   "fallback": {
     "resolutionFallbackUsed": false,
     "decisionFallbackUsed": false,
@@ -258,7 +269,10 @@ Response:
   },
   "contract": {
     "revision": "42",
-    "digest": "sha256:8fc...",
+    "contractDigest": "sha256:contract...",
+    "bundleDigest": "sha256:bundle...",
+    "buildId": "tetris-web-2026-07-25.1",
+    "deploymentId": "tetris-web-2026-07-25.1",
     "integrity": "verified",
     "compatibility": "identical"
   },
@@ -274,32 +288,40 @@ This means Flaggo could not use the most specific requested scope, but it still 
 ```json
 {
   "surface": "tetris.dropInterval",
-  "requestedScope": {
+  "runtimeTarget": {
     "type": "user",
     "id": "user-123"
   },
-  "resolvedScope": {
-    "type": "segment",
+  "controlTarget": {
+    "type": "cohort",
     "id": "new_players"
   },
   "resolutionChain": [
     "user:user-123",
-    "segment:new_players",
+    "cohort:new_players",
     "global"
   ],
   "value": 750,
   "valueType": "number",
   "decisionMode": "strategy",
   "strategyId": "strategy-tetris-new-players-v1",
-  "confidence": 0.78,
-  "evidenceScope": {
-    "type": "segment",
-    "id": "new_players"
+  "confidence": {
+    "evidenceQuality": 0.86,
+    "modelUncertainty": 0.28,
+    "expectedOutcome": 0.78
   },
+  "evidenceViews": [
+    {
+      "evidenceKey": "gameplay.placement_time",
+      "revision": "1",
+      "target": { "type": "cohort", "id": "new_players" },
+      "window": "24h"
+    }
+  ],
   "fallback": {
     "resolutionFallbackUsed": true,
     "decisionFallbackUsed": false,
-    "reason": "user_scope_insufficient_evidence"
+    "reason": "runtime_target_insufficient_evidence"
   },
   "policy": {
     "result": "approved",
@@ -308,11 +330,12 @@ This means Flaggo could not use the most specific requested scope, but it still 
   },
   "contract": {
     "revision": "42",
-    "digest": "sha256:8fc...",
-    "integrity": "compatible-drift",
-    "compatibility": "backward-compatible"
+    "contractDigest": "sha256:contract...",
+    "bundleDigest": "sha256:bundle...",
+    "integrity": "known-older-revision",
+    "compatibility": "identical"
   },
-  "reason": "User-level evidence was insufficient; segment-level evidence for new_players supported the returned drop interval.",
+  "reason": "User-level evidence was insufficient; cohort-level evidence for new_players supported the returned drop interval.",
   "auditId": "audit-791"
 }
 ```
@@ -324,23 +347,20 @@ This means Flaggo could not safely make an approved decision at any applicable s
 ```json
 {
   "surface": "tetris.dropInterval",
-  "requestedScope": {
+  "runtimeTarget": {
     "type": "user",
     "id": "user-123"
   },
-  "resolvedScope": {
+  "controlTarget": {
     "type": "global",
     "id": "global"
   },
   "resolutionChain": [
     "user:user-123",
-    "segment:new_players",
+    "cohort:new_players",
     "global"
   ],
-  "evidenceScope": {
-    "type": "global",
-    "id": "global"
-  },
+  "evidenceViews": [],
   "value": 800,
   "valueType": "number",
   "decisionMode": "fallback",
@@ -353,11 +373,12 @@ This means Flaggo could not safely make an approved decision at any applicable s
   "policy": {
     "result": "fallback",
     "reasons": ["insufficient_evidence_all_scopes"],
-    "appliedConstraints": ["min-confidence", "min-sample-size"]
+    "appliedConstraints": ["min-evidence-quality", "max-model-uncertainty", "min-sample-size"]
   },
   "contract": {
     "revision": "42",
-    "digest": "sha256:8fc...",
+    "contractDigest": "sha256:contract...",
+    "bundleDigest": "sha256:bundle...",
     "integrity": "unknown-client-contract"
   },
   "reason": "No scope in the resolution chain had sufficient evidence for a safe decision.",
@@ -369,7 +390,7 @@ This means Flaggo could not safely make an approved decision at any applicable s
 
 The request should provide:
 
-- decision surface,
+- decision key and definition,
 - requested scope when the client knows it,
 - runtime context,
 - expected contract digest/revision when available,
@@ -409,23 +430,23 @@ The response should not expose:
 
 ## Scope resolution
 
-The Decision API should resolve the decision scope using:
+The Decision API should resolve target roles using:
 
 - requested scope,
 - runtime context,
-- surface-defined scope hierarchy,
+- target hierarchy,
 - configured fallback chain.
 
 For Tetris:
 
 ```text
-requested scope: session:game-456
-resolution chain: session:game-456 -> user:user-123 -> segment:new_players -> global
+runtime target: session:game-456
+resolution chain: session:game-456 -> user:user-123 -> cohort:new_players -> global
 ```
 
-The resolved scope and resolution chain should be included in the response for auditability.
+The runtime target, control target, evidence views, and resolution chain should be included in the response for auditability.
 
-Resolution fallback should not be treated as a failed decision. If Flaggo falls back from `user` to `segment` and returns an approved segment-level value, the response should still be an approved decision with a confidence score for the resolved evidence scope.
+Resolution fallback should not be treated as a failed decision. If Flaggo falls back from `user` evidence to `cohort` evidence and returns an approved cohort-governed value, the response should still be an approved decision with a confidence score for the evidence views used.
 
 ## Policy evaluation
 
@@ -446,16 +467,16 @@ Policy reason codes should be stable because clients, audits, and the operator c
 
 ## Contract integrity
 
-The Decision API should compare the request's expected contract identity with registry state before approving a decision.
+The Decision API should compare the request's expected contract identity with registry state before approving a decision. It must support rolling deployments where several builds of the same service call the API concurrently with different known contract IDs or revisions.
 
 Initial integrity states:
 
 | State | Runtime behavior |
 | --- | --- |
-| `verified` | Expected digest/revision matches registered compatible contract; decide normally. |
-| `compatible-drift` | Expected contract is older but compatible; decide normally and emit diagnostics. |
+| `verified` | Expected contract ID/revision matches a registered contract; decide normally. |
+| `known-older-revision` | Expected contract revision is recognized and still allowed; decide normally and emit diagnostics. |
 | `unknown-client-contract` | No known expected identity; allow in local/dev, fallback in production enforce mode. |
-| `incompatible-drift` | Expected identity is incompatible with active contract; return fallback and audit. |
+| `contract-conflict` | Caller used an existing contract ID with conflicting semantics; return fallback and audit. |
 | `unknown-surface` | Surface is not registered; return fallback or controlled error. |
 | `retired-surface` | Surface is retired; return fallback or controlled error. |
 
@@ -494,8 +515,8 @@ The Decision API should treat strategy execution as a bounded operation. It shou
 The API should distinguish two fallback types:
 
 1. **Resolution fallback**
-   - Flaggo could not use the requested or most-specific scope.
-   - Flaggo resolved to a broader scope, such as `segment` or `global`.
+   - Flaggo could not use the requested or most-specific runtime target/evidence view.
+   - Flaggo resolved to a broader target, such as `cohort` or `global`.
    - A real decision may still be approved.
    - Confidence should be present when the broader-scope decision is approved.
 
@@ -504,7 +525,14 @@ The API should distinguish two fallback types:
    - The returned value is the configured fallback.
    - Confidence should be `null` or omitted because no evidence-backed decision was approved.
 
-Confidence describes the returned decision at the `evidenceScope`, not necessarily the originally requested scope.
+Confidence is not one generic score. When present, it describes the returned decision at the evidence views and control target used, not necessarily the originally requested runtime target:
+
+| Field | Meaning |
+| --- | --- |
+| `evidenceQuality` | Freshness, sample size, missingness, and consistency of evidence. |
+| `modelUncertainty` | Uncertainty in a learned estimate or strategy; representation must define whether higher or lower is better. |
+| `expectedOutcome` | Estimated likelihood or magnitude of satisfying the declared objective. |
+Policy eligibility belongs to the `policy` result, not `confidence`, so the two cannot contradict each other.
 
 ## Audit and correlation
 
@@ -514,10 +542,12 @@ The audit record should correlate:
 
 - request metadata,
 - surface,
-- resolved scope,
+- decision definition,
+- runtime target,
+- control target,
 - runtime context summary,
-- evidence snapshot,
-- system state summary,
+- evidence snapshot/view summary,
+- governed state summary,
 - active value, strategy, or candidate action,
 - policy result,
 - returned value,

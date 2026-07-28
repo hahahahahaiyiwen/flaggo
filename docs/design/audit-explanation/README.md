@@ -13,7 +13,7 @@ Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Audit records should capture:
 
 - request metadata,
-- decision surface,
+- decision key and definition,
 - requested/resolved/evidence scopes,
 - contract version,
 - runtime context summary,
@@ -79,9 +79,9 @@ If audit writing fails, the MVP should fail safe. For local development, surfaci
 ```json
 {
   "surface": "tetris.dropInterval",
-  "contractVersion": "1",
-  "resolvedScope": {
-    "type": "segment",
+  "definition": "tetris.dropInterval@2",
+  "controlTarget": {
+    "type": "cohort",
     "id": "new_players"
   },
   "stateSummary": {
