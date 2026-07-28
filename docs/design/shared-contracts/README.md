@@ -56,6 +56,8 @@ Rules:
 - `environment` is provider-neutral, such as `dev`, `test`, `prod`.
 - `DecisionTargetRef.type` is extensible, but MVP built-ins are `session`, `user`, `cohort`, and `global`.
 - Runtime context must stay primitive and JSON-serializable for audit and policy evaluation.
+- A signal `key` is its immutable semantic identity. Incompatible schema or meaning changes require a new key; schema digests can detect conflicting definitions under the same key.
+- A decision may only use signals listed in `signals.allow`. Referencing a producer-owned signal handle does not grant implicit authority to use every available signal.
 
 ## Action space
 
@@ -102,7 +104,8 @@ type DecisionDefinition = {
   actionSpace: ActionSpace;
   fallback: FallbackContract;
   runtimeContextSchema?: RuntimeContextSchema;
-  signals?: SignalDeclarationBlock;
+  targetHierarchy?: string[];
+  signals?: DecisionSignalReferences;
   inference?: InferenceDeclaration;
   intent?: DecisionIntent;
   requestedApproval?: RequestedApprovalMode;
@@ -125,35 +128,45 @@ type RuntimeContextSchema = Record<
   }
 >;
 
-type SignalDeclarationBlock = {
-  targetHierarchy?: string[];
-  definitions: SignalDeclarationMap;
+type DecisionSignalReferences = {
+  allow: SignalRef[];
+  evidence?: SignalRef[];
+  guardrails?: SignalRef[];
 };
-
-type SignalDeclarationMap = Record<string, SignalDeclaration>;
 
 type SignalDeclaration =
   | EventSignalDeclaration
   | MetricSignalDeclaration;
 
+type SignalRef = {
+  key: string;
+  schemaDigest?: string;
+};
+
 type EventSignalDeclaration = {
   kind: "event";
-  emitAs?: string;
+  key: string;
   fields: Record<string, "boolean" | "number" | "string">;
+  units?: Record<string, string>;
+  schemaDigest?: string;
 };
 
 type MetricSignalDeclaration = {
   kind: "metric";
+  key: string;
   type: "boolean" | "number" | "string";
-  source: "app-emitted" | "service-aggregated";
-  from?: string;
+  source: "app-emitted" | "derived";
+  unit?: string;
+  from?: SignalRef[];
   aggregation?: string;
+  window?: string;
   range?: [number, number];
+  schemaDigest?: string;
 };
 
 type InferenceDeclaration = {
   target: TargetType;
-  inputs?: string[];
+  inputs?: SignalRef[];
   fallbackOrder?: string[];
 };
 
@@ -174,7 +187,7 @@ type MetricObjectiveIntent = {
 };
 
 type MetricObjective = {
-  signal: string;
+  signal: SignalRef;
   direction: "minimize" | "maximize" | "target";
   target?: number;
 };
@@ -413,6 +426,7 @@ type DecideRequest = {
 type DecideResponse<T extends DecisionValue = DecisionValue> = {
   decisionKey: string;
   definition?: DecisionDefinitionRef;
+  decisionId?: string;
   value: T;
   valueType: ValueType;
   decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
@@ -425,12 +439,17 @@ type DecideResponse<T extends DecisionValue = DecisionValue> = {
   evidenceViews?: EvidenceViewRef[];
   resolutionChain: string[];
   fallback: {
+    source: "server" | "client-fallback";
     resolutionFallbackUsed: boolean;
     decisionFallbackUsed: boolean;
     reason: string | null;
   };
-  policy: PolicyEvaluationResult;
-  contract: ContractRuntimeStatus;
+  exposure?: {
+    confirmationRequired: boolean;
+    confirmToken?: string;
+  };
+  policy?: PolicyEvaluationResult;
+  definitionStatus?: ContractRuntimeStatus;
 };
 ```
 
@@ -438,9 +457,11 @@ Rules:
 
 - The response returns the final concrete value for application code.
 - `decisionMode` explains how the value was produced without exposing internals.
-- `confidence` is `null` for static decision fallback.
+- `decisionId`, `auditId`, `policy`, and `definitionStatus` are present only for server-produced results. A local client fallback caused by service unavailability uses `fallback.source = "client-fallback"` and cannot claim server policy, decision, or audit identity.
+- `confidence` is `null` for static server decision fallback.
 - Resolution fallback can still return a real confidence report if a broader target produced an approved decision.
-- `contract.integrity` indicates whether the client expectation matched a registered known contract definition.
+- `exposure.confirmToken` lets an SDK confirm exposure after the application applies or renders the returned value. The initial `RuntimeDecisionResult` must not include an `exposureId`; exposure identity is created by confirmation.
+- `definitionStatus.integrity` indicates whether the client expectation matched a registered known contract definition.
 - The full definition bundle is not sent with each request; only compact identity is sent.
 
 ## Contract identity and integrity
@@ -626,6 +647,7 @@ type DecisionDefinitionBundle = {
     path?: string;
     commit?: string;
   };
+  signals?: SignalDeclaration[];
   definitions: DecisionDefinitionBundleEntry[];
 };
 
@@ -636,7 +658,8 @@ type DecisionDefinitionBundleEntry = {
   valueType: ValueType;
   actionSpace: ActionSpace;
   runtimeContextSchema?: RuntimeContextSchema;
-  signals?: SignalDeclarationBlock;
+  targetHierarchy?: string[];
+  signals?: DecisionSignalReferences;
   inference?: InferenceDeclaration;
   intent?: DecisionIntent;
   fallback: FallbackContract;
@@ -682,6 +705,49 @@ Rules:
 
 ## Tetris MVP contract example
 
+Signal declarations are extracted from producer-owned typed handles:
+
+```json
+[
+  { "kind": "metric", "key": "tetris.boardPressure", "type": "number", "source": "app-emitted", "range": [0, 1] },
+  { "kind": "metric", "key": "tetris.recentPlacementTimeMs", "type": "number", "source": "app-emitted", "unit": "ms" },
+  { "kind": "metric", "key": "tetris.recoveryFailures", "type": "number", "source": "app-emitted" },
+  { "kind": "metric", "key": "tetris.currentLevel", "type": "number", "source": "app-emitted" },
+  {
+    "kind": "event",
+    "key": "tetris.piecePlaced",
+    "fields": { "placementTimeMs": "number", "hardDrop": "boolean" },
+    "units": { "placementTimeMs": "ms" }
+  },
+  {
+    "kind": "event",
+    "key": "tetris.sessionEnded",
+    "fields": { "endReason": "string", "durationSeconds": "number" },
+    "units": { "durationSeconds": "s" }
+  },
+  {
+    "kind": "metric",
+    "key": "tetris.earlyLossRate",
+    "type": "number",
+    "source": "derived",
+    "from": [{ "key": "tetris.sessionEnded" }],
+    "aggregation": "rate(endReason == 'early_loss')",
+    "window": "24h"
+  },
+  {
+    "kind": "metric",
+    "key": "tetris.hardDropRate",
+    "type": "number",
+    "source": "derived",
+    "from": [{ "key": "tetris.piecePlaced" }],
+    "aggregation": "rate(hardDrop == true)",
+    "window": "24h"
+  }
+]
+```
+
+The decision definition references those signal identities without redefining their schemas:
+
 ```json
 {
   "ref": {
@@ -706,56 +772,37 @@ Rules:
   "runtimeContextSchema": {
     "userId": { "type": "string", "required": true },
     "sessionId": { "type": "string", "required": true },
-    "currentLevel": { "type": "number" },
-    "deviceType": { "type": "string" },
-    "boardPressure": { "type": "number" },
-    "recentPlacementTimeMs": { "type": "number" },
-    "recoveryFailures": { "type": "number" }
+    "deviceType": { "type": "string" }
   },
+  "targetHierarchy": ["session", "user", "cohort", "global"],
   "signals": {
-    "targetHierarchy": ["session", "user", "cohort", "global"],
-    "definitions": {
-      "boardPressure": { "kind": "metric", "type": "number", "source": "app-emitted", "range": [0, 1] },
-      "recentPlacementTimeMs": { "kind": "metric", "type": "number", "source": "app-emitted" },
-      "recoveryFailures": { "kind": "metric", "type": "number", "source": "app-emitted" },
-      "currentLevel": { "kind": "metric", "type": "number", "source": "app-emitted" },
-      "piecePlaced": {
-        "kind": "event",
-        "emitAs": "piece_placed",
-        "fields": { "placementTimeMs": "number", "hardDrop": "boolean" }
-      },
-      "sessionEnded": {
-        "kind": "event",
-        "emitAs": "session_ended",
-        "fields": { "endReason": "string", "durationSeconds": "number" }
-      },
-      "earlyLossRate": {
-        "kind": "metric",
-        "type": "number",
-        "source": "service-aggregated",
-        "from": "sessionEnded.endReason",
-        "aggregation": "rate(endReason == 'early_loss')"
-      },
-      "hardDropRate": {
-        "kind": "metric",
-        "type": "number",
-        "source": "service-aggregated",
-        "from": "piecePlaced.hardDrop",
-        "aggregation": "rate(hardDrop == true)"
-      }
-    }
+    "allow": [
+      { "key": "tetris.boardPressure" },
+      { "key": "tetris.recentPlacementTimeMs" },
+      { "key": "tetris.recoveryFailures" },
+      { "key": "tetris.currentLevel" },
+      { "key": "tetris.piecePlaced" },
+      { "key": "tetris.sessionEnded" },
+      { "key": "tetris.earlyLossRate" },
+      { "key": "tetris.hardDropRate" }
+    ]
   },
   "inference": {
     "target": "session",
-    "inputs": ["boardPressure", "recentPlacementTimeMs", "recoveryFailures", "currentLevel"],
+    "inputs": [
+      { "key": "tetris.boardPressure" },
+      { "key": "tetris.recentPlacementTimeMs" },
+      { "key": "tetris.recoveryFailures" },
+      { "key": "tetris.currentLevel" }
+    ],
     "fallbackOrder": ["cohort", "global"]
   },
   "intent": {
     "type": "metric-objective",
-    "primary": { "signal": "earlyLossRate", "direction": "minimize" },
+    "primary": { "signal": { "key": "tetris.earlyLossRate" }, "direction": "minimize" },
     "secondary": [
-      { "signal": "hardDropRate", "direction": "target", "target": 0.45 },
-      { "signal": "recentPlacementTimeMs", "direction": "minimize" }
+      { "signal": { "key": "tetris.hardDropRate" }, "direction": "target", "target": 0.45 },
+      { "signal": { "key": "tetris.recentPlacementTimeMs" }, "direction": "minimize" }
     ],
     "rationale": "Keep gameplay challenging but playable while reducing early frustration."
   },

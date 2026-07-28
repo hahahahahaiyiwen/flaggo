@@ -52,18 +52,13 @@ Application/build provenance should not affect personalization or target selecti
 Decision definitions declare the signals Flaggo can understand:
 
 ```text
-signals:
-  piecePlaced:
-    kind: event
-  boardPressure:
-    kind: metric
-    source: app-emitted
-  earlyLossRate:
-    kind: metric
-    source: service-aggregated
+signals.allow:
+  - tetris.piecePlaced
+  - tetris.boardPressure
+  - tetris.earlyLossRate
 ```
 
-Evidence views are derived from the decision definition revision, signal declarations, target hierarchy, and time/window needs:
+Evidence views are derived from the decision definition revision, referenced signal declarations, target hierarchy, and time/window needs:
 
 ```text
 tetris.dropInterval@2
@@ -90,7 +85,8 @@ They should be declared as metrics first, then optionally selected as inference 
 | --- | --- | --- |
 | Declared metric | App-computed or pre-materialized signal with stable semantics. | Async learning, validation, evidence views. |
 | Inference input | Declared metric supplied with the decision request. | Fast online inference without service-side hot-path aggregation. |
-| Exposure-captured input | Inference input value captured when Flaggo returns a decision. | Learning what happened under the exact context of a rendered decision. |
+| Decision-record input | Inference input value captured when Flaggo returns a decision. | Auditing what Flaggo recommended under the exact request context. |
+| Exposure-captured input | Inference input value copied when the client confirms the value was applied or rendered. | Learning what happened under the exact context of a rendered decision. |
 
 For example:
 

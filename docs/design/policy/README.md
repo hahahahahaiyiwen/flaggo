@@ -24,6 +24,21 @@ The MVP policy component should enforce:
 
 Policy must be provider-neutral and deterministic. It should not call an AI model in the MVP runtime path.
 
+## Effective policy composition
+
+Effective policy is the intersection of three layers:
+
+```text
+definition constraints
+  ∩ environment policy
+  ∩ operator controls
+  = effective policy
+```
+
+Less-trusted or narrower layers may only narrow constraints, never widen them. For example, a decision definition may request a smaller numeric range or stricter cooldown than the environment default, and an operator may pause or further limit rollout. But an application-authored definition cannot raise environment maximums, bypass approval requirements, lower mandatory evidence-quality floors, or override operator pause.
+
+When layers conflict, the safest applicable constraint wins or policy returns fallback/blocked with a stable reason code.
+
 ## Core port
 
 ```ts

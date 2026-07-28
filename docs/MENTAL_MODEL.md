@@ -50,52 +50,30 @@ A decision definition is the contract for one semantic revision of a decision ke
 DecisionDefinition
   key: tetris.dropInterval
   revision: 2
+  targetHierarchy: session -> user -> cohort -> global
   signals:
-    targetHierarchy: session -> user -> cohort -> global
-    definitions:
-      boardPressure:
-        kind: metric
-        source: app-emitted
-      recentPlacementTimeMs:
-        kind: metric
-        source: app-emitted
-      piecePlaced:
-        kind: event
-        fields:
-          placementTimeMs: number
-          hardDrop: boolean
-      sessionEnded:
-        kind: event
-        fields:
-          endReason: string
-          durationSeconds: number
-      earlyLossRate:
-        kind: metric
-        source: service-aggregated
-        from: sessionEnded.endReason
-        aggregation: rate(endReason == "early_loss")
-        window: 24h
-      hardDropRate:
-        kind: metric
-        source: service-aggregated
-        from: piecePlaced.hardDrop
-        aggregation: rate(hardDrop == true)
-        window: 24h
+    allow:
+      - tetris.boardPressure
+      - tetris.recentPlacementTimeMs
+      - tetris.piecePlaced
+      - tetris.sessionEnded
+      - tetris.earlyLossRate
+      - tetris.hardDropRate
   intent:
       type: metric-objective
       primary:
-        signal: earlyLossRate
+        signal: tetris.earlyLossRate
         direction: minimize
       secondary:
-        - signal: hardDropRate
+        - signal: tetris.hardDropRate
           direction: target
           target: 0.45
       rationale: Keep the game challenging while reducing early frustration.
   inference:
       target: session
       inputs:
-        - boardPressure
-        - recentPlacementTimeMs
+        - tetris.boardPressure
+        - tetris.recentPlacementTimeMs
       fallbackOrder: cohort -> global
   output:
       type: number
@@ -121,17 +99,18 @@ Notes:
 
 - The decision key is a sub-concept of the decision definition: it identifies the decision family.
 - The definition owns the output **contract** or action space, not the actual runtime result.
-- Signals are the single declaration surface for observable facts: discrete events, app-emitted metrics, and service-aggregated metrics.
-- `signals.targetHierarchy` defines meaningful target levels for signal aggregation, evidence views, learning, inference, governance, and fallback.
-- Service-aggregated metrics must declare how they are derived from available signals.
+- Signal definitions are owned outside individual decisions, usually near the producer. A signal key such as `tetris.boardPressure` is the immutable semantic identity for its schema, type, units, range, and meaning.
+- A decision definition does not redefine signal schemas. It explicitly allows the signal handles it may use and assigns them roles as objectives, inference inputs, evidence, or guardrails.
+- `targetHierarchy` defines meaningful target levels for signal aggregation, evidence views, learning, inference, governance, and fallback.
+- Derived signals must be declared separately from decisions and must state how they are derived from available signals.
 - `inference.target` describes the desired online inference target kind, not a concrete target instance.
-- `inference.inputs` names declared app-emitted metrics that the application supplies with the decision request so online inference does not need to aggregate them on the hot path.
+- `inference.inputs` references allowed app-emitted metric handles that the application supplies with the decision request so online inference does not need to aggregate them on the hot path.
 - `inference.fallbackOrder` makes broader fallback levels explicit.
 - Intent is typed. Natural-language intent captures product direction; metric-objective intent binds optimization to declared signals.
 - Natural-language intent is advisory metadata unless paired with metric objectives or typed policy constraints.
 - Safety should use typed constraints when behavior must be machine-enforced. Labels such as `gradual` can remain presets only if they expand to concrete constraints.
 - Application-authored definitions can request an approval mode, but deployment or environment policy grants authority. A definition cannot grant itself automatic approval.
-- Evidence views are derived from the decision definition revision, signal definitions, target hierarchy, and time/window needs; they do not need to be manually bound as a separate concept in the definition.
+- Evidence views are derived from the decision definition revision, referenced signal definitions, target hierarchy, and time/window needs; they do not need to be manually bound as a separate concept in the definition.
 
 ## Decision evidence
 
@@ -261,8 +240,10 @@ Validation checks schema compatibility, output bounds, typed safety constraints,
 | Approval mode | When appropriate |
 | --- | --- |
 | Automatic | Low-risk changes within typed constraints, sufficient evidence quality, model uncertainty limits, no conflicting active state, metric-objective intent, and environment policy grants automatic approval authority. |
-| Human approval | New strategy classes, high-impact changes, low confidence, overlapping target conflicts, policy exceptions, or regulated/business-critical decisions. |
+| Human approval | New strategy classes, high-impact changes, insufficient evidence quality, excessive model uncertainty, weak expected outcome, overlapping target conflicts, policy exceptions, or regulated/business-critical decisions. |
 | Operator override | Emergency pause, forced fallback, rollback, or manually pinned value. |
+
+Effective policy is the intersection of definition constraints, environment policy, and operator controls. Less-trusted or narrower layers may restrict behavior but never widen it; an application-authored definition cannot override environment approval requirements, relax mandatory evidence-quality floors, or bypass an operator pause.
 
 Active `GovernedDecisionState` is then consumed by online inference:
 
@@ -278,6 +259,7 @@ The `RuntimeDecisionResult` is an output record, not part of the definition:
 ```text
 value: 850
 fallbackUsed: false
+decisionId: decision-123
 confidence:
   evidenceQuality: 0.82
   modelUncertainty: 0.31
@@ -285,7 +267,6 @@ confidence:
 policy:
   result: approved
 auditId: audit-789
-exposureId: exposure-123
 ```
 
 Avoid treating confidence as one universal number. Operators need to know whether a score describes evidence quality, model uncertainty, or expected outcome. Policy has its own result and should not be duplicated inside confidence:
@@ -303,6 +284,8 @@ Adaptive learning needs explicit attribution. A runtime result should create a d
 ```text
 RuntimeDecisionResult
   -> decisionId
+  -> application applies or renders value
+  -> confirmExposure(decisionId)
   -> client-applied exposureId
   -> outcome events within attribution window
   -> attributed evidence
@@ -320,6 +303,6 @@ Different decision definitions should not automatically share active decision au
 | Raw telemetry observations | Reusable when event and field semantics match. |
 | Evidence views/signals | Reusable only when signal definitions and aggregation semantics are compatible. |
 | GovernedDecisionState | Isolated by decision definition revision/hash and control target unless explicitly declared compatible. |
-| RuntimeDecisionResult/exposures | Bound to the exact definition revision/hash used by the request. |
+| RuntimeDecisionResult, decision records, and confirmed exposures | Bound to the exact definition revision/hash used by the request. |
 
 Runtime requests should bind to an expected decision definition revision or contract hash. `GovernedDecisionState` should declare which revisions or contract hashes it is compatible with. New definitions can start partially warm only through semantic compatibility: unchanged signals and evidence may be reused, while new or changed signals warm up before policy allows them to influence proposals or online inference.

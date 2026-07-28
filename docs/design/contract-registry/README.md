@@ -96,12 +96,16 @@ Example shape:
     {
       "key": "tetris.dropInterval",
       "valueType": "number",
+      "targetHierarchy": ["session", "user", "cohort", "global"],
       "signals": {
-        "targetHierarchy": ["session", "user", "segment", "global"]
+        "allow": [
+          { "key": "tetris.boardPressure" },
+          { "key": "tetris.earlyLossRate" }
+        ]
       },
       "inference": {
         "target": "session",
-        "fallbackOrder": ["segment", "global"]
+        "fallbackOrder": ["cohort", "global"]
       }
     }
   ]
@@ -141,9 +145,9 @@ The preferred UX is registry-managed versioning. Developers can keep writing:
 ```ts
 flaggo.tune.number("tetris.dropInterval", {
   definition: {
+    targetHierarchy: ["session", "user", "cohort", "global"],
     signals: {
-      targetHierarchy: ["session", "user", "cohort", "global"],
-      definitions: {}
+      allow: [gameplaySignals.boardPressure, gameplaySignals.earlyLossRate]
     },
     inference: {
       target: "session",

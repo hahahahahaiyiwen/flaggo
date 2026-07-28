@@ -14,7 +14,7 @@ Audit records should capture:
 
 - request metadata,
 - decision key and definition,
-- requested/resolved/evidence scopes,
+- requested runtime targets, resolved control targets, evidence targets, and policy targets,
 - contract version,
 - runtime context summary,
 - evidence snapshot summary,

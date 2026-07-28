@@ -34,7 +34,7 @@ The scenario uses the three-part mental model from [Mental Model](MENTAL_MODEL.m
 | Goals | keep hard-drop rate near target; reduce early losses |
 | Policy constraints | min/max value, max delta, cooldown, minimum evidence quality, maximum model uncertainty, sample-size minimum |
 | Governed state | active strategy, current interval, previous decision, cooldown state, rollout, operator mode |
-| Uncertainty | confidence, sample size, data freshness, conflicting signals |
+| Uncertainty | evidence quality, model uncertainty, expected outcome, sample size, data freshness, conflicting signals |
 | Action space | numeric interval from `200ms` to `1500ms` in `50ms` steps; strategy may further narrow range for a segment |
 | Fallback contract | use `800ms` when decisioning is unavailable or unsafe |
 | Audit/explanation | returned value, reason, evidence snapshot, policy result |
@@ -85,69 +85,97 @@ const flaggo = createFlaggoClient({
 
 The runtime SDK carries only compact contract/build identity, such as expected contract digest, revision, build ID, or deployment ID. It does not send the full contract bundle on every decision request.
 
-The developer asks for one adaptive value. The same call contains the extractable decision definition and the runtime context needed for online inference:
+The developer defines gameplay signals once near their producer, then asks for one adaptive value by referencing those typed handles.
 
 ```ts
-const dropInterval = await flaggo.tune.number("tetris.dropInterval", {
+export const gameplaySignals = flaggo.signals.define({
+  boardPressure: flaggo.metric.number({
+    key: "tetris.boardPressure",
+    range: [0, 1]
+  }),
+
+  recentPlacementTimeMs: flaggo.metric.number({
+    key: "tetris.recentPlacementTimeMs",
+    unit: "ms"
+  }),
+
+  recoveryFailures: flaggo.metric.number({
+    key: "tetris.recoveryFailures"
+  }),
+
+  currentLevel: flaggo.metric.number({
+    key: "tetris.currentLevel"
+  }),
+
+  piecePlaced: flaggo.event({
+    key: "tetris.piecePlaced",
+    fields: {
+      placementTimeMs: flaggo.number({ unit: "ms" }),
+      hardDrop: flaggo.boolean()
+    }
+  }),
+
+  sessionEnded: flaggo.event({
+    key: "tetris.sessionEnded",
+    fields: {
+      endReason: flaggo.string(),
+      durationSeconds: flaggo.number({ unit: "s" })
+    }
+  }),
+
+  earlyLossRate: flaggo.metric.derived({
+    key: "tetris.earlyLossRate",
+    type: "number",
+    from: ["tetris.sessionEnded"],
+    aggregation: "rate(endReason == 'early_loss')",
+    window: "24h"
+  }),
+
+  hardDropRate: flaggo.metric.derived({
+    key: "tetris.hardDropRate",
+    type: "number",
+    from: ["tetris.piecePlaced"],
+    aggregation: "rate(hardDrop == true)",
+    window: "24h"
+  })
+});
+```
+
+The decision definition does not own those schemas. It explicitly allows the signals and assigns roles:
+
+```ts
+const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   definition: {
+    targetHierarchy: ["session", "user", "cohort", "global"],
     signals: {
-      targetHierarchy: ["session", "user", "cohort", "global"],
-      definitions: {
-        boardPressure: {
-          kind: "metric",
-          type: "number",
-          source: "app-emitted",
-          range: [0, 1]
-        },
-        recentPlacementTimeMs: {
-          kind: "metric",
-          type: "number",
-          source: "app-emitted"
-        },
-        recoveryFailures: {
-          kind: "metric",
-          type: "number",
-          source: "app-emitted"
-        },
-        piecePlaced: {
-          kind: "event",
-          emitAs: "piece_placed",
-          fields: {
-            placementTimeMs: "number",
-            hardDrop: "boolean"
-          }
-        },
-        sessionEnded: {
-          kind: "event",
-          emitAs: "session_ended",
-          fields: {
-            endReason: "string",
-            durationSeconds: "number"
-          }
-        },
-        earlyLossRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "sessionEnded.endReason",
-          aggregation: "rate(endReason == 'early_loss')"
-        },
-        hardDropRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "piecePlaced.hardDrop",
-          aggregation: "rate(hardDrop == true)"
-        }
-      }
+      allow: [
+        gameplaySignals.boardPressure,
+        gameplaySignals.recentPlacementTimeMs,
+        gameplaySignals.recoveryFailures,
+        gameplaySignals.currentLevel,
+        gameplaySignals.piecePlaced,
+        gameplaySignals.sessionEnded,
+        gameplaySignals.earlyLossRate,
+        gameplaySignals.hardDropRate
+      ]
     },
     intent: {
-      type: "natural-language",
-      text: "challenging-but-playable"
+      type: "metric-objective",
+      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
+      secondary: [
+        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
+        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
+      ],
+      rationale: "Keep gameplay challenging but playable while reducing early frustration."
     },
     inference: {
       target: "session",
-      inputs: ["boardPressure", "recentPlacementTimeMs", "recoveryFailures"],
+      inputs: [
+        gameplaySignals.boardPressure,
+        gameplaySignals.recentPlacementTimeMs,
+        gameplaySignals.recoveryFailures,
+        gameplaySignals.currentLevel
+      ],
       fallbackOrder: ["cohort", "global"]
     },
     output: {
@@ -160,47 +188,44 @@ const dropInterval = await flaggo.tune.number("tetris.dropInterval", {
       sessionId: { type: "string", target: "session" },
       userId: { type: "string", target: "user" },
       cohort: { type: "string", target: "cohort" },
-      currentLevel: "number",
-      deviceType: "string",
-      boardPressure: "number",
-      recentPlacementTimeMs: "number",
-      recoveryFailures: "number"
+      deviceType: "string"
     }
   },
   context: {
     sessionId,
     userId,
     cohort: playerCohort,
-    currentLevel: game.level,
     deviceType: device.type,
-    boardPressure,
-    recentPlacementTimeMs,
-    recoveryFailures
+    boardPressure: gameplaySignals.boardPressure.value(boardPressure),
+    recentPlacementTimeMs: gameplaySignals.recentPlacementTimeMs.value(recentPlacementTimeMs),
+    recoveryFailures: gameplaySignals.recoveryFailures.value(recoveryFailures),
+    currentLevel: gameplaySignals.currentLevel.value(game.level)
   }
 });
 
-gameEngine.updateConfig({ dropInterval });
+gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
+await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 ```
 
-In this shape, `dropInterval` is a plain `number`, not a Flaggo wrapper object.
+In this shape, `flaggo.tune.number(...)` keeps the original SDK surface but returns a number decision object. The application still applies a plain numeric value through `dropIntervalDecision.value`, while the SDK exposes the decision receipt needed for attribution. If a value-only convenience is needed later, it should be a separate helper or projection that intentionally opts out of closed-loop exposure attribution.
 
-The `definition` block follows the decision-definition mental model: signals, intent, inference, output, safety, and runtime context schema. Signals declare all observable facts consistently: target hierarchy, discrete events, app-emitted metrics, and service-aggregated metrics. Metrics such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` are app-emitted precomputed values; `inference.inputs` declares which of those metrics the runtime request must or may carry for online inference. `inference.target` declares the desired target kind, and `inference.fallbackOrder` keeps fallback explicit. Service-aggregated metrics such as `earlyLossRate` declare their source signal and aggregation expression. Evidence views are derived internally from the definition revision, signal declarations, target hierarchy, and requested windows. Target IDs such as `sessionId`, `userId`, and `cohort` are normal context fields marked in the schema as target levels. The registry can still govern behavior at a broader control target such as `cohort:new_players`. `output.default` is the safe value returned when Flaggo cannot provide an approved value.
+The `definition` block follows the decision-definition mental model: target hierarchy, allowed signal references, intent, inference, output, safety, and runtime context schema. Signal schemas live outside the decision near their producers. Metrics such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` are app-emitted precomputed values supplied through typed handles; `inference.inputs` declares which handles the runtime request may carry for online inference. `inference.target` declares the desired target kind, and `inference.fallbackOrder` keeps fallback explicit. Derived signals such as `earlyLossRate` declare their source signal and aggregation expression separately. Evidence views are derived internally from the definition revision, referenced signal definitions, target hierarchy, and requested windows. Target IDs such as `sessionId`, `userId`, and `cohort` are normal context fields marked in the schema as target levels. The registry can still govern behavior at a broader control target such as `cohort:new_players`. `output.default` is the safe value returned when Flaggo cannot provide an approved value.
 
-This keeps the online path simple: the application sends pre-aggregated metric values, and the service does not aggregate them on the hot path. The same metric values can be emitted over time for async learning and captured in exposure records for decision-outcome attribution.
+This keeps the online path simple: the application sends pre-aggregated metric values, and the service does not aggregate them on the hot path. The same metric values can be emitted over time for async learning, captured in the decision record when a value is returned, and captured in an exposure record only after the client confirms the value was applied or rendered.
 
 The application can continue emitting normal domain events or OpenTelemetry signals:
 
 ```ts
-flaggo.metrics.emit("boardPressure", boardPressure);
-flaggo.metrics.emit("recentPlacementTimeMs", recentPlacementTimeMs);
-flaggo.metrics.emit("recoveryFailures", recoveryFailures);
+gameplaySignals.boardPressure.emit(boardPressure);
+gameplaySignals.recentPlacementTimeMs.emit(recentPlacementTimeMs);
+gameplaySignals.recoveryFailures.emit(recoveryFailures);
 
-flaggo.events.emit("piece_placed", {
+gameplaySignals.piecePlaced.emit({
   placementTimeMs,
   hardDrop: placementMethod === "hard_drop"
 });
 
-flaggo.events.emit("session_ended", {
+gameplaySignals.sessionEnded.emit({
   endReason,
   durationSeconds
 });
@@ -235,43 +260,24 @@ This keeps the game code simple while allowing runtime behavior to adapt to the 
 Once a team needs exact control, it can graduate to explicit evidence and governance configuration:
 
 ```ts
-const dropInterval = flaggo.tune.number("tetris.dropInterval", {
+const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   definition: {
+    targetHierarchy: ["session", "user", "cohort", "global"],
     signals: {
-      targetHierarchy: ["session", "user", "cohort", "global"],
-      definitions: {
-        piecePlaced: {
-          kind: "event",
-          emitAs: "piece_placed",
-          fields: { placementTimeMs: "number", hardDrop: "boolean" }
-        },
-        sessionEnded: {
-          kind: "event",
-          emitAs: "session_ended",
-          fields: { endReason: "string", durationSeconds: "number" }
-        },
-        earlyLossRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "sessionEnded.endReason",
-          aggregation: "rate(endReason == 'early_loss')"
-        },
-        hardDropRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "piecePlaced.hardDrop",
-          aggregation: "rate(hardDrop == true)"
-        }
-      }
+      allow: [
+        gameplaySignals.piecePlaced,
+        gameplaySignals.sessionEnded,
+        gameplaySignals.earlyLossRate,
+        gameplaySignals.hardDropRate,
+        gameplaySignals.recentPlacementTimeMs
+      ]
     },
     intent: {
       type: "metric-objective",
-      primary: { signal: "earlyLossRate", direction: "minimize" },
+      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
       secondary: [
-        { signal: "hardDropRate", direction: "target", target: 0.45 },
-        { signal: "recentPlacementTimeMs", direction: "minimize" }
+        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
+        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
       ],
       rationale: "Keep the game challenging while reducing early frustration."
     },
@@ -295,7 +301,7 @@ const dropInterval = flaggo.tune.number("tetris.dropInterval", {
 });
 ```
 
-This retains the system's depth without charging every user the full conceptual cost on day one. Named domain events, reusable metric definitions, OpenTelemetry bindings, and warehouse-backed evidence should be advanced evidence modes, not prerequisites for the first successful adaptive value.
+This retains the system's depth without charging every user the full conceptual cost on day one. Named domain events, reusable signal definitions, OpenTelemetry bindings, and warehouse-backed evidence should be advanced evidence modes, not prerequisites for the first successful adaptive value.
 
 Governed state and strategy are intentionally not declared by the application in the basic path. Flaggo owns state such as the current active value, previous decision, cooldown status, rollout, operator mode, rollback transition metadata, and active strategy. The developer says what should be optimized and what is safe; Flaggo and operators decide whether that is currently served by a fixed value, numeric rule, experiment, learned strategy, or fallback-only mode.
 
@@ -351,7 +357,7 @@ For `tetris.dropInterval`, the operator should see:
 - the fallback contract: `800ms`,
 - the active policy constraints: minimum evidence quality, maximum model uncertainty, sample-size minimum, max change per decision, cooldown, and guardrail limits,
 - the current governed state: active value, previous value, cooldown state, rollout, and operator mode,
-- the uncertainty state: confidence, evidence freshness, sample size, and conflicting signals,
+- the uncertainty state: evidence quality, model uncertainty, expected outcome, evidence freshness, sample size, and conflicting signals,
 - recent decisions and explanations,
 - whether the decision is observing, suggesting, or applying changes,
 - the active decision strategy, if one is approved,
@@ -419,7 +425,9 @@ The decision is never just "whatever the model thinks is best." It is bounded by
 - maximum delta per decision,
 - cooldown between changes,
 - minimum evidence requirements,
-- confidence threshold,
+- minimum evidence quality,
+- maximum model uncertainty,
+- minimum expected outcome when an optimization estimate is used,
 - guardrail metrics,
 - operator-controlled mode.
 
@@ -431,7 +439,9 @@ Flaggo should not pretend every recommendation is equally reliable.
 
 For each decision, the system should expose:
 
-- confidence,
+- evidence quality,
+- model uncertainty,
+- expected outcome estimate when available,
 - evidence volume,
 - evidence freshness,
 - competing interpretations,
@@ -446,11 +456,13 @@ Every returned value should be explainable after the fact:
 
 ```text
 Decision: tetris.dropInterval
-Scope: user:123
+Runtime target: user:123
 Previous value: 800
 Returned value: 700
 Reason: hard-drop rate remained above target with sufficient recent evidence
-Confidence: 0.72
+Evidence quality: 0.82
+Model uncertainty: 0.31
+Expected outcome: 0.72
 Policy result: approved
 Fallback used: no
 ```
@@ -471,7 +483,7 @@ They encode intent:
 
 AI-native decisioning should amplify human intent, not replace it.
 
-### Fallback behavior exists when confidence, evidence, or safety is insufficient
+### Fallback behavior exists when evidence, uncertainty, expected outcome, or safety is insufficient
 
 The game must always have a safe behavior even when Flaggo cannot decide.
 
@@ -480,7 +492,9 @@ Fallback should be used when:
 - the service is unavailable,
 - telemetry is missing,
 - sample size is too small,
-- confidence is too low,
+- evidence quality is too low,
+- model uncertainty is too high,
+- expected outcome is below the required threshold,
 - policy blocks the proposal,
 - the requested runtime context is invalid,
 - the decision is paused by an operator.

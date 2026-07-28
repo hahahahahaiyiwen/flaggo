@@ -151,66 +151,83 @@ This separation lets TypeScript be the first ergonomic SDK while preserving poly
 ### Basic decision and runtime value
 
 ```ts
-const dropInterval = await flaggo.tune.number("tetris.dropInterval", {
+export const gameplaySignals = flaggo.signals.define({
+  boardPressure: flaggo.metric.number({
+    key: "tetris.boardPressure",
+    range: [0, 1]
+  }),
+  recentPlacementTimeMs: flaggo.metric.number({
+    key: "tetris.recentPlacementTimeMs",
+    unit: "ms"
+  }),
+  recoveryFailures: flaggo.metric.number({
+    key: "tetris.recoveryFailures"
+  }),
+  currentLevel: flaggo.metric.number({
+    key: "tetris.currentLevel"
+  }),
+  piecePlaced: flaggo.event({
+    key: "tetris.piecePlaced",
+    fields: {
+      placementTimeMs: flaggo.number({ unit: "ms" }),
+      hardDrop: flaggo.boolean()
+    }
+  }),
+  sessionEnded: flaggo.event({
+    key: "tetris.sessionEnded",
+    fields: {
+      endReason: flaggo.string(),
+      durationSeconds: flaggo.number({ unit: "s" })
+    }
+  }),
+  earlyLossRate: flaggo.metric.derived({
+    key: "tetris.earlyLossRate",
+    type: "number",
+    from: ["tetris.sessionEnded"],
+    aggregation: "rate(endReason == 'early_loss')",
+    window: "24h"
+  }),
+  hardDropRate: flaggo.metric.derived({
+    key: "tetris.hardDropRate",
+    type: "number",
+    from: ["tetris.piecePlaced"],
+    aggregation: "rate(hardDrop == true)",
+    window: "24h"
+  })
+});
+
+const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   definition: {
+    targetHierarchy: ["session", "user", "cohort", "global"],
     signals: {
-      targetHierarchy: ["session", "user", "cohort", "global"],
-      definitions: {
-        boardPressure: {
-          kind: "metric",
-          type: "number",
-          source: "app-emitted",
-          range: [0, 1]
-        },
-        recentPlacementTimeMs: {
-          kind: "metric",
-          type: "number",
-          source: "app-emitted"
-        },
-        recoveryFailures: {
-          kind: "metric",
-          type: "number",
-          source: "app-emitted"
-        },
-        piecePlaced: {
-          kind: "event",
-          emitAs: "piece_placed",
-          fields: {
-            placementTimeMs: "number",
-            hardDrop: "boolean"
-          }
-        },
-        sessionEnded: {
-          kind: "event",
-          emitAs: "session_ended",
-          fields: {
-            endReason: "string",
-            durationSeconds: "number"
-          }
-        },
-        earlyLossRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "sessionEnded.endReason",
-          aggregation: "rate(endReason == 'early_loss')"
-        },
-        hardDropRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "piecePlaced.hardDrop",
-          aggregation: "rate(hardDrop == true)"
-        }
-      }
+      allow: [
+        gameplaySignals.boardPressure,
+        gameplaySignals.recentPlacementTimeMs,
+        gameplaySignals.recoveryFailures,
+        gameplaySignals.currentLevel,
+        gameplaySignals.piecePlaced,
+        gameplaySignals.sessionEnded,
+        gameplaySignals.earlyLossRate,
+        gameplaySignals.hardDropRate
+      ]
     },
     intent: {
-      type: "natural-language",
-      text: "challenging-but-playable"
+      type: "metric-objective",
+      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
+      secondary: [
+        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
+        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
+      ],
+      rationale: "Keep gameplay challenging but playable while reducing early frustration."
     },
     inference: {
       target: "session",
-      inputs: ["boardPressure", "recentPlacementTimeMs", "recoveryFailures"],
+      inputs: [
+        gameplaySignals.boardPressure,
+        gameplaySignals.recentPlacementTimeMs,
+        gameplaySignals.recoveryFailures,
+        gameplaySignals.currentLevel
+      ],
       fallbackOrder: ["cohort", "global"]
     },
     output: {
@@ -224,43 +241,40 @@ const dropInterval = await flaggo.tune.number("tetris.dropInterval", {
       sessionId: { type: "string", target: "session" },
       userId: { type: "string", target: "user" },
       cohort: { type: "string", target: "cohort" },
-      currentLevel: "number",
-      deviceType: "string",
-      boardPressure: "number",
-      recentPlacementTimeMs: "number",
-      recoveryFailures: "number"
+      deviceType: "string"
     }
   },
   context: {
     sessionId,
     userId,
     cohort: playerCohort,
-    currentLevel: game.level,
     deviceType: device.type,
-    boardPressure,
-    recentPlacementTimeMs,
-    recoveryFailures
+    boardPressure: gameplaySignals.boardPressure.value(boardPressure),
+    recentPlacementTimeMs: gameplaySignals.recentPlacementTimeMs.value(recentPlacementTimeMs),
+    recoveryFailures: gameplaySignals.recoveryFailures.value(recoveryFailures),
+    currentLevel: gameplaySignals.currentLevel.value(game.level)
   }
 });
 
-gameEngine.updateConfig({ dropInterval });
+gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
+await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 ```
 
-The basic API returns a plain `number`. The `definition` block is extractable as a decision definition during build/release. Signals declare target hierarchy, events, app-emitted metrics, and service-aggregated metrics in one place so Flaggo can validate emitted telemetry and derive evidence views from the definition revision. `inference.inputs` are declared app-emitted metrics supplied with the request; the service should not aggregate them on the hot path. The runtime `context` block provides concrete target identifiers and app-emitted current metric values for online inference. The SDK should attach expected definition identity when configured. Direct REST clients can provide the same compact identity explicitly.
+The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`, and the receipt carries `decisionId`/confirmation metadata for exposure attribution. Signal schemas are defined once near producers and reused through typed handles. The decision definition only references allowed signal handles and assigns their roles as objective signals, inference inputs, evidence, or guardrails. The runtime `context` block provides concrete target identifiers, runtime metadata, and typed signal values for online inference. The SDK should attach expected definition identity when configured. Direct REST clients can provide the same compact identity explicitly.
 
 ### Basic evidence emission
 
 ```ts
-flaggo.metrics.emit("boardPressure", boardPressure);
-flaggo.metrics.emit("recentPlacementTimeMs", recentPlacementTimeMs);
-flaggo.metrics.emit("recoveryFailures", recoveryFailures);
+gameplaySignals.boardPressure.emit(boardPressure);
+gameplaySignals.recentPlacementTimeMs.emit(recentPlacementTimeMs);
+gameplaySignals.recoveryFailures.emit(recoveryFailures);
 
-flaggo.events.emit("piece_placed", {
+gameplaySignals.piecePlaced.emit({
   placementTimeMs,
   hardDrop: placementMethod === "hard_drop"
 });
 
-flaggo.events.emit("session_ended", {
+gameplaySignals.sessionEnded.emit({
   endReason,
   durationSeconds
 });
@@ -283,43 +297,24 @@ An explicit decision-scoped observation helper can exist as shorthand for advanc
 ### Advanced evidence and governance
 
 ```ts
-const dropInterval = flaggo.tune.number("tetris.dropInterval", {
+const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   definition: {
+    targetHierarchy: ["session", "user", "cohort", "global"],
     signals: {
-      targetHierarchy: ["session", "user", "cohort", "global"],
-      definitions: {
-        piecePlaced: {
-          kind: "event",
-          emitAs: "piece_placed",
-          fields: { placementTimeMs: "number", hardDrop: "boolean" }
-        },
-        sessionEnded: {
-          kind: "event",
-          emitAs: "session_ended",
-          fields: { endReason: "string", durationSeconds: "number" }
-        },
-        earlyLossRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "sessionEnded.endReason",
-          aggregation: "rate(endReason == 'early_loss')"
-        },
-        hardDropRate: {
-          kind: "metric",
-          type: "number",
-          source: "service-aggregated",
-          from: "piecePlaced.hardDrop",
-          aggregation: "rate(hardDrop == true)"
-        }
-      }
+      allow: [
+        gameplaySignals.piecePlaced,
+        gameplaySignals.sessionEnded,
+        gameplaySignals.earlyLossRate,
+        gameplaySignals.hardDropRate,
+        gameplaySignals.recentPlacementTimeMs
+      ]
     },
     intent: {
       type: "metric-objective",
-      primary: { signal: "earlyLossRate", direction: "minimize" },
+      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
       secondary: [
-        { signal: "hardDropRate", direction: "target", target: 0.45 },
-        { signal: "recentPlacementTimeMs", direction: "minimize" }
+        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
+        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
       ],
       rationale: "Keep the game challenging while reducing early frustration."
     },
@@ -344,23 +339,18 @@ const dropInterval = flaggo.tune.number("tetris.dropInterval", {
 });
 ```
 
-Named typed events and reusable metrics remain available as advanced evidence mode:
+Typed signal handles remain available wherever values are produced:
 
 ```ts
-const piecePlaced = flaggo.events.define("piece_placed", {
-  properties: {
-    placementTimeMs: "number",
-    placementMethod: "string"
-  }
+gameplaySignals.piecePlaced.emit({
+  placementTimeMs,
+  hardDrop: placementMethod === "hard_drop"
 });
 
-const signals = flaggo.metrics.define({
-  placementTimeMs: {
-    value: piecePlaced.property("placementTimeMs").average(),
-    window: "5m",
-    direction: "minimize"
-  }
-});
+gameplaySignals.boardPressure.emit(boardPressure);
+
+// Derived signals such as gameplaySignals.hardDropRate are declared once
+// and can be referenced by any decision allowed to use them.
 ```
 
 The library should make fallback semantics easy to inspect:
@@ -391,7 +381,7 @@ type DecisionResult<T> = DecideResponse<T>;
 
 `definition.integrity` should tell the application whether the runtime response was produced under a verified or known definition identity, or whether the response fell back because the definition was unknown, retired, or conflicting.
 
-The basic `tune.number(...)` helper returns `number` for ergonomics, while an advanced detailed helper should expose the full `DecisionResult<T>`.
+The basic `tune.number(...)` helper returns `DecisionReceipt<number>` for attribution while preserving the original SDK method name. An advanced detailed helper should expose the full `DecisionResult<T>`.
 
 ## MVP SDK interfaces
 
@@ -402,14 +392,25 @@ interface IFlaggoClient {
   tune: ITuneBuilder;
   events: IEventBuilder;
   metrics: IMetricBuilder;
+  exposures: IExposureBuilder;
   definitions: IDefinitionBundleProvider;
 }
 
 interface ITuneBuilder {
-  number(name: string, request: NumberTuneRequest): Promise<number>;
+  number(name: string, request: NumberTuneRequest): Promise<DecisionReceipt<number>>;
 
   numberDetailed(name: string, request: NumberTuneRequest): Promise<DecisionResult<number>>;
 }
+
+interface IExposureBuilder {
+  confirm(decisionId: string): Promise<{ exposureId: string }>;
+}
+
+type DecisionReceipt<T extends DecisionValue = DecisionValue> = {
+  value: T;
+  decisionId: string;
+  confirmToken?: string;
+};
 
 type NumberTuneRequest =
   | BasicNumberTuneRequest
@@ -426,7 +427,8 @@ type AdvancedNumberTuneRequest = {
 };
 
 type BasicNumberTuneDefinition = {
-  signals?: SignalDeclarationBlock;
+  targetHierarchy?: string[];
+  signals?: DecisionSignalReferences;
   inference?: InferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
@@ -435,7 +437,8 @@ type BasicNumberTuneDefinition = {
 };
 
 type AdvancedNumberTuneDefinition = {
-  signals?: SignalDeclarationBlock;
+  targetHierarchy?: string[];
+  signals?: DecisionSignalReferences;
   inference?: InferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
@@ -458,37 +461,25 @@ type RuntimeContextSchema = Record<
   | { type: "string" | "number" | "boolean"; target?: string }
 >;
 
-type RuntimeContext = Record<string, unknown>;
+type RuntimeContextValue = string | number | boolean | null;
+type RuntimeContext = Record<string, RuntimeContextValue>;
 
-type SignalDeclarationBlock = {
-  targetHierarchy?: string[];
-  definitions: SignalDeclarationMap;
+type DecisionSignalReferences = {
+  allow: SignalHandle[];
+  evidence?: SignalHandle[];
+  guardrails?: SignalHandle[];
 };
 
-type SignalDeclarationMap = Record<string, SignalDeclaration>;
-
-type SignalDeclaration =
-  | EventSignalDeclaration
-  | MetricSignalDeclaration;
-
-type EventSignalDeclaration = {
-  kind: "event";
-  emitAs?: string;
-  fields: Record<string, "string" | "number" | "boolean">;
-};
-
-type MetricSignalDeclaration = {
-  kind: "metric";
-  type: "string" | "number" | "boolean";
-  source: "app-emitted" | "service-aggregated";
-  from?: string;
-  aggregation?: string;
-  range?: [number, number];
+type SignalHandle = {
+  key: string;
+  schemaDigest?: string;
+  value?: (input: unknown) => RuntimeContextValue;
+  emit?: (input: unknown) => void;
 };
 
 type InferenceDeclaration = {
   target: "global" | "segment" | "cohort" | "user" | "session" | "level" | string;
-  inputs?: string[];
+  inputs?: SignalHandle[];
   fallbackOrder?: string[];
 };
 
@@ -509,7 +500,7 @@ type MetricObjectiveIntent = {
 };
 
 type MetricObjective = {
-  signal: string;
+  signal: SignalHandle;
   direction: "minimize" | "maximize" | "target";
   target?: number;
 };
@@ -640,7 +631,7 @@ For the Tetris hero scenario, the first client library design should support:
 
 - TypeScript only.
 - Number decision definitions.
-- Basic `tune.number(...)` call returning a plain number.
+- Basic `tune.number(...)` call returning a number decision receipt with a plain numeric `.value`.
 - Safety preset support, starting with `gradual`.
 - Signal declarations plus normal domain event/OpenTelemetry emission.
 - Advanced domain event and metric declarations as optional evidence mode.

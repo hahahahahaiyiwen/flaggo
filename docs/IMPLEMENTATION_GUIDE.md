@@ -296,7 +296,7 @@ interface IFlaggoClient {
 }
 
 interface ITuneBuilder {
-  number(name: string, request: NumberTuneRequest): Promise<number>;
+  number(name: string, request: NumberTuneRequest): Promise<DecisionReceipt<number>>;
   numberDetailed(name: string, request: NumberTuneRequest): Promise<DecideResponse<number>>;
 }
 

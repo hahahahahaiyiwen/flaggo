@@ -112,9 +112,10 @@ Values used by online inference should be declared metrics first, then selected 
 | --- | --- | --- |
 | Declared metric | App-computed or pre-materialized signal with stable semantics. | `boardPressure` |
 | Inference input | Declared metric supplied with the decision request. | `context.boardPressure` |
-| Exposure-captured input | Inference input value captured with the decision exposure record. | `exposure.boardPressure` |
+| Decision-record input | Inference input value captured when Flaggo returns a decision. | `decision.boardPressure` |
+| Exposure-captured input | Inference input value copied after the client confirms the value was applied or rendered. | `exposure.boardPressure` |
 
-Emitted metrics support broad async learning, including windows where no decision was requested. Exposure-captured inputs support decision-outcome attribution for the exact context in which Flaggo returned a value.
+Emitted metrics support broad async learning, including windows where no decision was requested. Decision-record inputs support audit of returned values. Exposure-captured inputs support decision-outcome attribution for the exact context in which the application actually applied or rendered a value.
 
 Design rule:
 
@@ -129,7 +130,7 @@ Useful metrics:
 - `earlyGameOverRate`,
 - `recoveryFailureRate`.
 
-Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` can come from runtime context only after they are declared as metrics and selected as inference inputs. The same metrics can be emitted over time and captured in exposure records when Flaggo returns a decision. Aggregated evidence can provide broader confidence and sample-size context.
+Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` can come from runtime context only after they are declared as metrics and selected as inference inputs. The same metrics can be emitted over time, captured in decision records when Flaggo returns a decision, and copied into exposure records only after the client confirms application/rendering. Aggregated evidence can provide broader confidence and sample-size context.
 
 ## MVP non-goals
 

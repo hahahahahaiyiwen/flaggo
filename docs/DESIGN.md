@@ -181,6 +181,8 @@ Responsibilities:
 
 The Decision API must be fast, reliable, and safe-by-default. If it cannot decide safely, it should return fallback guidance rather than pretending confidence exists.
 
+Fallback provenance is explicit. A server-produced policy fallback is a normal audited `RuntimeDecisionResult` with `source: server`, policy result, decision ID, and audit ID. A client fallback caused by service unavailability has `source: client-fallback` and cannot claim server policy, decision, or audit IDs.
+
 ### 3. Telemetry and evidence service
 
 The telemetry/evidence service turns runtime observations into decision evidence.
@@ -265,7 +267,7 @@ The audit/explanation service records why decisions happened.
 Responsibilities:
 
 - persist decision request/response summaries,
-- record scope, evidence snapshot, policy result, confidence, fallback usage, and reason text,
+- record runtime target, control target, evidence target references, policy target, evidence snapshot, policy result, confidence report, fallback usage, and reason text,
 - correlate decisions with telemetry and traces,
 - support operator review and debugging.
 
@@ -278,7 +280,7 @@ The operator console is the human governance interface.
 Responsibilities:
 
 - list decision keys and definitions,
-- inspect scopes and resolution chains,
+- inspect runtime/control/evidence/policy targets and resolution chains,
 - view goals, policies, fallbacks, and active state,
 - inspect recent decisions and explanations,
 - pause/resume decisions,
@@ -340,7 +342,7 @@ DecisionProposal: proposed -> validated -> approved | rejected
 GovernedDecisionState: pending -> active -> superseded | expired | rolled-back
 ```
 
-Approval can be automatic for low-risk changes within typed constraints and sufficient evidence only when deployment or environment policy grants that authority. Human approval is required for high-impact strategies, policy exceptions, low confidence, overlapping target conflicts, or regulated/business-critical decisions.
+Approval can be automatic for low-risk changes within typed constraints and sufficient evidence only when deployment or environment policy grants that authority. Human approval is required for high-impact strategies, policy exceptions, insufficient evidence quality, excessive model uncertainty, weak expected outcome, overlapping target conflicts, or regulated/business-critical decisions.
 
 Supporting lifecycle flows keep the system declared, evidenced, operated, audited, and improved over time:
 

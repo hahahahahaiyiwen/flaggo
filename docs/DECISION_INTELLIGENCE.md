@@ -63,7 +63,7 @@ The proposal must then pass through governance:
 ```text
 decision proposal
   -> policy constraints
-  -> scope authority
+  -> target authority
   -> lifecycle state
   -> cooldown and rollout limits
   -> operator overrides or approval requirements
@@ -122,7 +122,7 @@ Strategy proposals may take several forms:
 | Experiment assignment | Return the assigned candidate for the request's scope or exposure bucket. |
 | LLM-backed strategy | Use bounded AI reasoning only where latency and policy allow it. |
 
-Every strategy must still be governed by the declared result type, action space, fallback, policy, scope authority, lifecycle state, and audit requirements.
+Every strategy must still be governed by the declared result type, action space, fallback, policy, target authority, lifecycle state, and audit requirements.
 
 ## Inputs
 
@@ -211,7 +211,7 @@ Observation includes:
 
 - current active value,
 - recent outcome telemetry,
-- evidence inherited from broader scopes,
+- evidence inherited from broader targets,
 - prior decisions and proposal history,
 - active experiments or rollouts,
 - policy-relevant state.
@@ -338,7 +338,7 @@ After a `RuntimeDecisionResult` is applied, Flaggo should observe the result and
 Monitoring closes the loop:
 
 ```text
-DecisionProposal -> GovernedDecisionState -> RuntimeDecisionResult/exposure -> outcome telemetry -> future DecisionProposal
+DecisionProposal -> GovernedDecisionState -> RuntimeDecisionResult -> decision record -> confirmed exposure -> outcome telemetry -> future DecisionProposal
 ```
 
 Without outcome monitoring, Flaggo would only be making one-off recommendations.
@@ -391,7 +391,7 @@ Governance turns proposals or runtime candidates into safe runtime authority. It
 ```text
 Decision proposal, strategy proposal, or runtime candidate
   -> policy evaluation
-  -> scope authority check
+  -> target authority check
   -> lifecycle and cooldown check
   -> approval or override handling
   -> governed state update, governed response, hold, rollback transition, or no state
@@ -399,7 +399,7 @@ Decision proposal, strategy proposal, or runtime candidate
 
 Governance may approve a proposal as-is, constrain it, require human approval, reject it, activate fallback-only governed state, activate a bounded strategy, or allow a bounded runtime response. A rollback proposal is a transition: it activates a replacement or previous known-safe state and marks the replaced state as rolled back.
 
-Governance may itself use agentic assistance for analysis or explanation. For example, an agent may summarize why a proposal appears risky or recommend which policy reason code applies. That assistance must not replace explicit policy enforcement. The final authority should remain inspectable as policy, scope, lifecycle state, and operator controls.
+Governance may itself use agentic assistance for analysis or explanation. For example, an agent may summarize why a proposal appears risky or recommend which policy reason code applies. That assistance must not replace explicit policy enforcement. The final authority should remain inspectable as effective policy, runtime/control/evidence target references, lifecycle state, and operator controls.
 
 ## Supporting lifecycle flows
 
@@ -573,7 +573,7 @@ A proposal can resolve to several governed outcomes:
 | `rollback` | Transition to a replacement or previous known-safe state and mark the replaced state rolled back. |
 | `fallback` | Activate fallback-only governed state, or produce no state if even fallback-only authority is not durable. |
 | `requires_approval` | Human approval is needed before activation. |
-| `rejected` | Proposal violates policy or scope authority. |
+| `rejected` | Proposal violates policy or target authority. |
 
 ## Relationship to policy
 
@@ -588,7 +588,7 @@ Decision intelligence may understand policy context and avoid obviously invalid 
 - cooldown windows,
 - maximum deltas,
 - rollout limits,
-- scope authority,
+- target authority,
 - approval requirements,
 - operator pauses and overrides.
 

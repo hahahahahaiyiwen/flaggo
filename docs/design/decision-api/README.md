@@ -458,7 +458,9 @@ Policy may block or force fallback because of:
 - max delta violation,
 - cooldown,
 - insufficient sample size,
-- low confidence,
+- insufficient evidence quality,
+- excessive model uncertainty,
+- insufficient expected outcome,
 - guardrail breach,
 - paused operator mode,
 - missing required evidence.
@@ -518,7 +520,7 @@ The API should distinguish two fallback types:
    - Flaggo could not use the requested or most-specific runtime target/evidence view.
    - Flaggo resolved to a broader target, such as `cohort` or `global`.
    - A real decision may still be approved.
-   - Confidence should be present when the broader-scope decision is approved.
+   - Confidence should be present when the broader-target decision is approved.
 
 2. **Decision fallback**
    - Flaggo could not safely approve a decision.
@@ -533,6 +535,29 @@ Confidence is not one generic score. When present, it describes the returned dec
 | `modelUncertainty` | Uncertainty in a learned estimate or strategy; representation must define whether higher or lower is better. |
 | `expectedOutcome` | Estimated likelihood or magnitude of satisfying the declared objective. |
 Policy eligibility belongs to the `policy` result, not `confidence`, so the two cannot contradict each other.
+
+Fallback provenance must be explicit:
+
+| Source | Meaning |
+| --- | --- |
+| `server` | Decision API returned an audited `RuntimeDecisionResult`, possibly using policy fallback. Server `decisionId`, `auditId`, and `policy` may be present. |
+| `client-fallback` | SDK returned the local default because the service was unavailable or unreachable. No server `decisionId`, `auditId`, or `policy` may be claimed. |
+
+## Exposure confirmation
+
+Returning a value creates a decision record, not an exposure. The server response may include a confirm token or decision handle:
+
+```json
+{
+  "decisionId": "decision-123",
+  "exposure": {
+    "confirmationRequired": true,
+    "confirmToken": "confirm-abc"
+  }
+}
+```
+
+The SDK should call `confirmExposure(decisionId)` or use the confirm token only after the application applies or renders the value. The confirmation creates the `exposureId`; the initial runtime response should not include one.
 
 ## Audit and correlation
 
