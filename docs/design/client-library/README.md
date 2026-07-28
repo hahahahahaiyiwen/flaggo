@@ -151,108 +151,103 @@ This separation lets TypeScript be the first ergonomic SDK while preserving poly
 ### Basic decision and runtime value
 
 ```ts
-export const gameplaySignals = flaggo.signals.define({
-  boardPressure: flaggo.metric.number({
-    key: "tetris.boardPressure",
-    range: [0, 1]
-  }),
-  recentPlacementTimeMs: flaggo.metric.number({
-    key: "tetris.recentPlacementTimeMs",
-    unit: "ms"
-  }),
-  recoveryFailures: flaggo.metric.number({
-    key: "tetris.recoveryFailures"
-  }),
-  currentLevel: flaggo.metric.number({
-    key: "tetris.currentLevel"
-  }),
-  piecePlaced: flaggo.event({
-    key: "tetris.piecePlaced",
-    fields: {
-      placementTimeMs: flaggo.number({ unit: "ms" }),
-      hardDrop: flaggo.boolean()
-    }
-  }),
-  sessionEnded: flaggo.event({
-    key: "tetris.sessionEnded",
-    fields: {
-      endReason: flaggo.string(),
-      durationSeconds: flaggo.number({ unit: "s" })
-    }
-  }),
-  earlyLossRate: flaggo.metric.derived({
-    key: "tetris.earlyLossRate",
-    type: "number",
-    from: ["tetris.sessionEnded"],
-    aggregation: "rate(endReason == 'early_loss')",
-    window: "24h"
-  }),
-  hardDropRate: flaggo.metric.derived({
-    key: "tetris.hardDropRate",
-    type: "number",
-    from: ["tetris.piecePlaced"],
-    aggregation: "rate(hardDrop == true)",
-    window: "24h"
-  })
+export const boardPressureSignal = flaggo.metric.number({
+  key: "tetris.boardPressure",
+  range: [0, 1]
+});
+
+export const recentPlacementTimeMsSignal = flaggo.metric.number({
+  key: "tetris.recentPlacementTimeMs",
+  unit: "ms"
+});
+
+export const recoveryFailuresSignal = flaggo.metric.number({
+  key: "tetris.recoveryFailures"
+});
+
+export const currentLevelSignal = flaggo.metric.number({
+  key: "tetris.currentLevel"
+});
+
+export const piecePlacedEvent = flaggo.event({
+  key: "tetris.piecePlaced",
+  fields: {
+    placementTimeMs: flaggo.number({ unit: "ms" }),
+    hardDrop: flaggo.boolean()
+  }
+});
+
+export const sessionEndedEvent = flaggo.event({
+  key: "tetris.sessionEnded",
+  fields: {
+    endReason: flaggo.string(),
+    durationSeconds: flaggo.number({ unit: "s" })
+  }
+});
+
+export const earlyLossRateSignal = flaggo.metric.derived({
+  key: "tetris.earlyLossRate",
+  type: "number",
+  from: sessionEndedEvent,
+  aggregation: "rate(endReason == 'early_loss')",
+  window: "24h"
+});
+
+export const hardDropRateSignal = flaggo.metric.derived({
+  key: "tetris.hardDropRate",
+  type: "number",
+  from: piecePlacedEvent,
+  aggregation: "rate(hardDrop == true)",
+  window: "24h"
 });
 
 const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
-  definition: {
-    targetHierarchy: ["session", "user", "cohort", "global"],
-    signals: {
-      allow: [
-        gameplaySignals.boardPressure,
-        gameplaySignals.recentPlacementTimeMs,
-        gameplaySignals.recoveryFailures,
-        gameplaySignals.currentLevel,
-        gameplaySignals.piecePlaced,
-        gameplaySignals.sessionEnded,
-        gameplaySignals.earlyLossRate,
-        gameplaySignals.hardDropRate
-      ]
-    },
-    intent: {
-      type: "metric-objective",
-      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
-      secondary: [
-        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
-        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
-      ],
-      rationale: "Keep gameplay challenging but playable while reducing early frustration."
-    },
-    inference: {
-      target: "session",
-      inputs: [
-        gameplaySignals.boardPressure,
-        gameplaySignals.recentPlacementTimeMs,
-        gameplaySignals.recoveryFailures,
-        gameplaySignals.currentLevel
-      ],
-      fallbackOrder: ["cohort", "global"]
-    },
-    output: {
-      default: 800,
-      range: [200, 1500],
-      step: 50
-    },
-    safety: "gradual",
-    requestedApproval: "automatic",
-    context: {
-      sessionId: { type: "string", target: "session" },
-      userId: { type: "string", target: "user" },
-      cohort: { type: "string", target: "cohort" },
-      deviceType: "string"
-    }
+  targetHierarchy: ["session", "user", "cohort", "global"],
+  signals: {
+    evidence: [
+      piecePlacedEvent,
+      sessionEndedEvent,
+      earlyLossRateSignal,
+      hardDropRateSignal
+    ]
   },
+  intent: {
+    type: "metric-objective",
+    primary: { signal: earlyLossRateSignal, direction: "minimize" },
+    secondary: [
+      { signal: hardDropRateSignal, direction: "target", target: 0.45 },
+      { signal: recentPlacementTimeMsSignal, direction: "minimize" }
+    ],
+    rationale: "Keep gameplay challenging but playable while reducing early frustration."
+  },
+  inference: {
+    target: "session",
+    inputs: [
+      boardPressureSignal.input(boardPressure),
+      recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+      recoveryFailuresSignal.input(recoveryFailures),
+      currentLevelSignal.input(game.level)
+    ],
+    fallbackOrder: ["cohort", "global"]
+  },
+  output: {
+    default: 800,
+    range: [200, 1500],
+    step: 50
+  },
+  policy: {
+    maxDelta: 50,
+    cooldown: "20s",
+    minSampleSize: 30,
+    minEvidenceQuality: 0.7,
+    maxModelUncertainty: 0.35
+  },
+  requestedApproval: "automatic",
   context: {
-    sessionId,
-    userId,
-    cohort: playerCohort,
-    deviceType: device.type,
-    boardPressure: gameplaySignals.boardPressure.value(boardPressure),
-    recentPlacementTimeMs: gameplaySignals.recentPlacementTimeMs.value(recentPlacementTimeMs),
-    recoveryFailures: gameplaySignals.recoveryFailures.value(recoveryFailures),
-    currentLevel: gameplaySignals.currentLevel.value(game.level)
+    session: flaggo.target.session(sessionId),
+    user: flaggo.target.user(userId),
+    cohort: flaggo.target.cohort(playerCohort),
+    deviceType: device.type
   }
 });
 
@@ -260,21 +255,21 @@ gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
 await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 ```
 
-The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`, and the receipt carries `decisionId`/confirmation metadata for exposure attribution. Signal schemas are defined once near producers and reused through typed handles. The decision definition only references allowed signal handles and assigns their roles as objective signals, inference inputs, evidence, or guardrails. The runtime `context` block provides concrete target identifiers, runtime metadata, and typed signal values for online inference. The SDK should attach expected definition identity when configured. Direct REST clients can provide the same compact identity explicitly.
+The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`, and the receipt carries `decisionId`/confirmation metadata for exposure attribution. Signal schemas are defined once near producers and reused through typed handles. Bound inference inputs combine a signal declaration reference with its current value, while typed target wrappers combine target schema with the current ID. Tooling partitions this object into an immutable extracted definition and a compact runtime request; runtime values never enter the definition digest. Emitting a signal does not associate it with every decision in the program.
 
 ### Basic evidence emission
 
 ```ts
-gameplaySignals.boardPressure.emit(boardPressure);
-gameplaySignals.recentPlacementTimeMs.emit(recentPlacementTimeMs);
-gameplaySignals.recoveryFailures.emit(recoveryFailures);
+boardPressureSignal.emit(boardPressure);
+recentPlacementTimeMsSignal.emit(recentPlacementTimeMs);
+recoveryFailuresSignal.emit(recoveryFailures);
 
-gameplaySignals.piecePlaced.emit({
+piecePlacedEvent.emit({
   placementTimeMs,
   hardDrop: placementMethod === "hard_drop"
 });
 
-gameplaySignals.sessionEnded.emit({
+sessionEndedEvent.emit({
   endReason,
   durationSeconds
 });
@@ -301,25 +296,30 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   definition: {
     targetHierarchy: ["session", "user", "cohort", "global"],
     signals: {
-      allow: [
-        gameplaySignals.piecePlaced,
-        gameplaySignals.sessionEnded,
-        gameplaySignals.earlyLossRate,
-        gameplaySignals.hardDropRate,
-        gameplaySignals.recentPlacementTimeMs
+      evidence: [
+        piecePlacedEvent,
+        sessionEndedEvent,
+        earlyLossRateSignal,
+        hardDropRateSignal
       ]
     },
     intent: {
       type: "metric-objective",
-      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
+      primary: { signal: earlyLossRateSignal, direction: "minimize" },
       secondary: [
-        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
-        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
+        { signal: hardDropRateSignal, direction: "target", target: 0.45 },
+        { signal: recentPlacementTimeMsSignal, direction: "minimize" }
       ],
       rationale: "Keep the game challenging while reducing early frustration."
     },
     inference: {
       target: "session",
+      inputs: [
+        boardPressureSignal,
+        recentPlacementTimeMsSignal,
+        recoveryFailuresSignal,
+        currentLevelSignal
+      ],
       fallbackOrder: ["cohort", "global"]
     },
     output: {
@@ -334,22 +334,42 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
       minSampleSize: 30,
       minEvidenceQuality: 0.7,
       maxModelUncertainty: 0.35
+    },
+    context: {
+      sessionId: { type: "string", target: "session" },
+      userId: { type: "string", target: "user" },
+      cohort: { type: "string", target: "cohort" },
+      deviceType: "string"
     }
-  }
+  },
+  context: {
+    sessionId,
+    userId,
+    cohort: playerCohort,
+    deviceType: device.type
+  },
+  inputs: [
+    boardPressureSignal.input(boardPressure),
+    recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+    recoveryFailuresSignal.input(recoveryFailures),
+    currentLevelSignal.input(game.level)
+  ]
 });
 ```
+
+This is the explicit advanced form. It preserves separate reusable definition, context, and input values when build tooling cannot infer them from one code-first expression or when the definition is managed independently.
 
 Typed signal handles remain available wherever values are produced:
 
 ```ts
-gameplaySignals.piecePlaced.emit({
+piecePlacedEvent.emit({
   placementTimeMs,
   hardDrop: placementMethod === "hard_drop"
 });
 
-gameplaySignals.boardPressure.emit(boardPressure);
+boardPressureSignal.emit(boardPressure);
 
-// Derived signals such as gameplaySignals.hardDropRate are declared once
+// Derived signals such as hardDropRateSignal are declared once
 // and can be referenced by any decision allowed to use them.
 ```
 
@@ -413,27 +433,24 @@ type DecisionReceipt<T extends DecisionValue = DecisionValue> = {
 };
 
 type NumberTuneRequest =
-  | BasicNumberTuneRequest
-  | AdvancedNumberTuneRequest;
+  | CodeFirstNumberTuneRequest
+  | ExplicitNumberTuneRequest;
 
-type BasicNumberTuneRequest = {
-  definition: BasicNumberTuneDefinition;
-  context: RuntimeContext;
-};
-
-type AdvancedNumberTuneRequest = {
-  definition: AdvancedNumberTuneDefinition;
-  context: RuntimeContext;
-};
-
-type BasicNumberTuneDefinition = {
+type CodeFirstNumberTuneRequest = {
   targetHierarchy?: string[];
   signals?: DecisionSignalReferences;
-  inference?: InferenceDeclaration;
+  inference?: BoundInferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
-  safety: "gradual" | "conservative" | "manual";
-  context: RuntimeContextSchema;
+  policy: InlinePolicy;
+  requestedApproval?: RequestedApprovalMode;
+  context: BoundRuntimeContext;
+};
+
+type ExplicitNumberTuneRequest = {
+  definition: AdvancedNumberTuneDefinition;
+  context: RuntimeContext;
+  inputs?: SignalInput[];
 };
 
 type AdvancedNumberTuneDefinition = {
@@ -442,10 +459,12 @@ type AdvancedNumberTuneDefinition = {
   inference?: InferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
-  safety?: "gradual" | "conservative" | "manual";
   policy?: InlinePolicy;
+  requestedApproval?: RequestedApprovalMode;
   context: RuntimeContextSchema;
 };
+
+type RequestedApprovalMode = "automatic" | "human" | "policy-default";
 
 type NumberOutputContract = {
   default: number;
@@ -462,10 +481,23 @@ type RuntimeContextSchema = Record<
 >;
 
 type RuntimeContextValue = string | number | boolean | null;
+
+type SignalInput = {
+  signal: InferenceSignalHandle;
+  value: RuntimeContextValue;
+};
 type RuntimeContext = Record<string, RuntimeContextValue>;
+type BoundRuntimeContext = Record<
+  string,
+  RuntimeContextValue | TargetBinding
+>;
+
+type TargetBinding = {
+  target: string;
+  value: string;
+};
 
 type DecisionSignalReferences = {
-  allow: SignalHandle[];
   evidence?: SignalHandle[];
   guardrails?: SignalHandle[];
 };
@@ -473,13 +505,22 @@ type DecisionSignalReferences = {
 type SignalHandle = {
   key: string;
   schemaDigest?: string;
-  value?: (input: unknown) => RuntimeContextValue;
   emit?: (input: unknown) => void;
+};
+
+type InferenceSignalHandle = SignalHandle & {
+  input: (value: unknown) => SignalInput;
 };
 
 type InferenceDeclaration = {
   target: "global" | "segment" | "cohort" | "user" | "session" | "level" | string;
-  inputs?: SignalHandle[];
+  inputs?: InferenceSignalHandle[];
+  fallbackOrder?: string[];
+};
+
+type BoundInferenceDeclaration = {
+  target: "global" | "segment" | "cohort" | "user" | "session" | "level" | string;
+  inputs?: SignalInput[];
   fallbackOrder?: string[];
 };
 

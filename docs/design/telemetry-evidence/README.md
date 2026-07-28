@@ -70,21 +70,18 @@ Different decision definitions should not share active decision state by default
 
 | Layer | Reuse rule |
 | --- | --- |
-| Raw observations | Reusable across definitions when application, event name, field semantics, target, and schema version match. |
-| Evidence/signals | Reusable when the evidence definition hash matches. |
+| Raw observations | Reusable across definitions when application, signal key, and target semantics match. |
+| Evidence views | Reusable when signal key, target, window, and filters match. |
 | Decision state/strategy | Not reusable by default; keyed by decision definition and control/runtime target. |
 
-Example: `tetris.dropInterval@2` may add `recoveryFailures` as a new signal. It can reuse historical `boardPressure` and `placementTimeMs` observations from `@1` if those fields already existed with the same semantics. The new `recoveryFailures` signal starts cold unless historical observations already contain it.
+Example: `tetris.dropInterval@2` may add `tetris.recoveryFailures` as a new signal. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
 
-Evidence definition hashes should include:
+Evidence view identity should include:
 
-- source event or metric name,
-- field mapping,
-- aggregation function,
+- immutable signal key,
+- target,
 - time window,
-- filters,
-- scope level,
-- schema or semantic version.
+- filters.
 
 If only some required evidence is warm, the evidence provider should surface that as partial quality rather than pretending the new contract is fully ready. Policy can then choose fallback, safe baseline, or limited activation.
 

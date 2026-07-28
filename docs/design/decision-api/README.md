@@ -251,10 +251,10 @@ Response:
   },
   "evidenceViews": [
     {
-      "evidenceKey": "gameplay.placement_time",
-      "revision": "1",
+      "signal": { "key": "tetris.recentPlacementTimeMs" },
       "target": { "type": "session", "id": "game-456" },
-      "window": "2m"
+      "window": "2m",
+      "filters": {}
     }
   ],
   "fallback": {
@@ -312,10 +312,10 @@ This means Flaggo could not use the most specific requested scope, but it still 
   },
   "evidenceViews": [
     {
-      "evidenceKey": "gameplay.placement_time",
-      "revision": "1",
+      "signal": { "key": "tetris.recentPlacementTimeMs" },
       "target": { "type": "cohort", "id": "new_players" },
-      "window": "24h"
+      "window": "24h",
+      "filters": {}
     }
   ],
   "fallback": {

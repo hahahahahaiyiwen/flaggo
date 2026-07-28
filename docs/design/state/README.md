@@ -103,7 +103,7 @@ Rules:
 
 - A new semantic decision definition gets a new state namespace by default.
 - Old builds can continue using their known contract ID and state while new builds use a new contract ID or semantic revision.
-- Raw telemetry and matching evidence definitions may be reused to avoid cold start, but active strategy/state should not be copied automatically.
+- Raw telemetry and compatible evidence views may be reused to avoid cold start, but active strategy/state should not be copied automatically.
 - If a team wants to seed a new contract from old state, that should be an explicit migration with audit records and policy checks.
 
 ## MVP non-goals

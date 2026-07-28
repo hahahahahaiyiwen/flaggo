@@ -56,8 +56,8 @@ Rules:
 - `environment` is provider-neutral, such as `dev`, `test`, `prod`.
 - `DecisionTargetRef.type` is extensible, but MVP built-ins are `session`, `user`, `cohort`, and `global`.
 - Runtime context must stay primitive and JSON-serializable for audit and policy evaluation.
-- A signal `key` is its immutable semantic identity. Incompatible schema or meaning changes require a new key; schema digests can detect conflicting definitions under the same key.
-- A decision may only use signals listed in `signals.allow`. Referencing a producer-owned signal handle does not grant implicit authority to use every available signal.
+- A signal `key` is its immutable semantic identity. Any schema or meaning change requires a new key; schema digests detect conflicting definitions under the same key.
+- A decision may only use signals referenced by explicit roles such as objectives, inference inputs, evidence, or guardrails. Tooling may materialize an associated-signal set in the extracted contract for governance, but authored definitions should not duplicate role references by hand.
 
 ## Action space
 
@@ -129,7 +129,8 @@ type RuntimeContextSchema = Record<
 >;
 
 type DecisionSignalReferences = {
-  allow: SignalRef[];
+  // Generated in registered contracts from the role references below plus intent and inference declarations.
+  allowed?: SignalRef[];
   evidence?: SignalRef[];
   guardrails?: SignalRef[];
 };
@@ -392,10 +393,10 @@ type ConfidenceReport = {
 };
 
 type EvidenceViewRef = {
-  evidenceKey: string;
-  revision: string;
+  signal: SignalRef;
   target: DecisionTargetRef;
   window?: string;
+  filters?: Record<string, RuntimeContextValue>;
 };
 ```
 
@@ -407,12 +408,15 @@ Rules:
 
 ## Runtime API contracts
 
+Code-first SDKs may combine definition authoring and runtime binding in one ergonomic object. Before hashing or transport, the SDK/tooling must partition that object into the immutable `DecisionDefinition` and the runtime `DecideRequest` below. Bound values must never affect definition identity.
+
 ```ts
 type DecideRequest = {
   decisionKey: string;
   definition?: DecisionDefinitionRef;
   runtimeTarget?: DecisionTargetRef;
   runtimeContext: RuntimeContext;
+  inputs?: SignalInput[];
   expectedContract?: ContractIdentity;
   client: {
     appId: string;
@@ -421,6 +425,11 @@ type DecideRequest = {
     sdkVersion?: string;
   };
   correlationId?: string;
+};
+
+type SignalInput = {
+  signal: SignalRef;
+  value: RuntimeContextValue;
 };
 
 type DecideResponse<T extends DecisionValue = DecisionValue> = {
@@ -516,14 +525,14 @@ Flaggo should avoid sharing unsafe learned decision behavior across different co
 
 | Layer | Default sharing behavior | Reason |
 | --- | --- | --- |
-| Raw telemetry observations | Share across contracts with the same application, event, target, and schema semantics. | Observations are historical facts, not learned policy. |
-| Derived evidence or signals | Share only when the evidence definition hash matches. | A metric can be reused if it means the same thing. |
+| Raw telemetry observations | Share across definitions with the same application, signal key, and target semantics. | Observations are historical facts, not learned policy. |
+| Evidence views | Share only when signal key, target, window, and filters match. | A metric can be reused if it is the same immutable signal viewed the same way. |
 | Decision state or active strategy | Isolate by contract ID and control/runtime target. | A learned value or strategy for one contract may be unsafe for another. |
 
 Rules:
 
 - Telemetry identity should be stable at the event/signal level so a new definition can reuse existing observations for unchanged inputs.
-- Evidence requirements should have deterministic definition hashes based on source event, field mapping, window, aggregation, filters, and target level.
+- Evidence views should be identified by immutable signal key plus target, window, and filters.
 - A new definition may start in partial-warm mode: reused evidence can contribute immediately, while new signals collect data until policy marks them sufficient.
 - Decision state, active strategies, cooldowns, and operator overrides are keyed by contract ID plus resolved control/runtime target. They are not inherited automatically across contracts.
 - State migration between contract IDs should be an explicit operator or registry action, not an implicit compatibility rule.
@@ -748,6 +757,8 @@ Signal declarations are extracted from producer-owned typed handles:
 
 The decision definition references those signal identities without redefining their schemas:
 
+`signals.allowed` below is generated from role references such as `intent`, `inference.inputs`, evidence, and guardrails. Authors should not maintain a duplicate flat allowlist by hand.
+
 ```json
 {
   "ref": {
@@ -776,7 +787,7 @@ The decision definition references those signal identities without redefining th
   },
   "targetHierarchy": ["session", "user", "cohort", "global"],
   "signals": {
-    "allow": [
+    "allowed": [
       { "key": "tetris.boardPressure" },
       { "key": "tetris.recentPlacementTimeMs" },
       { "key": "tetris.recoveryFailures" },

@@ -59,7 +59,7 @@ Decision evidence is what Flaggo knows from runtime facts, observations, telemet
 | --- | --- | --- |
 | Runtime context | What is true right now? | board pressure is high |
 | Runtime target | Who or what receives this decision now? | `session:game-456` |
-| Evidence view | Which slice of telemetry is relevant? | `placement_time@1` grouped by cohort over 24h |
+| Evidence view | Which slice of telemetry is relevant? | `tetris.recentPlacementTimeMs` grouped by cohort over 24h |
 | Application/build provenance | Which software artifact is calling for audit/operations? | `service=web`, `build=2026.07.25.1` |
 
 Detailed concept design: [DECISION_EVIDENCE.md](DECISION_EVIDENCE.md).
@@ -208,7 +208,7 @@ Responsibilities:
 - store action spaces,
 - store fallback contracts,
 - store goal definitions,
-- store telemetry/evidence definitions and bindings,
+- store telemetry, signal references, and evidence view requirements,
 - store target rules and resolution chains,
 - version contract changes.
 
@@ -374,8 +374,8 @@ Flaggo may resolve:
 runtime target: session:game-456
 control target: cohort:new_players
 evidence views:
-  placement_time@1 / session:game-456 / 2m
-  early_loss_rate@1 / cohort:new_players / 24h
+  tetris.recentPlacementTimeMs / session:game-456 / 2m / filters:{}
+  tetris.earlyLossRate / cohort:new_players / 24h / filters:{}
 policy: cohort:new_players -> global
 fallback: global 800ms
 ```

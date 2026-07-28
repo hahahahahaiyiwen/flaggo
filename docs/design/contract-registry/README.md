@@ -11,7 +11,7 @@ It owns the server-side resources that application code references at runtime:
 - action spaces,
 - supported runtime target kinds,
 - allowed control target kinds,
-- evidence definitions and bindings,
+- signal role references and evidence view requirements,
 - goals,
 - fallback contracts,
 - policy references.
@@ -62,7 +62,7 @@ Examples of revision-worthy changes:
 - string allowed values change,
 - supported target or control target changes,
 - fallback contract changes,
-- evidence definition changes,
+- signal role/reference changes,
 - goal definition changes,
 - policy reference changes.
 
@@ -97,15 +97,14 @@ Example shape:
       "key": "tetris.dropInterval",
       "valueType": "number",
       "targetHierarchy": ["session", "user", "cohort", "global"],
-      "signals": {
-        "allow": [
-          { "key": "tetris.boardPressure" },
-          { "key": "tetris.earlyLossRate" }
-        ]
-      },
       "inference": {
         "target": "session",
+        "inputs": [{ "key": "tetris.boardPressure" }],
         "fallbackOrder": ["cohort", "global"]
+      },
+      "intent": {
+        "type": "metric-objective",
+        "primary": { "signal": { "key": "tetris.earlyLossRate" }, "direction": "minimize" }
       }
     }
   ]
@@ -144,29 +143,43 @@ The preferred UX is registry-managed versioning. Developers can keep writing:
 
 ```ts
 flaggo.tune.number("tetris.dropInterval", {
-  definition: {
-    targetHierarchy: ["session", "user", "cohort", "global"],
-    signals: {
-      allow: [gameplaySignals.boardPressure, gameplaySignals.earlyLossRate]
-    },
-    inference: {
-      target: "session",
-      fallbackOrder: ["cohort", "global"]
-    },
-    intent: {
-      type: "natural-language",
-      text: "challenging-but-playable"
-    },
-    output: {
-      default: 800,
-      range: [200, 1500]
-    },
-    safety: "gradual"
+  targetHierarchy: ["session", "user", "cohort", "global"],
+  signals: {
+    evidence: [
+      piecePlacedEvent,
+      sessionEndedEvent,
+      earlyLossRateSignal
+    ]
+  },
+  intent: {
+    type: "metric-objective",
+    primary: { signal: earlyLossRateSignal, direction: "minimize" }
+  },
+  inference: {
+    target: "session",
+    inputs: [boardPressureSignal.input(boardPressure)],
+    fallbackOrder: ["cohort", "global"]
+  },
+  output: {
+    default: 800,
+    range: [200, 1500]
+  },
+  policy: {
+    maxDelta: 50,
+    cooldown: "20s",
+    minSampleSize: 30,
+    minEvidenceQuality: 0.7,
+    maxModelUncertainty: 0.35
+  },
+  context: {
+    session: flaggo.target.session(sessionId),
+    user: flaggo.target.user(userId),
+    cohort: flaggo.target.cohort(playerCohort)
   }
 });
 ```
 
-During validation/apply, the registry compares the submitted semantics with the existing contract:
+Tooling extracts signal identities and target schemas from the bindings above, discards their runtime values, and sends only canonical definition semantics to the registry. During validation/apply, the registry compares those submitted semantics with the existing contract:
 
 - If semantics are unchanged, it returns the existing contract ID/revision.
 - If only metadata changed, it records a metadata revision.

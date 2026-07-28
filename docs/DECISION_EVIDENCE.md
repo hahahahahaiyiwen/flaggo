@@ -18,15 +18,17 @@ Decision evidence has two broad forms:
 
 | Evidence form | Meaning | Example |
 | --- | --- | --- |
-| Runtime context | Facts supplied with a decision request. | `sessionId`, `boardPressure`, `recentPlacementTimeMs` |
+| Runtime context | Target identifiers and non-signal request metadata. | `sessionId`, `deviceType` |
+| Runtime signal inputs | Typed signal values supplied with a decision request. | `tetris.boardPressure = 0.82` |
 | Durable observations | Facts observed over time. | `piece_placed`, `session_ended`, emitted metrics |
 
 Flaggo projects these facts into evidence views.
 
 ```text
-gameplay.placement_time@1
+signal: tetris.recentPlacementTimeMs
   target: cohort:new_players
   window: 24h
+  filters: {}
   quality: sufficient
 ```
 
@@ -36,9 +38,9 @@ gameplay.placement_time@1
 | --- | --- |
 | Runtime context | Current request facts and identifiers. |
 | Raw observations | Events, metrics, traces, logs, spans, or domain records. |
-| Evidence definitions | Stable semantic definitions for observed measures. |
-| Evidence views | Evidence definition + target + window + filters + freshness/quality. |
-| Inference inputs | Declared metrics supplied in runtime context for online inference. |
+| Signal definitions | Immutable keyed schemas for observed measures. |
+| Evidence views | Signal key + target + window + filters + freshness/quality. |
+| Inference inputs | Typed signal values used for online inference. Code-first SDKs may bind them inside `inference.inputs`; the wire request carries them separately from runtime context. |
 | Decision records | Returned value plus inference input values, target, definition revision, and audit/correlation ID. |
 | Exposure records | Client-confirmed application/rendering of a returned value, linked to a decision record. |
 | Evidence quality | Freshness, sample size, confidence, missingness, conflict, drift. |
@@ -49,22 +51,23 @@ Application/build provenance should not affect personalization or target selecti
 
 ## Signals and derived evidence views
 
-Decision definitions declare the signals Flaggo can understand:
+Decision definitions reference signal handles by role. Tooling can derive an explicit allowed-signal set from objective, inference, evidence, and guardrail references:
 
 ```text
-signals.allow:
+derived allowed signals:
   - tetris.piecePlaced
   - tetris.boardPressure
   - tetris.earlyLossRate
 ```
 
-Evidence views are derived from the decision definition revision, referenced signal declarations, target hierarchy, and time/window needs:
+Evidence views are derived from immutable signal keys, target hierarchy, and time/window/filter needs:
 
 ```text
 tetris.dropInterval@2
-  signal: earlyLossRate
+  signal: tetris.earlyLossRate
   target: cohort:new_players
   window: 24h
+  filters: {}
 ```
 
 This lets multiple decision definitions reuse compatible observed signals without sharing governed state or requiring separate evidence binding declarations.
@@ -79,7 +82,7 @@ recentPlacementTimeMs
 recoveryFailures
 ```
 
-They should be declared as metrics first, then optionally selected as inference inputs:
+They should be declared as immutable keyed metrics first, then optionally selected as inference inputs:
 
 | Concept | Meaning | Best for |
 | --- | --- | --- |
@@ -91,12 +94,12 @@ They should be declared as metrics first, then optionally selected as inference 
 For example:
 
 ```text
-metric: boardPressure
+metric: tetris.boardPressure
   type: number
   source: app-emitted
 
 inferenceInputs:
-  - boardPressure
+  - tetris.boardPressure
 ```
 
 The emitted metric is normal telemetry:
@@ -113,9 +116,9 @@ definition: tetris.dropInterval@2
 runtime target: session:game-456
 returned value: 850
 inference inputs:
-  boardPressure = 0.82
-  recentPlacementTimeMs = 1420
-  recoveryFailures = 2
+  tetris.boardPressure = 0.82
+  tetris.recentPlacementTimeMs = 1420
+  tetris.recoveryFailures = 2
 auditId: audit-789
 ```
 
@@ -138,7 +141,7 @@ Later outcome events should correlate with exposures, not merely returned decisi
 
 Design rule:
 
-> If online inference needs a value, it must be a declared metric selected as an inference input. The application should provide the current pre-aggregated value; the service should not aggregate it on the hot path.
+> If online inference needs a value, it must be a declared metric selected as an inference input. A code-first SDK may bind the current pre-aggregated value directly inside `inference.inputs`; it must still serialize that value into the wire request's separate `inputs` array. The service should not aggregate it on the hot path.
 
 ## Evidence views
 
@@ -146,19 +149,21 @@ An evidence view is a target-specific and time-specific projection of evidence.
 
 ```text
 EvidenceView
-  evidence: gameplay.placement_time@1
+  signal: tetris.recentPlacementTimeMs
   target: session:game-456
   window: 2m
+  filters: {}
 ```
 
 ```text
 EvidenceView
-  evidence: gameplay.placement_time@1
+  signal: tetris.recentPlacementTimeMs
   target: cohort:new_players
   window: 24h
+  filters: {}
 ```
 
-The same evidence definition can serve async learning and online inference through different views:
+The same immutable signal key can serve async learning and online inference through different views:
 
 | Path | Typical evidence view |
 | --- | --- |
@@ -174,9 +179,15 @@ Runtime context is evidence for the current request. It can contain:
 sessionId = game-456
 userId = user-123
 cohort = new_players
-boardPressure = 0.82
-recentPlacementTimeMs = 1420
-recoveryFailures = 2
+deviceType = mobile
+```
+
+Runtime signal inputs are separate from ordinary context:
+
+```text
+tetris.boardPressure = 0.82
+tetris.recentPlacementTimeMs = 1420
+tetris.recoveryFailures = 2
 ```
 
 The target resolver uses these facts with the decision definition's target hierarchy:
@@ -191,12 +202,12 @@ Evidence can be reused across decision definition revisions when semantics match
 
 | Layer | Default reuse behavior |
 | --- | --- |
-| Raw observations | Reusable when event and field semantics match. |
-| Evidence definitions | Reusable by stable semantic version. |
-| Evidence views | Reusable when definition hash, target, window, filters, and schema match. |
+| Raw observations | Reusable when immutable signal keys match. |
+| Signal definitions | Reusable by immutable signal key. |
+| Evidence views | Reusable when signal key, target, window, and filters match. |
 | Governed state | Not reused automatically; it belongs to decision intelligence/governance. |
 
-Example: `tetris.dropInterval@2` may add a new signal such as `recoveryFailures`. It can reuse historical `placement_time@1` and `early_loss_rate@1`, while the new signal warms up.
+Example: `tetris.dropInterval@2` may add a new signal such as `tetris.recoveryFailures`. It can reuse historical `tetris.recentPlacementTimeMs` and `tetris.earlyLossRate` views, while the new signal warms up.
 
 ## OpenTelemetry relationship
 

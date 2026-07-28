@@ -456,7 +456,7 @@ The telemetry ingestion flow turns application observations into evidence that o
 Application emits domain telemetry or OpenTelemetry signals
   -> ingestion pipeline receives events, metrics, traces, or logs
   -> evidence service correlates and aggregates observations
-  -> evidence snapshots become available by evidence definition, target, and window
+  -> evidence snapshots become available by signal key, target, window, and filters
   -> online and async paths use evidence snapshots
 ```
 

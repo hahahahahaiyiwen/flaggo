@@ -88,118 +88,106 @@ The runtime SDK carries only compact contract/build identity, such as expected c
 The developer defines gameplay signals once near their producer, then asks for one adaptive value by referencing those typed handles.
 
 ```ts
-export const gameplaySignals = flaggo.signals.define({
-  boardPressure: flaggo.metric.number({
-    key: "tetris.boardPressure",
-    range: [0, 1]
-  }),
+export const boardPressureSignal = flaggo.metric.number({
+  key: "tetris.boardPressure",
+  range: [0, 1]
+});
 
-  recentPlacementTimeMs: flaggo.metric.number({
-    key: "tetris.recentPlacementTimeMs",
-    unit: "ms"
-  }),
+export const recentPlacementTimeMsSignal = flaggo.metric.number({
+  key: "tetris.recentPlacementTimeMs",
+  unit: "ms"
+});
 
-  recoveryFailures: flaggo.metric.number({
-    key: "tetris.recoveryFailures"
-  }),
+export const recoveryFailuresSignal = flaggo.metric.number({
+  key: "tetris.recoveryFailures"
+});
 
-  currentLevel: flaggo.metric.number({
-    key: "tetris.currentLevel"
-  }),
+export const currentLevelSignal = flaggo.metric.number({
+  key: "tetris.currentLevel"
+});
 
-  piecePlaced: flaggo.event({
-    key: "tetris.piecePlaced",
-    fields: {
-      placementTimeMs: flaggo.number({ unit: "ms" }),
-      hardDrop: flaggo.boolean()
-    }
-  }),
+export const piecePlacedEvent = flaggo.event({
+  key: "tetris.piecePlaced",
+  fields: {
+    placementTimeMs: flaggo.number({ unit: "ms" }),
+    hardDrop: flaggo.boolean()
+  }
+});
 
-  sessionEnded: flaggo.event({
-    key: "tetris.sessionEnded",
-    fields: {
-      endReason: flaggo.string(),
-      durationSeconds: flaggo.number({ unit: "s" })
-    }
-  }),
+export const sessionEndedEvent = flaggo.event({
+  key: "tetris.sessionEnded",
+  fields: {
+    endReason: flaggo.string(),
+    durationSeconds: flaggo.number({ unit: "s" })
+  }
+});
 
-  earlyLossRate: flaggo.metric.derived({
-    key: "tetris.earlyLossRate",
-    type: "number",
-    from: ["tetris.sessionEnded"],
-    aggregation: "rate(endReason == 'early_loss')",
-    window: "24h"
-  }),
+export const earlyLossRateSignal = flaggo.metric.derived({
+  key: "tetris.earlyLossRate",
+  type: "number",
+  from: sessionEndedEvent,
+  aggregation: "rate(endReason == 'early_loss')",
+  window: "24h"
+});
 
-  hardDropRate: flaggo.metric.derived({
-    key: "tetris.hardDropRate",
-    type: "number",
-    from: ["tetris.piecePlaced"],
-    aggregation: "rate(hardDrop == true)",
-    window: "24h"
-  })
+export const hardDropRateSignal = flaggo.metric.derived({
+  key: "tetris.hardDropRate",
+  type: "number",
+  from: piecePlacedEvent,
+  aggregation: "rate(hardDrop == true)",
+  window: "24h"
 });
 ```
 
-The decision definition does not own those schemas. It explicitly allows the signals and assigns roles:
+The decision definition does not own those schemas. It directly references individual typed signal handles by role; tooling can derive an explicit associated-signal set in the extracted contract. Emitting a signal does not associate it with every decision in the program: each decision opts into the signals it may use for evidence, objectives, inference, and guardrails.
 
 ```ts
 const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
-  definition: {
-    targetHierarchy: ["session", "user", "cohort", "global"],
-    signals: {
-      allow: [
-        gameplaySignals.boardPressure,
-        gameplaySignals.recentPlacementTimeMs,
-        gameplaySignals.recoveryFailures,
-        gameplaySignals.currentLevel,
-        gameplaySignals.piecePlaced,
-        gameplaySignals.sessionEnded,
-        gameplaySignals.earlyLossRate,
-        gameplaySignals.hardDropRate
-      ]
-    },
-    intent: {
-      type: "metric-objective",
-      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
-      secondary: [
-        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
-        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
-      ],
-      rationale: "Keep gameplay challenging but playable while reducing early frustration."
-    },
-    inference: {
-      target: "session",
-      inputs: [
-        gameplaySignals.boardPressure,
-        gameplaySignals.recentPlacementTimeMs,
-        gameplaySignals.recoveryFailures,
-        gameplaySignals.currentLevel
-      ],
-      fallbackOrder: ["cohort", "global"]
-    },
-    output: {
-      default: 800,
-      range: [200, 1500],
-      step: 50
-    },
-    safety: "gradual",
-    context: {
-      sessionId: { type: "string", target: "session" },
-      userId: { type: "string", target: "user" },
-      cohort: { type: "string", target: "cohort" },
-      deviceType: "string"
-    }
+  targetHierarchy: ["session", "user", "cohort", "global"],
+  signals: {
+    evidence: [
+      piecePlacedEvent,
+      sessionEndedEvent,
+      earlyLossRateSignal,
+      hardDropRateSignal
+    ]
+  },
+  intent: {
+    type: "metric-objective",
+    primary: { signal: earlyLossRateSignal, direction: "minimize" },
+    secondary: [
+      { signal: hardDropRateSignal, direction: "target", target: 0.45 },
+      { signal: recentPlacementTimeMsSignal, direction: "minimize" }
+    ],
+    rationale: "Keep gameplay challenging but playable while reducing early frustration."
+  },
+  inference: {
+    target: "session",
+    inputs: [
+      boardPressureSignal.input(boardPressure),
+      recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+      recoveryFailuresSignal.input(recoveryFailures),
+      currentLevelSignal.input(game.level)
+    ],
+    fallbackOrder: ["cohort", "global"]
+  },
+  output: {
+    default: 800,
+    range: [200, 1500],
+    step: 50
+  },
+  policy: {
+    maxDelta: 50,
+    cooldown: "20s",
+    minSampleSize: 30,
+    minEvidenceQuality: 0.7,
+    maxModelUncertainty: 0.35
   },
   context: {
-    sessionId,
-    userId,
-    cohort: playerCohort,
-    deviceType: device.type,
-    boardPressure: gameplaySignals.boardPressure.value(boardPressure),
-    recentPlacementTimeMs: gameplaySignals.recentPlacementTimeMs.value(recentPlacementTimeMs),
-    recoveryFailures: gameplaySignals.recoveryFailures.value(recoveryFailures),
-    currentLevel: gameplaySignals.currentLevel.value(game.level)
+    session: flaggo.target.session(sessionId),
+    user: flaggo.target.user(userId),
+    cohort: flaggo.target.cohort(playerCohort),
+    deviceType: device.type
   }
 });
 
@@ -209,23 +197,25 @@ await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 
 In this shape, `flaggo.tune.number(...)` keeps the original SDK surface but returns a number decision object. The application still applies a plain numeric value through `dropIntervalDecision.value`, while the SDK exposes the decision receipt needed for attribution. If a value-only convenience is needed later, it should be a separate helper or projection that intentionally opts out of closed-loop exposure attribution.
 
-The `definition` block follows the decision-definition mental model: target hierarchy, allowed signal references, intent, inference, output, safety, and runtime context schema. Signal schemas live outside the decision near their producers. Metrics such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` are app-emitted precomputed values supplied through typed handles; `inference.inputs` declares which handles the runtime request may carry for online inference. `inference.target` declares the desired target kind, and `inference.fallbackOrder` keeps fallback explicit. Derived signals such as `earlyLossRate` declare their source signal and aggregation expression separately. Evidence views are derived internally from the definition revision, referenced signal definitions, target hierarchy, and requested windows. Target IDs such as `sessionId`, `userId`, and `cohort` are normal context fields marked in the schema as target levels. The registry can still govern behavior at a broader control target such as `cohort:new_players`. `output.default` is the safe value returned when Flaggo cannot provide an approved value.
+The code-first object combines authoring and invocation without conflating their persisted forms. A bound input such as `boardPressureSignal.input(boardPressure)` contributes the immutable signal reference to the extracted definition and the current value to the runtime request. A typed target such as `flaggo.target.session(sessionId)` contributes the target kind to the extracted context schema and the current ID to the runtime request. Plain context values such as `deviceType` remain runtime metadata. Flaggo excludes bound runtime values from definition digests and revisions.
+
+`signals.evidence` declares emitted or derived signals that this decision may use for evidence and learning; emitting a signal does not associate it with every decision. `inference.target` declares the desired target kind, and `inference.fallbackOrder` keeps resolution explicit. Derived signals such as `earlyLossRateSignal` declare their typed source and aggregation separately. The registry can still govern behavior at a broader control target such as `cohort:new_players`. `output.default` is the safe value returned when Flaggo cannot provide an approved value.
 
 This keeps the online path simple: the application sends pre-aggregated metric values, and the service does not aggregate them on the hot path. The same metric values can be emitted over time for async learning, captured in the decision record when a value is returned, and captured in an exposure record only after the client confirms the value was applied or rendered.
 
 The application can continue emitting normal domain events or OpenTelemetry signals:
 
 ```ts
-gameplaySignals.boardPressure.emit(boardPressure);
-gameplaySignals.recentPlacementTimeMs.emit(recentPlacementTimeMs);
-gameplaySignals.recoveryFailures.emit(recoveryFailures);
+boardPressureSignal.emit(boardPressure);
+recentPlacementTimeMsSignal.emit(recentPlacementTimeMs);
+recoveryFailuresSignal.emit(recoveryFailures);
 
-gameplaySignals.piecePlaced.emit({
+piecePlacedEvent.emit({
   placementTimeMs,
   hardDrop: placementMethod === "hard_drop"
 });
 
-gameplaySignals.sessionEnded.emit({
+sessionEndedEvent.emit({
   endReason,
   durationSeconds
 });
@@ -264,25 +254,30 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   definition: {
     targetHierarchy: ["session", "user", "cohort", "global"],
     signals: {
-      allow: [
-        gameplaySignals.piecePlaced,
-        gameplaySignals.sessionEnded,
-        gameplaySignals.earlyLossRate,
-        gameplaySignals.hardDropRate,
-        gameplaySignals.recentPlacementTimeMs
+      evidence: [
+        piecePlacedEvent,
+        sessionEndedEvent,
+        earlyLossRateSignal,
+        hardDropRateSignal
       ]
     },
     intent: {
       type: "metric-objective",
-      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
+      primary: { signal: earlyLossRateSignal, direction: "minimize" },
       secondary: [
-        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
-        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
+        { signal: hardDropRateSignal, direction: "target", target: 0.45 },
+        { signal: recentPlacementTimeMsSignal, direction: "minimize" }
       ],
       rationale: "Keep the game challenging while reducing early frustration."
     },
     inference: {
       target: "session",
+      inputs: [
+        boardPressureSignal,
+        recentPlacementTimeMsSignal,
+        recoveryFailuresSignal,
+        currentLevelSignal
+      ],
       fallbackOrder: ["cohort", "global"]
     },
     output: {
@@ -296,12 +291,30 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
       minSampleSize: 30,
       minEvidenceQuality: 0.7,
       maxModelUncertainty: 0.35
+    },
+    context: {
+      sessionId: { type: "string", target: "session" },
+      userId: { type: "string", target: "user" },
+      cohort: { type: "string", target: "cohort" },
+      deviceType: "string"
     }
-  }
+  },
+  context: {
+    sessionId,
+    userId,
+    cohort: playerCohort,
+    deviceType: device.type
+  },
+  inputs: [
+    boardPressureSignal.input(boardPressure),
+    recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+    recoveryFailuresSignal.input(recoveryFailures),
+    currentLevelSignal.input(game.level)
+  ]
 });
 ```
 
-This retains the system's depth without charging every user the full conceptual cost on day one. Named domain events, reusable signal definitions, OpenTelemetry bindings, and warehouse-backed evidence should be advanced evidence modes, not prerequisites for the first successful adaptive value.
+This explicit form remains useful when definitions are generated, reused across call sites, registered outside application execution, or authored independently from runtime values. It maps directly to the separated definition and request contracts. The combined code-first form should remain the default UX.
 
 Governed state and strategy are intentionally not declared by the application in the basic path. Flaggo owns state such as the current active value, previous decision, cooldown status, rollout, operator mode, rollback transition metadata, and active strategy. The developer says what should be optimized and what is safe; Flaggo and operators decide whether that is currently served by a fixed value, numeric rule, experiment, learned strategy, or fallback-only mode.
 
@@ -331,11 +344,11 @@ Flaggo should support different owners and systems across the software lifecycle
 
 This lifecycle supports TypeScript-first development without making TypeScript SDK extraction a global architectural requirement. It also supports rolling deployments where two builds of the same service are live at the same time: each build carries its own expected contract identity, and Flaggo recognizes known immutable contract IDs/revisions instead of forcing every build onto one current contract.
 
-When a contract changes semantically, Flaggo should not automatically share active decision state with the new contract. It may still reuse telemetry facts and matching evidence definitions so the new contract does not start completely cold:
+When a definition changes semantically, Flaggo should not automatically share active decision state with the new definition. It may still reuse telemetry facts and matching immutable signal keys so the new definition does not start completely cold:
 
 ```text
-raw observations: reusable when event and field semantics match
-evidence views: reusable when definition hash matches
+raw observations: reusable when immutable signal keys match
+evidence views: reusable when signal key, target, window, and filters match
 governed state: isolated by decision definition and control target
 runtime target state: isolated by decision definition and runtime target
 ```

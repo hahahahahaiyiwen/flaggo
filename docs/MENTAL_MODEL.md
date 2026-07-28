@@ -104,7 +104,7 @@ Notes:
 - `targetHierarchy` defines meaningful target levels for signal aggregation, evidence views, learning, inference, governance, and fallback.
 - Derived signals must be declared separately from decisions and must state how they are derived from available signals.
 - `inference.target` describes the desired online inference target kind, not a concrete target instance.
-- `inference.inputs` references allowed app-emitted metric handles that the application supplies with the decision request so online inference does not need to aggregate them on the hot path.
+- `inference.inputs` identifies allowed app-emitted metrics and supplies their current pre-aggregated values. Code-first SDKs may express both through bound handles such as `boardPressureSignal.input(boardPressure)`; extracted definitions retain only the signal references, while runtime requests carry the values.
 - `inference.fallbackOrder` makes broader fallback levels explicit.
 - Intent is typed. Natural-language intent captures product direction; metric-objective intent binds optimization to declared signals.
 - Natural-language intent is advisory metadata unless paired with metric objectives or typed policy constraints.
@@ -181,7 +181,7 @@ The word "scope" should not carry every meaning. Decision definitions declare a 
 | Runtime target | Concrete entity receiving this decision now. |
 | Learning target | Target chosen by async intelligence for analysis. |
 | Control target | Target where governed state is approved and stored. |
-| Evidence view | Evidence definition plus target, window, filters, freshness, and quality. |
+| Evidence view | Immutable signal key plus target, window, filters, freshness, and quality. |
 | Policy scope | Boundary where a policy applies. |
 | Fallback scope | Boundary where a fallback value or rule applies. |
 | Application/build provenance | Software artifact identity used for audit and operations, not a personalization target by default. |

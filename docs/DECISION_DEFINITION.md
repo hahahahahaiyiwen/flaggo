@@ -33,12 +33,12 @@ The key identifies the decision family. The definition revision identifies one i
 | --- | --- | --- |
 | Decision key | Stable application-facing decision family. | `tetris.dropInterval` |
 | Revision | Immutable semantic version. | `2` |
-| Signal references | Explicit allow-list of externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and online inference. | `gameplaySignals.boardPressure`, `gameplaySignals.earlyLossRate` |
+| Signal references | Role references to externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and online inference. | `boardPressureSignal`, `earlyLossRateSignal` |
 | Intent | Typed objective: natural-language product direction or metric-driven optimization over declared signals. | natural-language: challenging but playable; metric-objective: minimize early loss |
 | Inference | Runtime inference target, app-emitted metric inputs, and fallback order. | target `session`, inputs `boardPressure`, fallback `cohort -> global` |
 | Output contract | Result type, bounds, allowed values, step, default. | number, `200..1500`, step `50`, default `800` |
 | Safety/policy/guardrails | Hard constraints, operating limits, and requested approval mode. Deployment/environment policy decides whether requested automatic approval is allowed. | gradual, cooldown, min evidence quality, max model uncertainty, requested automatic approval |
-| Runtime context schema | Request-time facts the application must or may provide, including fields that identify target levels. | `sessionId`, `cohort`, board pressure |
+| Runtime context schema | Request-time facts the application must or may provide, including fields that identify target levels or metadata. | `sessionId`, `cohort`, `deviceType` |
 
 ## What it does not own
 
@@ -60,72 +60,70 @@ Those belong to [Decision Evidence](DECISION_EVIDENCE.md), [Decision Intelligenc
 Signals are defined once near their producer. The signal key is the immutable semantic identity for schema, type, units, range, and meaning:
 
 ```ts
-// gameplaySignals.ts
-export const gameplaySignals = flaggo.signals.define({
-  boardPressure: flaggo.metric.number({
-    key: "tetris.boardPressure",
-    range: [0, 1]
-  }),
+// gameplaySignalHandles.ts
+export const boardPressureSignal = flaggo.metric.number({
+  key: "tetris.boardPressure",
+  range: [0, 1]
+});
 
-  recentPlacementTimeMs: flaggo.metric.number({
-    key: "tetris.recentPlacementTimeMs",
-    unit: "ms"
-  }),
+export const recentPlacementTimeMsSignal = flaggo.metric.number({
+  key: "tetris.recentPlacementTimeMs",
+  unit: "ms"
+});
 
-  recoveryFailures: flaggo.metric.number({
-    key: "tetris.recoveryFailures"
-  }),
+export const recoveryFailuresSignal = flaggo.metric.number({
+  key: "tetris.recoveryFailures"
+});
 
-  currentLevel: flaggo.metric.number({
-    key: "tetris.currentLevel"
-  }),
+export const currentLevelSignal = flaggo.metric.number({
+  key: "tetris.currentLevel"
+});
 
-  piecePlaced: flaggo.event({
-    key: "tetris.piecePlaced",
-    fields: {
-      placementTimeMs: flaggo.number({ unit: "ms" }),
-      hardDrop: flaggo.boolean()
-    }
-  }),
+export const piecePlacedEvent = flaggo.event({
+  key: "tetris.piecePlaced",
+  fields: {
+    placementTimeMs: flaggo.number({ unit: "ms" }),
+    hardDrop: flaggo.boolean()
+  }
+});
 
-  sessionEnded: flaggo.event({
-    key: "tetris.sessionEnded",
-    fields: {
-      endReason: flaggo.string(),
-      durationSeconds: flaggo.number({ unit: "s" })
-    }
-  }),
+export const sessionEndedEvent = flaggo.event({
+  key: "tetris.sessionEnded",
+  fields: {
+    endReason: flaggo.string(),
+    durationSeconds: flaggo.number({ unit: "s" })
+  }
+});
 
-  earlyLossRate: flaggo.metric.derived({
-    key: "tetris.earlyLossRate",
-    type: "number",
-    from: ["tetris.sessionEnded"],
-    aggregation: "rate(endReason == 'early_loss')",
-    window: "24h"
-  }),
+export const earlyLossRateSignal = flaggo.metric.derived({
+  key: "tetris.earlyLossRate",
+  type: "number",
+  from: sessionEndedEvent,
+  aggregation: "rate(endReason == 'early_loss')",
+  window: "24h"
+});
 
-  hardDropRate: flaggo.metric.derived({
-    key: "tetris.hardDropRate",
-    type: "number",
-    from: ["tetris.piecePlaced"],
-    aggregation: "rate(hardDrop == true)",
-    window: "24h"
-  })
+export const hardDropRateSignal = flaggo.metric.derived({
+  key: "tetris.hardDropRate",
+  type: "number",
+  from: piecePlacedEvent,
+  aggregation: "rate(hardDrop == true)",
+  window: "24h"
 });
 ```
 
 Emission imports and uses the typed handle. It should not redefine schemas inside every `emit(...)` call:
 
 ```ts
-gameplaySignals.boardPressure.emit(boardPressure);
+boardPressureSignal.emit(boardPressure);
 
-gameplaySignals.piecePlaced.emit({
+piecePlacedEvent.emit({
   placementTimeMs,
   hardDrop: placementMethod === "hard_drop"
 });
 ```
 
-If a signal schema or meaning changes incompatibly, introduce a new key such as `tetris.boardPressurePercent`. An internal schema digest can detect conflicting definitions under the same key, but there is no separate public signal name or revision.
+Any signal schema or semantic change requires a new key, such as `tetris.boardPressurePercent`. A signal key is immutable; schema digests can detect conflicting duplicate definitions under the same key, but a changed digest must not silently mutate that key's meaning. There is no separate public signal name or revision.
 
 ## SDK-facing shape
 
@@ -133,62 +131,52 @@ The simple code-first UX should hide most contract machinery:
 
 ```ts
 const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
-  definition: {
-    signals: {
-      allow: [
-        gameplaySignals.boardPressure,
-        gameplaySignals.recentPlacementTimeMs,
-        gameplaySignals.recoveryFailures,
-        gameplaySignals.currentLevel,
-        gameplaySignals.piecePlaced,
-        gameplaySignals.sessionEnded,
-        gameplaySignals.earlyLossRate,
-        gameplaySignals.hardDropRate
-      ]
-    },
-    targetHierarchy: ["session", "user", "cohort", "global"],
-    intent: {
-      type: "metric-objective",
-      primary: { signal: gameplaySignals.earlyLossRate, direction: "minimize" },
-      secondary: [
-        { signal: gameplaySignals.hardDropRate, direction: "target", target: 0.45 },
-        { signal: gameplaySignals.recentPlacementTimeMs, direction: "minimize" }
-      ],
-      rationale: "Keep gameplay challenging but playable while reducing early frustration."
-    },
-    inference: {
-      target: "session",
-      inputs: [
-        gameplaySignals.boardPressure,
-        gameplaySignals.recentPlacementTimeMs,
-        gameplaySignals.recoveryFailures,
-        gameplaySignals.currentLevel
-      ],
-      fallbackOrder: ["cohort", "global"]
-    },
-    output: {
-      default: 800,
-      range: [200, 1500],
-      step: 50
-    },
-    safety: "gradual",
-    requestedApproval: "automatic",
-    context: {
-      sessionId: { type: "string", target: "session" },
-      userId: { type: "string", target: "user" },
-      cohort: { type: "string", target: "cohort" },
-      deviceType: "string"
-    }
+  targetHierarchy: ["session", "user", "cohort", "global"],
+  signals: {
+    evidence: [
+      piecePlacedEvent,
+      sessionEndedEvent,
+      earlyLossRateSignal,
+      hardDropRateSignal
+    ]
   },
+  intent: {
+    type: "metric-objective",
+    primary: { signal: earlyLossRateSignal, direction: "minimize" },
+    secondary: [
+      { signal: hardDropRateSignal, direction: "target", target: 0.45 },
+      { signal: recentPlacementTimeMsSignal, direction: "minimize" }
+    ],
+    rationale: "Keep gameplay challenging but playable while reducing early frustration."
+  },
+  inference: {
+    target: "session",
+    inputs: [
+      boardPressureSignal.input(boardPressure),
+      recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+      recoveryFailuresSignal.input(recoveryFailures),
+      currentLevelSignal.input(game.level)
+    ],
+    fallbackOrder: ["cohort", "global"]
+  },
+  output: {
+    default: 800,
+    range: [200, 1500],
+    step: 50
+  },
+  policy: {
+    maxDelta: 50,
+    cooldown: "20s",
+    minSampleSize: 30,
+    minEvidenceQuality: 0.7,
+    maxModelUncertainty: 0.35
+  },
+  requestedApproval: "automatic",
   context: {
-    sessionId,
-    userId,
-    cohort: playerCohort,
-    deviceType: device.type,
-    boardPressure: gameplaySignals.boardPressure.value(boardPressure),
-    recentPlacementTimeMs: gameplaySignals.recentPlacementTimeMs.value(recentPlacementTimeMs),
-    recoveryFailures: gameplaySignals.recoveryFailures.value(recoveryFailures),
-    currentLevel: gameplaySignals.currentLevel.value(game.level)
+    session: flaggo.target.session(sessionId),
+    user: flaggo.target.user(userId),
+    cohort: flaggo.target.cohort(playerCohort),
+    deviceType: device.type
   }
 });
 
@@ -196,7 +184,7 @@ gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
 await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 ```
 
-The `definition` block compiles to a versioned decision definition. Runtime values in `context` are used for online inference only when supplied through typed signal values whose handles are listed in `inference.inputs`. The `definition.context` schema tells Flaggo which non-signal fields identify target hierarchy levels or runtime metadata. The developer names the stable decision key; Flaggo tooling and the registry manage semantic revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while `.decisionId` supports exposure confirmation.
+The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Plain values remain runtime metadata. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while `.decisionId` supports exposure confirmation.
 
 Automatic approval requires executable objectives. If a definition requests `requestedApproval: "automatic"`, the definition should use `intent.type: "metric-objective"` and typed policy constraints; natural-language-only intent should require human approval or policy-default handling.
 
@@ -204,10 +192,10 @@ Signal handles are the single declaration surface for facts Flaggo may understan
 
 | Concept | Source | Used by | Example |
 | --- | --- | --- | --- |
-| Declared event | Domain event emitted through a typed signal handle. | Async learning, evidence views, validation, audit. | `gameplaySignals.piecePlaced` |
-| App-emitted metric | Application-computed metric with stable semantics. | Async learning and, if selected, online inference. | `gameplaySignals.boardPressure` |
-| Derived signal | Metric declared from other signal handles and an aggregation expression. | Async learning, evidence views, validation, policy. | `gameplaySignals.earlyLossRate` |
-| Inference input | Allowed app-emitted metric supplied with the decision request through `.value(...)`. | Online inference and strategy execution. | `gameplaySignals.boardPressure.value(boardPressure)` |
+| Declared event | Domain event emitted through a typed signal handle. | Async learning, evidence views, validation, audit. | `piecePlacedEvent` |
+| App-emitted metric | Application-computed metric with stable semantics. | Async learning and, if selected, online inference. | `boardPressureSignal` |
+| Derived signal | Metric declared from other signal handles and an aggregation expression. | Async learning, evidence views, validation, policy. | `earlyLossRateSignal` |
+| Inference input | App-emitted metric bound to its current value inside the inference declaration. | Online inference and strategy execution. | `boardPressureSignal.input(boardPressure)` |
 | Decision-record input | Inference input value captured when a value is returned. | Auditing what Flaggo decided for the request. | `decision.boardPressure` when `850ms` was returned |
 | Exposure-captured input | Inference input value copied to an exposure only after the client confirms the value was applied or rendered. | Later learning and outcome correlation. | `exposure.boardPressure` after `confirmExposure(decisionId)` |
 
@@ -225,10 +213,10 @@ intent: {
 ```ts
 intent: {
   type: "metric-objective",
-  primary: { signal: "earlyLossRate", direction: "minimize" },
+  primary: { signal: earlyLossRateSignal, direction: "minimize" },
   secondary: [
-    { signal: "hardDropRate", direction: "target", target: 0.45 },
-    { signal: "recentPlacementTimeMs", direction: "minimize" }
+    { signal: hardDropRateSignal, direction: "target", target: 0.45 },
+    { signal: recentPlacementTimeMsSignal, direction: "minimize" }
   ],
   rationale: "Keep the game challenging while reducing early frustration."
 }

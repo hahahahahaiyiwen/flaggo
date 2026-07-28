@@ -409,8 +409,9 @@ For MVP, a script, fixture, or admin action can create the Tetris strategy propo
    Activate a governed numeric-rule strategy for session/new-player targets.
 
 3. Runtime decision
-   Game calls POST /v1/decisions/tetris.dropInterval:decide with live context:
-     boardPressure, recentPlacementTimeMs, recoveryFailures, currentLevel.
+   Game calls POST /v1/decisions/tetris.dropInterval:decide with target/metadata context
+   plus bound inference inputs: boardPressure, recentPlacementTimeMs,
+   recoveryFailures, and currentLevel.
 
 4. Strategy execution
    Decision API loads active strategy and calculates the immediate value.
@@ -520,7 +521,7 @@ Goal: prove the hero scenario end to end.
 
 Deliverables:
 
-- Tetris emits live context such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures`,
+- Tetris supplies live inference inputs such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures`,
 - server has active `numeric-rule` strategy for `tetris.dropInterval`,
 - game applies returned `dropInterval`,
 - audit output shows strategy execution and policy result,
