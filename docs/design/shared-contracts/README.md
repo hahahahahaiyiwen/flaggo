@@ -57,6 +57,7 @@ Rules:
 - `DecisionTargetRef.type` is extensible, but MVP built-ins are `session`, `user`, `cohort`, and `global`.
 - Runtime context must stay primitive and JSON-serializable for audit and policy evaluation.
 - A signal `key` is its immutable semantic identity. Any schema or meaning change requires a new key; schema digests detect conflicting definitions under the same key.
+- `schemaDigest` is generated from the canonical signal declaration with the digest field omitted. Tooling recomputes and verifies it when supplied; authors do not control it. Signal references contain only `key`, so presence or absence of digest metadata cannot change a decision-definition digest.
 - A decision may only use signals referenced by explicit roles such as objectives, inference inputs, evidence, or guardrails. Tooling may materialize an associated-signal set in the extracted contract for governance, but authored definitions should not duplicate role references by hand.
 
 ## Action space
@@ -141,8 +142,10 @@ type SignalDeclaration =
 
 type SignalRef = {
   key: string;
-  schemaDigest?: string;
 };
+
+// Serialized as SignalRef; registry validation resolves and verifies the numeric metric declaration.
+type NumericMetricRef = SignalRef;
 
 type EventSignalDeclaration = {
   kind: "event";
@@ -201,11 +204,16 @@ type MetricObjectiveIntent = {
   rationale?: string;
 };
 
-type MetricObjective = {
-  signal: SignalRef;
-  direction: "minimize" | "maximize" | "target";
-  target?: number;
-};
+type MetricObjective =
+  | {
+      signal: NumericMetricRef;
+      direction: "minimize" | "maximize";
+    }
+  | {
+      signal: NumericMetricRef;
+      direction: "target";
+      target: number;
+    };
 
 type RequestedApprovalMode = "automatic" | "human" | "policy-default";
 
@@ -226,6 +234,14 @@ type OnlineStrategyDeclaration = {
 ```
 
 MVP rule: `tetris.dropInterval` should use `onlineStrategy.mode = "approved-strategy"` and live inputs such as `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, and `currentLevel`.
+
+`InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; registry validation and the Decision API must enforce it again against registered signal declarations.
+
+`MetricObjective.signal` is structurally serialized as a signal key, but it must resolve to a numeric metric declaration. The metric may be app-emitted or derived; events and boolean/string metrics are invalid objectives. SDKs should expose a branded numeric metric identity, and registry/API validation must enforce the same rule.
+
+Metric objective direction is discriminated: `target` requires a finite numeric `target`, while `minimize` and `maximize` must not carry a `target` field. Canonical validation rejects both missing-target and unexpected-target forms.
+
+`DecisionDefinition.policy` is required. Canonicalization never inserts an implicit environment or default policy when it is absent. Code-first shorthand must normalize to `InlinePolicy`; explicit definitions must supply either `PolicyReference` or `InlinePolicy`.
 
 ## Policy contract
 
@@ -497,12 +513,14 @@ Normalization:
 1. Remove all bound runtime values.
 2. Convert each bound signal input into its immutable `SignalRef`.
 3. Convert each typed target binding into a runtime-context schema entry. The original object property name is the canonical context field name; for example, `sessionId: flaggo.target.session(value)` becomes `sessionId: { type: "string", target: "session" }`.
-4. Materialize generated fields such as `signals.allowed` from role references.
-5. Omit undefined fields and normalize equivalent optional/default forms according to the contract version.
-6. Sort JSON object keys recursively.
-7. Reject duplicate signal keys, duplicate context fields, or conflicting role/schema declarations.
-8. Serialize with RFC 8785 JSON Canonicalization Scheme.
-9. Compute SHA-256 over the canonical UTF-8 bytes and encode the identity as `sha256:<lowercase-hex>`.
+4. Normalize SDK-specific policy shorthand, such as client-library [`PolicyAuthoring`](../client-library/README.md#policy-authoring-normalization), into canonical `InlinePolicy` constraints.
+5. Materialize generated fields such as `signals.allowed` from role references.
+6. Reduce every signal role/reference to immutable `SignalRef { key }`. `schemaDigest` belongs to signal-declaration conflict detection and is excluded from decision-definition identity.
+7. Omit undefined fields and normalize equivalent optional/default forms according to the contract version.
+8. Sort JSON object keys recursively.
+9. Reject duplicate signal keys, duplicate context fields, duplicate policy constraint kinds, or conflicting role/schema declarations.
+10. Serialize with RFC 8785 JSON Canonicalization Scheme.
+11. Compute SHA-256 over the canonical UTF-8 bytes and encode the identity as `sha256:<lowercase-hex>`.
 
 Order-sensitive arrays retain authored order because order changes behavior:
 
@@ -518,7 +536,8 @@ Order-insensitive collections are duplicate-free sets and are sorted by immutabl
 - `signals.guardrails`,
 - generated `signals.allowed`,
 - canonical `inference.inputs`,
-- signal declarations in a bundle.
+- signal declarations in a bundle,
+- `InlinePolicy.constraints`, sorted by constraint kind.
 
 For `bundleDigest`, decision definitions are sorted by stable decision key after each definition has been normalized. Duplicate decision keys with different definition digests are a `contract-conflict`; identical duplicates are deduplicated.
 
@@ -832,30 +851,31 @@ The decision definition references those signal identities without redefining th
     "reason": "safe_default_drop_interval"
   },
   "runtimeContextSchema": {
-    "userId": { "type": "string", "required": true },
-    "sessionId": { "type": "string", "required": true },
+    "userId": { "type": "string", "target": "user" },
+    "sessionId": { "type": "string", "target": "session" },
+    "cohort": { "type": "string", "target": "cohort" },
     "deviceType": { "type": "string" }
   },
   "targetHierarchy": ["session", "user", "cohort", "global"],
   "signals": {
     "allowed": [
       { "key": "tetris.boardPressure" },
+      { "key": "tetris.currentLevel" },
+      { "key": "tetris.earlyLossRate24h" },
+      { "key": "tetris.hardDropRate24h" },
+      { "key": "tetris.piecePlaced" },
       { "key": "tetris.recentPlacementTimeMs" },
       { "key": "tetris.recoveryFailures" },
-      { "key": "tetris.currentLevel" },
-      { "key": "tetris.piecePlaced" },
-      { "key": "tetris.sessionEnded" },
-      { "key": "tetris.earlyLossRate24h" },
-      { "key": "tetris.hardDropRate24h" }
+      { "key": "tetris.sessionEnded" }
     ]
   },
   "inference": {
     "target": "session",
     "inputs": [
       { "key": "tetris.boardPressure" },
+      { "key": "tetris.currentLevel" },
       { "key": "tetris.recentPlacementTimeMs" },
-      { "key": "tetris.recoveryFailures" },
-      { "key": "tetris.currentLevel" }
+      { "key": "tetris.recoveryFailures" }
     ],
     "fallbackOrder": ["cohort", "global"]
   },
@@ -880,11 +900,12 @@ The decision definition references those signal identities without redefining th
   "policy": {
     "kind": "inline",
     "constraints": [
-      { "kind": "number-bounds", "min": 200, "max": 1500 },
-      { "kind": "max-delta", "value": 50 },
       { "kind": "cooldown", "seconds": 20 },
+      { "kind": "max-delta", "value": 50 },
+      { "kind": "max-model-uncertainty", "value": 0.35 },
       { "kind": "min-evidence-quality", "value": 0.7 },
-      { "kind": "max-model-uncertainty", "value": 0.35 }
+      { "kind": "min-sample-size", "value": 30 },
+      { "kind": "number-bounds", "min": 200, "max": 1500 }
     ]
   }
 }

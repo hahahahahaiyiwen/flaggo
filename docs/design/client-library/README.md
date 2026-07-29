@@ -257,6 +257,22 @@ await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
 
 The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`, and the receipt carries `decisionId`/confirmation metadata for exposure attribution. Signal schemas are defined once near producers and reused through typed handles. Bound inference inputs combine a signal declaration reference with its current value, while typed target wrappers combine target schema with the current ID. Tooling partitions this object into an immutable extracted definition and a compact runtime request; runtime values never enter the definition digest. Emitting a signal does not associate it with every decision in the program.
 
+### Policy authoring normalization
+
+The shorthand `policy` object is authoring syntax, not the canonical policy contract. Extraction normalizes it deterministically:
+
+| `PolicyAuthoring` field | Canonical constraint |
+| --- | --- |
+| `maxDelta` | `{ kind: "max-delta", value }` |
+| `cooldown: "20s"` | `{ kind: "cooldown", seconds: 20 }` |
+| `minSampleSize` | `{ kind: "min-sample-size", value }` |
+| `minEvidenceQuality` | `{ kind: "min-evidence-quality", value }` |
+| `maxModelUncertainty` | `{ kind: "max-model-uncertainty", value }` |
+| `minExpectedOutcome` | `{ kind: "min-expected-outcome", value }` |
+| `paused` | `{ kind: "pause", paused }` |
+
+The result is `InlinePolicy { kind: "inline", constraints }`; constraints are duplicate-free and canonically sorted by `kind`. The explicit advanced form accepts canonical `PolicyReference | InlinePolicy` directly.
+
 ### Extractable code-first subset
 
 MVP extraction must be deterministic and intentionally conservative. The extractor accepts:
@@ -365,11 +381,14 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     },
     requestedApproval: "automatic",
     policy: {
-      maxDelta: 50,
-      cooldown: "20s",
-      minSampleSize: 30,
-      minEvidenceQuality: 0.7,
-      maxModelUncertainty: 0.35
+      kind: "inline",
+      constraints: [
+        { kind: "max-delta", value: 50 },
+        { kind: "cooldown", seconds: 20 },
+        { kind: "min-sample-size", value: 30 },
+        { kind: "min-evidence-quality", value: 0.7 },
+        { kind: "max-model-uncertainty", value: 0.35 }
+      ]
     },
     context: {
       sessionId: { type: "string", target: "session" },
@@ -478,7 +497,7 @@ type CodeFirstNumberTuneRequest = {
   inference?: BoundInferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
-  policy: InlinePolicy;
+  policy: PolicyAuthoring;
   requestedApproval?: RequestedApprovalMode;
   context: BoundRuntimeContext;
 };
@@ -495,12 +514,22 @@ type AdvancedNumberTuneDefinition = {
   inference?: InferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
-  policy?: InlinePolicy;
+  policy: PolicyReference | InlinePolicy;
   requestedApproval?: RequestedApprovalMode;
   context: RuntimeContextSchema;
 };
 
 type RequestedApprovalMode = "automatic" | "human" | "policy-default";
+
+type PolicyAuthoring = {
+  maxDelta?: number;
+  cooldown?: `${number}s`;
+  minSampleSize?: number;
+  minEvidenceQuality?: number;
+  maxModelUncertainty?: number;
+  minExpectedOutcome?: number;
+  paused?: boolean;
+};
 
 type NumberOutputContract = {
   default: number;
@@ -536,18 +565,37 @@ type DecisionSignalReferences = {
 
 type SignalIdentity = {
   readonly key: string;
-  readonly schemaDigest?: string;
 };
 
 type SignalHandle<T> = SignalIdentity & {
+  readonly schemaDigest?: string;
   emit(value: T): void;
 };
 
 type InferenceValue = boolean | number | string;
 
-type InferenceSignalHandle<T extends InferenceValue> = SignalHandle<T> & {
-  input(value: T): BoundSignalInput<T>;
+declare const metricValueType: unique symbol;
+declare const inferenceMetricType: unique symbol;
+
+type MetricIdentity<
+  T extends InferenceValue = InferenceValue
+> = SignalIdentity & {
+  readonly [metricValueType]: T;
 };
+
+type NumericMetricIdentity = MetricIdentity<number>;
+
+type InferenceMetricIdentity<
+  T extends InferenceValue = InferenceValue
+> = MetricIdentity<T> & {
+  readonly [inferenceMetricType]: true;
+};
+
+type InferenceSignalHandle<T extends InferenceValue> =
+  SignalHandle<T> &
+  InferenceMetricIdentity<T> & {
+    input(value: T): BoundSignalInput<T>;
+  };
 
 type BoundSignalInput<T extends InferenceValue> = {
   readonly signal: InferenceSignalHandle<T>;
@@ -561,7 +609,7 @@ type AnyBoundSignalInput =
 
 type InferenceDeclaration = {
   target: "global" | "segment" | "cohort" | "user" | "session" | "level" | string;
-  inputs?: SignalIdentity[];
+  inputs?: InferenceMetricIdentity[];
   fallbackOrder?: string[];
 };
 
@@ -587,11 +635,16 @@ type MetricObjectiveIntent = {
   rationale?: string;
 };
 
-type MetricObjective = {
-  signal: SignalIdentity;
-  direction: "minimize" | "maximize" | "target";
-  target?: number;
-};
+type MetricObjective =
+  | {
+      signal: NumericMetricIdentity;
+      direction: "minimize" | "maximize";
+    }
+  | {
+      signal: NumericMetricIdentity;
+      direction: "target";
+      target: number;
+    };
 
 interface IDefinitionBundleProvider {
   exportBundle(): DecisionDefinitionBundle;
@@ -603,16 +656,40 @@ Constructor generics preserve producer-side type safety:
 
 ```ts
 declare const boardPressureSignal: InferenceSignalHandle<number>;
+declare const earlyLossRate24hSignal: SignalHandle<number> & NumericMetricIdentity;
+declare const difficultyLabelSignal: SignalHandle<string> & MetricIdentity<string>;
 declare const piecePlacedEvent: SignalHandle<{
   placementTimeMs: number;
   hardDrop: boolean;
 }>;
 
 boardPressureSignal.input(0.82);
+const objective: MetricObjective = {
+  signal: earlyLossRate24hSignal,
+  direction: "minimize"
+};
 piecePlacedEvent.emit({ placementTimeMs: 420, hardDrop: true });
 
 boardPressureSignal.input("high"); // TypeScript error
 piecePlacedEvent.emit({ placementTimeMs: 420, hardDrop: "yes" }); // TypeScript error
+const eventObjective: MetricObjective = {
+  signal: piecePlacedEvent, // TypeScript error
+  direction: "minimize"
+};
+const stringObjective: MetricObjective = {
+  signal: difficultyLabelSignal, // TypeScript error
+  direction: "target",
+  target: 0.5
+};
+const missingTarget: MetricObjective = {
+  signal: earlyLossRate24hSignal,
+  direction: "target" // TypeScript error
+};
+const unexpectedTarget: MetricObjective = {
+  signal: earlyLossRate24hSignal,
+  direction: "minimize",
+  target: 0.5 // TypeScript error
+};
 ```
 
 The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are definition extraction from static request fields, telemetry, optional definition bundle export, runtime request, compact definition identity propagation, typed response, and local fallback when the service is unavailable.

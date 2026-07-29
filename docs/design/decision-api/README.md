@@ -27,11 +27,15 @@ Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 At a high level:
 
 ```text
-request(surface, runtime context, optional requested scope)
-  -> validate surface
+request(decision key, runtime context, signal inputs)
+  -> validate decision key and definition identity
+  -> reject duplicate input keys
+  -> verify every input resolves to an allowed app-emitted primitive metric
+  -> verify metric objectives resolve to numeric metrics and obey direction/target invariants
+  -> verify policy is present
   -> verify expected contract digest/revision when supplied
-  -> resolve scope chain
-  -> load decision contract
+  -> resolve target chain
+  -> load decision definition
   -> fetch telemetry evidence
   -> fetch governed state
   -> assess uncertainty
@@ -39,7 +43,7 @@ request(surface, runtime context, optional requested scope)
   -> execute active strategy when present
   -> apply governance stage
   -> record audit/explanation
-  -> return decision or fallback
+  -> return RuntimeDecisionResult, possibly containing fallback
 ```
 
 ## Initial API shape
@@ -47,7 +51,7 @@ request(surface, runtime context, optional requested scope)
 Intent-level shape, not final wire contract:
 
 ```http
-POST /v1/decisions/{surface}:decide
+POST /v1/decisions/{decisionKey}:decide
 ```
 
 Flaggo-owned REST APIs should use path-based versioning:

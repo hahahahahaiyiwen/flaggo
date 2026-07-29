@@ -188,6 +188,11 @@ Tooling extracts signal identities and target schemas from the bindings above, d
 - Within one build, repeated declarations of the same decision key must normalize to the same canonical digest. Identical definitions are deduplicated; different digests are a `contract-conflict` build error.
 - Runtime calls attach a build-generated or memoized descriptor and evaluate only bound values. They must not recalculate or register static definition semantics on each call.
 - Unsupported or runtime-dependent extraction is invalid. Production runtime must fall back for an unknown/conflicting identity rather than deriving management state from an executed branch.
+- Every `inference.inputs` key must resolve to a registered app-emitted primitive metric. Event signals and service-derived metrics are rejected even if a non-TypeScript client submits them.
+- Every metric-objective signal must resolve to a registered numeric metric. App-emitted and derived numeric metrics are valid; events and boolean/string metrics are rejected.
+- A metric objective with `direction: "target"` must include a finite numeric `target`; `minimize` and `maximize` objectives must not include `target`.
+- Every canonical decision definition must contain `policy: PolicyReference | InlinePolicy`. Missing policy is a validation error; the registry does not insert an implicit environment/default reference.
+- `schemaDigest` is validated on signal declarations to detect conflicting schemas under one immutable key, but is not copied into `SignalRef` and does not affect decision-definition identity.
 
 The registry and SDK use the canonicalization rules in [Shared Contracts](../shared-contracts/README.md#canonical-definition-normalization-and-digest), including RFC 8785 serialization, order-sensitive hierarchy/precedence arrays, key-sorted signal-role sets, and duplicate rejection.
 
