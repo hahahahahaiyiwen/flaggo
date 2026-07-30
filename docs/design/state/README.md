@@ -18,7 +18,7 @@ State stores:
 - cooldown deadline,
 - pause state,
 - operator override,
-- contract ID/revision tied to the active state.
+- definition ID/revision tied to the active state.
 
 MVP state should support in-memory storage first. A later persistent implementation can use SQLite, PostgreSQL, Redis, or a cloud store behind the same interface.
 
@@ -73,7 +73,7 @@ Example active state:
 
 ```json
 {
-  "surface": "tetris.dropInterval",
+  "decisionKey": "tetris.dropInterval",
   "definition": "tetris.dropInterval@2",
   "controlTarget": {
     "type": "cohort",
@@ -102,7 +102,7 @@ Decision state is not the same thing as telemetry. State represents live authori
 Rules:
 
 - A new semantic decision definition gets a new state namespace by default.
-- Old builds can continue using their known contract ID and state while new builds use a new contract ID or semantic revision.
+- Old builds can continue using their known definition ID and state while new builds use a new definition ID or semantic revision.
 - Raw telemetry and compatible evidence views may be reused to avoid cold start, but active strategy/state should not be copied automatically.
 - If a team wants to seed a new contract from old state, that should be an explicit migration with audit records and policy checks.
 

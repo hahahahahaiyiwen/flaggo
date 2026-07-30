@@ -572,7 +572,7 @@ A proposal can resolve to several governed outcomes:
 | `hold` | Current state remains active because evidence is insufficient or risk is too high. |
 | `rollback` | Transition to a replacement or previous known-safe state and mark the replaced state rolled back. |
 | `fallback` | Activate fallback-only governed state, or produce no state if even fallback-only authority is not durable. |
-| `requires_approval` | Human approval is needed before activation. |
+| `requires-approval` | Human approval is needed before activation. |
 | `rejected` | Proposal violates policy or target authority. |
 
 ## Relationship to policy

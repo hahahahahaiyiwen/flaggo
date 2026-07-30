@@ -215,6 +215,30 @@ But the chain is used differently by different layers:
 
 `inference.fallbackOrder` is explicit, not implied by the hierarchy. If it says `cohort -> global`, skipping `user` is intentional for that decision revision; it means user-level governed state should not be used as fallback unless the definition includes it.
 
+## Control plane and data plane
+
+Polari separates definition management from runtime evaluation:
+
+| Plane | Owns |
+| --- | --- |
+| Control plane | Definition bundles, immutable revisions, policies, strategies, lifecycle, and registration receipts. |
+| Data plane | Runtime decision evaluation and exposure confirmation for exact registered identities. |
+
+Application deployment is a third, developer-owned lifecycle. Code-first declarations generate control-plane artifacts. For MVP, trusted application/bootstrap startup validates/applies those artifacts and initializes the runtime binding before data-plane use. A runtime call must carry `definitionId + revision + contractDigest`.
+
+```text
+code-first declaration
+  -> static extraction
+  -> application deployment
+  -> trusted startup control-plane registration
+  -> registered definition identity
+  -> data-plane decision
+```
+
+Missing, unknown, conflicting, or retired identity is a contract/configuration error and cannot become local fallback. A registered definition may still return governed server fallback when evidence, policy, or state prevents adaptation. SDK-local fallback is reserved for explicitly configured data-plane availability failures.
+
+Startup registration is an MVP control-plane client experience, not an architectural merger. Future clients can publish manually, through CI/CD or GitOps, through an init/deployment hook, through registry-first tooling, or use startup verify-only. Data-plane decide never registers definitions.
+
 ## Governance lifecycle, governed state, and runtime result
 
 Use explicit names:

@@ -123,7 +123,7 @@ inference inputs:
 auditId: audit-789
 ```
 
-The client should create or confirm an exposure only when it actually applies or renders the returned value:
+The client confirms an exposure only when it actually applies or renders the returned value. Under the Phase 1 API proposal, it sends the server-issued confirm token to `POST /v1/exposures/{decisionId}:confirm`; an idempotent retry returns the same exposure:
 
 ```text
 exposureId: exposure-456
@@ -133,6 +133,8 @@ appliedAt: 2026-07-28T15:58:00Z
 ```
 
 Later outcome events should correlate with exposures, not merely returned decisions. The metric, decision, and exposure records answer different learning questions:
+
+The service copies decision-time inference inputs into the exposure record. Confirmation does not accept replacement input values from the client.
 
 | Question | Better source |
 | --- | --- |

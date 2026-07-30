@@ -19,6 +19,7 @@ It owns the server-side resources that application code references at runtime:
 The registry exists so runtime decision requests can stay small and governed. Applications should call a pre-registered decision key and expected definition identity instead of sending all decision semantics inline on every request.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
+Phase 1 management-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md#management-api).
 
 ## Design principle
 
@@ -34,7 +35,7 @@ Keep the lifecycle small at first:
 |---|---|
 | `active` | Can be used by runtime decision requests. |
 | `deprecated` | Still usable for existing clients, but should not be used by new code. |
-| `retired` | Not eligible for approved decisions; runtime should return fallback or reject based on policy. Kept for audit/history. |
+| `retired` | Not eligible for runtime decisions; data plane rejects the retired identity. Kept for audit/history. |
 
 Avoid hard delete in normal workflows. Hard delete should be exceptional admin-only behavior, if it exists at all.
 
@@ -78,7 +79,7 @@ Example shape:
 
 ```json
 {
-  "format": "flaggo.contract-bundle/v1",
+  "format": "flaggo.decision-definition-bundle/v1",
   "application": {
     "id": "tetris-demo",
     "environment": "dev"
@@ -94,8 +95,21 @@ Example shape:
   },
   "definitions": [
     {
+      "definitionId": "tetris.dropInterval@2",
       "key": "tetris.dropInterval",
       "valueType": "number",
+      "actionSpace": {
+        "type": "number",
+        "min": 200,
+        "max": 1500,
+        "step": 50,
+        "default": 800
+      },
+      "runtimeContextSchema": {
+        "sessionId": { "type": "string", "target": "session" },
+        "userId": { "type": "string", "target": "user" },
+        "cohort": { "type": "string", "target": "cohort" }
+      },
       "targetHierarchy": ["session", "user", "cohort", "global"],
       "inference": {
         "target": "session",
@@ -105,6 +119,18 @@ Example shape:
       "intent": {
         "type": "metric-objective",
         "primary": { "signal": { "key": "tetris.earlyLossRate24h" }, "direction": "minimize" }
+      },
+      "fallback": {
+        "value": 800,
+        "reason": "safe_default_drop_interval"
+      },
+      "policy": {
+        "kind": "inline",
+        "constraints": [
+          { "kind": "cooldown", "seconds": 20 },
+          { "kind": "max-delta", "value": 50 },
+          { "kind": "number-bounds", "min": 200, "max": 1500 }
+        ]
       }
     }
   ]
@@ -181,13 +207,13 @@ flaggo.tune.number("tetris.dropInterval", {
 
 Tooling extracts signal identities and target schemas from the bindings above, discards their runtime values, and sends only canonical definition semantics to the registry. During validation/apply, the registry compares those submitted semantics with the existing contract:
 
-- If semantics are unchanged, it returns the existing contract ID/revision.
+- If semantics are unchanged, it returns the existing definition ID/revision.
 - If only metadata changed, it records a metadata revision.
-- If semantics changed, it rejects auto-overwrite and either asks for approval to mint a new semantic revision/ID or returns a suggested ID such as `tetris.dropInterval@2`.
+- If semantics changed, apply returns `requires-approval` with an approval request and performs no mutation. Explicit approval atomically creates the new semantic revision and applies the pending bundle.
 - Old builds continue using the old identity; new builds use the new identity.
 - Within one build, repeated declarations of the same decision key must normalize to the same canonical digest. Identical definitions are deduplicated; different digests are a `contract-conflict` build error.
 - Runtime calls attach a build-generated or memoized descriptor and evaluate only bound values. They must not recalculate or register static definition semantics on each call.
-- Unsupported or runtime-dependent extraction is invalid. Production runtime must fall back for an unknown/conflicting identity rather than deriving management state from an executed branch.
+- Unsupported or runtime-dependent extraction is invalid. Production runtime returns 4xx Problem Details for an unknown or conflicting identity; it never derives management state from an executed branch, selects another revision, or invokes local fallback.
 - Every `inference.inputs` key must resolve to a registered app-emitted primitive metric. Event signals and service-derived metrics are rejected even if a non-TypeScript client submits them.
 - Every metric-objective signal must resolve to a registered numeric metric. App-emitted and derived numeric metrics are valid; events and boolean/string metrics are rejected.
 - A metric objective with `direction: "target"` must include a finite numeric `target`; `minimize` and `maximize` objectives must not include `target`.
@@ -204,15 +230,30 @@ The runtime Decision API should depend on a registry port, not a concrete databa
 interface IDefinitionRegistry {
   getActiveDefinition(ref: DecisionDefinitionRef): Promise<DecisionDefinition>;
   validateBundle(bundle: DecisionDefinitionBundle): Promise<DefinitionBundleValidationResult>;
-  applyBundle(bundle: DecisionDefinitionBundle): Promise<RegistrationReceipt>;
+  applyBundle(bundle: DecisionDefinitionBundle): Promise<DefinitionBundleApplyResult>;
+}
+
+interface IDefinitionBundleApprovalStore {
+  getApproval(approvalRequestId: string): Promise<DefinitionBundleApprovalResult>;
+  approve(approvalRequestId: string): Promise<DefinitionBundleApprovalResult>;
+  reject(approvalRequestId: string): Promise<DefinitionBundleApprovalResult>;
 }
 
 type DefinitionBundleValidationResult = {
-  result: "valid" | "invalid";
+  status: "valid" | "invalid";
   bundleDigest?: string;
   contractDigest?: string;
-  errors: string[];
-  warnings: string[];
+  compatibility?: ContractCompatibility;
+  issues: ContractIssue[];
+};
+
+type ContractIssue = {
+  code: string;
+  severity: "error" | "warning";
+  path: string;
+  message: string;
+  decisionKey?: string;
+  signalKey?: string;
 };
 ```
 
@@ -279,36 +320,44 @@ missing from bundle -> deprecation candidate -> explicit deprecate -> explicit r
 |---|---|
 | `active` | Decision API may evaluate and return approved decisions. |
 | `deprecated` | Decision API may continue serving existing clients; response may include warning metadata later. |
-| `retired` | Decision API should not approve new decisions; return fallback or a controlled error based on policy. |
+| `retired` | Decision API rejects runtime use with a contract/configuration error. |
 
 The first implementation can keep runtime behavior simple:
 
 - `active`: decide normally.
 - `deprecated`: decide normally.
-- `retired`: fallback.
+- `retired`: return `409 retired-definition`; do not select another revision or local fallback.
 
 ## Management API implications
 
 The management API should support:
 
 ```http
-POST /v1/definitions
-GET /v1/definitions/{decisionKey}
-GET /v1/definitions/{decisionKey}/revisions
 POST /v1/definition-bundles:validate
 POST /v1/definition-bundles:apply
-POST /v1/definitions/{decisionKey}:deprecate
-POST /v1/definitions/{decisionKey}:retire
+GET /v1/definition-bundle-approvals/{approvalRequestId}
+POST /v1/definition-bundle-approvals/{approvalRequestId}:approve
+POST /v1/definition-bundle-approvals/{approvalRequestId}:reject
 ```
 
-Exact routes can change later. The important design is:
+Bundle validation/application and semantic-revision approval are the blocking Phase 1 management contract. Definition reads and explicit deprecate/retire operations remain necessary management capabilities, but their routes can be designed after the runtime/client integration seam is unblocked.
+
+The important design is:
 
 - create/register is explicit,
 - sync is bundle-driven,
+- validation is read-only and returns structured issues,
+- apply repeats validation and is atomic and idempotent,
+- semantic change returns `requires-approval` plus a stable `approvalRequestId` without mutation,
+- approval atomically applies the pending canonical bundle and stores its approved receipt,
+- approval status returns `pending`, `approved`, or `rejected`, and includes the receipt only when approved,
+- startup retry with the same bundle returns the final approved receipt after approval,
 - registration returns a receipt with bundle digest, definition digest, build metadata, and per-decision-key revisions,
 - semantic updates create revisions,
 - deprecation/retirement are lifecycle transitions,
 - hard delete is not part of the normal lifecycle.
+
+Bundle atomicity is all-or-nothing (A5). Semantic revision creation requires explicit approval with no pre-approval mutation (A6).
 
 ## Relationship to client library
 
@@ -318,13 +367,15 @@ Recommended flow:
 
 ```text
 developer writes decision declarations in code, JSON/YAML, or registry UI
-  -> build/CI/release creates or selects DecisionDefinitionBundle
-  -> Flaggo validates/applies bundle and returns receipt
-  -> deployment carries expected definition identity for that build
-  -> deployed app calls runtime Decision API
+  -> static extraction creates or selects DecisionDefinitionBundle
+  -> application deployment proceeds independently
+  -> trusted application/bootstrap startup validates/applies bundle
+  -> Flaggo returns receipt and compact runtime binding
+  -> data-plane client is initialized
+  -> runtime call succeeds only for that exact registered identity
 ```
 
-Local development may support local-only or explicit local registration workflows, but production should prefer bundle validation/application through explicit management, release, or GitOps tooling.
+MVP uses explicit startup registration as its first control-plane client. Future modes can include local-only, startup verify-only, manual CLI, release automation, GitOps, init/deployment hooks, and operator or registry-first workflows. Polari does not block external application deployment; failed startup apply produces no accepted identity, leaves the data-plane client disabled, and never selects an older revision or fallback.
 
 ## First slice
 

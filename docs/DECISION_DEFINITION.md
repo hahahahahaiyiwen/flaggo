@@ -288,6 +288,8 @@ Semantic changes create a new definition revision. Examples:
 
 Metadata-only changes may keep the same semantic revision if the registry can prove runtime behavior is unchanged.
 
+Definition publication is a control-plane operation independent from application deployment. For MVP, static code-first extraction supplies a canonical bundle to trusted application/bootstrap startup, which validates/applies it before initializing the data-plane binding. Future control-plane clients may publish manually or through CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first tooling. Decide never registers a definition. If startup publication fails, Polari decisions remain unavailable and the data plane never selects the previous revision or local fallback.
+
 ## Tetris example
 
 ```text
@@ -313,7 +315,8 @@ DecisionDefinition
     inputs:
       - tetris.boardPressure
       - tetris.recentPlacementTimeMs
-      - currentLevel
+      - tetris.recoveryFailures
+      - tetris.currentLevel
     fallbackOrder: cohort -> global
   output:
     type: number
@@ -321,8 +324,16 @@ DecisionDefinition
     step: 50
     default: 800
   requestedApproval: automatic
-  safety:
-    gradual
+  policy:
+    kind: inline
+    constraints:
+      - kind: number-bounds
+        min: 200
+        max: 1500
+      - kind: max-delta
+        value: 50
+      - kind: cooldown
+        seconds: 20
 ```
 
 `requestedApproval` is part of the definition contract, but it is only a request. Deployment or environment policy decides whether automatic approval is actually permitted for the target, risk level, and policy envelope.

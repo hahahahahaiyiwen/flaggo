@@ -56,22 +56,21 @@ The TypeScript hero path should ask the developer to express two things:
 1. **Declare** the bounded decision definition, including target hierarchy, context, evidence, safety, and fallback.
 2. **Decide** by asking for a concrete value with live gameplay context. Flaggo links the decision to evidence and outcomes through instrumentation.
 
-This code-first path is an ergonomic authoring mode, not the only control-plane model. The same decision contract should also be expressible through a language-neutral `flaggo.contract-bundle.json` for bundle-first, registry-first, GitOps, or direct REST-client workflows.
+This code-first path is an ergonomic authoring mode, not the only control-plane model. The same decision contract should also be expressible through a language-neutral `flaggo.decision-definition-bundle.json` for bundle-first, registry-first, GitOps, or direct REST-client workflows.
 
 The important experience is that the adaptive value is easy to declare and use in application code, while contract synchronization, definition revisions, runtime target resolution, control targets, strategy activation, evidence correlation, policy expansion, and audit linkage remain control-plane concerns.
 
 Example setup intent, not final API:
 
 ```ts
-const flaggo = createFlaggoClient({
+const flaggo = await createFlaggoClient({
   serviceUrl: "https://flaggo.example.com",
   appId: "tetris-demo",
   environment: "dev",
-  contract: {
-    expectedContractDigest: process.env.FLAGGO_CONTRACT_DIGEST,
-    expectedRevision: process.env.FLAGGO_CONTRACT_REVISION,
-    buildId: process.env.BUILD_ID,
-    deploymentId: process.env.DEPLOYMENT_ID
+  controlPlane: {
+    mode: "startup-register",
+    bundle: generatedDecisionBundle,
+    credential: localBootstrapCredential
   },
   telemetry: {
     exporter: "opentelemetry",
@@ -79,11 +78,16 @@ const flaggo = createFlaggoClient({
     sampleRate: 1.0,
     flushIntervalMs: 5000,
     includeDecisionContext: true
+  },
+  availabilityFallback: {
+    mode: "local-default"
   }
 });
 ```
 
-The runtime SDK carries only compact contract/build identity, such as expected contract digest, revision, build ID, or deployment ID. It does not send the full contract bundle on every decision request.
+Startup registration sends the canonical bundle to the control-plane API once and initializes the data-plane client from the accepted receipt. Each production decision request then carries the required definition ID, revision, and contract digest plus optional build/deployment metadata; it does not resend the bundle.
+
+The local Tetris MVP may use a trusted local bootstrap host or explicitly insecure local-development control plane. Production browser bundles must not contain management credentials and should use a future backend bootstrap, CLI/CI, deployment hook, or registry-first control-plane client.
 
 The developer defines gameplay signals once near their producer, then asks for one adaptive value by referencing those typed handles.
 
@@ -192,14 +196,22 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
-await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
+if (
+  dropIntervalDecision.source === "server" &&
+  dropIntervalDecision.confirmToken
+) {
+  await flaggo.exposures.confirm(
+    dropIntervalDecision.decisionId,
+    dropIntervalDecision.confirmToken
+  );
+}
 ```
 
 In this shape, `flaggo.tune.number(...)` keeps the original SDK surface but returns a number decision object. The application still applies a plain numeric value through `dropIntervalDecision.value`, while the SDK exposes the decision receipt needed for attribution. If a value-only convenience is needed later, it should be a separate helper or projection that intentionally opts out of closed-loop exposure attribution.
 
 The code-first object combines authoring and invocation without conflating their persisted forms. A bound input such as `boardPressureSignal.input(boardPressure)` contributes the immutable signal reference to the extracted definition and the current value to the runtime request. A typed target such as `flaggo.target.session(sessionId)` contributes the target kind to the extracted context schema and the current ID to the runtime request. Plain context values such as `deviceType` remain runtime metadata. Flaggo excludes bound runtime values from definition digests and revisions.
 
-`signals.evidence` declares emitted or derived signals that this decision may use for evidence and learning; emitting a signal does not associate it with every decision. `inference.target` declares the desired target kind, and `inference.fallbackOrder` keeps resolution explicit. Derived signals such as `earlyLossRateSignal` declare their typed source and aggregation separately. The registry can still govern behavior at a broader control target such as `cohort:new_players`. `output.default` is the safe value returned when Flaggo cannot provide an approved value.
+`signals.evidence` declares emitted or derived signals that this decision may use for evidence and learning; emitting a signal does not associate it with every decision. `inference.target` declares the desired target kind, and `inference.fallbackOrder` keeps resolution explicit. Derived signals such as `earlyLossRateSignal` declare their typed source and aggregation separately. The registry can still govern behavior at a broader control target such as `cohort:new_players`. For a valid registered definition, `output.default` is the governed fallback when evidence, policy, or state prevents an approved adaptive value; contract/configuration errors remain errors.
 
 This keeps the online path simple: the application sends pre-aggregated metric values, and the service does not aggregate them on the hot path. The same metric values can be emitted over time for async learning, captured in the decision record when a value is returned, and captured in an exposure record only after the client confirms the value was applied or rendered.
 
@@ -325,7 +337,7 @@ The declaration can produce or contribute to a canonical contract bundle during 
 
 ```text
 TypeScript declarations, hand-authored YAML/JSON, or registry export
-  -> flaggo.contract-bundle.json
+  -> flaggo.decision-definition-bundle.json
   -> flaggo contracts validate
   -> flaggo contracts apply
   -> registration receipt
@@ -334,18 +346,18 @@ TypeScript declarations, hand-authored YAML/JSON, or registry export
 
 ### Software lifecycle experience
 
-Flaggo should support different owners and systems across the software lifecycle. The SDK is important in development and runtime, but it should not be the only way to synchronize contracts.
+Flaggo should support different owners and systems across the software lifecycle. The SDK is important in development and runtime, but it should not be the only way to synchronize contracts. Application deployment is independent from the Flaggo control plane.
 
 | Stage | Developer or platform action | Flaggo artifact | SDK/runtime role |
 | --- | --- | --- | --- |
-| Development | Author decision declaration in TypeScript, JSON/YAML, or registry UI. | Local declaration or draft contract bundle. | SDK provides ergonomic code-first declarations and local fallback typing. |
-| Build | Extract or assemble canonical contract bundle for that build. | `flaggo.contract-bundle.json`, `contractDigest`, optional `buildId` and `artifactDigest`. | SDK extractor may generate the bundle, but manifest-first and registry-first workflows can produce the same artifact without SDK execution. |
-| CI/release | Validate and apply/promote bundle. | Registration receipt with bundle digest, contract digest, and decision definition revisions. | Standalone CLI or automation talks to registry; application runtime SDK is not required. |
-| Deployment | Attach compact contract/build identity to each workload version. | Expected contract digest, bundle digest, revision, build ID, deployment ID. | Identity can be injected via environment variables, generated constants, container labels, annotations, or direct REST headers. |
-| Runtime | Ask for decisions and emit telemetry. | `DecideRequest` with that workload's expected contract identity; `DecideResponse` with contract integrity status. | SDK sends compact identity, runtime context, and telemetry; Decision API verifies the calling build's known contract before approval. |
+| Development | Author decision declaration in TypeScript, JSON/YAML, or registry UI. | Local declaration or draft contract bundle. | SDK provides ergonomic code-first declarations and typed runtime calls. |
+| Build | Optionally extract or assemble a canonical contract bundle. | `flaggo.decision-definition-bundle.json`, `contractDigest`, optional build metadata. | SDK extractor may generate the bundle; bundle-first and registry-first workflows remain valid. |
+| Application deployment | Deploy application code independently. | Extracted bundle may be packaged for trusted startup. | Flaggo does not own or block external deployment. |
+| Application/bootstrap startup | MVP validates and atomically applies the extracted bundle before enabling decisions. | Registration receipt and runtime binding with definition ID, revision, and digest. | Trusted startup SDK is the initial control-plane client; it uses management APIs, never the decide endpoint. |
+| Runtime | Ask for decisions and emit telemetry. | Request with exact expected identity; strict server result or Problem Details error. | Data plane evaluates only registered identities. Missing/conflicting identity is surfaced without local fallback; availability fallback remains explicitly configurable. |
 | Observe/operate | Inspect drift, audit, fallback, and strategy behavior. | Audit records, diagnostics, integrity metrics, operator warnings. | SDK exposes response fields; control plane owns audit, strategy, policy, and operator actions. |
 
-This lifecycle supports TypeScript-first development without making TypeScript SDK extraction a global architectural requirement. It also supports rolling deployments where two builds of the same service are live at the same time: each build carries its own expected contract identity, and Flaggo recognizes known immutable contract IDs/revisions instead of forcing every build onto one current contract.
+This lifecycle supports TypeScript-first development without making CI/CD integration a requirement. For MVP, trusted startup publishes the extracted bundle; future clients can move that operation to CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first tooling. Code can deploy even when startup registration later fails, but its Polari calls remain disabled. Rolling deployments remain safe because each successful startup receives and uses its exact immutable identity.
 
 When a definition changes semantically, Flaggo should not automatically share active decision state with the new definition. It may still reuse telemetry facts and matching immutable signal keys so the new definition does not start completely cold:
 

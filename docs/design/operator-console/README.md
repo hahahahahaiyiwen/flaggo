@@ -27,7 +27,7 @@ The future operator console should support:
 - inspect active values and active strategies,
 - view recent decisions and audit records,
 - view evidence quality and confidence,
-- pause or resume a surface/scope,
+- pause or resume a decision/target,
 - set or clear operator overrides,
 - approve, reject, or roll back proposals,
 - inspect fallback and policy reason trends.

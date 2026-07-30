@@ -143,7 +143,7 @@ This scenario should prove the smallest useful version of Flaggo:
 
 ## System components
 
-### 1. Client library
+### 1. [Client library](design/client-library/README.md)
 
 The client library is the developer-facing integration point.
 
@@ -154,7 +154,9 @@ Responsibilities:
 - define or emit domain telemetry,
 - pass runtime context when asking for decisions,
 - receive decision responses,
-- apply fallback behavior when Flaggo is unavailable or blocks a decision,
+- optionally apply code-declared fallback when the data plane is unavailable,
+- surface contract/configuration errors without local fallback,
+- preserve governed server fallback when policy, evidence, or state blocks adaptation,
 - integrate with OpenTelemetry where configured.
 
 The client library should make the runtime primitive feel natural:
@@ -165,7 +167,7 @@ declare -> decide by observing
 
 For the Tetris hero scenario, the TypeScript client is the first likely library target.
 
-### 2. Decision API service
+### 2. [Decision API service](design/decision-api/README.md)
 
 The Decision API is the runtime service applications call when they need a `RuntimeDecisionResult`.
 
@@ -179,11 +181,11 @@ Responsibilities:
 - execute compatible governed state through deterministic selection or approved strategy logic,
 - return a value/action, explanation, confidence, policy result, and fallback status.
 
-The Decision API must be fast, reliable, and safe-by-default. If it cannot decide safely, it should return fallback guidance rather than pretending confidence exists.
+The Decision API must be fast, reliable, and safe-by-default. For a registered definition, if policy, evidence, or governed state prevents adaptation, it returns the registered fallback rather than pretending confidence exists. Missing, unknown, conflicting, or retired definition identity is a contract error, not a fallback decision.
 
-Fallback provenance is explicit. A server-produced policy fallback is a normal audited `RuntimeDecisionResult` with `source: server`, policy result, decision ID, and audit ID. A client fallback caused by service unavailability has `source: client-fallback` and cannot claim server policy, decision, or audit IDs.
+Fallback provenance is explicit. A server-produced policy fallback is a normal audited `RuntimeDecisionResult` with `source: server`, policy result, decision ID, and audit ID. An explicitly configured client fallback caused by data-plane unavailability has `source: client-fallback` and cannot claim server policy, decision, audit, or exposure identity. Contract/configuration errors never become client fallback.
 
-### 3. Telemetry and evidence service
+### 3. [Telemetry and evidence service](design/telemetry-evidence/README.md)
 
 The telemetry/evidence service turns runtime observations into decision evidence.
 
@@ -197,9 +199,11 @@ Responsibilities:
 
 The service should support both direct Flaggo ingestion and integration through OpenTelemetry pipelines.
 
-### 4. Contract and registry service
+### 4. [Contract and registry service](design/contract-registry/README.md)
 
 The contract/registry service stores the declared meaning of decisions.
+
+It is a control-plane service. Definition registration is separate from application deployment and never occurs as a side effect of a runtime decision call.
 
 Responsibilities:
 
@@ -214,7 +218,7 @@ Responsibilities:
 
 Contracts should be explicit and versioned because runtime decisions must be explainable after the fact.
 
-### 5. Policy service
+### 5. [Policy service](design/policy/README.md)
 
 The policy service is the safety gate.
 
@@ -228,7 +232,7 @@ Responsibilities:
 
 Policy is not advisory. It is part of the control plane.
 
-### 6. State service
+### 6. [State service](design/state/README.md)
 
 The state service tracks the current and historical state of decisions.
 
@@ -244,7 +248,7 @@ Responsibilities:
 
 State lets Flaggo avoid stateless one-off guesses and prevents thrashing or conflicting decisions.
 
-### 7. Decision reasoning engine
+### 7. [Decision reasoning engine](design/reasoning-engine/README.md)
 
 The decision reasoning engine executes the decision intelligence model and proposes the next candidate action.
 
@@ -260,7 +264,7 @@ Responsibilities:
 
 This engine may use AI, deterministic algorithms, statistical methods, bandits, rules, or hybrids. The design should not assume every decision requires an LLM.
 
-### 8. Audit and explanation service
+### 8. [Audit and explanation service](design/audit-explanation/README.md)
 
 The audit/explanation service records why decisions happened.
 
@@ -273,7 +277,7 @@ Responsibilities:
 
 Auditability is required for trust. It is not optional observability.
 
-### 9. Operator console
+### 9. [Operator console](design/operator-console/README.md)
 
 The operator console is the human governance interface.
 
@@ -289,6 +293,36 @@ Responsibilities:
 - observe evidence quality and uncertainty.
 
 The console should make Flaggo feel governed rather than magical.
+
+## Control plane and data plane
+
+Flaggo follows a cloud-service control-plane/data-plane model:
+
+| Plane | Responsibility |
+| --- | --- |
+| Control plane | Validate/apply definition bundles; manage immutable definitions, policies, strategies, state lifecycle, and operator actions. |
+| Data plane | Evaluate an exact pre-registered definition and confirm exposure. |
+| Application deployment | Build and deploy application code; remains outside Flaggo ownership. |
+
+For the MVP, trusted application/bootstrap startup acts as a control-plane client. This coordinates two separate APIs; it does not move registration into the decide path or make Flaggo responsible for deployment.
+
+```text
+application code
+  -> static SDK extraction creates canonical bundle
+
+application deployment (independent)
+  -> trusted application/bootstrap startup
+  -> control-plane validate/apply
+  -> registered definition identity
+  -> initialize data-plane client
+  -> runtime request carries exact definitionId + revision + contractDigest
+```
+
+Future control-plane client experiences can include startup verify-only, manual CLI, CI/CD, GitOps, init/deployment hooks, and registry-first tooling. The service boundary remains unchanged.
+
+If startup registration is skipped or fails, the application may continue without Polari, but decision calls cannot. The data plane never selects an older revision implicitly or converts registration failure into local fallback.
+
+Detailed SDK/tooling UX: [Control Plane and Data Plane UX](design/client-library/CONTROL_DATA_PLANE_UX.md).
 
 ## High-level runtime and intelligence flow
 

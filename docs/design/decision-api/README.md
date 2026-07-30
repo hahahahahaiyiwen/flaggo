@@ -6,7 +6,7 @@ The Decision API is the runtime service applications call when they need a `Runt
 
 It receives a decision key, runtime target/context, application identity, and optional request metadata. It resolves the applicable decision definition, control target, evidence views, governed state, and policy, records audit context, and returns a value or fallback guidance.
 
-The runtime API should also verify compact contract identity when the client or deployment provides it. A decision must not be returned as approved when the caller's contract ID or revision is unknown, retired, or semantically conflicting.
+The runtime API should also verify compact definition identity when the client or deployment provides it. A decision must not be returned as approved when the caller's definition ID or revision is unknown, retired, or semantically conflicting.
 
 ## Design goals
 
@@ -21,6 +21,7 @@ The runtime API should also verify compact contract identity when the client or 
 
 MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
+Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
 
 ## Runtime responsibility
 
@@ -48,7 +49,7 @@ request(decision key, runtime context, signal inputs)
 
 ## Initial API shape
 
-Intent-level shape, not final wire contract:
+Draft Phase 1 shape:
 
 ```http
 POST /v1/decisions/{decisionKey}:decide
@@ -68,19 +69,25 @@ OpenTelemetry ingestion should follow standard OTLP conventions where possible r
 
 Flaggo should separate runtime APIs from management APIs.
 
+The blocking Phase 1 contract freeze covers decide, exposure confirmation, definition-bundle validate/apply, and health. The broader resource groups below describe future component boundaries; they do not all need OpenAPI definitions before client and service work can begin.
+
+Runtime decide and exposure confirmation form the data plane. Definition-bundle validate/apply and lifecycle operations form the control plane. Application deployment is external to both: it may happen without control-plane publication, but data-plane calls succeed only for exact registered identities.
+
 ### Runtime APIs
 
 Runtime APIs are called by application code while the application is running.
 
 ```http
-POST /v1/decisions/{surface}:decide
+POST /v1/decisions/{decisionKey}:decide
+POST /v1/exposures/{decisionId}:confirm
 ```
 
 Primary purpose:
 
 - evaluate a scoped decision,
 - return approved value or fallback,
-- emit audit correlation.
+- emit audit correlation,
+- confirm application/rendering separately so a returned decision is not mistaken for an exposure.
 
 ### Telemetry ingestion APIs
 
@@ -116,7 +123,7 @@ Initial resource groups:
 
 ```http
 /v1/apps
-/v1/surfaces
+/v1/decisions
 /v1/contracts
 /v1/policies
 /v1/strategies
@@ -178,7 +185,7 @@ Initial resource groups:
 Example read query:
 
 ```http
-GET /v1/audit?surface=tetris.dropInterval&scope=user:user-123
+GET /v1/audit?decisionKey=tetris.dropInterval&scope=user:user-123
 ```
 
 Responsibilities:
@@ -192,7 +199,6 @@ Example:
 
 ```json
 {
-  "surface": "tetris.dropInterval",
   "runtimeTarget": {
     "type": "session",
     "id": "game-456"
@@ -200,14 +206,17 @@ Example:
   "runtimeContext": {
     "userId": "user-123",
     "sessionId": "game-456",
-    "currentLevel": 3,
-    "deviceType": "mobile",
-    "boardPressure": 0.82,
-    "recentPlacementTimeMs": 1300,
-    "recoveryFailures": 2
+    "cohort": "new_players",
+    "deviceType": "mobile"
   },
+  "inputs": [
+    { "signal": { "key": "tetris.boardPressure" }, "value": 0.82 },
+    { "signal": { "key": "tetris.currentLevel" }, "value": 3 },
+    { "signal": { "key": "tetris.recentPlacementTimeMs" }, "value": 1300 },
+    { "signal": { "key": "tetris.recoveryFailures" }, "value": 2 }
+  ],
   "expectedContract": {
-    "contractId": "tetris.dropInterval",
+    "definitionId": "tetris.dropInterval@2",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
     "revision": "42",
@@ -223,13 +232,14 @@ Example:
 }
 ```
 
-For the HTTP route `POST /v1/decisions/{surface}:decide`, the path supplies the stable decision key. The service should normalize the route parameter and body into the shared `DecideRequest` shape used internally by the Decision API core, including the resolved decision definition and runtime target.
+For the HTTP route `POST /v1/decisions/{decisionKey}:decide`, the path supplies the stable decision key and the wire body does not duplicate it. The service normalizes the route parameter and body into the shared internal `DecideRequest`, including the decision key, expected definition identity, runtime target, context, and inputs.
 
 Response:
 
 ```json
 {
-  "surface": "tetris.dropInterval",
+  "decisionKey": "tetris.dropInterval",
+  "decisionId": "decision-789",
   "runtimeTarget": {
     "type": "session",
     "id": "game-456"
@@ -238,6 +248,14 @@ Response:
     "type": "cohort",
     "id": "new_players"
   },
+  "targetProvenance": [
+    {
+      "targetType": "cohort",
+      "claimedId": "new_players",
+      "resolvedId": "new_players",
+      "source": "client-verified"
+    }
+  ],
   "resolutionChain": [
     "session:game-456",
     "user:user-123",
@@ -253,15 +271,8 @@ Response:
     "modelUncertainty": 0.31,
     "expectedOutcome": 0.72
   },
-  "evidenceViews": [
-    {
-      "signal": { "key": "tetris.recentPlacementTimeMs" },
-      "target": { "type": "session", "id": "game-456" },
-      "window": "2m",
-      "filters": {}
-    }
-  ],
   "fallback": {
+    "source": "server",
     "resolutionFallbackUsed": false,
     "decisionFallbackUsed": false,
     "reason": null
@@ -271,7 +282,7 @@ Response:
     "reasons": [],
     "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
-  "contract": {
+  "definitionStatus": {
     "revision": "42",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
@@ -279,6 +290,10 @@ Response:
     "deploymentId": "tetris-web-2026-07-25.1",
     "integrity": "verified",
     "compatibility": "identical"
+  },
+  "exposure": {
+    "confirmationRequired": true,
+    "confirmToken": "confirm-789"
   },
   "reason": "Approved strategy slowed the drop interval because board pressure was high and recent placement time was slow.",
   "auditId": "audit-789"
@@ -291,7 +306,8 @@ This means Flaggo could not use the most specific requested scope, but it still 
 
 ```json
 {
-  "surface": "tetris.dropInterval",
+  "decisionKey": "tetris.dropInterval",
+  "decisionId": "decision-791",
   "runtimeTarget": {
     "type": "user",
     "id": "user-123"
@@ -300,6 +316,14 @@ This means Flaggo could not use the most specific requested scope, but it still 
     "type": "cohort",
     "id": "new_players"
   },
+  "targetProvenance": [
+    {
+      "targetType": "cohort",
+      "claimedId": "new_players",
+      "resolvedId": "new_players",
+      "source": "client-verified"
+    }
+  ],
   "resolutionChain": [
     "user:user-123",
     "cohort:new_players",
@@ -314,15 +338,8 @@ This means Flaggo could not use the most specific requested scope, but it still 
     "modelUncertainty": 0.28,
     "expectedOutcome": 0.78
   },
-  "evidenceViews": [
-    {
-      "signal": { "key": "tetris.recentPlacementTimeMs" },
-      "target": { "type": "cohort", "id": "new_players" },
-      "window": "24h",
-      "filters": {}
-    }
-  ],
   "fallback": {
+    "source": "server",
     "resolutionFallbackUsed": true,
     "decisionFallbackUsed": false,
     "reason": "runtime_target_insufficient_evidence"
@@ -332,12 +349,16 @@ This means Flaggo could not use the most specific requested scope, but it still 
     "reasons": [],
     "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
-  "contract": {
+  "definitionStatus": {
     "revision": "42",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
     "integrity": "known-older-revision",
     "compatibility": "identical"
+  },
+  "exposure": {
+    "confirmationRequired": true,
+    "confirmToken": "confirm-791"
   },
   "reason": "User-level evidence was insufficient; cohort-level evidence for new_players supported the returned drop interval.",
   "auditId": "audit-791"
@@ -350,7 +371,8 @@ This means Flaggo could not safely make an approved decision at any applicable s
 
 ```json
 {
-  "surface": "tetris.dropInterval",
+  "decisionKey": "tetris.dropInterval",
+  "decisionId": "decision-790",
   "runtimeTarget": {
     "type": "user",
     "id": "user-123"
@@ -359,17 +381,25 @@ This means Flaggo could not safely make an approved decision at any applicable s
     "type": "global",
     "id": "global"
   },
+  "targetProvenance": [
+    {
+      "targetType": "cohort",
+      "claimedId": "new_players",
+      "resolvedId": "new_players",
+      "source": "client-verified"
+    }
+  ],
   "resolutionChain": [
     "user:user-123",
     "cohort:new_players",
     "global"
   ],
-  "evidenceViews": [],
   "value": 800,
   "valueType": "number",
   "decisionMode": "fallback",
   "confidence": null,
   "fallback": {
+    "source": "server",
     "resolutionFallbackUsed": true,
     "decisionFallbackUsed": true,
     "reason": "insufficient_evidence_all_scopes"
@@ -379,11 +409,16 @@ This means Flaggo could not safely make an approved decision at any applicable s
     "reasons": ["insufficient_evidence_all_scopes"],
     "appliedConstraints": ["min-evidence-quality", "max-model-uncertainty", "min-sample-size"]
   },
-  "contract": {
+  "definitionStatus": {
     "revision": "42",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
-    "integrity": "unknown-client-contract"
+    "integrity": "verified",
+    "compatibility": "identical"
+  },
+  "exposure": {
+    "confirmationRequired": true,
+    "confirmToken": "confirm-790"
   },
   "reason": "No scope in the resolution chain had sufficient evidence for a safe decision.",
   "auditId": "audit-790"
@@ -397,7 +432,7 @@ The request should provide:
 - decision key and definition,
 - requested scope when the client knows it,
 - runtime context,
-- expected contract digest/revision when available,
+- required expected definition ID, revision, and contract digest,
 - client/app metadata,
 - optional correlation IDs.
 
@@ -418,10 +453,10 @@ The response should provide:
 - strategy ID when an approved strategy produced the value,
 - fallback status separated into resolution fallback and decision fallback,
 - resolved scope,
-- evidence scope,
+- verified target provenance,
 - policy result,
 - contract integrity status,
-- confidence/evidence status,
+- compact confidence status,
 - human-readable reason,
 - audit correlation ID.
 
@@ -448,9 +483,11 @@ runtime target: session:game-456
 resolution chain: session:game-456 -> user:user-123 -> cohort:new_players -> global
 ```
 
-The runtime target, control target, evidence views, and resolution chain should be included in the response for auditability.
+The runtime target, control target, target provenance, and resolution chain should be included in the response. Full evidence-view detail belongs in the audit record rather than the latency-sensitive runtime response.
 
-Resolution fallback should not be treated as a failed decision. If Flaggo falls back from `user` evidence to `cohort` evidence and returns an approved cohort-governed value, the response should still be an approved decision with a confidence score for the evidence views used.
+Client-supplied cohort or segment IDs are claims, not authority. The service verifies the claim or replaces it using trusted server-side attributes and records `client-verified`, `server-derived`, or `server-replaced` provenance in the result.
+
+Resolution fallback should not be treated as a failed decision. If Flaggo falls back from `user` evidence to `cohort` evidence and returns an approved cohort-governed value, the response should still be an approved decision with a confidence score for the evidence used.
 
 ## Policy evaluation
 
@@ -473,20 +510,35 @@ Policy reason codes should be stable because clients, audits, and the operator c
 
 ## Contract integrity
 
-The Decision API should compare the request's expected contract identity with registry state before approving a decision. It must support rolling deployments where several builds of the same service call the API concurrently with different known contract IDs or revisions.
+The Decision API should compare the request's expected contract identity with registry state before approving a decision. It must support rolling deployments where several builds of the same service call the API concurrently with different known definition IDs or revisions.
 
 Initial integrity states:
 
 | State | Runtime behavior |
 | --- | --- |
-| `verified` | Expected contract ID/revision matches a registered contract; decide normally. |
+| `verified` | Expected definition ID/revision matches a registered definition; decide normally. |
 | `known-older-revision` | Expected contract revision is recognized and still allowed; decide normally and emit diagnostics. |
-| `unknown-client-contract` | No known expected identity; allow in local/dev, fallback in production enforce mode. |
-| `contract-conflict` | Caller used an existing contract ID with conflicting semantics; return fallback and audit. |
-| `unknown-surface` | Surface is not registered; return fallback or controlled error. |
-| `retired-surface` | Surface is retired; return fallback or controlled error. |
+| `unknown-client-contract` | Expected identity is missing or unregistered; return `400` or `409` Problem Details. |
+| `contract-conflict` | Caller used an existing definition ID with a conflicting digest; return `409` Problem Details. |
+| `unknown-decision-key` | Decision key is not registered; return `404` Problem Details. |
+| `retired-decision-key` | Definition is retired; return `409` Problem Details. |
 
 The full contract bundle should not be sent on each runtime request.
+
+Contract/configuration failures are not decision fallback. The service does not execute an older revision, and the SDK must not convert the 4xx response into local fallback.
+
+## Authentication and retry identity
+
+Production data-plane requests use OAuth 2.0/OIDC access tokens. Decide requires `polari.decisions:decide`; exposure confirmation requires `polari.exposures:confirm`. Authorization also verifies the application and environment carried by the registered contract identity. Local development may enable an explicit insecure bypass, which must be disabled by default and visibly diagnosed.
+
+`POST /v1/decisions/{decisionKey}:decide` accepts an optional `Idempotency-Key` header:
+
+- the same key with the same canonical route and request returns the original decision result,
+- reuse with a different canonical route or request returns `409 idempotency-conflict`,
+- omitting the header creates a new decision record,
+- `correlationId` remains tracing metadata and is never a uniqueness key.
+
+Phase 1 exposes only the singular decide operation. Batch decisions are deferred until ordering, partial-failure, policy, and idempotency semantics can be designed explicitly.
 
 ## Strategy execution
 
@@ -514,7 +566,7 @@ interface IStrategyExecutor {
 }
 ```
 
-The Decision API should treat strategy execution as a bounded operation. It should not call an unbounded agent loop in the normal online path unless a specific surface is explicitly configured for that behavior.
+The Decision API should treat strategy execution as a bounded operation. It should not call an unbounded agent loop in the normal online path unless a specific decision definition is explicitly configured for that behavior.
 
 ## Fallback and confidence semantics
 
@@ -531,7 +583,7 @@ The API should distinguish two fallback types:
    - The returned value is the configured fallback.
    - Confidence should be `null` or omitted because no evidence-backed decision was approved.
 
-Confidence is not one generic score. When present, it describes the returned decision at the evidence views and control target used, not necessarily the originally requested runtime target:
+Confidence is not one generic score. When present, it describes the returned decision at the evidence and control target used, not necessarily the originally requested runtime target:
 
 | Field | Meaning |
 | --- | --- |
@@ -544,12 +596,20 @@ Fallback provenance must be explicit:
 
 | Source | Meaning |
 | --- | --- |
-| `server` | Decision API returned an audited `RuntimeDecisionResult`, possibly using policy fallback. Server `decisionId`, `auditId`, and `policy` may be present. |
-| `client-fallback` | SDK returned the local default because the service was unavailable or unreachable. No server `decisionId`, `auditId`, or `policy` may be claimed. |
+| `server` | Decision API returned an audited `RuntimeDecisionResult`, possibly using policy fallback. Server `decisionId`, `auditId`, `policy`, and definition status are present. |
+| `client-fallback` | SDK returned the local default because an explicitly configured data-plane availability fallback was triggered. No server `decisionId`, `auditId`, `policy`, or exposure identity may be claimed. It is forbidden for contract/configuration errors. |
 
 ## Exposure confirmation
 
 Returning a value creates a decision record, not an exposure. The server response may include a confirm token or decision handle:
+
+This distinction matters because an application can request a decision without using it. The game may end, the relevant component may unmount, local state may change, or a newer decision may supersede the response before the value is applied. Treating every returned value as an exposure would associate outcomes with behavior the user never experienced and bias later evidence, evaluation, and optimization.
+
+Exposure confirmation closes that gap:
+
+```text
+decision returned -> value applied or rendered -> exposure confirmed -> outcomes attributed
+```
 
 ```json
 {
@@ -561,7 +621,9 @@ Returning a value creates a decision record, not an exposure. The server respons
 }
 ```
 
-The SDK should call `confirmExposure(decisionId)` or use the confirm token only after the application applies or renders the value. The confirmation creates the `exposureId`; the initial runtime response should not include one.
+The SDK should call the Phase 1 `POST /v1/exposures/{decisionId}:confirm` operation only after the application applies or renders the value. Accepted decision A4 requires the confirm token and makes replay return the original `exposureId`. The initial runtime response never includes an `exposureId`.
+
+Later outcome telemetry should correlate to the confirmed `exposureId`, not merely the returned `decisionId`. A decision that is never applied remains auditable but must not enter treatment-effect or optimization evidence as if it were observed by the user.
 
 ## Audit and correlation
 
@@ -570,7 +632,7 @@ Every decision response should have an audit ID.
 The audit record should correlate:
 
 - request metadata,
-- surface,
+- decision key,
 - decision definition,
 - runtime target,
 - control target,
@@ -587,9 +649,10 @@ The audit record should correlate:
 
 For the Tetris hero scenario, the first Decision API should support:
 
-- `POST /v1/decisions/{surface}:decide`,
+- `POST /v1/decisions/{decisionKey}:decide`,
+- `POST /v1/exposures/{decisionId}:confirm`,
 - number decisions,
-- session/user/segment/global scope resolution,
+- session/user/cohort/global target resolution,
 - resolution fallback and decision fallback response fields,
 - confidence and policy result fields,
 - audit ID generation,
@@ -597,10 +660,16 @@ For the Tetris hero scenario, the first Decision API should support:
 - deterministic policy evaluation,
 - active numeric rule strategy execution.
 
-## Open design questions
+## Accepted Phase 1 contract decisions
 
-- Should the API support batch decisions?
-- Should the client be allowed to submit local evidence with the decision request?
-- Should policy failures return HTTP 200 with fallback, or non-2xx errors?
-- How much evidence detail should be included in the runtime response versus audit record only?
-- How should segment resolution happen: client-provided, server-derived, or both?
+The complete rationale is tracked in the [API Contract Proposal decision log](../API_CONTRACT_PROPOSAL.md#contract-decision-log). The Decision API follows these accepted decisions:
+
+- governed fallback is a completed audited `200`; malformed and configuration failures use Problem Details (A3),
+- exposure confirmation requires an opaque token and is idempotent (A4),
+- client cohort/segment claims are verified or replaced server-side (A8),
+- runtime responses contain compact confidence and target provenance while full evidence remains in audit (A9),
+- batch decisions are deferred (A10),
+- production authentication uses OAuth 2.0/OIDC scopes with explicit local-development bypass only (A11),
+- optional `Idempotency-Key` provides decide retry identity (A12).
+
+Submitting undeclared local evidence is not proposed for v1. The request may carry only typed values for registered inference-input signal keys.

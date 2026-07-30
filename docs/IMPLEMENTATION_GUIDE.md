@@ -120,284 +120,137 @@ Cloud-backed implementations should be additive:
 
 The implementation should prove the interface shape before optimizing any cloud adapter.
 
-## Shared contract types
+## Contract and API sources of truth
 
-The canonical MVP interface freeze is documented in [Shared Contracts](design/shared-contracts/README.md). The shapes below summarize the core runtime types that SDK and API implementation should share.
+The implementation guide does not redefine shared DTOs. These documents and generated artifacts are authoritative:
 
-```ts
-type ValueType = "boolean" | "number" | "string";
-type DecisionValue = boolean | number | string;
-type RuntimeContextValue = boolean | number | string | null;
-type RuntimeContext = Record<string, RuntimeContextValue>;
+| Surface | Source of truth |
+| --- | --- |
+| Language-neutral domain and runtime contracts | [Shared Contracts](design/shared-contracts/README.md) |
+| Runtime HTTP behavior | [Decision API Design](design/decision-api/README.md) and the versioned OpenAPI document |
+| Phase 1 endpoint/artifact boundary and accepted decisions | [API Contract Proposal](design/API_CONTRACT_PROPOSAL.md) |
+| SDK authoring and runtime UX | [Client Library Design](design/client-library/README.md) |
+| Code-first control-plane/data-plane lifecycle | [Control Plane and Data Plane UX](design/client-library/CONTROL_DATA_PLANE_UX.md) |
+| Definition bundle and canonical digest rules | [Contract Registry Design](design/contract-registry/README.md) |
+| Strategy execution | [Reasoning Engine Design](design/reasoning-engine/README.md) |
+| Component-owned ports | The corresponding [component design folder](design/README.md) |
 
-type BuiltInTargetType = "session" | "user" | "cohort" | "global";
-type TargetType = BuiltInTargetType | (string & {});
+The API-contract phase should produce version-controlled artifacts before client or service implementation branches:
 
-type DecisionTargetRef = {
-  type: TargetType;
-  id: string;
-};
+The [API Contract Proposal](design/API_CONTRACT_PROPOSAL.md) records the accepted Phase 1 wire decisions. Those decisions must now be encoded in executable OpenAPI, JSON Schema, fixtures, and conformance tests before implementation branches diverge.
 
-type DecisionDefinitionRef = {
-  appId: string;
-  environment: string;
-  key: string;
-  revision: string;
-};
-
-type NumberActionSpace = {
-  type: "number";
-  min: number;
-  max: number;
-  step?: number;
-  default: number;
-};
-
-type BooleanActionSpace = {
-  type: "boolean";
-  default: boolean;
-};
-
-type StringActionSpace = {
-  type: "string";
-  allowedValues?: string[];
-  default: string;
-};
-
-type ActionSpace = NumberActionSpace | BooleanActionSpace | StringActionSpace;
+```text
+contracts/
+  openapi/
+    flaggo-runtime-v1.yaml
+    flaggo-management-v1.yaml
+  schemas/
+    decision-definition-bundle-v1.schema.json
+  fixtures/
+    runtime/
+      decide/
+      exposure-confirmation/
+    management/
+      definition-bundle/
+    errors/
 ```
 
-## Decision strategy interface
+Required API surfaces:
 
-The MVP should support a fixed value strategy and a simple numeric rule strategy. The shape should remain extensible for future scoring functions, small models, bandits, and experiment assignment.
+- `POST /v1/decisions/{decisionKey}:decide`,
+- `POST /v1/exposures/{decisionId}:confirm`,
+- definition-bundle validate/apply management operations,
+- health/readiness endpoint,
+- stable error and fallback representations.
 
-```ts
-type DecisionStrategy =
-  | FixedValueStrategy
-  | NumericRuleStrategy;
+Golden fixtures must cover:
 
-type FixedValueStrategy = {
-  kind: "fixed-value";
-  id: string;
-  value: DecisionValue;
-};
+- approved active value,
+- approved strategy execution,
+- server policy fallback,
+- client fallback representation,
+- unknown and conflicting definition identity,
+- invalid/duplicate inference inputs,
+- exposure confirmation,
+- definition validation success and failure.
 
-type NumericRuleStrategy = {
-  kind: "numeric-rule";
-  baseValue: number;
-  min: number;
-  max: number;
-  step: number;
-  cooldownSeconds: number;
-  rules: NumericAdjustmentRule[];
-};
+Both SDK and service tests consume the same schemas and fixtures. Neither branch may maintain an independent copy of `DecideRequest`, `RuntimeDecisionResult`, `DecisionDefinitionBundle`, policy, confidence, fallback, or exposure contracts.
 
-type NumericAdjustmentRule = {
-  id: string;
-  when: RuntimeCondition;
-  adjustBy: number;
-  reason: string;
-};
+## Control-plane and data-plane implementation boundary
 
-type RuntimeCondition = {
-  all?: RuntimeCondition[];
-  any?: RuntimeCondition[];
-  fact?: string;
-  operator?: "eq" | "neq" | "gt" | "gte" | "lt" | "lte";
-  value?: RuntimeContextValue;
-};
-```
+- Definition-bundle validate/apply belongs to the control plane.
+- Decide and exposure confirmation belong to the data plane.
+- Application deployment is external and must not be modeled as a Polari-owned operation.
+- MVP trusted application/bootstrap startup acts as the first control-plane client: it atomically applies the statically extracted bundle before enabling data-plane calls.
+- Future clients may use startup verify-only, CLI, CI/CD, GitOps, init/deployment hooks, or registry-first workflows without changing service boundaries.
+- Browser bundles must not contain management credentials; the local Tetris MVP uses a trusted local bootstrap host or explicitly insecure local-development mode.
+- Production decide requires exact registered `definitionId + revision + contractDigest`.
+- Contract/configuration errors return Problem Details and never invoke local fallback.
+- Governed server fallback remains a `200` audited result for valid definitions blocked by policy, evidence, or state.
+- SDK-local fallback is optional and limited to recognized data-plane availability failures.
 
-For the Tetris MVP, the active strategy can be:
+## Parallel implementation seams
 
-```json
-{
-  "kind": "numeric-rule",
-  "baseValue": 800,
-  "min": 600,
-  "max": 1100,
-  "step": 50,
-  "cooldownSeconds": 20,
-  "rules": [
-    {
-      "id": "slow-down-under-pressure",
-      "when": {
-        "all": [
-          { "fact": "boardPressure", "operator": "gte", "value": 0.7 },
-          { "fact": "recentPlacementTimeMs", "operator": "gte", "value": 1200 }
-        ]
-      },
-      "adjustBy": 50,
-      "reason": "Player is under board pressure and placing slowly."
-    }
-  ]
-}
-```
+After the API artifacts merge, client and service work can proceed independently.
 
-## Runtime request and response interfaces
+### Client track
 
-```ts
-type DecideRequest = {
-  decisionKey: string;
-  runtimeTarget?: DecisionTargetRef;
-  runtimeContext: RuntimeContext;
-  client: {
-    appId: string;
-    environment: string;
-    sdk?: string;
-    sdkVersion?: string;
-  };
-  correlationId?: string;
-};
+The client track owns:
 
-type DecideResponse<T extends DecisionValue = DecisionValue> = {
-  decisionKey: string;
-  definition?: DecisionDefinitionRef;
-  value: T;
-  valueType: ValueType;
-  decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
-  strategyId?: string;
-  confidence: ConfidenceReport | null;
-  reason: string;
-  auditId: string;
-  runtimeTarget?: DecisionTargetRef;
-  controlTarget?: DecisionTargetRef;
-  evidenceViews?: EvidenceViewRef[];
-  resolutionChain: string[];
-  fallback: {
-    resolutionFallbackUsed: boolean;
-    decisionFallbackUsed: boolean;
-    reason: string | null;
-  };
+- typed signal handles and code-first decision authoring,
+- fail-closed static extraction,
+- canonical definition normalization and digesting,
+- generated definition bundle output,
+- HTTP serialization from bound inputs/context,
+- compact definition identity propagation,
+- `flaggo.tune.number(...)` decision receipts,
+- exposure confirmation,
+- local client fallback for service unavailability,
+- telemetry emission.
 
-  type ConfidenceReport = {
-    evidenceQuality?: number;
-    modelUncertainty?: number;
-    expectedOutcome?: number;
-  };
-  policy: {
-    result: "approved" | "blocked" | "fallback";
-    reasons: string[];
-    appliedConstraints: string[];
-  };
-};
-```
+It tests against a generated mock server or fixture-backed HTTP harness derived from OpenAPI.
 
-## Client library interfaces
+### Service track
 
-The TypeScript SDK should expose a small public API:
+The service track owns:
 
-```ts
-interface IFlaggoClient {
-  tune: ITuneBuilder;
-  events: IEventBuilder;
-  metrics: IMetricBuilder;
-  definitions: IDefinitionBundleProvider;
-}
+- runtime and management endpoints,
+- definition registry and contract-integrity verification,
+- target resolution,
+- inference-input validation,
+- evidence provider,
+- governed state store,
+- deterministic strategy execution,
+- policy evaluation,
+- audit recording,
+- exposure confirmation and attribution linkage,
+- local adapters and health reporting.
 
-interface ITuneBuilder {
-  number(name: string, request: NumberTuneRequest): Promise<DecisionReceipt<number>>;
-  numberDetailed(name: string, request: NumberTuneRequest): Promise<DecideResponse<number>>;
-}
+It tests requests and responses against the same OpenAPI schemas and golden fixtures used by the client.
 
-interface IDefinitionBundleProvider {
-  exportBundle(): DecisionDefinitionBundle;
-  getExpectedIdentity(): ContractIdentity | undefined;
-}
-```
+### Service component ports
 
-The SDK should not own decision intelligence, policy, or state. It should declare decision definitions, optionally export a canonical definition bundle, send runtime context and compact definition identity, emit telemetry, and expose typed responses.
-
-## Decision API service interfaces
-
-The Decision API should be implemented by composing explicit ports:
-
-```ts
-interface IDecisionService {
-  decide(request: DecideRequest): Promise<DecideResponse>;
-}
-
-interface IDefinitionRegistry {
-  getActiveDefinition(ref: DecisionDefinitionRef): Promise<DecisionDefinition>;
-  validateBundle(bundle: DecisionDefinitionBundle): Promise<DefinitionBundleValidationResult>;
-  applyBundle(bundle: DecisionDefinitionBundle): Promise<RegistrationReceipt>;
-}
-
-interface ITargetResolver {
-  resolve(request: DecideRequest, definition: DecisionDefinition): Promise<ResolvedTargets>;
-}
-
-interface IEvidenceProvider {
-  getSnapshot(input: EvidenceRequest): Promise<EvidenceSnapshot>;
-}
-
-interface IStateStore {
-  getActiveState(input: StateRequest): Promise<DecisionState | null>;
-  updateActiveState(input: StateUpdate): Promise<void>;
-}
-
-interface IStrategyExecutor {
-  execute(input: StrategyExecutionRequest): Promise<StrategyExecutionResult>;
-}
-
-interface IPolicyEvaluator {
-  evaluate(input: PolicyEvaluationRequest): Promise<PolicyEvaluationResult>;
-}
-
-interface IAuditSink {
-  record(input: AuditRecord): Promise<{ auditId: string }>;
-}
-```
-
-Port request/result DTOs such as `EvidenceRequest`, `StateRequest`, `StrategyExecutionRequest`, and `PolicyEvaluationRequest` are owned by their component seams and summarized in the component design docs. Shared cross-component contracts stay in [Shared Contracts](design/shared-contracts/README.md).
-
-The online Decision API flow should compose these ports:
+The Decision API composes module-owned interfaces:
 
 ```text
 DecideRequest
-  -> IDefinitionRegistry.getActiveDefinition
-  -> ITargetResolver.resolve
-  -> IEvidenceProvider.getSnapshot
-  -> IStateStore.getActiveState
-  -> IStrategyExecutor.execute or fixed active value
-  -> IPolicyEvaluator.evaluate
-  -> IAuditSink.record
-  -> DecideResponse
+  -> IDefinitionRegistry
+  -> ITargetResolver
+  -> IEvidenceProvider
+  -> IStateStore
+  -> IStrategyExecutor or fixed active value
+  -> IPolicyEvaluator
+  -> IAuditSink
+  -> RuntimeDecisionResult
 ```
+
+Port DTOs such as evidence, state, strategy execution, policy evaluation, and audit requests are owned by their component boundaries. Cross-component wire/domain contracts remain in [Shared Contracts](design/shared-contracts/README.md).
 
 ## Async intelligence interfaces
 
-The MVP can keep async intelligence simple, but it should use future-compatible interfaces.
+The MVP can keep async intelligence simple, but it must consume and produce the canonical proposal, confidence, strategy, lifecycle, and governed-state contracts from [Shared Contracts](design/shared-contracts/README.md) and [Decision Intelligence](DECISION_INTELLIGENCE.md).
 
-```ts
-type DecisionProposal =
-  | ValueProposal
-  | StrategyProposal
-  | ExperimentProposal
-  | HoldProposal
-  | RollbackProposal;
-
-type StrategyProposal = {
-  proposalType: "strategy";
-  decisionKey: string;
-  target: DecisionTargetRef;
-  strategy: DecisionStrategy;
-  confidence: ConfidenceReport | null;
-  evidenceStatus: string;
-  rationale: string;
-  risks: string[];
-};
-
-interface IDecisionIntelligence {
-  propose(input: IntelligenceRequest): Promise<DecisionProposal>;
-}
-
-interface IProposalGovernance {
-  review(proposal: DecisionProposal): Promise<GovernanceOutcome>;
-}
-```
-
-For MVP, a script, fixture, or admin action can create the Tetris strategy proposal. The important design constraint is that the online path consumes the same governed `DecisionStrategy` representation future AI agents will produce.
+The reasoning component owns the `IDecisionIntelligence` proposal-generation seam. Governance owns proposal validation, approval, and activation into `GovernedDecisionState`. For MVP, a script, fixture, or admin action can create the Tetris strategy proposal. The online path must consume the same governed strategy representation future AI agents will produce.
 
 ## MVP Tetris flow
 
@@ -420,15 +273,20 @@ For MVP, a script, fixture, or admin action can create the Tetris strategy propo
    Policy checks min/max, step, max delta, cooldown, pause/override, fallback.
 
 6. Response
-   API returns value, decisionMode=strategy, strategyId, targets, policy result, reason, auditId.
+   API returns RuntimeDecisionResult with value, decisionId, decision mode, targets,
+   policy result, fallback provenance, reason, and auditId.
 
-7. Feedback
-   Client emits outcome telemetry for later evidence and async intelligence.
+7. Exposure
+   Game applies the value and confirms exposure with decisionId.
+
+8. Feedback
+   Client emits outcome telemetry linked to the confirmed exposure for later evidence
+   and async intelligence.
 ```
 
 ## MVP design and implementation plan
 
-The MVP should proceed in phases. Each phase should leave behind a working, inspectable slice rather than only abstract design.
+The MVP should proceed API-contract first. The API artifacts are the blocking dependency; after they merge, client and service implementation should branch from the same contract revision and proceed in parallel.
 
 ### Phase 0: Repository and contributor baseline
 
@@ -445,96 +303,134 @@ Deliverables:
 
 Decision rule: if a new contributor cannot run the MVP locally without cloud setup, the foundation is not portable enough.
 
-### Phase 1: Shared definitions, definition bundle, and receipt
+### Phase 1: API and contract design freeze
 
-Goal: define the stable shapes that SDK, server, tests, and future adapters share.
-
-Deliverables:
-
-- `DecisionValue`, `ActionSpace`, `DecisionTargetRef`, `DecideRequest`, and `DecideResponse`,
-- `DecisionStrategy` with `fixed-value` and `numeric-rule`,
-- `DecisionProposal` with at least `StrategyProposal`,
-- canonical `DecisionDefinitionBundle` schema,
-- deterministic bundle and definition digests,
-- `RegistrationReceipt`,
-- compact definition identity fields for runtime,
-- `definition.integrity` response shape,
-- JSON examples for `tetris.dropInterval`.
-
-Validation:
-
-- schema examples round-trip successfully,
-- invalid strategy/action-space combinations are rejected,
-- definition bundle can represent the Tetris decision key without cloud-specific fields,
-- direct REST clients can carry expected definition/build identity without any SDK.
-
-### Phase 2: Decision API core with local adapters
-
-Goal: implement the online runtime path behind provider-neutral interfaces.
+Goal: create executable, language-neutral contracts that let client and service teams implement independently.
 
 Deliverables:
 
-- `POST /v1/decisions/{decisionKey}:decide`,
-- runtime definition identity verification,
-- `IDefinitionRegistry` local implementation,
-- `ITargetResolver`,
-- `IStateStore` local implementation,
-- `IEvidenceProvider` local implementation,
-- `IStrategyExecutor` for numeric rules,
-- `IPolicyEvaluator` for min/max, step, max delta, cooldown, pause, and fallback,
-- `IAuditSink` local implementation,
-- health endpoint and structured logs.
+- runtime OpenAPI for decide, exposure confirmation, and health,
+- management OpenAPI for definition-bundle validate/apply and semantic-revision approval,
+- JSON Schema for `DecisionDefinitionBundle`,
+- canonical normalization and digest specification,
+- stable error, fallback provenance, target provenance, compact confidence, policy, and contract-integrity shapes,
+- exposure-confirmation request/response contract,
+- golden request/response fixtures for success, governed fallback, client fallback, target-claim replacement, validation, approval, authentication, retry, and conflict paths,
+- generated or hand-verified TypeScript/server model conformance,
+- mock server or fixture harness consumable by the client track.
 
 Validation:
 
-- fixed fallback response works when no active strategy exists,
-- active numeric rule strategy returns adaptive values from runtime context,
-- policy blocks out-of-range and cooldown-violating candidates,
-- every response includes `auditId`, `decisionMode`, target fields, fallback fields, and definition integrity status.
+- every OpenAPI example and JSON fixture validates,
+- combined code-first and explicit definitions normalize to the same canonical digest,
+- invalid inputs, objectives, policies, strategies, and definition identities have stable errors,
+- server and client fallback provenance are distinguishable,
+- exposure confirmation cannot occur without a valid `decisionId`,
+- replayed exposure confirmation returns the original `exposureId`,
+- semantic-change apply performs no mutation before explicit approval,
+- same-key decide retry returns the original decision and conflicting reuse returns `409`,
+- full evidence detail remains in audit rather than runtime results,
+- direct REST clients can implement the flow without the TypeScript SDK.
 
-### Phase 3: TypeScript client library
+Exit gate: Phase 2 branches do not begin until these artifacts merge to the shared baseline.
 
-Goal: make application integration simple while keeping server authority.
+### Phase 2: Parallel client and service implementation
+
+Goal: build both sides concurrently against the same frozen API artifacts.
+
+#### Track 2A: TypeScript client library
 
 Deliverables:
 
 - `createFlaggoClient`,
-- `decision.number(...)`,
-- `decide(...)`,
-- local fallback behavior when the server is unavailable,
-- domain event definition and emit API,
-- definition bundle export or reference,
-- expected definition digest/revision propagation,
-- OpenTelemetry-compatible telemetry mode stub or first implementation.
+- typed event, metric, derived-metric, and inference-input handles,
+- combined `flaggo.tune.number(...)` authoring/runtime API,
+- fail-closed static extraction subset,
+- canonical definition/bundle normalization and digesting,
+- trusted startup registration and registration-receipt handling,
+- typed `requires-approval` startup handling and approval request propagation,
+- HTTP client generated from or checked against OpenAPI,
+- compact definition identity propagation,
+- `DecisionReceipt<number>` and detailed result projection,
+- exposure confirmation,
+- optional decide idempotency-key support,
+- OAuth 2.0/OIDC credential providers with explicit local-development bypass,
+- explicitly configured data-plane availability fallback,
+- telemetry emission and OpenTelemetry-compatible mode.
 
 Validation:
 
-- Tetris code can declare `tetris.dropInterval`,
-- Tetris code can call `decide` with live context,
-- SDK exposes typed `DecisionResult<number>`,
-- SDK does not mutate production management state at runtime,
-- runtime calls send compact identity rather than the full bundle.
+- SDK contract tests pass against the shared fixture/mock server,
+- invalid authoring fails extraction or TypeScript validation,
+- repeated calls reuse cached static descriptors,
+- same-key conflicting definitions fail closed,
+- concurrent startup registration of the same bundle is idempotent,
+- failed startup registration rejects initialization; `requires-approval` is a typed startup error, and no data-plane client is created,
+- runtime requests send bound values and compact identity, not full definitions,
+- client fallback never claims server decision, policy, or audit identity,
+- verified/replaced cohort provenance is available in detailed results.
 
-### Phase 4: Tetris adaptive demo
-
-Goal: prove the hero scenario end to end.
+#### Track 2B: Decision service and local adapters
 
 Deliverables:
 
-- Tetris supplies live inference inputs such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures`,
-- server has active `numeric-rule` strategy for `tetris.dropInterval`,
-- game applies returned `dropInterval`,
-- audit output shows strategy execution and policy result,
-- fallback behavior is visible when server or policy blocks decisioning.
+- runtime decide and exposure-confirmation endpoints,
+- definition validate/apply endpoints,
+- definition approval status/approve/reject endpoints,
+- `IDefinitionRegistry` local implementation,
+- contract-integrity and canonical digest verification,
+- `ITargetResolver`,
+- `IStateStore` local implementation,
+- `IEvidenceProvider` local implementation,
+- `IStrategyExecutor` for fixed and numeric-rule strategies,
+- `IPolicyEvaluator` for bounds, step, max delta, cooldown, evidence/model constraints, pause, and fallback,
+- `IAuditSink` local implementation,
+- exposure record linkage,
+- OAuth 2.0/OIDC scope enforcement and explicit local-development bypass,
+- decide idempotency storage and conflict detection,
+- health endpoint and structured logs.
 
 Validation:
 
+- service contract tests pass against every shared fixture,
+- fixed fallback works when no governed state exists,
+- active numeric-rule strategy returns bounded adaptive values,
+- policy blocks invalid or cooldown-violating candidates,
+- invalid inference signals, objectives, policies, and definition identities fail closed,
+- every server result contains the required decision/audit/fallback/contract-integrity fields,
+- exposure confirmation creates attribution identity only after a decision is applied,
+- semantic-change apply leaves registry state unchanged until approval, then applies atomically,
+- runtime results expose compact confidence and target provenance while audit retains full evidence.
+
+Parallel-work rule: Track 2A and Track 2B may not change shared wire semantics independently. Any contract change first updates OpenAPI/schema, canonical fixtures, and both conformance suites.
+
+### Phase 3: Integration and Tetris adaptive demo
+
+Goal: prove the hero scenario end to end.
+
+Scope boundary: semantic-change startup registration uses the accepted approval flow. A pending apply rejects client initialization; after approval, startup retry or restart receives the stored approved receipt for the same canonical bundle.
+
+Deliverables:
+
+- SDK and service integrated against a shared local environment,
+- trusted Tetris bootstrap registers the canonical definition bundle through the management API,
+- Tetris supplies live inference inputs such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures`,
+- server has active `numeric-rule` strategy for `tetris.dropInterval`,
+- game applies returned `dropInterval` and confirms exposure,
+- outcome telemetry links to confirmed exposure,
+- audit output shows strategy execution and policy result,
+- server-policy and client-unavailability fallback paths are both visible.
+
+Validation:
+
+- SDK and direct REST calls produce contract-equivalent requests/results,
 - under high pressure and slow placement, interval slows within max delta,
 - after recovery, interval stabilizes or speeds up within bounds,
 - cooldown prevents chaotic changes,
-- fallback remains `800ms`.
+- fallback remains `800ms`,
+- unused decision receipts do not create exposure records.
 
-### Phase 5: Minimal async intelligence loop
+### Phase 4: Minimal async intelligence and governance loop
 
 Goal: introduce the async path without requiring a full AI platform.
 
@@ -552,7 +448,7 @@ Validation:
 - rejected proposals do not affect runtime state,
 - activated strategies are consumed by the same online runtime path.
 
-### Phase 6: Portable deployment and cloud adapter readiness
+### Phase 5: Packaging and portable deployment
 
 Goal: make the MVP portable before adding provider-specific integrations.
 
@@ -560,9 +456,10 @@ Deliverables:
 
 - container image or container-ready startup,
 - local compose-style deployment if needed,
-- OpenAPI document for the runtime API,
+- published OpenAPI and JSON Schema artifacts from Phase 1,
 - OpenTelemetry collector-compatible configuration,
 - adapter interface documentation,
+- contributor quickstart covering server, SDK, and Tetris,
 - one documented path for a future cloud-backed adapter.
 
 Validation:
@@ -573,16 +470,23 @@ Validation:
 
 ## Recommended MVP build sequence
 
-1. Finish shared contracts and examples first.
-2. Build the Decision API with local in-memory adapters.
-3. Add numeric rule strategy execution and policy governance.
-4. Build the TypeScript SDK decision call.
-5. Wire Tetris to the SDK and server.
-6. Add local telemetry/audit visibility.
-7. Add definition bundle export/reference and validate/apply flow.
-8. Add scripted strategy proposal activation.
-9. Package local startup and document quickstart.
-10. Add optional cloud adapter designs only after the local MVP is stable.
+1. Establish the repository/contributor baseline.
+2. Design and merge OpenAPI, JSON Schema, canonical fixtures, and contract tests.
+3. Branch client and service tracks from the same merged contract revision.
+4. Implement SDK and service concurrently against fixture-based conformance suites.
+5. Integrate frequently; do not wait for either track to be feature-complete.
+6. Wire Tetris through decide, apply, exposure confirmation, telemetry, and audit.
+7. Add scripted proposal review and governed strategy activation.
+8. Package local startup and publish the contract artifacts and quickstart.
+9. Add optional cloud adapters only after the local MVP is stable.
+
+## Branch and integration discipline
+
+- The API-contract branch merges before client/service implementation branches are created.
+- Client and service branches record the contract artifact revision they implement.
+- Contract-breaking changes require a dedicated contract PR that updates OpenAPI/schema, fixtures, compatibility notes, and both conformance suites.
+- Client and service tracks should merge small vertical increments and run cross-track contract tests continuously.
+- Phase 3 integration begins as soon as both tracks can complete one fixture-backed decide call; it is not deferred until all Track 2 deliverables finish.
 
 ## Extensibility checkpoints
 
