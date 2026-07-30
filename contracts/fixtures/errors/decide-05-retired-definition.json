@@ -1,0 +1,63 @@
+{
+  "name": "decide-retired-definition",
+  "scenario": 9,
+  "invariant": "A retired definition returns 409 retired-definition; lifecycle prevents an approved decision and forbids local fallback.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/decisions/tetris.dropInterval:decide",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "expectedContract": {
+        "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+        "contractDigest": "sha256:313cf567ee322f3f7028a48095cd4da6016d9d99759761d5651ac4ce84f3ff4e",
+        "revision": "rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K"
+      },
+      "runtimeTarget": {
+        "type": "session",
+        "id": "game-456"
+      },
+      "runtimeContext": {
+        "sessionId": "game-456",
+        "userId": "user-123",
+        "cohort": "new_players",
+        "deviceType": "mobile"
+      },
+      "inputs": [
+        {
+          "signal": {
+            "key": "tetris.boardPressure"
+          },
+          "value": 0.82
+        }
+      ],
+      "client": {
+        "appId": "tetris-demo",
+        "environment": "dev",
+        "sdk": "typescript",
+        "sdkVersion": "0.1.0"
+      },
+      "correlationId": "game-loop-123"
+    }
+  },
+  "expected": {
+    "status": 409,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-retired-definition"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/retired-definition",
+      "title": "Retired definition",
+      "status": 409,
+      "code": "retired-definition",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-retired-definition",
+      "detail": "The requested revision is retired and cannot serve decisions."
+    }
+  }
+}

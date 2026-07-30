@@ -1,0 +1,234 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flaggo Runtime API",
+    "version": "1.0.0",
+    "description": "Phase 1 data-plane contract: decide, exposure confirmation, and health. Domain types are owned by Shared Contracts; strict wire models live in ../schemas/runtime-models-v1.schema.json and ../schemas/problem-details-v1.schema.json.",
+    "license": { "name": "Apache-2.0" }
+  },
+  "servers": [
+    { "url": "https://data.flaggo.dev", "description": "Data plane" },
+    { "url": "http://localhost:8080", "description": "Local development" }
+  ],
+  "security": [{ "oauth2": [] }],
+  "tags": [
+    { "name": "decide", "description": "Runtime decision evaluation" },
+    { "name": "exposure", "description": "Exposure confirmation" },
+    { "name": "health", "description": "Liveness and readiness" }
+  ],
+  "paths": {
+    "/v1/decisions/{decisionKey}:decide": {
+      "post": {
+        "tags": ["decide"],
+        "operationId": "decide",
+        "summary": "Evaluate a runtime decision for an exact registered contract identity.",
+        "description": "The route carries the decisionKey; the body never duplicates it. Returns 200 only when the server completed an audited evaluation of a valid registered definition, including governed fallback. Contract/configuration failures are Problem Details and forbid SDK-local fallback.",
+        "security": [{ "oauth2": ["polari.decisions:decide"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/DecisionKeyPath" },
+          { "$ref": "#/components/parameters/IdempotencyKeyHeader" },
+          { "$ref": "#/components/parameters/CorrelationIdHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/DecideRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audited server decision (approved value, strategy, or governed fallback).",
+            "headers": {
+              "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" },
+              "Idempotency-Key-Expires-At": { "$ref": "#/components/headers/IdempotencyKeyExpiresAt" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/ServerDecisionResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Problem" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/ProblemWithRetryAfter" },
+          "415": { "$ref": "#/components/responses/Problem" },
+          "422": { "$ref": "#/components/responses/Problem" },
+          "429": { "$ref": "#/components/responses/ProblemWithRetryAfter" },
+          "500": { "$ref": "#/components/responses/Problem" },
+          "503": { "$ref": "#/components/responses/ProblemWithRetryAfter" }
+        }
+      }
+    },
+    "/v1/exposures/{decisionId}:confirm": {
+      "post": {
+        "tags": ["exposure"],
+        "operationId": "confirmExposure",
+        "summary": "Confirm that the application applied or rendered a decision.",
+        "description": "Creates exposure identity only after application. Retrying the same valid confirmation returns the same exposureId. Invalid or mismatched capability returns 404 to avoid a token-validity oracle.",
+        "security": [{ "oauth2": ["polari.exposures:confirm"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/DecisionIdPath" },
+          { "$ref": "#/components/parameters/CorrelationIdHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmed exposure (idempotent for the same decision/token).",
+            "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/ExposureConfirmationResult" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "415": { "$ref": "#/components/responses/Problem" },
+          "422": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": ["health"],
+        "operationId": "healthLive",
+        "summary": "Liveness probe. No external dependency checks.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process can serve the handler.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/LivenessResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": ["health"],
+        "operationId": "healthReady",
+        "summary": "Readiness probe over required and optional dependencies.",
+        "description": "200 ready requires every check up. 200 degraded is allowed when only optional checks are impaired and an audited governed fallback is still possible. Any required check that is not up returns 503 not-ready.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ready or degraded readiness.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/ReadinessResult" }
+              }
+            }
+          },
+          "503": {
+            "description": "Not-ready: a required dependency is not up.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/ReadinessResult" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "description": "OAuth 2.0/OIDC bearer access tokens. Local development may explicitly enable an insecure bypass, disabled by default.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
+            "scopes": {
+              "polari.decisions:decide": "Runtime decision evaluation",
+              "polari.exposures:confirm": "Exposure confirmation"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "DecisionKeyPath": {
+        "name": "decisionKey",
+        "in": "path",
+        "required": true,
+        "description": "Stable developer-facing decision lookup key, for example tetris.dropInterval.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "DecisionIdPath": {
+        "name": "decisionId",
+        "in": "path",
+        "required": true,
+        "description": "Opaque server decision identifier returned by decide.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "IdempotencyKeyHeader": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Optional decide retry-deduplication key. Same key plus canonical request returns the original decision; reuse with a different fingerprint is 409 idempotency-conflict.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "CorrelationIdHeader": {
+        "name": "X-Flaggo-Correlation-Id",
+        "in": "header",
+        "required": false,
+        "description": "Optional client-supplied tracing correlation id. Excluded from the idempotency fingerprint.",
+        "schema": { "type": "string" }
+      }
+    },
+    "headers": {
+      "CorrelationId": {
+        "description": "Server request-correlation identifier returned on every response.",
+        "schema": { "type": "string" }
+      },
+      "IdempotencyKeyExpiresAt": {
+        "description": "RFC 3339 UTC time when a retained idempotent result expires (24 hours from completion).",
+        "schema": { "type": "string", "format": "date-time" }
+      },
+      "RetryAfter": {
+        "description": "RFC 9110 Retry-After delay in seconds.",
+        "schema": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "RFC 9457 Problem Details error. Programs branch on code and status, never on title or detail.",
+        "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "../schemas/problem-details-v1.schema.json" }
+          }
+        }
+      },
+      "ProblemWithRetryAfter": {
+        "description": "RFC 9457 Problem Details error with an advisory Retry-After header.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" },
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "../schemas/problem-details-v1.schema.json" }
+          }
+        }
+      }
+    }
+  }
+}

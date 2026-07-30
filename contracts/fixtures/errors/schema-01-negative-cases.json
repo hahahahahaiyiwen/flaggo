@@ -1,0 +1,183 @@
+{
+  "name": "decide-schema-negative-cases",
+  "scenario": 33,
+  "invariant": "Value/type mismatch, non-finite number (absent from JSON), empty/out-of-range confidence, and invalid exposure union are rejected by the strict runtime schemas.",
+  "schemaNegative": true,
+  "request": {
+    "method": "POST",
+    "path": "/v1/decisions/tetris.dropInterval:decide",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    }
+  },
+  "expected": {
+    "status": 0,
+    "headers": {},
+    "note": "Schema-negative conformance fixture; not an HTTP exchange."
+  },
+  "rejectedSamples": [
+    {
+      "why": "valueType/value mismatch (string valueType with number value)",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "body": {
+        "decisionKey": "tetris.dropInterval",
+        "definition": {
+          "appId": "tetris-demo",
+          "environment": "dev",
+          "key": "tetris.dropInterval",
+          "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+          "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
+        },
+        "decisionId": "decision-123",
+        "value": 700,
+        "valueType": "string",
+        "decisionMode": "strategy",
+        "strategyId": "strategy-tetris-new-players-v1",
+        "runtimeTarget": {
+          "type": "session",
+          "id": "game-456"
+        },
+        "controlTarget": {
+          "type": "cohort",
+          "id": "new_players"
+        },
+        "targetProvenance": [
+          {
+            "targetType": "cohort",
+            "claimedId": "new_players",
+            "resolvedId": "new_players",
+            "source": "client-verified"
+          }
+        ],
+        "resolutionChain": [
+          "session:game-456",
+          "user:user-123",
+          "cohort:new_players",
+          "global"
+        ],
+        "confidence": {
+          "evidenceQuality": 0.82,
+          "modelUncertainty": 0.31,
+          "expectedOutcome": 0.72
+        },
+        "fallback": {
+          "source": "server",
+          "resolutionFallbackUsed": false,
+          "decisionFallbackUsed": false,
+          "reason": null
+        },
+        "policy": {
+          "result": "approved",
+          "reasons": [],
+          "appliedConstraints": [
+            "cooldown",
+            "max-delta",
+            "number-bounds"
+          ]
+        },
+        "definitionStatus": {
+          "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+          "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
+          "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
+          "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+          "buildId": "tetris-web-2026-07-25.1",
+          "deploymentId": "tetris-web-dev-a",
+          "integrity": "verified",
+          "compatibility": "identical"
+        },
+        "exposure": {
+          "confirmationRequired": true,
+          "confirmToken": "confirm-abc"
+        },
+        "reason": "Approved strategy slowed the drop interval within policy bounds.",
+        "auditId": "audit-789"
+      }
+    },
+    {
+      "why": "out-of-range confidence field",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ConfidenceReport",
+      "body": {
+        "evidenceQuality": 1.5
+      }
+    },
+    {
+      "why": "empty confidence object missing evidenceQuality",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ConfidenceReport",
+      "body": {}
+    },
+    {
+      "why": "invalid exposure union: confirmationRequired true without confirmToken",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureDirective",
+      "body": {
+        "confirmationRequired": true
+      }
+    },
+    {
+      "why": "invalid exposure union: confirmationRequired false with confirmToken",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureDirective",
+      "body": {
+        "confirmationRequired": false,
+        "confirmToken": "x"
+      }
+    },
+    {
+      "why": "malformed RFC 3339 appliedAt timestamp",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "body": {
+        "confirmToken": "confirm-abc",
+        "appliedAt": "not-a-date"
+      }
+    }
+  ],
+  "rejectedFixtureMutations": [
+    {
+      "why": "strategy result requires non-null confidence",
+      "fixture": "runtime/decide/02-active-numeric-strategy.json",
+      "path": "/confidence",
+      "value": null,
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+    },
+    {
+      "why": "strategy result cannot claim decision fallback",
+      "fixture": "runtime/decide/02-active-numeric-strategy.json",
+      "path": "/fallback/decisionFallbackUsed",
+      "value": true,
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+    },
+    {
+      "why": "fallback result must claim decision fallback",
+      "fixture": "runtime/decide/04-policy-decision-fallback-null-confidence.json",
+      "path": "/fallback/decisionFallbackUsed",
+      "value": false,
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+    },
+    {
+      "why": "fallback result requires null confidence",
+      "fixture": "runtime/decide/04-policy-decision-fallback-null-confidence.json",
+      "path": "/confidence",
+      "value": {
+        "evidenceQuality": 0.8
+      },
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+    }
+  ],
+  "acceptedFixtureMutations": [
+    {
+      "why": "evidence-backed active value may carry confidence",
+      "fixture": "runtime/decide/01-active-fixed-value.json",
+      "path": "/confidence",
+      "value": {
+        "evidenceQuality": 0.8,
+        "modelUncertainty": 0.2,
+        "expectedOutcome": 0.7
+      },
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+    }
+  ],
+  "rejectedJsonDocuments": [
+    "{\"value\":NaN}",
+    "{\"value\":Infinity}",
+    "{\"value\":-Infinity}"
+  ]
+}

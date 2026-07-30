@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/problem-details-v1.schema.json",
+  "title": "Flaggo Problem Details (RFC 9457) with Phase 1 extensions",
+  "description": "RFC 9457 application/problem+json body plus Flaggo-stable extension members. Programs branch on `code`, HTTP `status`, and structured issue fields, never on `title`, `detail`, or messages. Additional members are permitted per RFC 9457 forward compatibility.",
+  "type": "object",
+  "required": ["type", "status", "code"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "A URI reference identifying the problem type."
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable summary. Never used for program logic."
+    },
+    "status": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599,
+      "description": "HTTP status code generated on this occurrence."
+    },
+    "detail": {
+      "type": "string",
+      "description": "Human-readable explanation. Never used for program logic."
+    },
+    "instance": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "URI reference identifying the specific occurrence."
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Stable machine-readable Flaggo error code (kebab-case). Clients branch on this."
+    },
+    "correlationId": {
+      "type": "string",
+      "description": "Echoed or server-recorded correlation identifier for tracing."
+    },
+    "issues": {
+      "type": "array",
+      "description": "Structured, machine-readable issues. Clients branch on issue `code` and structured fields.",
+      "items": { "$ref": "#/$defs/ProblemIssue" }
+    },
+    "clientFallback": {
+      "$ref": "#/$defs/ClientFallbackEligibility"
+    },
+    "retryAfterSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Advisory retry delay mirrored from the Retry-After header where applicable."
+    }
+  },
+  "$defs": {
+    "ProblemIssue": {
+      "type": "object",
+      "required": ["code", "severity", "path", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Stable machine-readable issue code."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning"]
+        },
+        "path": {
+          "type": "string",
+          "description": "JSON Pointer to the offending location."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable message. Not used for program logic."
+        },
+        "decisionKey": { "type": "string" },
+        "signalKey": { "type": "string" }
+      }
+    },
+    "ClientFallbackEligibility": {
+      "type": "object",
+      "description": "SDK availability-fallback eligibility extension. `eligible: true` is required before an SDK may return a local value for an otherwise-eligible transport/status failure; SDK-local availability configuration is still separately required.",
+      "required": ["eligible"],
+      "additionalProperties": false,
+      "properties": {
+        "eligible": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "name": "decide-default-response-omits-evidence-view",
+  "scenario": 24,
+  "invariant": "Default runtime response returns compact confidence and target provenance only; full evidence-view detail is retained in audit, not the wire body.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+  "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+  "request": {
+    "method": "POST",
+    "path": "/v1/decisions/tetris.dropInterval:decide",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "expectedContract": {
+        "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+        "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
+        "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
+        "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+        "buildId": "tetris-web-2026-07-25.1",
+        "deploymentId": "tetris-web-dev-a"
+      },
+      "runtimeTarget": {
+        "type": "session",
+        "id": "game-456"
+      },
+      "runtimeContext": {
+        "sessionId": "game-456",
+        "userId": "user-123",
+        "cohort": "new_players",
+        "deviceType": "mobile"
+      },
+      "inputs": [
+        {
+          "signal": {
+            "key": "tetris.boardPressure"
+          },
+          "value": 0.82
+        }
+      ],
+      "client": {
+        "appId": "tetris-demo",
+        "environment": "dev",
+        "sdk": "typescript",
+        "sdkVersion": "0.1.0"
+      },
+      "correlationId": "game-loop-123"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-compact-evidence"
+    },
+    "body": {
+      "decisionKey": "tetris.dropInterval",
+      "definition": {
+        "appId": "tetris-demo",
+        "environment": "dev",
+        "key": "tetris.dropInterval",
+        "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+        "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
+      },
+      "decisionId": "decision-123",
+      "value": 700,
+      "valueType": "number",
+      "decisionMode": "strategy",
+      "strategyId": "strategy-tetris-new-players-v1",
+      "runtimeTarget": {
+        "type": "session",
+        "id": "game-456"
+      },
+      "controlTarget": {
+        "type": "cohort",
+        "id": "new_players"
+      },
+      "targetProvenance": [
+        {
+          "targetType": "cohort",
+          "claimedId": "new_players",
+          "resolvedId": "new_players",
+          "source": "client-verified"
+        }
+      ],
+      "resolutionChain": [
+        "session:game-456",
+        "user:user-123",
+        "cohort:new_players",
+        "global"
+      ],
+      "confidence": {
+        "evidenceQuality": 0.82,
+        "modelUncertainty": 0.31,
+        "expectedOutcome": 0.72
+      },
+      "fallback": {
+        "source": "server",
+        "resolutionFallbackUsed": false,
+        "decisionFallbackUsed": false,
+        "reason": null
+      },
+      "policy": {
+        "result": "approved",
+        "reasons": [],
+        "appliedConstraints": [
+          "cooldown",
+          "max-delta",
+          "number-bounds"
+        ]
+      },
+      "definitionStatus": {
+        "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+        "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
+        "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
+        "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+        "buildId": "tetris-web-2026-07-25.1",
+        "deploymentId": "tetris-web-dev-a",
+        "integrity": "verified",
+        "compatibility": "identical"
+      },
+      "exposure": {
+        "confirmationRequired": true,
+        "confirmToken": "confirm-abc"
+      },
+      "reason": "Approved strategy slowed the drop interval within policy bounds.",
+      "auditId": "audit-789"
+    }
+  }
+}

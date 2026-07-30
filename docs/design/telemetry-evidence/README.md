@@ -7,6 +7,7 @@ The telemetry/evidence component turns runtime observations into decision eviden
 For the MVP, evidence can be simple and local. The design should still preserve a clean `IEvidenceProvider` seam so later implementations can use OpenTelemetry pipelines, metrics stores, or cloud data services.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
+Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
 
 `ConfidenceReport` is defined in the shared contracts and is reused here so evidence, runtime responses, and proposals do not diverge.
 
@@ -74,7 +75,7 @@ Different decision definitions should not share active decision state by default
 | Evidence views | Reusable when signal key, target, window, and filters match. |
 | Decision state/strategy | Not reusable by default; keyed by decision definition and control/runtime target. |
 
-Example: `tetris.dropInterval@2` may add `tetris.recoveryFailures` as a new signal. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
+Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
 
 Evidence view identity should include:
 
@@ -108,15 +109,19 @@ Values used by online inference should be declared metrics first, then selected 
 | Concept | Meaning | Example |
 | --- | --- | --- |
 | Declared metric | App-computed or pre-materialized signal with stable semantics. | `boardPressure` |
-| Inference input | Declared metric supplied with the decision request. | `context.boardPressure` |
+| Inference input | Declared metric supplied separately from ordinary context in the decision request. | `inputs["tetris.boardPressure"]` |
 | Decision-record input | Inference input value captured when Flaggo returns a decision. | `decision.boardPressure` |
 | Exposure-captured input | Inference input value copied after the client confirms the value was applied or rendered. | `exposure.boardPressure` |
 
 Emitted metrics support broad async learning, including windows where no decision was requested. Decision-record inputs support audit of returned values. Exposure-captured inputs support decision-outcome attribution for the exact context in which the application actually applied or rendered a value.
 
+The Decision API stores decision-time inputs and copies them into the exposure record when confirmation succeeds. Clients must not resubmit those inputs during confirmation. Later outcome telemetry correlates to `exposureId`; correlating only to a returned-but-unused `decisionId` would bias learning.
+
 Design rule:
 
 > If a value should influence online inference, declare it as a metric and select it as an inference input. The application should send the pre-aggregated current value; the service should not aggregate it on the hot path.
+
+Phase 1 does not define a Flaggo-specific telemetry HTTP API. SDK telemetry should use OTLP; any direct/demo ingestion path is non-blocking and must not alter decision or exposure contracts.
 
 ## Tetris MVP evidence
 

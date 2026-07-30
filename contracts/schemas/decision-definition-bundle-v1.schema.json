@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v1.schema.json",
+  "title": "DecisionDefinitionBundle v1",
+  "description": "Canonical language-neutral sync artifact. Owned by Shared Contracts; this schema encodes its wire form for validate/apply and approval snapshots.",
+  "type": "object",
+  "required": ["format", "application", "source", "definitions"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "flaggo.decision-definition-bundle/v1" },
+    "application": {
+      "type": "object",
+      "required": ["id", "environment"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "environment": { "type": "string", "minLength": 1 }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "buildId": { "type": "string" },
+        "artifactDigest": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string" },
+        "path": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "signals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/SignalDeclaration" }
+    },
+    "definitions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/DecisionDefinitionBundleEntry" }
+    }
+  },
+  "$defs": {
+    "ValueType": { "type": "string", "enum": ["boolean", "number", "string"] },
+    "DecisionValue": {
+      "type": ["boolean", "number", "string"]
+    },
+    "SignalRef": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": { "key": { "type": "string", "minLength": 1 } }
+    },
+    "SignalDeclaration": {
+      "oneOf": [
+        { "$ref": "#/$defs/EventSignalDeclaration" },
+        { "$ref": "#/$defs/AppEmittedMetricSignalDeclaration" },
+        { "$ref": "#/$defs/DerivedMetricSignalDeclaration" }
+      ]
+    },
+    "EventSignalDeclaration": {
+      "type": "object",
+      "required": ["kind", "key", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "event" },
+        "key": { "type": "string", "minLength": 1 },
+        "fields": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "enum": ["boolean", "number", "string"] }
+        },
+        "units": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "schemaDigest": { "type": "string" }
+      }
+    },
+    "AppEmittedMetricSignalDeclaration": {
+      "type": "object",
+      "required": ["kind", "key", "type", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "metric" },
+        "key": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["boolean", "number", "string"] },
+        "source": { "const": "app-emitted" },
+        "unit": { "type": "string" },
+        "range": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "schemaDigest": { "type": "string" }
+      }
+    },
+    "DerivedMetricSignalDeclaration": {
+      "type": "object",
+      "required": ["kind", "key", "type", "source", "from", "aggregation", "window"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "metric" },
+        "key": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["boolean", "number", "string"] },
+        "source": { "const": "derived" },
+        "unit": { "type": "string" },
+        "from": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/SignalRef" }
+        },
+        "aggregation": { "type": "string" },
+        "window": { "type": "string" },
+        "range": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "schemaDigest": { "type": "string" }
+      }
+    },
+    "ActionSpace": {
+      "oneOf": [
+        { "$ref": "#/$defs/NumberActionSpace" },
+        { "$ref": "#/$defs/BooleanActionSpace" },
+        { "$ref": "#/$defs/StringActionSpace" }
+      ]
+    },
+    "NumberActionSpace": {
+      "type": "object",
+      "required": ["type", "min", "max", "default"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "number" },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "step": { "type": "number" },
+        "default": { "type": "number" }
+      }
+    },
+    "BooleanActionSpace": {
+      "type": "object",
+      "required": ["type", "default"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "boolean" },
+        "default": { "type": "boolean" }
+      }
+    },
+    "StringActionSpace": {
+      "type": "object",
+      "required": ["type", "default"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "string" },
+        "allowedValues": { "type": "array", "items": { "type": "string" } },
+        "default": { "type": "string" }
+      }
+    },
+    "FallbackContract": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "$ref": "#/$defs/DecisionValue" },
+        "reason": { "type": "string" }
+      }
+    },
+    "RuntimeContextSchema": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string", "enum": ["boolean", "number", "string"] },
+          "required": { "type": "boolean" },
+          "target": { "type": "string" }
+        }
+      }
+    },
+    "DecisionSignalReferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed": { "type": "array", "items": { "$ref": "#/$defs/SignalRef" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/SignalRef" } },
+        "guardrails": { "type": "array", "items": { "$ref": "#/$defs/SignalRef" } }
+      }
+    },
+    "InferenceDeclaration": {
+      "type": "object",
+      "required": ["target"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "type": "string" },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/SignalRef" } },
+        "fallbackOrder": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "DecisionIntent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "text"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "natural-language" },
+            "text": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "primary"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "metric-objective" },
+            "primary": { "$ref": "#/$defs/MetricObjective" },
+            "secondary": { "type": "array", "items": { "$ref": "#/$defs/MetricObjective" } },
+            "rationale": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "MetricObjective": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["signal", "direction", "target"],
+          "additionalProperties": false,
+          "properties": {
+            "signal": { "$ref": "#/$defs/SignalRef" },
+            "direction": { "const": "target" },
+            "target": { "type": "number" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["signal", "direction"],
+          "additionalProperties": false,
+          "properties": {
+            "signal": { "$ref": "#/$defs/SignalRef" },
+            "direction": { "type": "string", "enum": ["minimize", "maximize"] }
+          }
+        }
+      ]
+    },
+    "OnlineStrategyDeclaration": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["active-value", "approved-strategy", "experiment", "fallback-only"]
+        },
+        "liveInputs": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ClientFallbackPolicy": {
+      "type": "object",
+      "required": ["requiredEvidenceUnavailable"],
+      "additionalProperties": false,
+      "properties": {
+        "requiredEvidenceUnavailable": { "type": "string", "enum": ["allow", "forbid"] }
+      }
+    },
+    "PolicyConstraint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "min", "max"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "number-bounds" },
+            "min": { "type": "number" },
+            "max": { "type": "number" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "max-delta" },
+            "value": { "type": "number" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "seconds"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "cooldown" },
+            "seconds": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "min-evidence-quality" },
+            "value": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "max-model-uncertainty" },
+            "value": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "min-expected-outcome" },
+            "value": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "min-sample-size" },
+            "value": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "paused"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "pause" },
+            "paused": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "Policy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "policyId"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "reference" },
+            "policyId": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "constraints"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "inline" },
+            "constraints": { "type": "array", "items": { "$ref": "#/$defs/PolicyConstraint" } },
+            "clientFallback": { "$ref": "#/$defs/ClientFallbackPolicy" }
+          }
+        }
+      ]
+    },
+    "DecisionDefinitionBundleEntry": {
+      "type": "object",
+      "required": ["key", "valueType", "actionSpace", "fallback", "policy"],
+      "additionalProperties": false,
+      "properties": {
+        "definitionId": { "type": "string" },
+        "key": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string" },
+        "valueType": { "$ref": "#/$defs/ValueType" },
+        "actionSpace": { "$ref": "#/$defs/ActionSpace" },
+        "runtimeContextSchema": { "$ref": "#/$defs/RuntimeContextSchema" },
+        "targetHierarchy": { "type": "array", "items": { "type": "string" } },
+        "signals": { "$ref": "#/$defs/DecisionSignalReferences" },
+        "inference": { "$ref": "#/$defs/InferenceDeclaration" },
+        "intent": { "$ref": "#/$defs/DecisionIntent" },
+        "fallback": { "$ref": "#/$defs/FallbackContract" },
+        "policy": { "$ref": "#/$defs/Policy" },
+        "onlineStrategy": { "$ref": "#/$defs/OnlineStrategyDeclaration" }
+      }
+    }
+  }
+}

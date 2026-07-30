@@ -1,0 +1,410 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/runtime-models-v1.schema.json",
+  "title": "Flaggo runtime API models v1",
+  "description": "Strict wire models for the data plane: decide request/response, exposure confirmation, health, and the SDK client-fallback result. Projections of Shared Contracts domain types.",
+  "$defs": {
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Project digest form: sha256:<lowercase-hex>."
+    },
+    "Rfc3339": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "RuntimeContextValue": {
+      "type": ["boolean", "number", "string", "null"]
+    },
+    "SignalRef": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": { "key": { "type": "string", "minLength": 1 } }
+    },
+    "DecisionTargetRef": {
+      "type": "object",
+      "required": ["type", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "DecisionDefinitionRef": {
+      "type": "object",
+      "required": ["appId", "environment", "key", "definitionId", "revision"],
+      "additionalProperties": false,
+      "properties": {
+        "appId": { "type": "string", "minLength": 1 },
+        "environment": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "minLength": 1 },
+        "definitionId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "RuntimeContractIdentity": {
+      "type": "object",
+      "required": ["definitionId", "contractDigest", "revision"],
+      "additionalProperties": false,
+      "properties": {
+        "definitionId": { "type": "string", "minLength": 1 },
+        "contractDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "revision": { "type": "string", "minLength": 1 },
+        "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "buildId": { "type": "string" },
+        "deploymentId": { "type": "string" },
+        "artifactDigest": { "type": "string" }
+      }
+    },
+    "ConfidenceReport": {
+      "type": "object",
+      "required": ["evidenceQuality"],
+      "additionalProperties": false,
+      "properties": {
+        "evidenceQuality": { "type": "number", "minimum": 0, "maximum": 1 },
+        "modelUncertainty": { "type": "number", "minimum": 0, "maximum": 1 },
+        "expectedOutcome": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "TargetResolutionProvenance": {
+      "type": "object",
+      "required": ["targetType", "resolvedId", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "targetType": { "type": "string", "minLength": 1 },
+        "claimedId": { "type": "string" },
+        "resolvedId": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "string",
+          "enum": ["client-claimed", "client-verified", "server-derived", "server-replaced"]
+        }
+      }
+    },
+    "DecisionValuePayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "valueType": { "const": "boolean" },
+            "value": { "type": "boolean" }
+          },
+          "required": ["valueType", "value"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "valueType": { "const": "number" },
+            "value": { "type": "number" }
+          },
+          "required": ["valueType", "value"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "valueType": { "const": "string" },
+            "value": { "type": "string" }
+          },
+          "required": ["valueType", "value"]
+        }
+      ]
+    },
+    "ExposureDirective": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["confirmationRequired", "confirmToken"],
+          "additionalProperties": false,
+          "properties": {
+            "confirmationRequired": { "const": true },
+            "confirmToken": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["confirmationRequired"],
+          "additionalProperties": false,
+          "properties": {
+            "confirmationRequired": { "const": false }
+          }
+        }
+      ]
+    },
+    "PolicyEvaluationResult": {
+      "type": "object",
+      "required": ["result", "reasons", "appliedConstraints"],
+      "additionalProperties": false,
+      "properties": {
+        "result": { "type": "string", "enum": ["approved", "blocked", "fallback"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "appliedConstraints": { "type": "array", "items": { "type": "string" } },
+        "clientFallback": {
+          "type": "object",
+          "required": ["requiredEvidenceUnavailable"],
+          "additionalProperties": false,
+          "properties": {
+            "requiredEvidenceUnavailable": { "type": "string", "enum": ["allow", "forbid"] }
+          }
+        }
+      }
+    },
+    "ContractRuntimeStatus": {
+      "type": "object",
+      "required": ["definitionId", "revision", "contractDigest", "integrity"],
+      "additionalProperties": false,
+      "properties": {
+        "definitionId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "contractDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "buildId": { "type": "string" },
+        "deploymentId": { "type": "string" },
+        "integrity": { "const": "verified" },
+        "compatibility": {
+          "type": "string",
+          "enum": ["identical", "metadata-only", "new-contract-required"]
+        }
+      }
+    },
+    "ServerFallbackInfo": {
+      "type": "object",
+      "required": ["source", "resolutionFallbackUsed", "decisionFallbackUsed", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "const": "server" },
+        "resolutionFallbackUsed": { "type": "boolean" },
+        "decisionFallbackUsed": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+    "SignalInput": {
+      "type": "object",
+      "required": ["signal", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "signal": { "$ref": "#/$defs/SignalRef" },
+        "value": { "$ref": "#/$defs/RuntimeContextValue" }
+      }
+    },
+    "DecideRequest": {
+      "type": "object",
+      "description": "Decide request body. The decisionKey is carried by the route and is not duplicated in the body.",
+      "required": ["expectedContract", "runtimeContext", "client"],
+      "additionalProperties": false,
+      "properties": {
+        "expectedContract": { "$ref": "#/$defs/RuntimeContractIdentity" },
+        "runtimeTarget": { "$ref": "#/$defs/DecisionTargetRef" },
+        "runtimeContext": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/RuntimeContextValue" }
+        },
+        "inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SignalInput" }
+        },
+        "client": {
+          "type": "object",
+          "required": ["appId", "environment"],
+          "additionalProperties": false,
+          "properties": {
+            "appId": { "type": "string", "minLength": 1 },
+            "environment": { "type": "string", "minLength": 1 },
+            "sdk": { "type": "string" },
+            "sdkVersion": { "type": "string" }
+          }
+        },
+        "correlationId": { "type": "string" }
+      }
+    },
+    "ServerDecisionResult": {
+      "type": "object",
+      "description": "Strict server decide response. valueType/value and decisionMode semantics form discriminated unions.",
+      "allOf": [
+        {
+          "type": "object",
+          "required": [
+            "decisionKey",
+            "definition",
+            "decisionId",
+            "decisionMode",
+            "confidence",
+            "runtimeTarget",
+            "targetProvenance",
+            "resolutionChain",
+            "fallback",
+            "policy",
+            "definitionStatus",
+            "exposure",
+            "reason",
+            "auditId"
+          ],
+          "properties": {
+            "decisionKey": { "type": "string", "minLength": 1 },
+            "definition": { "$ref": "#/$defs/DecisionDefinitionRef" },
+            "decisionId": { "type": "string", "minLength": 1 },
+            "decisionMode": {
+              "type": "string",
+              "enum": ["active-value", "strategy", "experiment", "fallback"]
+            },
+            "strategyId": { "type": "string" },
+            "confidence": {
+              "oneOf": [
+                { "$ref": "#/$defs/ConfidenceReport" },
+                { "type": "null" }
+              ]
+            },
+            "runtimeTarget": { "$ref": "#/$defs/DecisionTargetRef" },
+            "controlTarget": { "$ref": "#/$defs/DecisionTargetRef" },
+            "targetProvenance": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/TargetResolutionProvenance" }
+            },
+            "resolutionChain": { "type": "array", "items": { "type": "string" } },
+            "fallback": { "$ref": "#/$defs/ServerFallbackInfo" },
+            "policy": { "$ref": "#/$defs/PolicyEvaluationResult" },
+            "definitionStatus": { "$ref": "#/$defs/ContractRuntimeStatus" },
+            "exposure": { "$ref": "#/$defs/ExposureDirective" },
+            "reason": { "type": "string" },
+            "auditId": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "decisionMode": { "const": "active-value" },
+                "confidence": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/ConfidenceReport" },
+                    { "type": "null" }
+                  ]
+                },
+                "fallback": {
+                  "properties": { "decisionFallbackUsed": { "const": false } }
+                },
+                "policy": {
+                  "properties": { "result": { "const": "approved" } }
+                }
+              },
+              "not": { "required": ["strategyId"] }
+            },
+            {
+              "properties": {
+                "decisionMode": { "enum": ["strategy", "experiment"] },
+                "confidence": { "$ref": "#/$defs/ConfidenceReport" },
+                "fallback": {
+                  "properties": { "decisionFallbackUsed": { "const": false } }
+                },
+                "policy": {
+                  "properties": { "result": { "const": "approved" } }
+                }
+              },
+              "required": ["strategyId"]
+            },
+            {
+              "properties": {
+                "decisionMode": { "const": "fallback" },
+                "confidence": { "type": "null" },
+                "fallback": {
+                  "properties": { "decisionFallbackUsed": { "const": true } }
+                },
+                "policy": {
+                  "properties": { "result": { "const": "fallback" } }
+                }
+              },
+              "not": { "required": ["strategyId"] }
+            }
+          ]
+        },
+        { "$ref": "#/$defs/DecisionValuePayload" }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ClientFallbackResult": {
+      "type": "object",
+      "description": "SDK-produced availability fallback. Carries only client provenance; never claims server decision, policy, audit, or exposure identity.",
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["decisionKey", "expectedContract", "decisionMode", "confidence", "reason", "fallback"],
+          "properties": {
+            "decisionKey": { "type": "string", "minLength": 1 },
+            "expectedContract": { "$ref": "#/$defs/RuntimeContractIdentity" },
+            "decisionMode": { "const": "fallback" },
+            "confidence": { "type": "null" },
+            "reason": { "type": "string" },
+            "fallback": {
+              "type": "object",
+              "required": ["source", "resolutionFallbackUsed", "decisionFallbackUsed", "reason"],
+              "additionalProperties": false,
+              "properties": {
+                "source": { "const": "client-fallback" },
+                "resolutionFallbackUsed": { "const": false },
+                "decisionFallbackUsed": { "const": true },
+                "reason": { "type": "string" }
+              }
+            }
+          }
+        },
+        { "$ref": "#/$defs/DecisionValuePayload" }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ExposureConfirmationRequest": {
+      "type": "object",
+      "required": ["confirmToken"],
+      "additionalProperties": false,
+      "properties": {
+        "confirmToken": { "type": "string", "minLength": 1 },
+        "appliedAt": { "$ref": "#/$defs/Rfc3339" },
+        "correlationId": { "type": "string" }
+      }
+    },
+    "ExposureConfirmationResult": {
+      "type": "object",
+      "required": ["exposureId", "decisionId", "status", "confirmedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "exposureId": { "type": "string", "minLength": 1 },
+        "decisionId": { "type": "string", "minLength": 1 },
+        "status": { "const": "confirmed" },
+        "confirmedAt": { "$ref": "#/$defs/Rfc3339" }
+      }
+    },
+    "LivenessResult": {
+      "type": "object",
+      "required": ["status", "service", "version", "observedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "live" },
+        "service": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "observedAt": { "$ref": "#/$defs/Rfc3339" }
+      }
+    },
+    "ReadinessCheck": {
+      "type": "object",
+      "required": ["name", "status", "required"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["up", "degraded", "down"] },
+        "required": { "type": "boolean" }
+      }
+    },
+    "ReadinessResult": {
+      "type": "object",
+      "required": ["status", "observedAt", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string", "enum": ["ready", "degraded", "not-ready"] },
+        "observedAt": { "$ref": "#/$defs/Rfc3339" },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ReadinessCheck" }
+        }
+      }
+    }
+  }
+}

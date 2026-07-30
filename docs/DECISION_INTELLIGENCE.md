@@ -285,7 +285,8 @@ Example shape:
 
 ```json
 {
-  "definition": "tetris.dropInterval@2",
+  "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+  "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
   "runtimeTarget": "session:game-456",
   "controlTarget": "cohort:new_players",
   "proposalType": "activate_strategy",
@@ -572,7 +573,7 @@ A proposal can resolve to several governed outcomes:
 | `hold` | Current state remains active because evidence is insufficient or risk is too high. |
 | `rollback` | Transition to a replacement or previous known-safe state and mark the replaced state rolled back. |
 | `fallback` | Activate fallback-only governed state, or produce no state if even fallback-only authority is not durable. |
-| `requires_approval` | Human approval is needed before activation. |
+| `requires-approval` | Human approval is needed before activation. |
 | `rejected` | Proposal violates policy or target authority. |
 
 ## Relationship to policy

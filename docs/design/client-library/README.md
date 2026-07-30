@@ -20,6 +20,8 @@ For the hero scenario, the first client library target is TypeScript for the Tet
 
 MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
+Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
+Control-plane/data-plane developer experience: [Control Plane and Data Plane UX](CONTROL_DATA_PLANE_UX.md).
 
 ## Developer mental model
 
@@ -28,15 +30,17 @@ development:
   declare adaptive value
 
 build/release:
-  produce or reference definition bundle
-  validate/apply bundle
-  receive registration receipt
+  optionally produce or reference definition bundle
+
+application/bootstrap startup (MVP):
+  validate/apply bundle through the control-plane API
+  receive registration receipt and runtime binding
 
 deployment:
-  attach expected contract/build identity to workload
+  deploy application independently
 
 runtime:
-  get value with live context
+  require exact registered identity for remote decisions
   observe outcome
 ```
 
@@ -55,6 +59,7 @@ The client library should support:
    - Application ID.
    - Environment.
    - API version.
+   - OAuth 2.0/OIDC credential provider and required data-plane/control-plane scopes.
    - Expected definition ID/digest/revision when available.
    - Telemetry mode.
    - OpenTelemetry export settings.
@@ -71,6 +76,8 @@ The client library should support:
    - Pass runtime context.
    - Pass concrete target identifiers for the configured `inference.target` and signal target hierarchy.
    - Call the versioned runtime Decision API.
+   - Optionally attach an idempotency key for safe decide retries.
+   - Treat cohort/segment identifiers as claims that the server may verify or replace.
    - Receive the runtime decision value directly in the basic path.
 
 4. **Decision-linked evidence emission**
@@ -79,31 +86,31 @@ The client library should support:
    - Allow advanced users to define typed events and evidence metrics explicitly.
 
 5. **Fallback handling**
-   - Use explicit fallback when service is unavailable.
+   - Optionally use the code-declared fallback when the data plane is unavailable.
    - Distinguish resolution fallback from decision fallback.
-   - Use explicit fallback when response says decision fallback was required.
+   - Preserve audited governed fallback returned by the server.
+   - Surface contract/configuration errors without local fallback.
    - Preserve application behavior when decisioning fails closed.
 
 6. **Definition bundle support**
    - Generate or reference a canonical `DecisionDefinitionBundle` in code-first workflows.
    - Expose bundle digest/revision metadata to runtime calls.
-   - Avoid production management writes from normal application startup.
+   - For MVP, explicitly validate/apply the extracted bundle during trusted application/bootstrap startup before enabling data-plane calls.
+   - Keep management calls separate from decide and exposure operations.
 
 ## Example shape
 
 This is intent-level pseudo-code, not final API.
 
 ```ts
-const flaggo = createFlaggoClient({
+const flaggo = await createFlaggoClient({
   serviceUrl: "https://flaggo.example.com",
   appId: "tetris-demo",
   environment: "dev",
-  apiVersion: "v1",
-  contract: {
-    expectedContractDigest: process.env.FLAGGO_CONTRACT_DIGEST,
-    expectedRevision: process.env.FLAGGO_CONTRACT_REVISION,
-    buildId: process.env.BUILD_ID,
-    deploymentId: process.env.DEPLOYMENT_ID
+  controlPlane: {
+    mode: "startup-register",
+    bundle: generatedDecisionBundle,
+    credential: localBootstrapCredential
   },
   telemetry: {
     exporter: "opentelemetry",
@@ -113,25 +120,36 @@ const flaggo = createFlaggoClient({
   },
   contractAuthoring: {
     mode: "code-first"
+  },
+  availabilityFallback: {
+    mode: "local-default"
   }
 });
 ```
 
-The SDK should send compact expected definition identity on runtime decision calls when configured. It should not send the full definition bundle with normal runtime requests.
+Startup registration sends the extracted bundle once to the management API and initializes compact expected identity from the accepted receipt. Production decision calls send only that identity. Availability fallback is disabled unless explicitly configured; `local-default` uses the decision's code-declared default only for recognized data-plane availability failures.
+
+If apply returns `requires-approval`, startup raises a typed error containing the `approvalRequestId` and does not initialize the data-plane client. After an authorized reviewer approves the pending bundle, retrying startup with the same bundle receives the approved receipt.
+
+If approval expires, retrying the same startup apply and deterministic key causes the server to revalidate and create one fresh linked approval request. Concurrent replicas receive that replacement request rather than minting independent approvals.
+
+The credential shown is valid only for a trusted bootstrap environment. Production browser bundles must use another control-plane client experience because they cannot safely hold management credentials.
 
 ## API interaction model
 
-The client library should interact with three categories of endpoints, but only the runtime decision endpoint is required for the first slice.
+The client library interacts with three categories of endpoints. Runtime decide and exposure confirmation form the data plane. Bundle management forms the control plane; for MVP, a trusted application/bootstrap startup client calls it before enabling runtime decisions.
 
 | Area | Client behavior |
 |---|---|
-| **Runtime Decision API** | Calls `/v1/decisions/{decisionKey}:decide` with runtime context and compact expected definition identity when application code requests a decision. |
+| **Runtime Decision API** | Calls `/v1/decisions/{decisionKey}:decide`, applies the returned value, and calls `/v1/exposures/{decisionId}:confirm` only when that value was applied or rendered. |
 | **Telemetry ingestion** | Emits telemetry through OpenTelemetry-compatible export when configured. The SDK should not invent a custom telemetry transport unless needed for direct/demo mode. |
-| **Definition tooling / Management APIs** | Generates, validates, or applies canonical definition bundles outside normal runtime. This should be explicit, language-neutral, and not an accidental startup side effect. |
+| **Definition tooling / Management APIs** | Generates, validates, or applies canonical definition bundles. MVP uses explicit startup registration; future clients may use CLI, CI/CD, GitOps, deployment hooks, or registry-first workflows. |
 
 Design rule:
 
-> Runtime decision calls are part of application execution; definition bundle validation and registration are part of build, release, deployment, GitOps, or operator workflow.
+> Runtime decision calls are data-plane operations. Definition registration is a separate control-plane operation even when the MVP SDK coordinates it during application/bootstrap startup.
+
+Application deployment itself remains developer-owned and can proceed without Polari tooling. In that case, data-plane calls fail until the exact expected definition is registered. See [Control Plane and Data Plane UX](CONTROL_DATA_PLANE_UX.md).
 
 ## Software lifecycle roles
 
@@ -139,14 +157,14 @@ The SDK has different responsibilities at different stages. It should not be req
 
 | Stage | What happens | SDK role | Non-SDK path |
 | --- | --- | --- | --- |
-| Development | Developer declares decision keys, events, metrics, and fallback. | Provide ergonomic TypeScript declarations, local fallback, and typed decision calls. | Author `flaggo.decision-definition-bundle.json` or configure decision key in registry. |
-| Build | Definition artifact is produced or selected for that build. | Optional extractor emits canonical `DecisionDefinitionBundle`, `definitionDigest`, and build metadata. | Bundle is maintained as JSON/YAML or exported from registry/platform tooling. |
-| CI/release | Bundle is validated/applied/promoted. | No runtime SDK required; generated bundle is just an input artifact. | `flaggo contracts validate/apply`, GitHub Action, GitOps reconciler, or platform pipeline. |
-| Deployment | Accepted definition/build identity is attached to each workload version. | SDK can read env vars or generated constants. | Container labels, deployment annotations, injected env vars, or HTTP headers for REST clients. |
-| Runtime | Application asks for decisions and emits telemetry. | Send runtime context, expected contract/build identity, and telemetry; apply fallback when needed. | Direct REST client sends the same compact identity and runtime context. |
+| Development | Developer declares decision keys, events, metrics, and fallback. | Provide ergonomic TypeScript declarations, availability-fallback typing, and typed decision calls. | Author `flaggo.decision-definition-bundle.json` or configure decision key in registry. |
+| Build | Definition artifact is produced or selected for that build. | Optional extractor emits the canonical `DecisionDefinitionBundle`, per-definition `contractDigest` values, and build metadata. | Bundle is maintained as JSON/YAML or exported from registry/platform tooling. |
+| Application deployment | Code is deployed independently. | No Polari management action is implied by deployment itself. | Existing deployment mechanism remains unchanged. |
+| Application/bootstrap startup | MVP atomically validates/applies the extracted bundle and receives the runtime binding. | Trusted SDK bootstrap acts as a control-plane client, then initializes the data-plane client. | Future alternatives include CLI, CI/CD, GitOps, init/deployment hooks, or registry-first tooling. |
+| Runtime | Application asks for decisions and emits telemetry. | Send exact expected definition identity; surface contract errors; optionally apply local fallback only for configured availability failures. | Direct REST client sends the same compact identity and handles Problem Details. |
 | Observe/operate | Teams inspect contract drift, fallback, and strategy outcomes. | Expose response fields and emit diagnostics. | Operator console, audit API, logs, metrics, deployment checks. |
 
-This separation lets TypeScript be the first ergonomic SDK while preserving polyglot and open-source-native portability.
+This separation lets TypeScript be the first ergonomic SDK while preserving polyglot and open-source-native portability. Polari tooling can optimize control-plane publication without claiming ownership of application deployment.
 
 ### Basic decision and runtime value
 
@@ -252,10 +270,18 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
-await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
+if (
+  dropIntervalDecision.source === "server" &&
+  dropIntervalDecision.confirmToken
+) {
+  await flaggo.exposures.confirm(
+    dropIntervalDecision.decisionId,
+    dropIntervalDecision.confirmToken
+  );
+}
 ```
 
-The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`, and the receipt carries `decisionId`/confirmation metadata for exposure attribution. Signal schemas are defined once near producers and reused through typed handles. Bound inference inputs combine a signal declaration reference with its current value, while typed target wrappers combine target schema with the current ID. Tooling partitions this object into an immutable extracted definition and a compact runtime request; runtime values never enter the definition digest. Emitting a signal does not associate it with every decision in the program.
+The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`. A server receipt carries `decisionId` and confirmation metadata; an SDK-local fallback receipt deliberately does not. Signal schemas are defined once near producers and reused through typed handles. Bound inference inputs combine a signal declaration reference with its current value, while typed target wrappers combine target schema with the current ID. Tooling partitions this object into an immutable extracted definition and a compact runtime request; runtime values never enter the definition digest. Emitting a signal does not associate it with every decision in the program.
 
 ### Policy authoring normalization
 
@@ -295,7 +321,7 @@ The extractor rejects static semantics built with:
 - mutation of a declaration after construction,
 - a non-literal or dynamically computed decision key.
 
-If a plain context expression's type cannot be resolved unambiguously, authors must use an explicit typed context binding supplied by the SDK. Unsupported syntax is a build/CI error, not a best-effort extraction. Tooling must not derive a definition from whichever runtime branch happened to execute. In production enforcement mode, a request carrying an unknown or conflicting definition identity receives governed fallback.
+If a plain context expression's type cannot be resolved unambiguously, authors must use an explicit typed context binding supplied by the SDK. Unsupported syntax is a build/tooling error, not a best-effort extraction. Tooling must not derive a definition from whichever runtime branch happened to execute. A production request carrying missing, unknown, or conflicting definition identity receives a contract error.
 
 ### Repeated-call behavior
 
@@ -444,17 +470,19 @@ if (decision.fallback.resolutionFallbackUsed) {
 
 ## Expected decision response shape
 
-The library should expose the shared runtime response shape with a developer-friendly alias:
+The generated wire model uses the shared `valueType + value` discriminated union. The ergonomic SDK may project that union into a generic only after runtime validation:
 
 ```ts
-type DecisionResult<T> = DecideResponse<T>;
+type DecisionResult<T> =
+  | ServerDecisionResult<T>
+  | ClientFallbackResult<T>;
 ```
 
 `confidence` is `null` when Flaggo returns a static decision fallback because no evidence-backed decision was approved. If only target/evidence resolution fallback happened, confidence should still be present and should refer to the returned decision's evidence views and control target.
 
 `decisionMode` tells the application how the value was produced without exposing internal implementation details. For the Tetris adaptive MVP, the expected mode is usually `strategy`: the server executed an approved strategy against live runtime context and returned an immediate numeric value.
 
-`definition.integrity` should tell the application whether the runtime response was produced under a verified or known definition identity, or whether the response fell back because the definition was unknown, retired, or conflicting.
+Every server `200` contains the exact accepted definition tuple with `definitionStatus.integrity = "verified"`. Unknown, retired, or conflicting identities are typed Problem Details errors and never success-shaped fallback results.
 
 The basic `tune.number(...)` helper returns `DecisionReceipt<number>` for attribution while preserving the original SDK method name. An advanced detailed helper should expose the full `DecisionResult<T>`.
 
@@ -478,14 +506,29 @@ interface ITuneBuilder {
 }
 
 interface IExposureBuilder {
-  confirm(decisionId: string): Promise<{ exposureId: string }>;
+  confirm(
+    decisionId: string,
+    confirmToken: string
+  ): Promise<ExposureConfirmationResult>;
 }
 
-type DecisionReceipt<T extends DecisionValue = DecisionValue> = {
+type ServerDecisionReceipt<T extends DecisionValue = DecisionValue> = {
+  source: "server";
   value: T;
   decisionId: string;
-  confirmToken?: string;
+  exposure: ExposureDirective;
 };
+
+type ClientFallbackReceipt<T extends DecisionValue = DecisionValue> = {
+  source: "client-fallback";
+  value: T;
+  expectedContract: RuntimeContractIdentity;
+  reason: string;
+};
+
+type DecisionReceipt<T extends DecisionValue = DecisionValue> =
+  | ServerDecisionReceipt<T>
+  | ClientFallbackReceipt<T>;
 
 type NumberTuneRequest =
   | CodeFirstNumberTuneRequest
@@ -648,7 +691,7 @@ type MetricObjective =
 
 interface IDefinitionBundleProvider {
   exportBundle(): DecisionDefinitionBundle;
-  getExpectedIdentity(): ContractIdentity | undefined;
+  getRegistrationReceipt(): RegistrationReceipt | undefined;
 }
 ```
 
@@ -692,13 +735,13 @@ const unexpectedTarget: MetricObjective = {
 };
 ```
 
-The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are definition extraction from static request fields, telemetry, optional definition bundle export, runtime request, compact definition identity propagation, typed response, and local fallback when the service is unavailable.
+The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are definition extraction from static request fields, telemetry, optional definition bundle export, runtime request, compact definition identity propagation, typed response, and explicitly configured local fallback for data-plane availability failures.
 
 In the basic path, `default` is the singular safe fallback value. During bundle generation, the SDK can compile it into the lower-level action-space default and fallback definition required by the registry/runtime model.
 
 ## Contract authoring, bundle, and registration
 
-The client library may support code-first decision declarations, but Flaggo should not require production applications to mutate management state during normal runtime startup.
+The client library supports code-first decision declarations while preserving separate management and runtime APIs. For MVP, trusted application/bootstrap startup is the default control-plane client experience.
 
 Decision declarations should be extractable into a canonical `DecisionDefinitionBundle`. Build, release, deployment, GitOps, or operator tooling can validate and apply that bundle to Flaggo management APIs.
 
@@ -706,11 +749,12 @@ Recommended code-first lifecycle:
 
 ```text
 write declaration in code
-  -> extract flaggo.contract-bundle.json
-  -> validate/apply bundle with contract tooling
+  -> extract flaggo.decision-definition-bundle.json
+  -> deploy application independently
+  -> trusted startup validates/applies bundle through management API
   -> receive registration receipt
-  -> deploy app with expected contract/build identity
-  -> runtime only calls decide and emits telemetry
+  -> initialize data-plane client with accepted identity
+  -> runtime decide succeeds only for exact registered identity
 ```
 
 Supported authoring modes:
@@ -722,7 +766,7 @@ Supported authoring modes:
 | `registry-first` | Decision key is managed in Flaggo registry or operator tooling; SDK references pre-registered decision definition and expected identity. |
 | `local-only` | Use declarations and fallback locally without remote validation. Useful for demos and early development. |
 
-The first slice should support TypeScript `code-first` generation for the Tetris demo and direct `bundle-first` REST compatibility at the definition/API layer.
+The first slice should support TypeScript `code-first` generation plus startup registration for the local Tetris demo and direct `bundle-first` REST compatibility at the management API layer.
 
 Resource lifecycle is owned by the Contract Registry. Client tooling should create or validate resources through bundle sync, but should not hard-delete missing resources. Missing declarations should become deprecation candidates, not deletes.
 
@@ -734,8 +778,8 @@ Developers should not need to manually version every decision definition during 
 developer names the decision: tetris.dropInterval
   -> tooling extracts canonical semantics
   -> registry compares with existing definition
-  -> unchanged or metadata-only: keep same definition identity
-  -> semantic conflict: reject overwrite or mint approved new semantic identity
+  -> unchanged or metadata-only: keep the same runtime tuple
+  -> semantic change: require approval, then receive a new opaque revision/digest
 ```
 
 The developer-facing name can stay stable for the common case. When semantics change in a way that could make old decision state unsafe, tooling should make the change explicit in PR/CI output:
@@ -746,22 +790,33 @@ semantic change detected: added required signal recoveryFailures
 state reuse: no
 telemetry reuse: boardPressure and placementTimeMs evidence can be reused
 new evidence warmup: recoveryFailures
-suggested definition: tetris.dropInterval@2
+runtime revision: assigned by registry after approval
 ```
 
 This keeps the normal UX simple while still preventing accidental sharing of active strategies across incompatible contracts.
 
 ## Runtime definition identity
 
-The runtime SDK should send compact expected definition identity when available:
+The production runtime SDK must send compact expected definition identity:
 
 ```ts
+const receipt = flaggo.definitions.getRegistrationReceipt();
+const decisionKey = "tetris.dropInterval";
+const acceptedDefinition =
+  receipt?.acceptedDefinitions[decisionKey];
+
+if (!acceptedDefinition) {
+  throw new MissingAcceptedDefinitionError(decisionKey);
+}
+
 const decision = await dropInterval.decide({
-  expectedDefinitionId: flaggo.definitions.getExpectedIdentity()?.definitionId,
-  expectedDefinitionDigest: flaggo.definitions.getExpectedIdentity()?.definitionDigest,
-  expectedDefinitionRevision: flaggo.definitions.getExpectedIdentity()?.revision,
-  buildId: flaggo.definitions.getExpectedIdentity()?.buildId,
-  deploymentId: flaggo.definitions.getExpectedIdentity()?.deploymentId,
+  expectedContract: {
+    definitionId: acceptedDefinition.definitionId,
+    revision: acceptedDefinition.revision,
+    contractDigest: acceptedDefinition.contractDigest,
+    bundleDigest: receipt.bundleDigest,
+    buildId: receipt.buildId
+  },
   runtimeContext: {
     userId,
     sessionId,
@@ -781,7 +836,13 @@ The full `DecisionDefinitionBundle` should not be sent with each runtime request
 
 Different builds of the same service can be deployed at the same time. The SDK should treat expected definition identity as build/deployment metadata attached to each workload.
 
-If the Decision API reports an unknown or conflicting definition, the SDK should expose the fallback response clearly. It may log or emit diagnostics, but it should not hide the fallback behind a success-shaped local value.
+If expected identity is missing, unknown, conflicting, or retired, the SDK surfaces the Problem Details contract error. It must not invoke local fallback or retry with another revision. Local fallback is reserved for explicitly configured data-plane availability failures.
+
+Production credentials use OAuth 2.0/OIDC scopes. The SDK keeps management credentials out of runtime/browser clients and exposes an explicit insecure local-development bypass only when configured. Decide retries may supply an optional `Idempotency-Key`; the SDK must not use `correlationId` as retry identity. Detailed results expose server-resolved target provenance so callers can distinguish verified, derived, and replaced cohort claims.
+
+The exact availability classifier and retry defaults are defined in the [API Contract Proposal](../API_CONTRACT_PROPOSAL.md#sdk-availability-fallback-classifier). The SDK must compare each generated call-site digest with `RegistrationReceipt.acceptedDefinitions[decisionKey]` before a remote attempt or local fallback. Availability fallback is forbidden until that accepted binding exists and matches.
+
+For valid Flaggo Problem Details, the SDK requires `clientFallback.eligible: true`; status `503` alone does not authorize a local value. In particular, `required-evidence-unavailable` is forbidden unless the registered policy separately permits it and the server projects that permission into the error.
 
 ## Telemetry behavior
 
@@ -797,14 +858,15 @@ Initial telemetry modes:
 
 Domain events should be developer-friendly. The SDK may map them to structured logs, span events, or metric measurements under the hood.
 
-## Open design questions
+## Accepted wire-contract decisions
 
-- What exact `DecisionDefinitionBundle` JSON schema should the TypeScript extractor emit?
-- Should browser SDKs send definition identity on every decision request or use a cached handshake?
-- How much local evidence should the browser compute before sending telemetry?
-- Should fallback be applied automatically by the library or explicitly by app code?
-- How should TypeScript types be generated from server-side contracts?
+The [API Contract Proposal decision log](../API_CONTRACT_PROPOSAL.md#contract-decision-log) records the accepted decisions. The client library requires exact runtime identity (A1), keeps server and client fallback result types distinct (A2), confirms exposure with an opaque token (A4), treats cohort/segment IDs as verifiable claims (A8), uses compact runtime evidence/provenance (A9), omits batch decide in Phase 1 (A10), uses scoped OAuth 2.0/OIDC credentials in production (A11), and supports optional decide idempotency keys (A12).
+
+Client-only questions that remain:
+
+- How much local metric computation should browser SDKs perform before normal telemetry emission?
 - Should direct telemetry mode exist only in local/demo environments?
+- Which generator produces TypeScript wire types from OpenAPI without replacing ergonomic SDK/domain types?
 
 ## First slice
 
@@ -821,8 +883,9 @@ For the Tetris hero scenario, the first client library design should support:
 - Session/user/cohort/global target hierarchy.
 - Singular default/fallback value.
 - DecisionDefinitionBundle generation or reference.
+- Trusted startup registration through the control-plane validate/apply API.
 - Expected definition digest/revision propagation.
 - Decision API call with a typed response.
 - Runtime API path versioning through `/v1`.
 - OpenTelemetry telemetry mode.
-- No production runtime registration side effects.
+- No registration side effects in decide or exposure calls.

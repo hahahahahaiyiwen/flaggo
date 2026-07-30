@@ -1,0 +1,31 @@
+{
+  "name": "exposure-confirm-idempotent-replay",
+  "scenario": 12,
+  "invariant": "Retrying the same valid confirmation returns the same exposureId.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+  "responseSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationResult",
+  "request": {
+    "method": "POST",
+    "path": "/v1/exposures/decision-123:confirm",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "confirmToken": "confirm-abc"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-confirm-replay"
+    },
+    "body": {
+      "exposureId": "exposure-456",
+      "decisionId": "decision-123",
+      "status": "confirmed",
+      "confirmedAt": "2026-07-29T19:20:01Z"
+    }
+  }
+}

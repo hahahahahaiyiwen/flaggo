@@ -1,0 +1,57 @@
+{
+  "name": "decide-missing-contract-identity",
+  "scenario": 6,
+  "invariant": "Missing expected contract identity returns 400 missing-contract-identity; the request body intentionally omits expectedContract so it is not schema-valid, and no local fallback occurs.",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/decisions/tetris.dropInterval:decide",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "runtimeTarget": {
+        "type": "session",
+        "id": "game-456"
+      },
+      "runtimeContext": {
+        "sessionId": "game-456",
+        "userId": "user-123",
+        "cohort": "new_players",
+        "deviceType": "mobile"
+      },
+      "inputs": [
+        {
+          "signal": {
+            "key": "tetris.boardPressure"
+          },
+          "value": 0.82
+        }
+      ],
+      "client": {
+        "appId": "tetris-demo",
+        "environment": "dev",
+        "sdk": "typescript",
+        "sdkVersion": "0.1.0"
+      },
+      "correlationId": "game-loop-123"
+    }
+  },
+  "expected": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-missing-contract-identity"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/missing-contract-identity",
+      "title": "Missing contract identity",
+      "status": 400,
+      "code": "missing-contract-identity",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-missing-contract-identity",
+      "detail": "expectedContract with definitionId, revision, and contractDigest is required."
+    }
+  }
+}

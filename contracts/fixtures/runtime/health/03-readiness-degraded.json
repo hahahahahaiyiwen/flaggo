@@ -1,0 +1,48 @@
+{
+  "name": "health-readiness-degraded",
+  "scenario": 38,
+  "invariant": "Optional evidence loss yields 200 degraded and never changes the check's required flag, because an audited governed fallback is still possible.",
+  "responseSchema": "runtime-models-v1.schema.json#/$defs/ReadinessResult",
+  "request": {
+    "method": "GET",
+    "path": "/health/ready",
+    "headers": {}
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "status": "degraded",
+      "observedAt": "2026-07-30T18:31:00Z",
+      "checks": [
+        {
+          "name": "contract-registry",
+          "status": "up",
+          "required": true
+        },
+        {
+          "name": "decision-state",
+          "status": "up",
+          "required": true
+        },
+        {
+          "name": "policy",
+          "status": "up",
+          "required": true
+        },
+        {
+          "name": "audit",
+          "status": "up",
+          "required": true
+        },
+        {
+          "name": "evidence",
+          "status": "down",
+          "required": false
+        }
+      ]
+    }
+  }
+}

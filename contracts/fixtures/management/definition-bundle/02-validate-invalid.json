@@ -1,0 +1,286 @@
+{
+  "name": "validate-bundle-invalid",
+  "scenario": 15,
+  "invariant": "A well-formed but invalid bundle returns 200 status invalid with structured issues and no mutation.",
+  "requestSchema": "decision-definition-bundle-v1.schema.json",
+  "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+  "request": {
+    "method": "POST",
+    "path": "/v1/definition-bundles:validate",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "format": "flaggo.decision-definition-bundle/v1",
+      "application": {
+        "id": "tetris-demo",
+        "environment": "dev"
+      },
+      "build": {
+        "buildId": "tetris-web-2026-07-25.1",
+        "artifactDigest": "sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
+        "version": "0.1.0"
+      },
+      "source": {
+        "repository": "github.com/flaggo/tetris-demo",
+        "path": "src/flaggo",
+        "commit": "a1b2c3d4"
+      },
+      "signals": [
+        {
+          "kind": "metric",
+          "key": "tetris.boardPressureDeclared",
+          "type": "number",
+          "source": "app-emitted",
+          "range": [
+            0,
+            1
+          ]
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.recentPlacementTimeMs",
+          "type": "number",
+          "source": "app-emitted",
+          "unit": "ms"
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.recoveryFailures",
+          "type": "number",
+          "source": "app-emitted"
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.currentLevel",
+          "type": "number",
+          "source": "app-emitted"
+        },
+        {
+          "kind": "event",
+          "key": "tetris.piecePlaced",
+          "fields": {
+            "placementTimeMs": "number",
+            "hardDrop": "boolean"
+          },
+          "units": {
+            "placementTimeMs": "ms"
+          }
+        },
+        {
+          "kind": "event",
+          "key": "tetris.sessionEnded",
+          "fields": {
+            "endReason": "string",
+            "durationSeconds": "number"
+          },
+          "units": {
+            "durationSeconds": "s"
+          }
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.earlyLossRate24h",
+          "type": "number",
+          "source": "derived",
+          "from": [
+            {
+              "key": "tetris.sessionEnded"
+            }
+          ],
+          "aggregation": "rate(endReason == 'early_loss')",
+          "window": "24h"
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.hardDropRate24h",
+          "type": "number",
+          "source": "derived",
+          "from": [
+            {
+              "key": "tetris.piecePlaced"
+            }
+          ],
+          "aggregation": "rate(hardDrop == true)",
+          "window": "24h"
+        }
+      ],
+      "definitions": [
+        {
+          "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+          "key": "tetris.dropInterval",
+          "valueType": "number",
+          "actionSpace": {
+            "type": "number",
+            "min": 200,
+            "max": 1500,
+            "step": 50,
+            "default": 800
+          },
+          "fallback": {
+            "value": 800,
+            "reason": "safe_default_drop_interval"
+          },
+          "runtimeContextSchema": {
+            "userId": {
+              "type": "string",
+              "target": "user"
+            },
+            "sessionId": {
+              "type": "string",
+              "target": "session"
+            },
+            "cohort": {
+              "type": "string",
+              "target": "cohort"
+            },
+            "deviceType": {
+              "type": "string"
+            }
+          },
+          "targetHierarchy": [
+            "session",
+            "user",
+            "cohort",
+            "global"
+          ],
+          "signals": {
+            "allowed": [
+              {
+                "key": "tetris.boardPressure"
+              },
+              {
+                "key": "tetris.currentLevel"
+              },
+              {
+                "key": "tetris.earlyLossRate24h"
+              },
+              {
+                "key": "tetris.hardDropRate24h"
+              },
+              {
+                "key": "tetris.piecePlaced"
+              },
+              {
+                "key": "tetris.recentPlacementTimeMs"
+              },
+              {
+                "key": "tetris.recoveryFailures"
+              },
+              {
+                "key": "tetris.sessionEnded"
+              }
+            ]
+          },
+          "inference": {
+            "target": "session",
+            "inputs": [
+              {
+                "key": "tetris.boardPressure"
+              },
+              {
+                "key": "tetris.currentLevel"
+              },
+              {
+                "key": "tetris.recentPlacementTimeMs"
+              },
+              {
+                "key": "tetris.recoveryFailures"
+              }
+            ],
+            "fallbackOrder": [
+              "cohort",
+              "global"
+            ]
+          },
+          "intent": {
+            "type": "metric-objective",
+            "primary": {
+              "signal": {
+                "key": "tetris.earlyLossRate24h"
+              },
+              "direction": "minimize"
+            },
+            "secondary": [
+              {
+                "signal": {
+                  "key": "tetris.hardDropRate24h"
+                },
+                "direction": "target",
+                "target": 0.45
+              },
+              {
+                "signal": {
+                  "key": "tetris.recentPlacementTimeMs"
+                },
+                "direction": "minimize"
+              }
+            ],
+            "rationale": "Keep gameplay challenging but playable while reducing early frustration."
+          },
+          "onlineStrategy": {
+            "mode": "approved-strategy",
+            "liveInputs": [
+              "currentLevel",
+              "boardPressure",
+              "recentPlacementTimeMs",
+              "recoveryFailures"
+            ]
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "cooldown",
+                "seconds": 20
+              },
+              {
+                "kind": "max-delta",
+                "value": 50
+              },
+              {
+                "kind": "max-model-uncertainty",
+                "value": 0.35
+              },
+              {
+                "kind": "min-evidence-quality",
+                "value": 0.7
+              },
+              {
+                "kind": "min-sample-size",
+                "value": 30
+              },
+              {
+                "kind": "number-bounds",
+                "min": 200,
+                "max": 1500
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-validate-invalid"
+    },
+    "body": {
+      "status": "invalid",
+      "bundleDigest": "sha256:7e7727b445220d820b88fd909ec1be361b75d1ee028769bfc81e56b166406e70",
+      "issues": [
+        {
+          "code": "unknown-signal",
+          "severity": "error",
+          "path": "/definitions/0/inference/inputs/0",
+          "message": "Referenced signal is not declared.",
+          "decisionKey": "tetris.dropInterval",
+          "signalKey": "tetris.boardPressure"
+        }
+      ]
+    }
+  }
+}

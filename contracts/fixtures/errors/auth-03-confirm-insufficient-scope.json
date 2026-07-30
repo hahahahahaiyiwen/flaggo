@@ -1,0 +1,33 @@
+{
+  "name": "confirm-insufficient-scope",
+  "scenario": 25,
+  "invariant": "Exposure confirm without polari.exposures:confirm returns 403 insufficient-scope.",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/exposures/decision-123:confirm",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "confirmToken": "confirm-abc"
+    }
+  },
+  "expected": {
+    "status": 403,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-insufficient-scope"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/insufficient-scope",
+      "title": "Insufficient scope",
+      "status": 403,
+      "code": "insufficient-scope",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-insufficient-scope",
+      "detail": "Token lacks polari.exposures:confirm."
+    }
+  }
+}

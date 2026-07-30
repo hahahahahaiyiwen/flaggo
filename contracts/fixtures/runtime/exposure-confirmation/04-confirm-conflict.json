@@ -1,0 +1,35 @@
+{
+  "name": "exposure-confirm-conflict",
+  "scenario": 12,
+  "invariant": "A conflicting exposure confirmation is rejected with 409 exposure-confirmation-conflict.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/exposures/decision-123:confirm",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "confirmToken": "confirm-abc",
+      "appliedAt": "2026-07-29T19:25:00Z"
+    }
+  },
+  "expected": {
+    "status": 409,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-exposure-confirmation-conflict"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/exposure-confirmation-conflict",
+      "title": "Exposure confirmation conflict",
+      "status": 409,
+      "code": "exposure-confirmation-conflict",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-exposure-confirmation-conflict",
+      "detail": "The decision was already confirmed with a different observation."
+    }
+  }
+}

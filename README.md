@@ -75,10 +75,12 @@ game emits telemetry
 - [Decision Intelligence](docs/DECISION_INTELLIGENCE.md)
 - [MVP Implementation Guide](docs/IMPLEMENTATION_GUIDE.md)
 - [Component Design Index](docs/design/README.md)
+- [Phase 1 Executable Contracts](contracts/README.md)
 
 ## Repository layout
 
 ```text
 docs/          Product, concept, and component design documents
+contracts/     OpenAPI, JSON Schema, fixtures, conformance, and mock server
 repos/         Related implementation repositories and experiments
 ```
