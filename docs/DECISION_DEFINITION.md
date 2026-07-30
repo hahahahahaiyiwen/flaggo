@@ -20,19 +20,22 @@ A decision definition belongs to a stable decision key.
 decision key:
   tetris.dropInterval
 
-decision definitions:
-  tetris.dropInterval@1
-  tetris.dropInterval@2
+definition lineage:
+  definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+
+runtime revisions:
+  revision: rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K
+  revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
 ```
 
-The key identifies the decision family. The definition revision identifies one immutable semantic version of that decision.
+The key identifies the developer-facing decision family. `definitionId` is an opaque registry lineage ID. Each approved semantic change creates an opaque runtime `revision` and canonical `contractDigest`; the full tuple is the immutable runtime identity.
 
 ## What a decision definition owns
 
 | Part | Meaning | Tetris example |
 | --- | --- | --- |
 | Decision key | Stable application-facing decision family. | `tetris.dropInterval` |
-| Revision | Immutable semantic version. | `2` |
+| Revision | Opaque registry-issued runtime revision; not semantic versioning or a metadata revision. | `rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3` |
 | Signal references | Role references to externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and online inference. | `boardPressureSignal`, `earlyLossRateSignal` |
 | Intent | Typed objective: natural-language product direction or metric-driven optimization over declared signals. | natural-language: challenging but playable; metric-objective: minimize early loss |
 | Inference | Runtime inference target, app-emitted metric inputs, and fallback order. | target `session`, inputs `boardPressure`, fallback `cohort -> global` |

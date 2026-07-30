@@ -26,7 +26,7 @@ The scenario uses the three-part mental model from [Mental Model](MENTAL_MODEL.m
 | Category | Tetris example |
 |---|---|
 | Decision surface/key | `tetris.dropInterval` |
-| Decision definition | SDK/registry-managed revision such as `tetris.dropInterval@2` |
+| Decision definition | Opaque registry identity such as `def_01JQ... / rev_01JQ...` |
 | Runtime target | `session:game-456` |
 | Control target | `cohort:new_players` or `global` |
 | Runtime context | `userId`, `sessionId`, `cohort`, `currentLevel`, `deviceType`, `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures` |
@@ -377,7 +377,7 @@ The operator should be able to inspect and govern the decision without reading a
 For `tetris.dropInterval`, the operator should see:
 
 - the decision key: `tetris.dropInterval`,
-- the active definition revision, such as `tetris.dropInterval@2`,
+- the stable decision key plus opaque active definition lineage/revision,
 - the runtime targets receiving decisions, such as sessions,
 - the control targets where behavior is governed, such as `cohort:new_players`,
 - the declared goal: keep gameplay challenging but playable,

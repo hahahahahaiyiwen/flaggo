@@ -77,7 +77,7 @@ Decision API
 
 If audit writing fails, the MVP should fail safe. For local development, surfacing the error is preferable to silently returning unaudited decisions.
 
-The Phase 1 runtime wire contract guarantees `auditId` only for server-produced decision results. SDK-local availability fallback has no server decision or audit identity. Audit query endpoints remain outside the blocking Phase 1 API freeze; local sinks and direct inspection are sufficient for the first integration slice.
+The proposed Phase 1 runtime wire contract guarantees `auditId` only for server-produced decision results. SDK-local availability fallback has no server decision or audit identity. Audit query endpoints remain outside the required Phase 1 executable artifact set; local sinks and direct inspection are sufficient for the first integration slice.
 
 The exposure confirm token is an authorization capability, not audit data. The Decision API must project the server response into `AuditDecisionResult` and remove `confirmToken` before calling any audit sink, including console and file sinks.
 
@@ -86,7 +86,8 @@ The exposure confirm token is an authorization capability, not audit data. The D
 ```json
 {
   "decisionKey": "tetris.dropInterval",
-  "definition": "tetris.dropInterval@2",
+  "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+  "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
   "controlTarget": {
     "type": "cohort",
     "id": "new_players"

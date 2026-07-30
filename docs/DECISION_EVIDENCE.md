@@ -63,7 +63,8 @@ derived allowed signals:
 Evidence views are derived from immutable signal keys, target hierarchy, and time/window/filter needs:
 
 ```text
-tetris.dropInterval@2
+definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
   signal: tetris.earlyLossRate24h
   target: cohort:new_players
   filters: {}
@@ -113,7 +114,8 @@ The request-time inference input is captured in a decision record when Flaggo re
 
 ```text
 decisionId: decision-123
-definition: tetris.dropInterval@2
+definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
 runtime target: session:game-456
 returned value: 850
 inference inputs:
@@ -210,7 +212,7 @@ Evidence can be reused across decision definition revisions when semantics match
 | Evidence views | Reusable when signal key, target, window, and filters match. |
 | Governed state | Not reused automatically; it belongs to decision intelligence/governance. |
 
-Example: `tetris.dropInterval@2` may add a new signal such as `tetris.recoveryFailures`. It can reuse historical `tetris.recentPlacementTimeMs` and `tetris.earlyLossRate24h` views, while the new signal warms up.
+Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.recentPlacementTimeMs` and `tetris.earlyLossRate24h` views while the new signal warms up.
 
 ## OpenTelemetry relationship
 

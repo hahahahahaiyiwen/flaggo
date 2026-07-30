@@ -1,3 +1,5 @@
+> Historical discussion record: examples using `decisionKey@number` predate the Phase 1 identity decision and are not current wire-contract examples. Current contracts use an opaque definition lineage ID plus an opaque registry revision and canonical contract digest.
+
 Yes—that is a strong and much cleaner core model:
 
 ```text

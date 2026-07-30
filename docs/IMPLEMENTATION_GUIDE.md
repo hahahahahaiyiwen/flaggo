@@ -303,7 +303,7 @@ Deliverables:
 
 Decision rule: if a new contributor cannot run the MVP locally without cloud setup, the foundation is not portable enough.
 
-### Phase 1: API and contract design freeze
+### Phase 1: Executable API contract production
 
 Goal: create executable, language-neutral contracts that let client and service teams implement independently.
 
@@ -311,10 +311,11 @@ Deliverables:
 
 - runtime OpenAPI for decide, exposure confirmation, and health,
 - management OpenAPI for definition-bundle validate/apply and semantic-revision approval,
-- JSON Schema for `DecisionDefinitionBundle`,
+- JSON Schema for `DecisionDefinitionBundle` and Problem Details extensions,
 - canonical normalization and digest specification,
 - stable error, fallback provenance, target provenance, compact confidence, policy, and contract-integrity shapes,
 - exposure-confirmation request/response contract,
+- concrete liveness/readiness schemas and dependency-state behavior,
 - golden request/response fixtures for success, governed fallback, client fallback, target-claim replacement, validation, approval, authentication, retry, and conflict paths,
 - generated or hand-verified TypeScript/server model conformance,
 - mock server or fixture harness consumable by the client track.
@@ -328,11 +329,21 @@ Validation:
 - exposure confirmation cannot occur without a valid `decisionId`,
 - replayed exposure confirmation returns the original `exposureId`,
 - semantic-change apply performs no mutation before explicit approval,
+- approved receipts provide a complete per-decision accepted runtime tuple,
+- SDK binding lookup selects `acceptedDefinitions[decisionKey]` and propagates `contractDigest`,
+- approval terminal transitions, expiry renewal, idempotency, and concurrency fixtures pass,
+- approval fixtures expose old/new digests, semantic diff, immutable snapshot, and persisted actor/comment,
+- approval snapshot fixtures use quoted entity tags and RFC 9530 SHA-256 content digests,
+- optional definition lineage omission/resolution and supplied-ID mismatch rules pass,
 - same-key decide retry returns the original decision and conflicting reuse returns `409`,
+- concurrent decide retries, TTL expiry, and tracing-field exclusion follow the fingerprint contract,
+- availability fallback occurs only for the exact eligible classifier after binding verification and retry exhaustion,
+- `required-evidence-unavailable` requires both explicit effective-policy permission and SDK configuration before client fallback,
+- global health readiness fails for required dependencies and remains degraded for evidence loss regardless of per-definition evidence requirements,
 - full evidence detail remains in audit rather than runtime results,
 - direct REST clients can implement the flow without the TypeScript SDK.
 
-Exit gate: Phase 2 branches do not begin until these artifacts merge to the shared baseline.
+Exit gate: Phase 1 is not frozen and Phase 2 branches do not begin until the complete artifact tree exists, all listed validations pass, and the artifacts merge to the shared baseline.
 
 ### Phase 2: Parallel client and service implementation
 

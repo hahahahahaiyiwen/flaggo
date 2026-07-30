@@ -93,6 +93,8 @@ The Flaggo client initialization rejects on validation failure, apply failure, c
 
 The typed approval error includes the stable `approvalRequestId`. Approval atomically applies the pending canonical bundle; a later startup retry or restart with the same bundle receives the stored approved receipt and may initialize the data plane.
 
+If that approval expires, the next startup apply uses the same deterministic key but triggers server-side revalidation and receives one fresh linked approval request. Concurrent replicas converge on the replacement request; the SDK does not need a renewal endpoint or a new locally generated key.
+
 ### Credential boundary
 
 Startup registration requires control-plane authority. Production clients use OAuth 2.0/OIDC credentials: bundle validation requires `polari.definitions:validate`, apply requires `polari.definitions:apply`, and approval requires `polari.definitions:approve`. Long-lived management credentials must not be embedded in browser bundles or other untrusted clients.
@@ -168,9 +170,13 @@ The registered definition is valid, but evidence, policy, governed state, or saf
 
 The data plane cannot be reached or cannot complete a request because of an explicitly recognized availability failure. If application configuration enables it, the SDK may return the code-declared local default with `source: "client-fallback"`.
 
-An availability fallback has no server `decisionId`, `auditId`, policy result, definition status, or exposure token. It is never used for a 4xx contract/configuration response.
+An availability fallback has no server `decisionId`, `auditId`, policy result, definition status, or exposure token. It carries only the accepted expected contract tuple as client provenance.
 
-Availability fallback is disabled by default. Applications must explicitly enable the code-declared local default for recognized conditions such as connection failure, timeout, or `502`/`503`/`504`. If it is disabled, the SDK surfaces an availability error instead.
+Availability fallback is disabled by default. It is eligible only after configured retries for DNS/connection failure, connection/read timeout before a complete response, intermediary `502`/`504`, or a valid Flaggo `5xx` Problem Details response with `clientFallback.eligible: true`. It is forbidden for TLS, certificate, proxy/authentication configuration, caller cancellation, malformed responses, every `503` without explicit eligibility, every `4xx`, `500`/`501`/`505`, and Flaggo problems where eligibility is false or absent.
+
+`required-evidence-unavailable` is forbidden by default. It becomes eligible only when the registered definition policy separately allows that client fallback and the server returns the explicit eligibility extension. HTTP `503` alone is not sufficient.
+
+The default is one retry after the initial attempt with the same decide idempotency key. Before any remote attempt or local fallback, the generated call-site digest must match `acceptedDefinitions[decisionKey].contractDigest` from the approved registration receipt. Missing or mismatched binding is a local contract error, not availability.
 
 ## SDK error surface
 

@@ -69,7 +69,7 @@ OpenTelemetry ingestion should follow standard OTLP conventions where possible r
 
 Flaggo should separate runtime APIs from management APIs.
 
-The blocking Phase 1 contract freeze covers decide, exposure confirmation, definition-bundle validate/apply, and health. The broader resource groups below describe future component boundaries; they do not all need OpenAPI definitions before client and service work can begin.
+The required Phase 1 executable artifact set covers decide, exposure confirmation, definition-bundle validate/apply/approval, and health. The broader resource groups below describe future component boundaries; they are outside this artifact set.
 
 Runtime decide and exposure confirmation form the data plane. Definition-bundle validate/apply and lifecycle operations form the control plane. Application deployment is external to both: it may happen without control-plane publication, but data-plane calls succeed only for exact registered identities.
 
@@ -216,10 +216,10 @@ Example:
     { "signal": { "key": "tetris.recoveryFailures" }, "value": 2 }
   ],
   "expectedContract": {
-    "definitionId": "tetris.dropInterval@2",
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
-    "revision": "42",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
     "buildId": "tetris-web-2026-07-25.1",
     "deploymentId": "tetris-web-2026-07-25.1"
   },
@@ -239,6 +239,13 @@ Response:
 ```json
 {
   "decisionKey": "tetris.dropInterval",
+  "definition": {
+    "appId": "tetris-demo",
+    "environment": "dev",
+    "key": "tetris.dropInterval",
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
+  },
   "decisionId": "decision-789",
   "runtimeTarget": {
     "type": "session",
@@ -283,7 +290,8 @@ Response:
     "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
   "definitionStatus": {
-    "revision": "42",
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
     "buildId": "tetris-web-2026-07-25.1",
@@ -307,6 +315,13 @@ This means Flaggo could not use the most specific requested scope, but it still 
 ```json
 {
   "decisionKey": "tetris.dropInterval",
+  "definition": {
+    "appId": "tetris-demo",
+    "environment": "dev",
+    "key": "tetris.dropInterval",
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
+  },
   "decisionId": "decision-791",
   "runtimeTarget": {
     "type": "user",
@@ -350,10 +365,11 @@ This means Flaggo could not use the most specific requested scope, but it still 
     "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
   },
   "definitionStatus": {
-    "revision": "42",
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
-    "integrity": "known-older-revision",
+    "integrity": "verified",
     "compatibility": "identical"
   },
   "exposure": {
@@ -372,6 +388,13 @@ This means Flaggo could not safely make an approved decision at any applicable s
 ```json
 {
   "decisionKey": "tetris.dropInterval",
+  "definition": {
+    "appId": "tetris-demo",
+    "environment": "dev",
+    "key": "tetris.dropInterval",
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
+  },
   "decisionId": "decision-790",
   "runtimeTarget": {
     "type": "user",
@@ -410,7 +433,8 @@ This means Flaggo could not safely make an approved decision at any applicable s
     "appliedConstraints": ["min-evidence-quality", "max-model-uncertainty", "min-sample-size"]
   },
   "definitionStatus": {
-    "revision": "42",
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
     "contractDigest": "sha256:contract...",
     "bundleDigest": "sha256:bundle...",
     "integrity": "verified",
@@ -512,16 +536,16 @@ Policy reason codes should be stable because clients, audits, and the operator c
 
 The Decision API should compare the request's expected contract identity with registry state before approving a decision. It must support rolling deployments where several builds of the same service call the API concurrently with different known definition IDs or revisions.
 
-Initial integrity states:
+Success and error states:
 
 | State | Runtime behavior |
 | --- | --- |
-| `verified` | Expected definition ID/revision matches a registered definition; decide normally. |
-| `known-older-revision` | Expected contract revision is recognized and still allowed; decide normally and emit diagnostics. |
-| `unknown-client-contract` | Expected identity is missing or unregistered; return `400` or `409` Problem Details. |
-| `contract-conflict` | Caller used an existing definition ID with a conflicting digest; return `409` Problem Details. |
+| `verified` | The full expected definition ID/revision/digest tuple is registered and lifecycle-eligible; return a server `200` containing the same tuple. |
+| `missing-contract-identity` | Required tuple member is missing; return `400` Problem Details. |
+| `contract-not-registered` | Definition ID/revision is unknown; return `409` Problem Details. |
+| `contract-conflict` | The digest does not match the registered revision; return `409` Problem Details. |
 | `unknown-decision-key` | Decision key is not registered; return `404` Problem Details. |
-| `retired-decision-key` | Definition is retired; return `409` Problem Details. |
+| `retired-definition` | The exact revision is retired; return `409` Problem Details. |
 
 The full contract bundle should not be sent on each runtime request.
 
@@ -533,10 +557,11 @@ Production data-plane requests use OAuth 2.0/OIDC access tokens. Decide requires
 
 `POST /v1/decisions/{decisionKey}:decide` accepts an optional `Idempotency-Key` header:
 
-- the same key with the same canonical route and request returns the original decision result,
-- reuse with a different canonical route or request returns `409 idempotency-conflict`,
+- the namespace, RFC 8785 fingerprint, 24-hour retention, and concurrent-request behavior are defined by the [API Contract Proposal](../API_CONTRACT_PROPOSAL.md#correlation-and-retries),
+- the same key and fingerprint returns the original decision result,
+- reuse with another fingerprint returns `409 idempotency-conflict`,
 - omitting the header creates a new decision record,
-- `correlationId` remains tracing metadata and is never a uniqueness key.
+- `correlationId` and trace metadata are excluded from the fingerprint.
 
 Phase 1 exposes only the singular decide operation. Batch decisions are deferred until ordering, partial-failure, policy, and idempotency semantics can be designed explicitly.
 
@@ -581,9 +606,9 @@ The API should distinguish two fallback types:
 2. **Decision fallback**
    - Flaggo could not safely approve a decision.
    - The returned value is the configured fallback.
-   - Confidence should be `null` or omitted because no evidence-backed decision was approved.
+   - Confidence is `null` because no evidence-backed decision was approved.
 
-Confidence is not one generic score. When present, it describes the returned decision at the evidence and control target used, not necessarily the originally requested runtime target:
+Confidence is not one generic score. It is required for `strategy`, `experiment`, and every result claiming evidence-backed adaptation. It is null for decision fallback and may be null for a non-evidence-based active value. When present, it describes the returned decision at the evidence and control target used, not necessarily the originally requested runtime target:
 
 | Field | Meaning |
 | --- | --- |

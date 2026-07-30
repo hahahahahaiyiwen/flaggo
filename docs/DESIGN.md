@@ -118,7 +118,7 @@ The first complete design target is the Tetris `dropInterval` decision.
 
 ```text
 Decision key: tetris.dropInterval
-Decision definition: tetris.dropInterval@2
+Decision definition: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A / rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
 Runtime target: session:game-456
 Control target: cohort:new_players or global
 Runtime context: userId, sessionId, cohort, currentLevel, deviceType, boardPressure, recentPlacementTimeMs, recoveryFailures
@@ -398,7 +398,8 @@ Target and scope resolution are central to Flaggo, but the resolved references h
 For a request like:
 
 ```text
-definition = tetris.dropInterval@2
+definitionId = def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+revision = rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
 runtime target = session:game-456
 ```
 

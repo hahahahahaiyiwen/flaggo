@@ -43,18 +43,18 @@ This simplified lifecycle intentionally skips `draft` and `archived` for the fir
 
 ## Versioning model
 
-Decision definitions should be append-only semantic revisions behind a stable decision key.
+Decision definitions use an opaque lineage ID with append-only runtime revisions behind a stable decision key.
 
 Example:
 
 ```text
-tetris.dropInterval@1 active
-tetris.dropInterval@2 active
-tetris.dropInterval@1 deprecated
-tetris.dropInterval@1 retired
+decisionKey: tetris.dropInterval
+definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+revision rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K: deprecated
+revision rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3: active
 ```
 
-Changing contract semantics should create a new revision instead of mutating historical meaning in place.
+Changing contract semantics should create a new opaque revision and canonical digest under the same lineage instead of mutating historical meaning in place. Metadata-only history does not create a runtime revision. A new definition ID is reserved for a new lineage or explicit fork.
 
 Examples of revision-worthy changes:
 
@@ -95,7 +95,7 @@ Example shape:
   },
   "definitions": [
     {
-      "definitionId": "tetris.dropInterval@2",
+      "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
       "key": "tetris.dropInterval",
       "valueType": "number",
       "actionSpace": {
@@ -208,7 +208,7 @@ flaggo.tune.number("tetris.dropInterval", {
 Tooling extracts signal identities and target schemas from the bindings above, discards their runtime values, and sends only canonical definition semantics to the registry. During validation/apply, the registry compares those submitted semantics with the existing contract:
 
 - If semantics are unchanged, it returns the existing definition ID/revision.
-- If only metadata changed, it records a metadata revision.
+- If only metadata changed, it records registry/audit metadata history without changing runtime revision or digest.
 - If semantics changed, apply returns `requires-approval` with an approval request and performs no mutation. Explicit approval atomically creates the new semantic revision and applies the pending bundle.
 - Old builds continue using the old identity; new builds use the new identity.
 - Within one build, repeated declarations of the same decision key must normalize to the same canonical digest. Identical definitions are deduplicated; different digests are a `contract-conflict` build error.
@@ -219,6 +219,8 @@ Tooling extracts signal identities and target schemas from the bindings above, d
 - A metric objective with `direction: "target"` must include a finite numeric `target`; `minimize` and `maximize` objectives must not include `target`.
 - Every canonical decision definition must contain `policy: PolicyReference | InlinePolicy`. Missing policy is a validation error; the registry does not insert an implicit environment/default reference.
 - `schemaDigest` is validated on signal declarations to detect conflicting schemas under one immutable key, but is not copied into `SignalRef` and does not affect decision-definition identity.
+- If `definitionId` is omitted for a known key, the registry resolves the existing lineage in the declared application/environment. New keys must omit it so apply can assign the lineage.
+- A supplied `definitionId` must already belong to that same authorized key and scope. Unknown IDs produce `unknown-definition-lineage`; IDs from another key or scope produce `definition-lineage-mismatch`.
 
 The registry and SDK use the canonicalization rules in [Shared Contracts](../shared-contracts/README.md#canonical-definition-normalization-and-digest), including RFC 8785 serialization, order-sensitive hierarchy/precedence arrays, key-sorted signal-role sets, and duplicate rejection.
 
@@ -235,15 +237,32 @@ interface IDefinitionRegistry {
 
 interface IDefinitionBundleApprovalStore {
   getApproval(approvalRequestId: string): Promise<DefinitionBundleApprovalResult>;
-  approve(approvalRequestId: string): Promise<DefinitionBundleApprovalResult>;
-  reject(approvalRequestId: string): Promise<DefinitionBundleApprovalResult>;
+  getApprovalBundle(approvalRequestId: string): Promise<DecisionDefinitionBundle>;
+  approve(
+    approvalRequestId: string,
+    expectedBundleDigest: string,
+    comment?: string
+  ): Promise<DefinitionBundleApprovalResult>;
+  reject(
+    approvalRequestId: string,
+    expectedBundleDigest: string,
+    reasonCode: string,
+    comment?: string
+  ): Promise<DefinitionBundleApprovalResult>;
 }
 
 type DefinitionBundleValidationResult = {
   status: "valid" | "invalid";
   bundleDigest?: string;
-  contractDigest?: string;
   compatibility?: ContractCompatibility;
+  validatedDefinitions?: Record<
+    string,
+    {
+      definitionId?: string;
+      revision?: string;
+      contractDigest: string;
+    }
+  >;
   issues: ContractIssue[];
 };
 
@@ -276,22 +295,22 @@ Bundle sync should classify changes, not blindly overwrite.
 code declarations, hand-authored bundle, or registry export
   -> compare with registered resources
   -> classify semantic changes
-  -> keep existing IDs for unchanged contracts
-  -> create new semantic IDs/revisions for conflicts
+  -> keep the runtime tuple for unchanged or metadata-only contracts
+  -> require approval, then create a new opaque revision/digest for semantic changes
   -> mark missing resources as deprecation candidates
   -> require explicit retirement
   -> return registration receipt
 ```
 
-If multiple builds are live, each runtime request carries the expected bundle/definition identity for that workload. The registry should recognize known immutable definition IDs/revisions rather than forcing all builds onto one current definition.
+If multiple builds are live, each runtime request carries the exact accepted definition tuple for that workload. The registry should recognize known immutable tuples rather than forcing all builds onto one current revision.
 
 Recommended behavior:
 
 | Diff | Action |
 |---|---|
 | New decision key | Create active decision definition and initial revision. |
-| Compatible metadata change | Update metadata or create revision based on policy. |
-| Semantic definition change | Reject overwrite; create or require a new semantic definition ID/revision. |
+| Compatible metadata change | Update registry/audit metadata without changing runtime identity. |
+| Semantic definition change | Return `requires-approval`; approval creates a new opaque revision/digest under the same definition lineage. |
 | Resource missing from bundle | Mark as deprecation candidate; do not delete. |
 | Deprecated resource with no active clients | Allow explicit retirement. |
 | Active runtime usage exists | Block retirement unless forced by operator policy. |
@@ -336,11 +355,12 @@ The management API should support:
 POST /v1/definition-bundles:validate
 POST /v1/definition-bundles:apply
 GET /v1/definition-bundle-approvals/{approvalRequestId}
+GET /v1/definition-bundle-approvals/{approvalRequestId}/bundle
 POST /v1/definition-bundle-approvals/{approvalRequestId}:approve
 POST /v1/definition-bundle-approvals/{approvalRequestId}:reject
 ```
 
-Bundle validation/application and semantic-revision approval are the blocking Phase 1 management contract. Definition reads and explicit deprecate/retire operations remain necessary management capabilities, but their routes can be designed after the runtime/client integration seam is unblocked.
+Bundle validation/application and semantic-revision approval are required in the Phase 1 executable management contract. Definition reads and explicit deprecate/retire operations remain necessary management capabilities, but their routes are deferred.
 
 The important design is:
 
@@ -349,10 +369,15 @@ The important design is:
 - validation is read-only and returns structured issues,
 - apply repeats validation and is atomic and idempotent,
 - semantic change returns `requires-approval` plus a stable `approvalRequestId` without mutation,
-- approval atomically applies the pending canonical bundle and stores its approved receipt,
-- approval status returns `pending`, `approved`, or `rejected`, and includes the receipt only when approved,
+- approval atomically applies the immutable pending canonical bundle and stores its approved receipt,
+- approval review exposes previous/proposed digests, canonical semantic diff, and immutable canonical bundle snapshot,
+- approval status is `pending`, `approved`, `rejected`, or `expired`; only approved includes a receipt,
+- pending requests have an authoritative `expiresAt`; terminal transitions are immutable and compare-and-swap safe,
+- same terminal action is idempotent; opposite concurrent/terminal action returns `approval-terminal-conflict`,
+- approval/rejection persist the authorized actor and comment,
+- reapplying an expired bundle with the same deterministic key revalidates and creates one linked replacement request,
 - startup retry with the same bundle returns the final approved receipt after approval,
-- registration returns a receipt with bundle digest, definition digest, build metadata, and per-decision-key revisions,
+- registration returns `acceptedDefinitions`, containing the complete definition ID/revision/digest tuple per decision key,
 - semantic updates create revisions,
 - deprecation/retirement are lifecycle transitions,
 - hard delete is not part of the normal lifecycle.

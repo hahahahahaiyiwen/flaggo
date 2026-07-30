@@ -131,6 +131,8 @@ Startup registration sends the extracted bundle once to the management API and i
 
 If apply returns `requires-approval`, startup raises a typed error containing the `approvalRequestId` and does not initialize the data-plane client. After an authorized reviewer approves the pending bundle, retrying startup with the same bundle receives the approved receipt.
 
+If approval expires, retrying the same startup apply and deterministic key causes the server to revalidate and create one fresh linked approval request. Concurrent replicas receive that replacement request rather than minting independent approvals.
+
 The credential shown is valid only for a trusted bootstrap environment. Production browser bundles must use another control-plane client experience because they cannot safely hold management credentials.
 
 ## API interaction model
@@ -156,7 +158,7 @@ The SDK has different responsibilities at different stages. It should not be req
 | Stage | What happens | SDK role | Non-SDK path |
 | --- | --- | --- | --- |
 | Development | Developer declares decision keys, events, metrics, and fallback. | Provide ergonomic TypeScript declarations, availability-fallback typing, and typed decision calls. | Author `flaggo.decision-definition-bundle.json` or configure decision key in registry. |
-| Build | Definition artifact is produced or selected for that build. | Optional extractor emits canonical `DecisionDefinitionBundle`, `definitionDigest`, and build metadata. | Bundle is maintained as JSON/YAML or exported from registry/platform tooling. |
+| Build | Definition artifact is produced or selected for that build. | Optional extractor emits the canonical `DecisionDefinitionBundle`, per-definition `contractDigest` values, and build metadata. | Bundle is maintained as JSON/YAML or exported from registry/platform tooling. |
 | Application deployment | Code is deployed independently. | No Polari management action is implied by deployment itself. | Existing deployment mechanism remains unchanged. |
 | Application/bootstrap startup | MVP atomically validates/applies the extracted bundle and receives the runtime binding. | Trusted SDK bootstrap acts as a control-plane client, then initializes the data-plane client. | Future alternatives include CLI, CI/CD, GitOps, init/deployment hooks, or registry-first tooling. |
 | Runtime | Application asks for decisions and emits telemetry. | Send exact expected definition identity; surface contract errors; optionally apply local fallback only for configured availability failures. | Direct REST client sends the same compact identity and handles Problem Details. |
@@ -468,7 +470,7 @@ if (decision.fallback.resolutionFallbackUsed) {
 
 ## Expected decision response shape
 
-The library should expose the shared server/client result union:
+The generated wire model uses the shared `valueType + value` discriminated union. The ergonomic SDK may project that union into a generic only after runtime validation:
 
 ```ts
 type DecisionResult<T> =
@@ -480,7 +482,7 @@ type DecisionResult<T> =
 
 `decisionMode` tells the application how the value was produced without exposing internal implementation details. For the Tetris adaptive MVP, the expected mode is usually `strategy`: the server executed an approved strategy against live runtime context and returned an immediate numeric value.
 
-`definition.integrity` should tell the application whether the runtime response was produced under a verified or known definition identity, or whether the response fell back because the definition was unknown, retired, or conflicting.
+Every server `200` contains the exact accepted definition tuple with `definitionStatus.integrity = "verified"`. Unknown, retired, or conflicting identities are typed Problem Details errors and never success-shaped fallback results.
 
 The basic `tune.number(...)` helper returns `DecisionReceipt<number>` for attribution while preserving the original SDK method name. An advanced detailed helper should expose the full `DecisionResult<T>`.
 
@@ -514,12 +516,13 @@ type ServerDecisionReceipt<T extends DecisionValue = DecisionValue> = {
   source: "server";
   value: T;
   decisionId: string;
-  confirmToken?: string;
+  exposure: ExposureDirective;
 };
 
 type ClientFallbackReceipt<T extends DecisionValue = DecisionValue> = {
   source: "client-fallback";
   value: T;
+  expectedContract: RuntimeContractIdentity;
   reason: string;
 };
 
@@ -688,7 +691,7 @@ type MetricObjective =
 
 interface IDefinitionBundleProvider {
   exportBundle(): DecisionDefinitionBundle;
-  getExpectedIdentity(): ContractIdentity | undefined;
+  getRegistrationReceipt(): RegistrationReceipt | undefined;
 }
 ```
 
@@ -775,8 +778,8 @@ Developers should not need to manually version every decision definition during 
 developer names the decision: tetris.dropInterval
   -> tooling extracts canonical semantics
   -> registry compares with existing definition
-  -> unchanged or metadata-only: keep same definition identity
-  -> semantic conflict: reject overwrite or mint approved new semantic identity
+  -> unchanged or metadata-only: keep the same runtime tuple
+  -> semantic change: require approval, then receive a new opaque revision/digest
 ```
 
 The developer-facing name can stay stable for the common case. When semantics change in a way that could make old decision state unsafe, tooling should make the change explicit in PR/CI output:
@@ -787,7 +790,7 @@ semantic change detected: added required signal recoveryFailures
 state reuse: no
 telemetry reuse: boardPressure and placementTimeMs evidence can be reused
 new evidence warmup: recoveryFailures
-suggested definition: tetris.dropInterval@2
+runtime revision: assigned by registry after approval
 ```
 
 This keeps the normal UX simple while still preventing accidental sharing of active strategies across incompatible contracts.
@@ -797,12 +800,23 @@ This keeps the normal UX simple while still preventing accidental sharing of act
 The production runtime SDK must send compact expected definition identity:
 
 ```ts
+const receipt = flaggo.definitions.getRegistrationReceipt();
+const decisionKey = "tetris.dropInterval";
+const acceptedDefinition =
+  receipt?.acceptedDefinitions[decisionKey];
+
+if (!acceptedDefinition) {
+  throw new MissingAcceptedDefinitionError(decisionKey);
+}
+
 const decision = await dropInterval.decide({
-  expectedDefinitionId: flaggo.definitions.getExpectedIdentity()?.definitionId,
-  expectedDefinitionDigest: flaggo.definitions.getExpectedIdentity()?.definitionDigest,
-  expectedDefinitionRevision: flaggo.definitions.getExpectedIdentity()?.revision,
-  buildId: flaggo.definitions.getExpectedIdentity()?.buildId,
-  deploymentId: flaggo.definitions.getExpectedIdentity()?.deploymentId,
+  expectedContract: {
+    definitionId: acceptedDefinition.definitionId,
+    revision: acceptedDefinition.revision,
+    contractDigest: acceptedDefinition.contractDigest,
+    bundleDigest: receipt.bundleDigest,
+    buildId: receipt.buildId
+  },
   runtimeContext: {
     userId,
     sessionId,
@@ -825,6 +839,10 @@ Different builds of the same service can be deployed at the same time. The SDK s
 If expected identity is missing, unknown, conflicting, or retired, the SDK surfaces the Problem Details contract error. It must not invoke local fallback or retry with another revision. Local fallback is reserved for explicitly configured data-plane availability failures.
 
 Production credentials use OAuth 2.0/OIDC scopes. The SDK keeps management credentials out of runtime/browser clients and exposes an explicit insecure local-development bypass only when configured. Decide retries may supply an optional `Idempotency-Key`; the SDK must not use `correlationId` as retry identity. Detailed results expose server-resolved target provenance so callers can distinguish verified, derived, and replaced cohort claims.
+
+The exact availability classifier and retry defaults are defined in the [API Contract Proposal](../API_CONTRACT_PROPOSAL.md#sdk-availability-fallback-classifier). The SDK must compare each generated call-site digest with `RegistrationReceipt.acceptedDefinitions[decisionKey]` before a remote attempt or local fallback. Availability fallback is forbidden until that accepted binding exists and matches.
+
+For valid Flaggo Problem Details, the SDK requires `clientFallback.eligible: true`; status `503` alone does not authorize a local value. In particular, `required-evidence-unavailable` is forbidden unless the registered policy separately permits it and the server projects that permission into the error.
 
 ## Telemetry behavior
 

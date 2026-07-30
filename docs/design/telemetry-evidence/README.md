@@ -75,7 +75,7 @@ Different decision definitions should not share active decision state by default
 | Evidence views | Reusable when signal key, target, window, and filters match. |
 | Decision state/strategy | Not reusable by default; keyed by decision definition and control/runtime target. |
 
-Example: `tetris.dropInterval@2` may add `tetris.recoveryFailures` as a new signal. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
+Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
 
 Evidence view identity should include:
 

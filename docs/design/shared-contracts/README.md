@@ -228,6 +228,11 @@ type PolicyReference = {
 type InlinePolicy = {
   kind: "inline";
   constraints: PolicyConstraint[];
+  clientFallback?: ClientFallbackPolicy;
+};
+
+type ClientFallbackPolicy = {
+  requiredEvidenceUnavailable: "allow" | "forbid";
 };
 
 type OnlineStrategyDeclaration = {
@@ -237,6 +242,8 @@ type OnlineStrategyDeclaration = {
 ```
 
 MVP rule: `tetris.dropInterval` should use `onlineStrategy.mode = "approved-strategy"` and live inputs such as `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, and `currentLevel`.
+
+`clientFallback.requiredEvidenceUnavailable` is independent from governed server fallback. Omission means `forbid`. The server projects the evaluated permission into the `required-evidence-unavailable` Problem Details extension; an SDK also requires its own local availability-fallback configuration before using a local value.
 
 `InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; registry validation and the Decision API must enforce it again against registered signal declarations.
 
@@ -304,6 +311,7 @@ type PolicyEvaluationResult = {
   result: "approved" | "blocked" | "fallback";
   reasons: string[];
   appliedConstraints: string[];
+  clientFallback?: ClientFallbackPolicy;
 };
 ```
 
@@ -312,6 +320,7 @@ Rules:
 - Policy reason codes should be stable strings.
 - Runtime should return fallback when policy result is `fallback`.
 - Runtime should not return a candidate value as approved when policy result is `blocked`.
+- Omitted client-fallback permission means `forbid`. A `required-evidence-unavailable` error may advertise client fallback only when effective policy explicitly returns `allow`.
 
 ## Decision strategy
 
@@ -408,7 +417,7 @@ type EvidenceSnapshot = {
 };
 
 type ConfidenceReport = {
-  evidenceQuality?: number;
+  evidenceQuality: number;
   modelUncertainty?: number;
   expectedOutcome?: number;
 };
@@ -426,6 +435,9 @@ Rules:
 - The MVP can use in-memory or fixture evidence.
 - Evidence details should be available to audit, but runtime responses should stay compact.
 - Missing evidence should not crash runtime; it should flow into policy and fallback semantics.
+- Every confidence field is a finite number in the inclusive range `[0, 1]`.
+- `evidenceQuality` is required, so an empty confidence object is invalid.
+- Higher `evidenceQuality` and `expectedOutcome` are better; higher `modelUncertainty` means less certainty.
 - `window` is allowed for raw events and app-emitted metrics. It must be omitted for a fixed-window derived signal because that signal's immutable key already owns its aggregation window.
 
 ## Runtime API contracts
@@ -465,12 +477,25 @@ type TargetResolutionProvenance = {
     | "server-replaced";
 };
 
-type ServerDecisionResult<T extends DecisionValue = DecisionValue> = {
+type DecisionValuePayload =
+  | { valueType: "boolean"; value: boolean }
+  | { valueType: "number"; value: number }
+  | { valueType: "string"; value: string };
+
+type ExposureDirective =
+  | {
+      confirmationRequired: true;
+      confirmToken: string;
+    }
+  | {
+      confirmationRequired: false;
+      confirmToken?: never;
+    };
+
+type ServerDecisionCommon = {
   decisionKey: string;
-  definition?: DecisionDefinitionRef;
+  definition: DecisionDefinitionRef;
   decisionId: string;
-  value: T;
-  valueType: ValueType;
   decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
   strategyId?: string;
   confidence: ConfidenceReport | null;
@@ -486,18 +511,16 @@ type ServerDecisionResult<T extends DecisionValue = DecisionValue> = {
     decisionFallbackUsed: boolean;
     reason: string | null;
   };
-  exposure?: {
-    confirmationRequired: boolean;
-    confirmToken?: string;
-  };
+  exposure: ExposureDirective;
   policy: PolicyEvaluationResult;
   definitionStatus: ContractRuntimeStatus;
 };
 
-type ClientFallbackResult<T extends DecisionValue = DecisionValue> = {
+type ServerDecisionResult = ServerDecisionCommon & DecisionValuePayload;
+
+type ClientFallbackCommon = {
   decisionKey: string;
-  value: T;
-  valueType: ValueType;
+  expectedContract: RuntimeContractIdentity;
   decisionMode: "fallback";
   confidence: null;
   reason: string;
@@ -509,15 +532,13 @@ type ClientFallbackResult<T extends DecisionValue = DecisionValue> = {
   };
 };
 
-type DecisionResult<T extends DecisionValue = DecisionValue> =
-  | ServerDecisionResult<T>
-  | ClientFallbackResult<T>;
+type ClientFallbackResult = ClientFallbackCommon & DecisionValuePayload;
 
-type DecideResponse<T extends DecisionValue = DecisionValue> =
-  ServerDecisionResult<T>;
+type DecisionResult = ServerDecisionResult | ClientFallbackResult;
 
-type RuntimeDecisionResult<T extends DecisionValue = DecisionValue> =
-  ServerDecisionResult<T>;
+type DecideResponse = ServerDecisionResult;
+
+type RuntimeDecisionResult = ServerDecisionResult;
 
 type ExposureConfirmationRequest = {
   confirmToken: string;
@@ -536,15 +557,17 @@ type ExposureConfirmationResult = {
 Rules:
 
 - The response returns the final concrete value for application code.
+- `valueType` discriminates `value`; mismatched pairs and non-finite number values are invalid.
 - `decisionMode` explains how the value was produced without exposing internals.
-- The server wire response always contains `decisionId`, `auditId`, `policy`, and `definitionStatus`.
+- The server wire response always contains `definition`, `decisionId`, `auditId`, `policy`, verified `definitionStatus`, and `exposure`.
 - A local client fallback caused by data-plane unavailability is an SDK-produced `ClientFallbackResult`; it is disabled unless explicitly configured and cannot claim server policy, definition status, decision, audit, or exposure identity.
+- A client fallback carries only `expectedContract` as client provenance, after the local call-site digest has matched the accepted runtime binding.
 - A 4xx contract/configuration response can never produce `ClientFallbackResult`.
-- `confidence` is `null` for static server decision fallback.
-- Resolution fallback can still return a real confidence report if a broader target produced an approved decision.
+- `confidence` is `null` for server decision fallback and may be null for a non-evidence-based active value.
+- `strategy`, `experiment`, and any evidence-backed adaptation require confidence. Resolution fallback retains it when a broader target produced an approved evidence-backed decision.
 - Client target/cohort claims are context, not authority. `targetProvenance` records whether each effective target was client-claimed, verified, server-derived, or replaced.
 - Default runtime responses contain compact confidence and target provenance; full evidence-view references remain in audit records.
-- `exposure.confirmToken` lets an SDK confirm exposure after the application applies or renders the returned value. The initial `RuntimeDecisionResult` must not include an `exposureId`; exposure identity is created by confirmation.
+- `exposure.confirmToken` is required exactly when `confirmationRequired` is true and forbidden otherwise. The initial `RuntimeDecisionResult` must not include an `exposureId`; exposure identity is created by confirmation.
 - `definitionStatus.integrity` indicates whether the client expectation matched a registered known contract definition.
 - The full definition bundle is not sent with each request; only compact identity is sent.
 - Exposure confirmation is idempotent for the same decision/token and creates the first `exposureId` under accepted decision A4.
@@ -607,21 +630,14 @@ type RuntimeContractIdentity = ContractIdentity & {
   revision: string;
 };
 
-type ContractIntegrityState =
-  | "verified"
-  | "known-older-revision"
-  | "unknown-client-contract"
-  | "contract-conflict"
-  | "unknown-decision-key"
-  | "retired-decision-key";
-
 type ContractRuntimeStatus = {
-  revision?: string;
+  definitionId: string;
+  revision: string;
+  contractDigest: string;
   bundleDigest?: string;
-  contractDigest?: string;
   buildId?: string;
   deploymentId?: string;
-  integrity: ContractIntegrityState;
+  integrity: "verified";
   compatibility?: ContractCompatibility;
 };
 
@@ -633,13 +649,17 @@ type ContractCompatibility =
 
 Rules:
 
-- `verified` and `known-older-revision` may return approved decisions when the registry recognizes the caller's immutable definition revision.
-- Missing identity, `unknown-client-contract`, `contract-conflict`, `unknown-decision-key`, and `retired-decision-key` are contract/configuration errors. They return Problem Details and cannot become server or SDK-local fallback.
+- Every server `200` repeats the exact accepted `definitionId + revision + contractDigest` and reports only `integrity: "verified"`. Unknown, conflicting, or retired identities are Problem Details errors rather than alternate success states.
+- Stable contract/configuration error codes are `missing-contract-identity`, `contract-not-registered`, `contract-conflict`, `unknown-decision-key`, and `retired-definition`. They cannot become server or SDK-local fallback.
 - Browser-provided definition identity is useful for drift detection, not as a security boundary.
 - Multiple builds of the same service may be deployed at the same time. Runtime integrity must be evaluated against the expected definition identity carried by the calling build, not a singular environment-wide bundle.
-- `definitionId` identifies the immutable semantic decision definition used by the caller. `contractDigest` identifies canonical definition content. `bundleDigest` identifies the full submitted bundle. `buildId`, `deploymentId`, and `artifactDigest` identify the workload instance or release that carries the contract expectation.
-- Semantic changes should not overwrite an existing `definitionId`. They should be rejected under the old ID and registered as a new definition ID or explicit semantic revision.
-- Known older revisions are served only when the request identifies that exact registered revision and lifecycle permits it. The runtime never substitutes another revision.
+- `definitionId` is an opaque registry-issued lineage ID and remains stable across approved semantic revisions. It is never a semantic version and clients must not parse it.
+- `revision` is an opaque registry-issued runtime revision ID, not semantic versioning or a metadata revision.
+- `contractDigest` identifies canonical semantic content. The immutable runtime identity is the complete `{ definitionId, revision, contractDigest }` tuple.
+- Metadata-only edits are retained in registry/audit history without changing runtime identity.
+- Semantic approval creates a new revision and digest under the same definition lineage. A new definition ID is reserved for a new lineage or explicit fork.
+- `bundleDigest` identifies the full submitted bundle. `buildId`, `deploymentId`, and `artifactDigest` identify the workload instance or release that carries the contract expectation.
+- Older revisions are served only when the request identifies that exact registered tuple and lifecycle permits it. The runtime never substitutes another revision.
 
 ## Contract, telemetry, evidence, and state reuse
 
@@ -730,8 +750,8 @@ Rules:
 ## Audit record
 
 ```ts
-type AuditDecisionResult<T extends DecisionValue = DecisionValue> =
-  Omit<ServerDecisionResult<T>, "exposure"> & {
+type AuditDecisionResult =
+  Omit<ServerDecisionResult, "exposure"> & {
     exposure?: {
       confirmationRequired: boolean;
     };
@@ -791,7 +811,7 @@ type DecisionDefinitionBundle = {
 };
 
 type DecisionDefinitionBundleEntry = {
-  definitionId: string;
+  definitionId?: string;
   key: string;
   owner?: string;
   valueType: ValueType;
@@ -809,8 +829,15 @@ type DecisionDefinitionBundleEntry = {
 type DefinitionBundleValidationResult = {
   status: "valid" | "invalid";
   bundleDigest?: string;
-  contractDigest?: string;
   compatibility?: ContractCompatibility;
+  validatedDefinitions?: Record<
+    string,
+    {
+      definitionId?: string;
+      revision?: string;
+      contractDigest: string;
+    }
+  >;
   issues: ContractIssue[];
 };
 
@@ -823,21 +850,53 @@ type ContractIssue = {
   signalKey?: string;
 };
 
-type ContractChange = {
-  kind: "created" | "metadata-updated" | "deprecation-candidate" | "semantic-conflict";
-  decisionKey: string;
-  fromRevision?: string;
-  toRevision?: string;
+type ContractChange =
+  | {
+      kind: "created" | "metadata-updated" | "deprecation-candidate";
+      decisionKey: string;
+    }
+  | {
+      kind: "semantic-change";
+      decisionKey: string;
+      previous: AcceptedDefinition;
+      proposed: {
+        definitionId: string;
+        contractDigest: string;
+      };
+      semanticDiff: ContractSemanticDiffOperation[];
+    };
+
+type CanonicalJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | CanonicalJsonValue[]
+  | { [key: string]: CanonicalJsonValue };
+
+type ContractSemanticDiffOperation =
+  | { op: "add"; path: string; after: CanonicalJsonValue }
+  | { op: "remove"; path: string; before: CanonicalJsonValue }
+  | {
+      op: "replace";
+      path: string;
+      before: CanonicalJsonValue;
+      after: CanonicalJsonValue;
+    };
+
+type AcceptedDefinition = {
+  definitionId: string;
+  revision: string;
+  contractDigest: string;
 };
 
 type RegistrationReceipt = {
   application: string;
   environment: string;
   bundleDigest: string;
-  contractDigest: string;
   buildId?: string;
   artifactDigest?: string;
-  registeredRevisions: Record<string, string>;
+  acceptedDefinitions: Record<string, AcceptedDefinition>;
   compatibility: ContractCompatibility;
   status: "approved";
   changes?: ContractChange[];
@@ -852,26 +911,60 @@ type DefinitionBundleApplyResult =
       application: string;
       environment: string;
       bundleDigest: string;
-      contractDigest: string;
       compatibility: "new-contract-required";
+      expiresAt: string;
+      snapshotUrl: string;
+      supersedesApprovalRequestId?: string;
       changes: ContractChange[];
-      issues: ContractIssue[];
-    }
-  | {
-      status: "rejected";
       issues: ContractIssue[];
     };
 
+type ApprovalActor = {
+  subject: string;
+  displayName?: string;
+};
+
+type DefinitionBundleApprovalCommon = {
+  approvalRequestId: string;
+  application: string;
+  environment: string;
+  bundleDigest: string;
+  createdAt: string;
+  expiresAt: string;
+  snapshotUrl: string;
+  supersedesApprovalRequestId?: string;
+  changes: ContractChange[];
+};
+
 type DefinitionBundleApprovalResult =
-  | {
-      approvalRequestId: string;
-      status: "pending" | "rejected";
-    }
-  | {
-      approvalRequestId: string;
-      status: "approved";
-      receipt: RegistrationReceipt;
-    };
+  DefinitionBundleApprovalCommon &
+  (
+    | {
+        status: "pending";
+      }
+    | {
+        status: "approved";
+        decidedAt: string;
+        receipt: RegistrationReceipt;
+        approval: {
+          actor: ApprovalActor;
+          comment?: string;
+        };
+      }
+    | {
+        status: "rejected";
+        decidedAt: string;
+        rejection: {
+          actor: ApprovalActor;
+          reasonCode: string;
+          comment?: string;
+        };
+      }
+    | {
+        status: "expired";
+        expiredAt: string;
+      }
+  );
 
 type ResourceOwnershipManifest = DecisionDefinitionBundle;
 type ManifestValidationResult = DefinitionBundleValidationResult;
@@ -882,15 +975,20 @@ Rules:
 - `DecisionDefinitionBundle` is the canonical language-neutral sync artifact.
 - SDK-generated declarations, hand-authored JSON/YAML, GitOps workflows, and registry exports should all produce or reference the same bundle shape.
 - Bundle sync creates or validates decision definition revisions.
-- Definition IDs are semantic ownership boundaries. A semantic conflict under an existing definition ID is rejected; the caller must create or allow tooling to create a new definition ID/revision.
+- A bundle may omit `definitionId` for a new decision key. The registry assigns an opaque lineage ID; clients never synthesize version-bearing IDs.
+- Omitted `definitionId` resolves the existing lineage for a known key. A supplied ID must already belong to that same authorized application/environment/key; unknown or mismatched IDs are validation errors.
 - Missing bundle resources become deprecation candidates, not deletes.
 - Bundle data must remain provider-neutral.
 - `ResourceOwnershipManifest` is retained only as a compatibility alias while the design migrates to `DecisionDefinitionBundle`.
 - Build metadata is allowed in the bundle for traceability, but compatibility should be based on canonical definition content, not incidental build metadata. Two different builds with identical decision definitions may share the same `contractDigest` while having different `buildId` or `artifactDigest`.
-- Registration receipts should identify revisions per decision key because one bundle can contain multiple decision definitions.
-- Registry-managed versioning should be the default UX. Developers should not need to hand-name every version; tooling can keep a stable definition ID for metadata-only changes and mint a new semantic revision or ID when the definition changes incompatibly.
+- `acceptedDefinitions` provides the complete per-key runtime binding. A client must initialize each call site from its receipt entry rather than combine a top-level digest with a revision map.
+- Registry-managed revisioning is the default UX. Metadata-only changes keep the same runtime identity; approved semantic changes mint a new opaque revision and digest under the same definition lineage.
 - Bundle validation issues use stable machine-readable codes and JSON Pointer paths; clients must not parse prose messages.
 - Bundle apply is atomic under accepted decision A5. Under accepted decision A6, semantic changes return `requires-approval` without mutation; explicit approval atomically applies the pending canonical bundle and produces the receipt.
+- Approval requests are immutable snapshots with an authoritative expiration. Pending requests transition once to approved, rejected, or expired; terminal states never transition.
+- Approval changes include previous/proposed contract digests and a canonical semantic diff. `snapshotUrl` retrieves the immutable canonical bundle under review.
+- Snapshot HTTP responses quote the project `sha256:<hex>` value as an opaque `ETag` and separately encode the raw SHA-256 bytes using RFC 9530 `Content-Digest: sha-256=:<base64>:` syntax.
+- Approval/rejection records persist the server-derived actor and submitted comment. Expired apply attempts may be resubmitted with the same deterministic key; revalidation creates one linked replacement request.
 
 ## Tetris MVP contract example
 
@@ -945,7 +1043,8 @@ The decision definition references those signal identities without redefining th
     "appId": "tetris-demo",
     "environment": "dev",
     "key": "tetris.dropInterval",
-    "revision": "1"
+    "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+    "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
   },
   "lifecycle": "active",
   "valueType": "number",
