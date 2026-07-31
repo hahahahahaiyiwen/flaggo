@@ -1,0 +1,23 @@
+{
+  "source": "RFC 8785 sections 3.2.2.2 and 3.2.3",
+  "vectors": [
+    {
+      "name": "ecmascript-number-serialization",
+      "input": [-0.0, 1e-7, 1e20],
+      "expected": "[0,1e-7,100000000000000000000]"
+    },
+    {
+      "name": "utf16-property-order",
+      "input": {
+        "\u20ac": "Euro Sign",
+        "\r": "Carriage Return",
+        "\ufb33": "Hebrew Letter Dalet With Dagesh",
+        "1": "One",
+        "\ud83d\ude00": "Emoji: Grinning Face",
+        "\u0080": "Control",
+        "\u00f6": "Latin Small Letter O With Diaeresis"
+      },
+      "expected": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\u0080\":\"Control\",\"\u00f6\":\"Latin Small Letter O With Diaeresis\",\"\u20ac\":\"Euro Sign\",\"\ud83d\ude00\":\"Emoji: Grinning Face\",\"\ufb33\":\"Hebrew Letter Dalet With Dagesh\"}"
+    }
+  ]
+}

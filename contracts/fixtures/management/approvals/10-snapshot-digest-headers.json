@@ -1,0 +1,279 @@
+{
+  "name": "approval-snapshot-digest-headers",
+  "scenario": 43,
+  "canonicalResponse": true,
+  "invariant": "The immutable snapshot returns the canonical bundle bytes with a quoted ETag holding sha256:<hex> and an RFC 9530 Content-Digest base64 over the same raw SHA-256 bytes.",
+  "responseSchema": "decision-definition-bundle-v1.schema.json",
+  "digest": {
+    "bundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
+    "etag": "\"sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441\"",
+    "contentDigest": "sha-256=:czy+91rAmRD0d7TYhoOqyS7QqBIRSgy0P0LdEr/HFEE=:"
+  },
+  "request": {
+    "method": "GET",
+    "path": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "ETag": "\"sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441\"",
+      "Content-Digest": "sha-256=:czy+91rAmRD0d7TYhoOqyS7QqBIRSgy0P0LdEr/HFEE=:",
+      "X-Flaggo-Correlation-Id": "srv-snapshot"
+    },
+    "body": {
+      "format": "flaggo.decision-definition-bundle/v1",
+      "application": {
+        "id": "tetris-demo",
+        "environment": "dev"
+      },
+      "build": {
+        "buildId": "tetris-web-2026-07-25.1",
+        "artifactDigest": "sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
+        "version": "0.1.0"
+      },
+      "source": {
+        "repository": "github.com/flaggo/tetris-demo",
+        "path": "src/flaggo",
+        "commit": "a1b2c3d4"
+      },
+      "signals": [
+        {
+          "kind": "metric",
+          "key": "tetris.boardPressure",
+          "type": "number",
+          "source": "app-emitted",
+          "range": [
+            0,
+            1
+          ]
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.recentPlacementTimeMs",
+          "type": "number",
+          "source": "app-emitted",
+          "unit": "ms"
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.recoveryFailures",
+          "type": "number",
+          "source": "app-emitted"
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.currentLevel",
+          "type": "number",
+          "source": "app-emitted"
+        },
+        {
+          "kind": "event",
+          "key": "tetris.piecePlaced",
+          "fields": {
+            "placementTimeMs": "number",
+            "hardDrop": "boolean"
+          },
+          "units": {
+            "placementTimeMs": "ms"
+          }
+        },
+        {
+          "kind": "event",
+          "key": "tetris.sessionEnded",
+          "fields": {
+            "endReason": "string",
+            "durationSeconds": "number"
+          },
+          "units": {
+            "durationSeconds": "s"
+          }
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.earlyLossRate24h",
+          "type": "number",
+          "source": "derived",
+          "from": [
+            {
+              "key": "tetris.sessionEnded"
+            }
+          ],
+          "aggregation": "rate(endReason == 'early_loss')",
+          "window": "24h"
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.hardDropRate24h",
+          "type": "number",
+          "source": "derived",
+          "from": [
+            {
+              "key": "tetris.piecePlaced"
+            }
+          ],
+          "aggregation": "rate(hardDrop == true)",
+          "window": "24h"
+        }
+      ],
+      "definitions": [
+        {
+          "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+          "key": "tetris.dropInterval",
+          "valueType": "number",
+          "actionSpace": {
+            "type": "number",
+            "min": 200,
+            "max": 1500,
+            "step": 50,
+            "default": 800
+          },
+          "fallback": {
+            "value": 800,
+            "reason": "safe_default_drop_interval"
+          },
+          "runtimeContextSchema": {
+            "userId": {
+              "type": "string",
+              "target": "user"
+            },
+            "sessionId": {
+              "type": "string",
+              "target": "session"
+            },
+            "cohort": {
+              "type": "string",
+              "target": "cohort"
+            },
+            "deviceType": {
+              "type": "string"
+            }
+          },
+          "targetHierarchy": [
+            "session",
+            "user",
+            "cohort",
+            "global"
+          ],
+          "signals": {
+            "allowed": [
+              {
+                "key": "tetris.boardPressure"
+              },
+              {
+                "key": "tetris.currentLevel"
+              },
+              {
+                "key": "tetris.earlyLossRate24h"
+              },
+              {
+                "key": "tetris.hardDropRate24h"
+              },
+              {
+                "key": "tetris.piecePlaced"
+              },
+              {
+                "key": "tetris.recentPlacementTimeMs"
+              },
+              {
+                "key": "tetris.recoveryFailures"
+              },
+              {
+                "key": "tetris.sessionEnded"
+              }
+            ]
+          },
+          "inference": {
+            "target": "session",
+            "inputs": [
+              {
+                "key": "tetris.boardPressure"
+              },
+              {
+                "key": "tetris.currentLevel"
+              },
+              {
+                "key": "tetris.recentPlacementTimeMs"
+              },
+              {
+                "key": "tetris.recoveryFailures"
+              }
+            ],
+            "fallbackOrder": [
+              "cohort",
+              "global"
+            ]
+          },
+          "intent": {
+            "type": "metric-objective",
+            "primary": {
+              "signal": {
+                "key": "tetris.earlyLossRate24h"
+              },
+              "direction": "minimize"
+            },
+            "secondary": [
+              {
+                "signal": {
+                  "key": "tetris.hardDropRate24h"
+                },
+                "direction": "target",
+                "target": 0.45
+              },
+              {
+                "signal": {
+                  "key": "tetris.recentPlacementTimeMs"
+                },
+                "direction": "minimize"
+              }
+            ],
+            "rationale": "Keep gameplay challenging but playable while reducing early frustration."
+          },
+          "onlineStrategy": {
+            "mode": "approved-strategy",
+            "liveInputs": [
+              "currentLevel",
+              "boardPressure",
+              "recentPlacementTimeMs",
+              "recoveryFailures"
+            ]
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "cooldown",
+                "seconds": 20
+              },
+              {
+                "kind": "max-delta",
+                "value": 50
+              },
+              {
+                "kind": "max-model-uncertainty",
+                "value": 0.35
+              },
+              {
+                "kind": "min-evidence-quality",
+                "value": 0.7
+              },
+              {
+                "kind": "min-sample-size",
+                "value": 30
+              },
+              {
+                "kind": "number-bounds",
+                "min": 200,
+                "max": 1500
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

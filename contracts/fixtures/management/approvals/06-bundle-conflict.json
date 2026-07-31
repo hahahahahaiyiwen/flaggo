@@ -1,0 +1,34 @@
+{
+  "name": "approval-bundle-conflict",
+  "scenario": 29,
+  "invariant": "A digest mismatch on approve returns 409 approval-bundle-conflict.",
+  "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "expectedBundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1"
+    }
+  },
+  "expected": {
+    "status": 409,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-approval-bundle-conflict"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/approval-bundle-conflict",
+      "title": "Approval bundle conflict",
+      "status": 409,
+      "code": "approval-bundle-conflict",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-approval-bundle-conflict",
+      "detail": "expectedBundleDigest does not match the pending snapshot."
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "approval-approve-expired",
+  "scenario": 29,
+  "invariant": "Approve against an expired request returns 410 approval-expired.",
+  "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "expectedBundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441"
+    }
+  },
+  "expected": {
+    "status": 410,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-approval-expired"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/approval-expired",
+      "title": "Approval expired",
+      "status": 410,
+      "code": "approval-expired",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-approval-expired",
+      "detail": "The approval request has expired."
+    }
+  }
+}

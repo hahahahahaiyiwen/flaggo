@@ -1,0 +1,29 @@
+{
+  "name": "get-approval-snapshot-insufficient-scope",
+  "scenario": 25,
+  "invariant": "Approval snapshot retrieval without polari.definitions:approve returns 403 insufficient-scope.",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "GET",
+    "path": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
+    "headers": {
+      "Authorization": "******"
+    }
+  },
+  "expected": {
+    "status": 403,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-insufficient-scope"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/insufficient-scope",
+      "title": "Insufficient scope",
+      "status": 403,
+      "code": "insufficient-scope",
+      "instance": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
+      "correlationId": "srv-insufficient-scope",
+      "detail": "Token lacks polari.definitions:approve."
+    }
+  }
+}

@@ -1,8 +1,8 @@
 # Phase 1 API Contract Proposal
 
-Status: **Decision log accepted; executable contract artifacts pending**
+Status: **Decision log accepted; executable contract candidate generated; Phase 1 freeze pending final review**
 
-This proposal is a design input to Phase 1, not the completed artifact set. Phase 1 remains unfrozen until runtime and management OpenAPI, JSON Schemas, golden fixtures, conformance models, and the fixture-backed mock harness encode this baseline and pass the required validations.
+This proposal remains the prose design input to Phase 1. The executable candidate under [`contracts/`](../../contracts/README.md) now encodes this baseline and passes its conformance gate. Phase 1 remains unfrozen until final review explicitly accepts the local documentation and contract baseline.
 
 It does not introduce a second domain model. Canonical domain types remain owned by [Shared Contracts](shared-contracts/README.md); this document defines how those types cross HTTP and build/release boundaries.
 

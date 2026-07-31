@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/management-models-v1.schema.json",
+  "title": "Flaggo management API models v1",
+  "description": "Strict wire models for the control plane: bundle validate/apply results, registration receipt, and the approval-resource discriminated union.",
+  "$defs": {
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "Rfc3339": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ContractCompatibility": {
+      "type": "string",
+      "enum": ["identical", "metadata-only", "new-contract-required"]
+    },
+    "ContractIssue": {
+      "type": "object",
+      "required": ["code", "severity", "path", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "severity": { "type": "string", "enum": ["error", "warning"] },
+        "path": { "type": "string" },
+        "message": { "type": "string" },
+        "decisionKey": { "type": "string" },
+        "signalKey": { "type": "string" }
+      }
+    },
+    "AcceptedDefinition": {
+      "type": "object",
+      "required": ["definitionId", "revision", "contractDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "definitionId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "contractDigest": { "$ref": "#/$defs/Sha256Digest" }
+      }
+    },
+    "ProposedDefinition": {
+      "type": "object",
+      "required": ["definitionId", "contractDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "definitionId": { "type": "string", "minLength": 1 },
+        "contractDigest": { "$ref": "#/$defs/Sha256Digest" }
+      }
+    },
+    "ValidatedDefinition": {
+      "type": "object",
+      "required": ["contractDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "definitionId": { "type": "string" },
+        "revision": { "type": "string" },
+        "contractDigest": { "$ref": "#/$defs/Sha256Digest" }
+      }
+    },
+    "CanonicalJsonValue": {
+      "$comment": "Any canonical JSON value.",
+      "type": ["null", "boolean", "number", "string", "array", "object"]
+    },
+    "ContractSemanticDiffOperation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["op", "path", "after"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "add" },
+            "path": { "type": "string" },
+            "after": { "$ref": "#/$defs/CanonicalJsonValue" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "path", "before"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "remove" },
+            "path": { "type": "string" },
+            "before": { "$ref": "#/$defs/CanonicalJsonValue" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "path", "before", "after"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "replace" },
+            "path": { "type": "string" },
+            "before": { "$ref": "#/$defs/CanonicalJsonValue" },
+            "after": { "$ref": "#/$defs/CanonicalJsonValue" }
+          }
+        }
+      ]
+    },
+    "ContractChange": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "decisionKey"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "type": "string", "enum": ["created", "metadata-updated", "deprecation-candidate"] },
+            "decisionKey": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "decisionKey", "previous", "proposed", "semanticDiff"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "semantic-change" },
+            "decisionKey": { "type": "string", "minLength": 1 },
+            "previous": { "$ref": "#/$defs/AcceptedDefinition" },
+            "proposed": { "$ref": "#/$defs/ProposedDefinition" },
+            "semanticDiff": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/ContractSemanticDiffOperation" }
+            }
+          }
+        }
+      ]
+    },
+    "RegistrationReceipt": {
+      "type": "object",
+      "required": ["application", "environment", "bundleDigest", "acceptedDefinitions", "compatibility", "status", "issues"],
+      "additionalProperties": false,
+      "properties": {
+        "application": { "type": "string", "minLength": 1 },
+        "environment": { "type": "string", "minLength": 1 },
+        "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "buildId": { "type": "string" },
+        "artifactDigest": { "type": "string" },
+        "acceptedDefinitions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/AcceptedDefinition" }
+        },
+        "compatibility": { "$ref": "#/$defs/ContractCompatibility" },
+        "status": { "const": "approved" },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/ContractChange" } },
+        "issues": { "type": "array", "items": { "$ref": "#/$defs/ContractIssue" } }
+      }
+    },
+    "DefinitionBundleValidationResult": {
+      "type": "object",
+      "required": ["status", "issues"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string", "enum": ["valid", "invalid"] },
+        "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "compatibility": { "$ref": "#/$defs/ContractCompatibility" },
+        "validatedDefinitions": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ValidatedDefinition" }
+        },
+        "issues": { "type": "array", "items": { "$ref": "#/$defs/ContractIssue" } }
+      }
+    },
+    "RequiresApprovalResult": {
+      "type": "object",
+      "required": ["status", "approvalRequestId", "application", "environment", "bundleDigest", "compatibility", "expiresAt", "snapshotUrl", "changes", "issues"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "const": "requires-approval" },
+        "approvalRequestId": { "type": "string", "minLength": 1 },
+        "application": { "type": "string", "minLength": 1 },
+        "environment": { "type": "string", "minLength": 1 },
+        "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "compatibility": { "const": "new-contract-required" },
+        "expiresAt": { "$ref": "#/$defs/Rfc3339" },
+        "snapshotUrl": { "type": "string" },
+        "supersedesApprovalRequestId": { "type": "string" },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/ContractChange" } },
+        "issues": { "type": "array", "items": { "$ref": "#/$defs/ContractIssue" } }
+      }
+    },
+    "DefinitionBundleApplyResult": {
+      "oneOf": [
+        { "$ref": "#/$defs/RegistrationReceipt" },
+        { "$ref": "#/$defs/RequiresApprovalResult" }
+      ]
+    },
+    "ApprovalActor": {
+      "type": "object",
+      "required": ["subject"],
+      "additionalProperties": false,
+      "properties": {
+        "subject": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string" }
+      }
+    },
+    "DefinitionBundleApprovalResult": {
+      "type": "object",
+      "description": "Approval resource discriminated union keyed by status.",
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["approvalRequestId", "application", "environment", "bundleDigest", "createdAt", "expiresAt", "snapshotUrl", "changes", "status"],
+          "properties": {
+            "approvalRequestId": { "type": "string", "minLength": 1 },
+            "application": { "type": "string", "minLength": 1 },
+            "environment": { "type": "string", "minLength": 1 },
+            "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+            "createdAt": { "$ref": "#/$defs/Rfc3339" },
+            "expiresAt": { "$ref": "#/$defs/Rfc3339" },
+            "snapshotUrl": { "type": "string" },
+            "supersedesApprovalRequestId": { "type": "string" },
+            "changes": { "type": "array", "items": { "$ref": "#/$defs/ContractChange" } },
+            "status": { "type": "string", "enum": ["pending", "approved", "rejected", "expired"] }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": { "status": { "const": "pending" } },
+              "required": ["status"]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": { "const": "approved" },
+                "decidedAt": { "$ref": "#/$defs/Rfc3339" },
+                "receipt": { "$ref": "#/$defs/RegistrationReceipt" },
+                "approval": {
+                  "type": "object",
+                  "required": ["actor"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "actor": { "$ref": "#/$defs/ApprovalActor" },
+                    "comment": { "type": "string" }
+                  }
+                }
+              },
+              "required": ["status", "decidedAt", "receipt", "approval"]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": { "const": "rejected" },
+                "decidedAt": { "$ref": "#/$defs/Rfc3339" },
+                "rejection": {
+                  "type": "object",
+                  "required": ["actor", "reasonCode"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "actor": { "$ref": "#/$defs/ApprovalActor" },
+                    "reasonCode": { "type": "string", "minLength": 1 },
+                    "comment": { "type": "string" }
+                  }
+                }
+              },
+              "required": ["status", "decidedAt", "rejection"]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": { "const": "expired" },
+                "expiredAt": { "$ref": "#/$defs/Rfc3339" }
+              },
+              "required": ["status", "expiredAt"]
+            }
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ValidateBundleRequest": {
+      "$ref": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v1.schema.json"
+    },
+    "ApplyBundleRequest": {
+      "$ref": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v1.schema.json"
+    },
+    "ApproveRequest": {
+      "type": "object",
+      "required": ["expectedBundleDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "expectedBundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "comment": { "type": "string" },
+        "correlationId": { "type": "string" }
+      }
+    },
+    "RejectRequest": {
+      "type": "object",
+      "required": ["expectedBundleDigest", "reasonCode"],
+      "additionalProperties": false,
+      "properties": {
+        "expectedBundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+        "reasonCode": { "type": "string", "minLength": 1 },
+        "comment": { "type": "string" },
+        "correlationId": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,283 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flaggo Management API",
+    "version": "1.0.0",
+    "description": "Phase 1 control-plane contract: bundle validate/apply and semantic-revision approval lifecycle. Strict wire models live in ../schemas/management-models-v1.schema.json, ../schemas/decision-definition-bundle-v1.schema.json, and ../schemas/problem-details-v1.schema.json.",
+    "license": { "name": "Apache-2.0" }
+  },
+  "servers": [
+    { "url": "https://control.flaggo.dev", "description": "Control plane" },
+    { "url": "http://localhost:8080", "description": "Local development" }
+  ],
+  "security": [{ "oauth2": [] }],
+  "tags": [
+    { "name": "definition-bundle", "description": "Bundle validation and application" },
+    { "name": "approvals", "description": "Semantic-revision approval lifecycle" }
+  ],
+  "paths": {
+    "/v1/definition-bundles:validate": {
+      "post": {
+        "tags": ["definition-bundle"],
+        "operationId": "validateDefinitionBundle",
+        "summary": "Validate a bundle without mutation.",
+        "description": "Read-only. Canonicalizes, verifies schemas/references, classifies compatibility, and returns structured issues plus computed digests. Well-formed but invalid content returns 200 with status invalid.",
+        "security": [{ "oauth2": ["polari.definitions:validate"] }],
+        "parameters": [{ "$ref": "#/components/parameters/CorrelationIdHeader" }],
+        "requestBody": { "$ref": "#/components/requestBodies/Bundle" },
+        "responses": {
+          "200": {
+            "description": "Validation result (status valid or invalid).",
+            "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "415": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/definition-bundles:apply": {
+      "post": {
+        "tags": ["definition-bundle"],
+        "operationId": "applyDefinitionBundle",
+        "summary": "Atomically apply a bundle under an idempotency key.",
+        "description": "Repeats validation, then performs an atomic registry change. Returns 200 with a RegistrationReceipt when immediately approved, 202 requires-approval when a semantic change needs approval (no mutation), and 422 invalid-bundle when validation rejects the write.",
+        "security": [{ "oauth2": ["polari.definitions:apply"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ApplyIdempotencyKeyHeader" },
+          { "$ref": "#/components/parameters/CorrelationIdHeader" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/Bundle" },
+        "responses": {
+          "200": {
+            "description": "Approved registration receipt.",
+            "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/management-models-v1.schema.json#/$defs/RegistrationReceipt" }
+              }
+            }
+          },
+          "202": {
+            "description": "Semantic change pending approval; no registry mutation performed.",
+            "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/management-models-v1.schema.json#/$defs/RequiresApprovalResult" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "415": { "$ref": "#/components/responses/Problem" },
+          "422": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/definition-bundle-approvals/{approvalRequestId}": {
+      "get": {
+        "tags": ["approvals"],
+        "operationId": "getDefinitionBundleApproval",
+        "summary": "Get the approval resource (discriminated by status).",
+        "description": "Returns 200 with the approval union for pending, approved, rejected, or expired. An expired resource is returned as 200.",
+        "security": [{ "oauth2": ["polari.definitions:approve"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ApprovalRequestIdPath" },
+          { "$ref": "#/components/parameters/CorrelationIdHeader" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/ApprovalResult" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/definition-bundle-approvals/{approvalRequestId}/bundle": {
+      "get": {
+        "tags": ["approvals"],
+        "operationId": "getDefinitionBundleApprovalSnapshot",
+        "summary": "Get the immutable canonical bundle snapshot under review.",
+        "description": "Returns the exact canonical DecisionDefinitionBundle used to compute bundleDigest. Immutable across every approval state. The quoted ETag holds the project sha256:<hex> value; Content-Digest carries RFC 9530 sha-256 base64 of the raw 32 bytes.",
+        "security": [{ "oauth2": ["polari.definitions:approve"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ApprovalRequestIdPath" },
+          { "$ref": "#/components/parameters/CorrelationIdHeader" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Immutable canonical bundle snapshot.",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "Content-Digest": { "$ref": "#/components/headers/ContentDigest" },
+              "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../schemas/decision-definition-bundle-v1.schema.json" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/definition-bundle-approvals/{approvalRequestId}:approve": {
+      "post": {
+        "tags": ["approvals"],
+        "operationId": "approveDefinitionBundle",
+        "summary": "Approve a pending semantic revision.",
+        "description": "Verifies expectedBundleDigest, then atomically transitions pending -> approved, creates new runtime revisions, applies the pending canonical bundle, and stores the receipt. Idempotent for the same digest. Never returns an approval-shaped success before the compare-and-swap commits.",
+        "security": [{ "oauth2": ["polari.definitions:approve"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ApprovalRequestIdPath" },
+          { "$ref": "#/components/parameters/CorrelationIdHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "../schemas/management-models-v1.schema.json#/$defs/ApproveRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ApprovalResult" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "410": { "$ref": "#/components/responses/Problem" },
+          "415": { "$ref": "#/components/responses/Problem" },
+          "422": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/definition-bundle-approvals/{approvalRequestId}:reject": {
+      "post": {
+        "tags": ["approvals"],
+        "operationId": "rejectDefinitionBundle",
+        "summary": "Reject a pending semantic revision.",
+        "description": "Verifies expectedBundleDigest, then atomically transitions pending -> rejected with no registry mutation. Idempotent for the same digest.",
+        "security": [{ "oauth2": ["polari.definitions:approve"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ApprovalRequestIdPath" },
+          { "$ref": "#/components/parameters/CorrelationIdHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "../schemas/management-models-v1.schema.json#/$defs/RejectRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/ApprovalResult" },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "403": { "$ref": "#/components/responses/Problem" },
+          "404": { "$ref": "#/components/responses/Problem" },
+          "409": { "$ref": "#/components/responses/Problem" },
+          "410": { "$ref": "#/components/responses/Problem" },
+          "415": { "$ref": "#/components/responses/Problem" },
+          "422": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "description": "OAuth 2.0/OIDC bearer access tokens. Startup and operator control-plane callers require management scopes. A browser or untrusted runtime must not hold a long-lived control-plane credential.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
+            "scopes": {
+              "polari.definitions:validate": "Bundle validation",
+              "polari.definitions:apply": "Bundle apply",
+              "polari.definitions:approve": "Semantic-revision approval and rejection"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "ApprovalRequestIdPath": {
+        "name": "approvalRequestId",
+        "in": "path",
+        "required": true,
+        "description": "Opaque approval request identifier.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "ApplyIdempotencyKeyHeader": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Deterministic apply idempotency key derived from application, environment, and bundleDigest. Reuse with a different canonical body is a conflict.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "CorrelationIdHeader": {
+        "name": "X-Flaggo-Correlation-Id",
+        "in": "header",
+        "required": false,
+        "description": "Optional client-supplied tracing correlation id.",
+        "schema": { "type": "string" }
+      }
+    },
+    "headers": {
+      "CorrelationId": {
+        "description": "Server request-correlation identifier returned on every response.",
+        "schema": { "type": "string" }
+      },
+      "ETag": {
+        "description": "Quoted opaque entity tag holding the project sha256:<lowercase-hex> value.",
+        "schema": { "type": "string", "pattern": "^\"sha256:[0-9a-f]{64}\"$" },
+        "example": "\"sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441\""
+      },
+      "ContentDigest": {
+        "description": "RFC 9530 Content-Digest over the same canonical bytes. Base64 of the raw 32-byte SHA-256, never the project sha256:<hex> string.",
+        "schema": { "type": "string", "pattern": "^sha-256=:[A-Za-z0-9+/]{43}=:$" },
+        "example": "sha-256=:czy+91rAmRD0d7TYhoOqyS7QqBIRSgy0P0LdEr/HFEE=:"
+      }
+    },
+    "requestBodies": {
+      "Bundle": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "../schemas/decision-definition-bundle-v1.schema.json" }
+          }
+        }
+      }
+    },
+    "responses": {
+      "ApprovalResult": {
+        "description": "Approval resource discriminated union.",
+        "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "../schemas/management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult" }
+          }
+        }
+      },
+      "Problem": {
+        "description": "RFC 9457 Problem Details error. Programs branch on code and status, never on title or detail.",
+        "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
+        "content": {
+          "application/problem+json": {
+            "schema": { "$ref": "../schemas/problem-details-v1.schema.json" }
+          }
+        }
+      }
+    }
+  }
+}

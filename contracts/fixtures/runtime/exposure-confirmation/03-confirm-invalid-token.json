@@ -1,0 +1,34 @@
+{
+  "name": "exposure-confirm-invalid-token",
+  "scenario": 13,
+  "invariant": "A mismatched confirmation capability returns 404 exposure-not-found to avoid a token-validity oracle.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/exposures/decision-123:confirm",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "confirmToken": "wrong-token"
+    }
+  },
+  "expected": {
+    "status": 404,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-exposure-not-found"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/exposure-not-found",
+      "title": "Exposure not found",
+      "status": 404,
+      "code": "exposure-not-found",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-exposure-not-found",
+      "detail": "Decision or confirmation capability not found."
+    }
+  }
+}

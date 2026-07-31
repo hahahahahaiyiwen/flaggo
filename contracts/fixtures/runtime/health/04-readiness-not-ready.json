@@ -1,0 +1,48 @@
+{
+  "name": "health-readiness-not-ready",
+  "scenario": 38,
+  "invariant": "Any required check that is not up produces 503 not-ready.",
+  "responseSchema": "runtime-models-v1.schema.json#/$defs/ReadinessResult",
+  "request": {
+    "method": "GET",
+    "path": "/health/ready",
+    "headers": {}
+  },
+  "expected": {
+    "status": 503,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "status": "not-ready",
+      "observedAt": "2026-07-30T18:32:00Z",
+      "checks": [
+        {
+          "name": "contract-registry",
+          "status": "down",
+          "required": true
+        },
+        {
+          "name": "decision-state",
+          "status": "up",
+          "required": true
+        },
+        {
+          "name": "policy",
+          "status": "up",
+          "required": true
+        },
+        {
+          "name": "audit",
+          "status": "up",
+          "required": true
+        },
+        {
+          "name": "evidence",
+          "status": "up",
+          "required": false
+        }
+      ]
+    }
+  }
+}

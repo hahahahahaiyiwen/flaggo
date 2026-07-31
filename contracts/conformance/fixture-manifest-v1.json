@@ -1,0 +1,1149 @@
+{
+  "$schema-note": "Index of Phase 1 golden fixtures. Each case references a fixture file and the required scenario numbers it covers.",
+  "version": "1",
+  "generatedFor": "Phase 1 API contract freeze",
+  "totalCases": 65,
+  "requiredScenarioCount": 43,
+  "coveredScenarios": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43
+  ],
+  "cases": [
+    {
+      "name": "decide-active-fixed-value",
+      "scenarios": [
+        1,
+        34
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/01-active-fixed-value.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Active fixed value returns 200 with decisionMode active-value; confidence may be null for a non-evidence active value; every 200 repeats the accepted identity with integrity verified."
+    },
+    {
+      "name": "decide-active-numeric-strategy",
+      "scenarios": [
+        2
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/02-active-numeric-strategy.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Approved numeric strategy returns 200 with decisionMode strategy, a strategyId, and a required confidence object."
+    },
+    {
+      "name": "decide-resolution-fallback-with-confidence",
+      "scenarios": [
+        3
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/03-resolution-fallback-with-confidence.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Resolution fallback to a broader approved target keeps confidence and returns 200; fallback.resolutionFallbackUsed is true and source stays server."
+    },
+    {
+      "name": "decide-policy-decision-fallback-null-confidence",
+      "scenarios": [
+        4
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/04-policy-decision-fallback-null-confidence.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Governed decision fallback returns 200 with decisionMode fallback, confidence null, decisionFallbackUsed true; exposure union sets confirmationRequired false and omits confirmToken."
+    },
+    {
+      "name": "decide-idempotency-replay-returns-original",
+      "scenarios": [
+        21
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/05-idempotency-replay-returns-original.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Optional decide idempotency replay with the same key and canonical body returns the original decision and an Idempotency-Key-Expires-At header."
+    },
+    {
+      "name": "decide-concurrent-fingerprint-converge",
+      "scenarios": [
+        36
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/06-concurrent-fingerprint-converge.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Concurrent same-fingerprint decide requests converge on one decision; tracing-only correlation changes do not alter the fingerprint, so the original decisionId is returned."
+    },
+    {
+      "name": "decide-idempotency-ttl-expiry-new-request",
+      "scenarios": [
+        37
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/07-idempotency-ttl-expiry-new-request.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "After the 24-hour idempotency TTL expires, reusing the key creates a new decision with a new decisionId and a fresh Idempotency-Key-Expires-At."
+    },
+    {
+      "name": "decide-cohort-claim-provenance",
+      "scenarios": [
+        23
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/08-cohort-claim-provenance.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Client cohort claims are context, not authority; targetProvenance records verified, server-derived, or server-replaced membership."
+    },
+    {
+      "name": "decide-default-response-omits-evidence-view",
+      "scenarios": [
+        24
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/09-default-response-omits-evidence-view.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Default runtime response returns compact confidence and target provenance only; full evidence-view detail is retained in audit, not the wire body."
+    },
+    {
+      "name": "decide-unknown-decision-key",
+      "scenarios": [
+        5
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-01-unknown-decision-key.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.unknownKey:decide",
+      "status": 404,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Unknown decision key returns 404 unknown-decision-key Problem Details; local fallback is forbidden."
+    },
+    {
+      "name": "decide-missing-contract-identity",
+      "scenarios": [
+        6
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-02-missing-contract-identity.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 400,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Missing expected contract identity returns 400 missing-contract-identity; the request body intentionally omits expectedContract so it is not schema-valid, and no local fallback occurs."
+    },
+    {
+      "name": "decide-unknown-definition",
+      "scenarios": [
+        7
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-03-unknown-definition.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 409,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Unknown expected definition for a known key returns 409 contract-not-registered; the runtime never selects an older registered revision and forbids local fallback."
+    },
+    {
+      "name": "decide-conflicting-contract-identity",
+      "scenarios": [
+        8
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-04-conflicting-contract-identity.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 409,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Contract digest conflict returns 409 contract-conflict; a mismatched contractDigest for a known tuple is rejected without local fallback."
+    },
+    {
+      "name": "decide-retired-definition",
+      "scenarios": [
+        9
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-05-retired-definition.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 409,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A retired definition returns 409 retired-definition; lifecycle prevents an approved decision and forbids local fallback."
+    },
+    {
+      "name": "decide-duplicate-inference-input",
+      "scenarios": [
+        10
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-06-duplicate-inference-input.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 400,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Duplicate signal keys within inputs return 400 duplicate-signal-input; deterministic ordering does not make conflicting values valid."
+    },
+    {
+      "name": "decide-invalid-inference-input",
+      "scenarios": [
+        11,
+        35
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-07-invalid-inference-input.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 422,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Invalid declared input type/range returns 422 invalid-inference-input with structured issues; clients branch on code and issue fields, never messages."
+    },
+    {
+      "name": "decide-idempotency-key-body-conflict",
+      "scenarios": [
+        22
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-08-idempotency-key-body-conflict.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 409,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Reusing a decide Idempotency-Key with a different request fingerprint returns 409 idempotency-conflict."
+    },
+    {
+      "name": "decide-idempotency-in-progress",
+      "scenarios": [
+        22
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/decide-09-idempotency-in-progress.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 409,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A matching decide request still executing after the wait budget returns 409 idempotency-in-progress plus Retry-After."
+    },
+    {
+      "name": "decide-authentication-required",
+      "scenarios": [
+        35
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-01-authentication-required.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 401,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Missing or invalid credentials return 401 authentication-required."
+    },
+    {
+      "name": "decide-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-02-decide-insufficient-scope.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 403,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Decide without polari.decisions:decide returns 403 insufficient-scope."
+    },
+    {
+      "name": "confirm-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-03-confirm-insufficient-scope.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 403,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Exposure confirm without polari.exposures:confirm returns 403 insufficient-scope."
+    },
+    {
+      "name": "validate-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-04-validate-insufficient-scope.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:validate",
+      "status": 403,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Bundle validate without polari.definitions:validate returns 403 insufficient-scope."
+    },
+    {
+      "name": "apply-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-05-apply-insufficient-scope.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 403,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Bundle apply without polari.definitions:apply returns 403 insufficient-scope."
+    },
+    {
+      "name": "approve-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-06-approve-insufficient-scope.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+      "status": 403,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Approve without polari.definitions:approve returns 403 insufficient-scope."
+    },
+    {
+      "name": "get-approval-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-08-get-approval-insufficient-scope.json",
+      "method": "GET",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1",
+      "status": 403,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Approval retrieval without polari.definitions:approve returns 403 insufficient-scope."
+    },
+    {
+      "name": "get-approval-snapshot-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-09-get-snapshot-insufficient-scope.json",
+      "method": "GET",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
+      "status": 403,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Approval snapshot retrieval without polari.definitions:approve returns 403 insufficient-scope."
+    },
+    {
+      "name": "reject-insufficient-scope",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-10-reject-insufficient-scope.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:reject",
+      "status": 403,
+      "requestSchema": "management-models-v1.schema.json#/$defs/RejectRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Reject without polari.definitions:approve returns 403 insufficient-scope."
+    },
+    {
+      "name": "decide-scope-mismatch",
+      "scenarios": [
+        25
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-07-scope-mismatch.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 403,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A credential/body application or environment mismatch returns 403 scope-mismatch."
+    },
+    {
+      "name": "decide-rate-limited",
+      "scenarios": [
+        35
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/rate-01-rate-limited.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 429,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Rate limiting returns 429 rate-limited with Retry-After; SDK-local fallback is forbidden for 429."
+    },
+    {
+      "name": "decide-service-unavailable-eligible",
+      "scenarios": [
+        18
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/fallback-01-service-unavailable-eligible.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 503,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "An eligible 503 service-unavailable carries clientFallback.eligible true; after retry exhaustion and explicit SDK configuration the SDK MAY produce a ClientFallbackResult (documented in sdkOutcome)."
+    },
+    {
+      "name": "decide-ineligible-no-client-fallback",
+      "scenarios": [
+        40
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/fallback-02-ineligible-no-client-fallback.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 500,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Ineligible transport/status failures (for example HTTP 500) never produce client fallback; no clientFallback.eligible is present and the SDK must surface the error."
+    },
+    {
+      "name": "decide-required-evidence-unavailable-forbidden",
+      "scenarios": [
+        42,
+        39
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/fallback-03-required-evidence-unavailable-forbidden.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 503,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "required-evidence-unavailable defaults to client fallback forbidden: status 503 with clientFallback.eligible false; readiness classification is unchanged."
+    },
+    {
+      "name": "decide-required-evidence-unavailable-eligible",
+      "scenarios": [
+        42
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/fallback-04-required-evidence-unavailable-eligible.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 503,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Explicit effective policy allow plus SDK configuration makes required-evidence-unavailable eligible: 503 with clientFallback.eligible true; server permission alone still requires SDK availability configuration."
+    },
+    {
+      "name": "decide-evidence-required-readiness-unchanged",
+      "scenarios": [
+        39
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/evidence-01-readiness-unchanged.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 503,
+      "requestSchema": null,
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "An evidence-required decide outcome (503 required-evidence-unavailable) is a per-request outcome and does not mutate global readiness classification, which stays 200 degraded when only optional evidence is impaired."
+    },
+    {
+      "name": "sdk-local-callsite-binding-mismatch",
+      "scenarios": [
+        41
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/local-01-callsite-binding-mismatch.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": null,
+      "requestSchema": null,
+      "responseSchema": null,
+      "sdkLocal": true,
+      "schemaNegative": false,
+      "invariant": "A missing or mismatched local call-site binding is a local contract error that forbids both the remote decide call and availability fallback; no network request is issued."
+    },
+    {
+      "name": "decide-schema-negative-cases",
+      "scenarios": [
+        33
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/schema-01-negative-cases.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/tetris.dropInterval:decide",
+      "status": 0,
+      "requestSchema": null,
+      "responseSchema": null,
+      "sdkLocal": false,
+      "schemaNegative": true,
+      "invariant": "Value/type mismatch, non-finite number (absent from JSON), empty/out-of-range confidence, and invalid exposure union are rejected by the strict runtime schemas."
+    },
+    {
+      "name": "exposure-confirm-success",
+      "scenarios": [
+        12
+      ],
+      "group": "runtime/exposure-confirmation",
+      "file": "fixtures/runtime/exposure-confirmation/01-confirm-success.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Confirmation is accepted only for a server decision that requires it; confirmedAt is server-authoritative and outcomes correlate to exposureId."
+    },
+    {
+      "name": "exposure-confirm-idempotent-replay",
+      "scenarios": [
+        12
+      ],
+      "group": "runtime/exposure-confirmation",
+      "file": "fixtures/runtime/exposure-confirmation/02-confirm-idempotent-replay.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Retrying the same valid confirmation returns the same exposureId."
+    },
+    {
+      "name": "exposure-confirm-invalid-token",
+      "scenarios": [
+        13
+      ],
+      "group": "runtime/exposure-confirmation",
+      "file": "fixtures/runtime/exposure-confirmation/03-confirm-invalid-token.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 404,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A mismatched confirmation capability returns 404 exposure-not-found to avoid a token-validity oracle."
+    },
+    {
+      "name": "exposure-confirm-conflict",
+      "scenarios": [
+        12
+      ],
+      "group": "runtime/exposure-confirmation",
+      "file": "fixtures/runtime/exposure-confirmation/04-confirm-conflict.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 409,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A conflicting exposure confirmation is rejected with 409 exposure-confirmation-conflict."
+    },
+    {
+      "name": "exposure-confirm-invalid-applied-at",
+      "scenarios": [
+        12
+      ],
+      "group": "runtime/exposure-confirmation",
+      "file": "fixtures/runtime/exposure-confirmation/05-confirm-invalid-applied-at.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 422,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Invalid appliedAt or clock skew beyond accepted bounds returns 422 invalid-applied-at."
+    },
+    {
+      "name": "health-liveness",
+      "scenarios": [
+        38
+      ],
+      "group": "runtime/health",
+      "file": "fixtures/runtime/health/01-liveness.json",
+      "method": "GET",
+      "httpPath": "/health/live",
+      "status": 200,
+      "requestSchema": null,
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/LivenessResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Liveness returns 200 when the process can serve the handler and performs no external dependency checks."
+    },
+    {
+      "name": "health-readiness-ready",
+      "scenarios": [
+        38
+      ],
+      "group": "runtime/health",
+      "file": "fixtures/runtime/health/02-readiness-ready.json",
+      "method": "GET",
+      "httpPath": "/health/ready",
+      "status": 200,
+      "requestSchema": null,
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ReadinessResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "200 ready requires every check up."
+    },
+    {
+      "name": "health-readiness-degraded",
+      "scenarios": [
+        38
+      ],
+      "group": "runtime/health",
+      "file": "fixtures/runtime/health/03-readiness-degraded.json",
+      "method": "GET",
+      "httpPath": "/health/ready",
+      "status": 200,
+      "requestSchema": null,
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ReadinessResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Optional evidence loss yields 200 degraded and never changes the check's required flag, because an audited governed fallback is still possible."
+    },
+    {
+      "name": "health-readiness-not-ready",
+      "scenarios": [
+        38
+      ],
+      "group": "runtime/health",
+      "file": "fixtures/runtime/health/04-readiness-not-ready.json",
+      "method": "GET",
+      "httpPath": "/health/ready",
+      "status": 503,
+      "requestSchema": null,
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ReadinessResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Any required check that is not up produces 503 not-ready."
+    },
+    {
+      "name": "validate-bundle-identical",
+      "scenarios": [
+        14
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/01-validate-identical.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:validate",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A valid bundle with identical compatibility returns 200 status valid with computed digests and validatedDefinitions."
+    },
+    {
+      "name": "validate-bundle-invalid",
+      "scenarios": [
+        15
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/02-validate-invalid.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:validate",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A well-formed but invalid bundle returns 200 status invalid with structured issues and no mutation."
+    },
+    {
+      "name": "apply-invalid-bundle",
+      "scenarios": [
+        15,
+        20,
+        35
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/03-apply-invalid-bundle.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 422,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Apply returns 422 invalid-bundle with structured issues because no write can occur; previously registered resources are unchanged."
+    },
+    {
+      "name": "apply-approved-receipt",
+      "scenarios": [
+        17,
+        19
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/04-apply-approved-receipt.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/RegistrationReceipt",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Apply returns 200 with a RegistrationReceipt when immediately approved; acceptedDefinitions is the only source for runtime bindings."
+    },
+    {
+      "name": "apply-idempotency-conflict",
+      "scenarios": [
+        17
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/05-apply-idempotency-conflict.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 409,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Reusing an apply idempotency key with a different canonical body returns 409 bundle-idempotency-conflict."
+    },
+    {
+      "name": "apply-requires-approval",
+      "scenarios": [
+        16,
+        20
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/06-apply-requires-approval.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 202,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/RequiresApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A semantic bundle change returns 202 requires-approval with an approvalRequestId and performs no registry mutation."
+    },
+    {
+      "name": "apply-multi-definition-receipt",
+      "scenarios": [
+        26
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/07-apply-multi-definition-receipt.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/RegistrationReceipt",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A multi-definition registration receipt initializes each exact accepted runtime tuple; clients initialize each call site from its receipt entry."
+    },
+    {
+      "name": "apply-metadata-only",
+      "scenarios": [
+        27
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/08-apply-metadata-only.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/RegistrationReceipt",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A metadata-only bundle update preserves the runtime revision and contractDigest; compatibility is metadata-only and no new revision is minted."
+    },
+    {
+      "name": "apply-expired-resubmission-linked",
+      "scenarios": [
+        30
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/09-apply-expired-resubmission-linked.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 202,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/RequiresApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Resubmitting an expired approval's canonical body with the same deterministic apply key revalidates and creates one linked replacement request via supersedesApprovalRequestId."
+    },
+    {
+      "name": "validate-new-key-omitted-lineage",
+      "scenarios": [
+        32
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/10-validate-new-key-omitted-lineage.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:validate",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Omitting definitionId for a new decision key is required; validation computes the proposed contractDigest and apply later assigns the opaque lineage ID."
+    },
+    {
+      "name": "validate-unknown-lineage",
+      "scenarios": [
+        32
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/11-validate-unknown-lineage.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:validate",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A supplied unknown registry definitionId returns status invalid with unknown-definition-lineage."
+    },
+    {
+      "name": "validate-lineage-mismatch",
+      "scenarios": [
+        32
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/12-validate-lineage-mismatch.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:validate",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A definitionId owned by another key or scope returns status invalid with definition-lineage-mismatch and does not disclose the other owner."
+    },
+    {
+      "name": "validate-stable-issue-codes",
+      "scenarios": [
+        35
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/13-validate-stable-issue-codes.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:validate",
+      "status": 200,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Stable invalid-definition, policy, objective, strategy, and signal issue codes keep fixed meanings and HTTP mappings within v1."
+    },
+    {
+      "name": "approval-get-review",
+      "scenarios": [
+        31
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/01-get-approval-review.json",
+      "method": "GET",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1",
+      "status": 200,
+      "requestSchema": null,
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "The approval resource exposes old/new digests, a canonical semantic diff, the immutable snapshot URL, and (once decided) persisted actor/comment metadata."
+    },
+    {
+      "name": "approval-approve-success",
+      "scenarios": [
+        28
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/02-approve-success.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+      "status": 200,
+      "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Approval verifies expectedBundleDigest, atomically transitions pending -> approved, creates new revisions, and returns the complete stored receipt plus server-derived actor."
+    },
+    {
+      "name": "approval-reject",
+      "scenarios": [
+        29
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/03-reject.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:reject",
+      "status": 200,
+      "requestSchema": "management-models-v1.schema.json#/$defs/RejectRequest",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Reject verifies expectedBundleDigest, atomically transitions pending -> rejected without registry mutation, and persists the server-derived actor and reasonCode."
+    },
+    {
+      "name": "approval-get-expired",
+      "scenarios": [
+        29
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/04-get-expired.json",
+      "method": "GET",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1",
+      "status": 200,
+      "requestSchema": null,
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "GET returns an expired resource as 200 with the expired variant; expiration is terminal."
+    },
+    {
+      "name": "approval-not-found",
+      "scenarios": [
+        29
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/05-not-found.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_MISSING000000000000000000:approve",
+      "status": 404,
+      "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "An unknown approval request returns 404 approval-not-found."
+    },
+    {
+      "name": "approval-bundle-conflict",
+      "scenarios": [
+        29
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/06-bundle-conflict.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+      "status": 409,
+      "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A digest mismatch on approve returns 409 approval-bundle-conflict."
+    },
+    {
+      "name": "approval-approve-idempotent-replay",
+      "scenarios": [
+        29
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/07-idempotent-replay.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+      "status": 200,
+      "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+      "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Repeating the same terminal approve with the same digest is idempotent and returns the stored approved result."
+    },
+    {
+      "name": "approval-terminal-conflict",
+      "scenarios": [
+        29
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/08-terminal-conflict.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:reject",
+      "status": 409,
+      "requestSchema": "management-models-v1.schema.json#/$defs/RejectRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "The opposite terminal action against an already-decided request returns 409 approval-terminal-conflict."
+    },
+    {
+      "name": "approval-approve-expired",
+      "scenarios": [
+        29
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/09-approve-expired.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+      "status": 410,
+      "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Approve against an expired request returns 410 approval-expired."
+    },
+    {
+      "name": "approval-snapshot-digest-headers",
+      "scenarios": [
+        43
+      ],
+      "group": "management/approvals",
+      "file": "fixtures/management/approvals/10-snapshot-digest-headers.json",
+      "method": "GET",
+      "httpPath": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
+      "status": 200,
+      "requestSchema": null,
+      "responseSchema": "decision-definition-bundle-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "The immutable snapshot returns the canonical bundle bytes with a quoted ETag holding sha256:<hex> and an RFC 9530 Content-Digest base64 over the same raw SHA-256 bytes."
+    }
+  ]
+}

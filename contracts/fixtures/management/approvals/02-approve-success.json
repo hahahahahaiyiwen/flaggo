@@ -1,0 +1,110 @@
+{
+  "name": "approval-approve-success",
+  "scenario": 28,
+  "invariant": "Approval verifies expectedBundleDigest, atomically transitions pending -> approved, creates new revisions, and returns the complete stored receipt plus server-derived actor.",
+  "requestSchema": "management-models-v1.schema.json#/$defs/ApproveRequest",
+  "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult",
+  "request": {
+    "method": "POST",
+    "path": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1:approve",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "expectedBundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
+      "comment": "Reviewed signal and policy changes.",
+      "correlationId": "release-2026-07-30"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-approve-success"
+    },
+    "body": {
+      "approvalRequestId": "apr_01JQ91C2D3E4F5G6H7J8K9M0N1",
+      "application": "tetris-demo",
+      "environment": "dev",
+      "bundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
+      "createdAt": "2026-07-30T18:30:00Z",
+      "expiresAt": "2026-08-06T18:30:00Z",
+      "snapshotUrl": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
+      "changes": [
+        {
+          "kind": "semantic-change",
+          "decisionKey": "tetris.dropInterval",
+          "previous": {
+            "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+            "revision": "rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K",
+            "contractDigest": "sha256:313cf567ee322f3f7028a48095cd4da6016d9d99759761d5651ac4ce84f3ff4e"
+          },
+          "proposed": {
+            "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+            "contractDigest": "sha256:18803c77771c37ba63938688085525eba731dc4078fa420e2cd43430cc695ffc"
+          },
+          "semanticDiff": [
+            {
+              "op": "add",
+              "path": "/inference/inputs/2",
+              "after": {
+                "key": "tetris.recoveryFailures"
+              }
+            }
+          ]
+        }
+      ],
+      "status": "approved",
+      "decidedAt": "2026-07-30T19:00:00Z",
+      "receipt": {
+        "application": "tetris-demo",
+        "environment": "dev",
+        "bundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
+        "buildId": "tetris-web-2026-07-25.1",
+        "artifactDigest": "sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
+        "acceptedDefinitions": {
+          "tetris.dropInterval": {
+            "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+            "revision": "rev_01JQ99ZZ11223344556677889A",
+            "contractDigest": "sha256:18803c77771c37ba63938688085525eba731dc4078fa420e2cd43430cc695ffc"
+          }
+        },
+        "compatibility": "new-contract-required",
+        "status": "approved",
+        "changes": [
+          {
+            "kind": "semantic-change",
+            "decisionKey": "tetris.dropInterval",
+            "previous": {
+              "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+              "revision": "rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K",
+              "contractDigest": "sha256:313cf567ee322f3f7028a48095cd4da6016d9d99759761d5651ac4ce84f3ff4e"
+            },
+            "proposed": {
+              "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+              "contractDigest": "sha256:18803c77771c37ba63938688085525eba731dc4078fa420e2cd43430cc695ffc"
+            },
+            "semanticDiff": [
+              {
+                "op": "add",
+                "path": "/inference/inputs/2",
+                "after": {
+                  "key": "tetris.recoveryFailures"
+                }
+              }
+            ]
+          }
+        ],
+        "issues": []
+      },
+      "approval": {
+        "actor": {
+          "subject": "user:operator-1",
+          "displayName": "Release Operator"
+        },
+        "comment": "Reviewed signal and policy changes."
+      }
+    }
+  }
+}

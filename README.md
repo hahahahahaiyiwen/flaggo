@@ -2,6 +2,8 @@
 
 Flaggo is an exploration of **AI-native runtime decisioning**: a governed way for running software to ask for contextual decisions when static code, feature flags, and manual tuning are too rigid.
 
+This repository is the shared documentation and executable-contract store. Runtime services, SDKs, applications, and other implementation components live in separate local and remote repositories so each component can evolve and release independently against the contracts published here.
+
 The core question is:
 
 > Given a decision definition, decision evidence, and governed state when available, what should happen now?
@@ -75,10 +77,11 @@ game emits telemetry
 - [Decision Intelligence](docs/DECISION_INTELLIGENCE.md)
 - [MVP Implementation Guide](docs/IMPLEMENTATION_GUIDE.md)
 - [Component Design Index](docs/design/README.md)
+- [Phase 1 Executable Contracts](contracts/README.md)
 
 ## Repository layout
 
 ```text
 docs/          Product, concept, and component design documents
-repos/         Related implementation repositories and experiments
+contracts/     OpenAPI, JSON Schema, fixtures, conformance, and mock server
 ```

@@ -35,4 +35,4 @@ Each component under [`DESIGN.md` / System components](../DESIGN.md#system-compo
 
 [shared-contracts](shared-contracts/README.md) contains provider-neutral interfaces shared by the nine components. It is a cross-cutting contract package, not an additional system component.
 
-The [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md) maps those domain contracts to the runtime, exposure, management, and health wire boundaries. Its product decisions are accepted; the wire contract remains a draft until validated OpenAPI, JSON Schema, fixtures, and conformance tests encode them.
+The [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md) maps those domain contracts to the runtime, exposure, management, and health wire boundaries. Its executable projection lives under [`contracts/`](../../contracts/README.md). The wire contract remains unfrozen until those OpenAPI, JSON Schema, fixture, conformance, and mock artifacts pass review and validation.

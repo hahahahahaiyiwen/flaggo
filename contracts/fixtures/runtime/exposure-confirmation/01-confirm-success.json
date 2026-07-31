@@ -1,0 +1,33 @@
+{
+  "name": "exposure-confirm-success",
+  "scenario": 12,
+  "invariant": "Confirmation is accepted only for a server decision that requires it; confirmedAt is server-authoritative and outcomes correlate to exposureId.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+  "responseSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationResult",
+  "request": {
+    "method": "POST",
+    "path": "/v1/exposures/decision-123:confirm",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "confirmToken": "confirm-abc",
+      "appliedAt": "2026-07-29T19:20:00Z",
+      "correlationId": "game-loop-123"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-confirm-success"
+    },
+    "body": {
+      "exposureId": "exposure-456",
+      "decisionId": "decision-123",
+      "status": "confirmed",
+      "confirmedAt": "2026-07-29T19:20:01Z"
+    }
+  }
+}

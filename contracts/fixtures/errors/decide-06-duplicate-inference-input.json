@@ -1,0 +1,72 @@
+{
+  "name": "decide-duplicate-inference-input",
+  "scenario": 10,
+  "invariant": "Duplicate signal keys within inputs return 400 duplicate-signal-input; deterministic ordering does not make conflicting values valid.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/decisions/tetris.dropInterval:decide",
+    "headers": {
+      "Authorization": "Bearer test-access-token",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "expectedContract": {
+        "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+        "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
+        "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
+        "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+        "buildId": "tetris-web-2026-07-25.1",
+        "deploymentId": "tetris-web-dev-a"
+      },
+      "runtimeTarget": {
+        "type": "session",
+        "id": "game-456"
+      },
+      "runtimeContext": {
+        "sessionId": "game-456",
+        "userId": "user-123",
+        "cohort": "new_players",
+        "deviceType": "mobile"
+      },
+      "inputs": [
+        {
+          "signal": {
+            "key": "tetris.boardPressure"
+          },
+          "value": 0.82
+        },
+        {
+          "signal": {
+            "key": "tetris.boardPressure"
+          },
+          "value": 0.4
+        }
+      ],
+      "client": {
+        "appId": "tetris-demo",
+        "environment": "dev",
+        "sdk": "typescript",
+        "sdkVersion": "0.1.0"
+      },
+      "correlationId": "game-loop-123"
+    }
+  },
+  "expected": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-duplicate-signal-input"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/duplicate-signal-input",
+      "title": "Duplicate signal input",
+      "status": 400,
+      "code": "duplicate-signal-input",
+      "instance": "/v1/decisions/tetris.dropInterval:decide",
+      "correlationId": "srv-duplicate-signal-input",
+      "detail": "The inputs array contains duplicate signal keys."
+    }
+  }
+}
