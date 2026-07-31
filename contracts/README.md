@@ -2,9 +2,8 @@
 
 This directory is the executable projection of the accepted Phase 1 design in
 [`docs/design/API_CONTRACT_PROPOSAL.md`](../docs/design/API_CONTRACT_PROPOSAL.md).
-The OpenAPI documents and JSON Schemas become authoritative for wire behavior
-only after all validation checks pass and the local contract baseline is
-explicitly accepted.
+The OpenAPI documents and JSON Schemas are the accepted Phase 1 authority for
+wire behavior. Their conformance gate must remain green for every change.
 
 ## Layout
 
@@ -45,6 +44,6 @@ selection and discovery endpoints.
 ## Change policy
 
 Contract changes must update the affected schema, OpenAPI operation, fixtures,
-manifest, proposal compatibility notes, and conformance checks together. Phase
-1 is not frozen merely because these files exist; it freezes only after the
-artifact set is reviewed, validated, and explicitly accepted.
+manifest, proposal compatibility notes, and conformance checks together. The
+accepted Phase 1 baseline changes only through an explicit compatible revision
+or a documented breaking-version decision.

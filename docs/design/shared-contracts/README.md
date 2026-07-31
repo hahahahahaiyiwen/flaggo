@@ -6,7 +6,9 @@ This document freezes the shared MVP contract shapes used across the Flaggo Type
 
 The goal is not to finalize every future field. The goal is to define a small, stable set of provider-neutral interfaces that can serve the Tetris MVP while leaving clear extension seams.
 
-The mapping of these domain contracts to HTTP is currently a draft in the [Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md). Its Phase 1 product decisions are accepted; wire-specific optionality and status behavior are not frozen until executable artifacts validate.
+The mapping of these domain contracts to HTTP is the accepted baseline in the
+[Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md) and its executable
+artifacts under `contracts/`.
 
 These contracts are open-source native:
 
@@ -1128,7 +1130,7 @@ The decision definition references those signal identities without redefining th
 }
 ```
 
-## MVP domain freeze and provisional wire contracts
+## MVP domain and wire contract freeze
 
 For the first implementation, treat these provider-neutral domain contracts as frozen:
 
@@ -1145,4 +1147,8 @@ For the first implementation, treat these provider-neutral domain contracts as f
 - `ContractRuntimeStatus`,
 - `ContractCompatibility`.
 
-The HTTP projections of `DecideRequest`, `ServerDecisionResult`, exposure confirmation, validation/apply/approval results, and `RegistrationReceipt` remain provisional until the accepted [Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md) decisions are encoded in OpenAPI, JSON Schema, fixtures, and passing conformance tests. After that freeze, future wire changes should be additive unless an implementation proves the contract unusable.
+The HTTP projections of `DecideRequest`, `ServerDecisionResult`, exposure
+confirmation, validation/apply/approval results, and `RegistrationReceipt` are
+frozen by the accepted [Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md)
+and executable conformance artifacts. Future wire changes should be additive
+unless an explicit breaking-version decision is accepted.

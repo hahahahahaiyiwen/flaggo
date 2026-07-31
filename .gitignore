@@ -1,5 +1,7 @@
 # Workspace orchestration and local automation
-.github/
+.github/*
+!.github/workflows/
+!.github/workflows/**
 docs/.archive/
 repos
 
@@ -13,6 +15,9 @@ repos
 *.tmp
 *.temp
 *.cache
+__pycache__/
+*.py[cod]
+.venv/
 
 # OS/editor files
 .DS_Store

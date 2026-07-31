@@ -49,7 +49,7 @@ request(decision key, runtime context, signal inputs)
 
 ## Initial API shape
 
-Draft Phase 1 shape:
+Accepted Phase 1 shape:
 
 ```http
 POST /v1/decisions/{decisionKey}:decide

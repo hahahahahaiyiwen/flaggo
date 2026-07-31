@@ -1,0 +1,23 @@
+name: Contracts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: contracts/conformance/requirements.txt
+      - run: python -m pip install -r contracts/conformance/requirements.txt
+      - run: python tools/dev.py check

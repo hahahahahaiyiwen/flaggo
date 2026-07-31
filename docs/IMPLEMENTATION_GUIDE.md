@@ -135,9 +135,12 @@ The implementation guide does not redefine shared DTOs. These documents and gene
 | Strategy execution | [Reasoning Engine Design](design/reasoning-engine/README.md) |
 | Component-owned ports | The corresponding [component design folder](design/README.md) |
 
-The API-contract phase should produce version-controlled artifacts before client or service implementation branches:
+The API-contract phase produced version-controlled artifacts before client or
+service implementation branches:
 
-The [API Contract Proposal](design/API_CONTRACT_PROPOSAL.md) records the accepted Phase 1 wire decisions. Those decisions must now be encoded in executable OpenAPI, JSON Schema, fixtures, and conformance tests before implementation branches diverge.
+The [API Contract Proposal](design/API_CONTRACT_PROPOSAL.md) and the accepted
+OpenAPI, JSON Schema, fixtures, conformance tests, and mock server under
+`contracts/` are the shared implementation baseline.
 
 ```text
 contracts/
@@ -292,6 +295,11 @@ The MVP should proceed API-contract first. The API artifacts are the blocking de
 
 Goal: make Flaggo easy to run and understand as an open-source project.
 
+Repository decision: Flaggo's open-source core uses a modular monorepo. Logical
+components retain explicit module-owned interfaces and may be separate
+deployables without becoming separate source repositories. See
+[Repository Architecture](REPOSITORY_ARCHITECTURE.md).
+
 Deliverables:
 
 - root README with product framing and quickstart,
@@ -343,7 +351,9 @@ Validation:
 - full evidence detail remains in audit rather than runtime results,
 - direct REST clients can implement the flow without the TypeScript SDK.
 
-Exit gate: Phase 1 is not frozen and Phase 2 branches do not begin until the complete artifact tree exists, all listed validations pass, and the artifacts merge to the shared baseline.
+Exit gate: **accepted on 2026-07-31.** The complete artifact tree exists, the
+listed validations pass, and the executable contracts are the shared baseline
+for Phase 2 implementation.
 
 ### Phase 2: Parallel client and service implementation
 

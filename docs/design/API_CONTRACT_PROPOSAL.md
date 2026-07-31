@@ -1,8 +1,11 @@
 # Phase 1 API Contract Proposal
 
-Status: **Decision log accepted; executable contract candidate generated; Phase 1 freeze pending final review**
+Status: **Accepted Phase 1 executable contract baseline**
 
-This proposal remains the prose design input to Phase 1. The executable candidate under [`contracts/`](../../contracts/README.md) now encodes this baseline and passes its conformance gate. Phase 1 remains unfrozen until final review explicitly accepts the local documentation and contract baseline.
+This proposal is the accepted prose design source for Phase 1. The executable
+baseline under [`contracts/`](../../contracts/README.md) encodes it and passes
+the conformance gate. Later behavior changes require an explicit contract
+revision with aligned schemas, OpenAPI, fixtures, and compatibility notes.
 
 It does not introduce a second domain model. Canonical domain types remain owned by [Shared Contracts](shared-contracts/README.md); this document defines how those types cross HTTP and build/release boundaries.
 
@@ -781,7 +784,8 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 
 ## Contract decision log
 
-All Phase 1 product decisions A1-A12 are accepted. The remaining work is to encode them in OpenAPI, JSON Schema, fixtures, and conformance tests.
+All Phase 1 product decisions A1-A12 and their executable OpenAPI, JSON Schema,
+fixtures, conformance tests, and mock projection are accepted as the baseline.
 
 ### A1. Runtime identity minimum
 
@@ -947,9 +951,9 @@ All Phase 1 product decisions A1-A12 are accepted. The remaining work is to enco
 
 **Consequence:** SDKs can safely retry transport failures without conflating normal repeated game-loop decisions, but the service needs bounded idempotency storage and conflict behavior.
 
-## Freeze exit criteria
+## Accepted freeze criteria
 
-The proposal can move from draft to frozen only when:
+The accepted baseline satisfies:
 
 - A1-A12 are represented consistently in the executable artifacts.
 - Runtime and management OpenAPI documents validate.

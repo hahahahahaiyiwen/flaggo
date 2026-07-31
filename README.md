@@ -2,7 +2,10 @@
 
 Flaggo is an exploration of **AI-native runtime decisioning**: a governed way for running software to ask for contextual decisions when static code, feature flags, and manual tuning are too rigid.
 
-This repository is the shared documentation and executable-contract store. Runtime services, SDKs, applications, and other implementation components live in separate local and remote repositories so each component can evolve and release independently against the contracts published here.
+This repository is the modular monorepo for Flaggo's open-source core. It owns
+the executable contracts, SDK packages, deployable applications, domain
+modules, documentation, tests, and local development tooling. External showcase
+applications may remain in separate repositories.
 
 The core question is:
 
@@ -78,10 +81,43 @@ game emits telemetry
 - [MVP Implementation Guide](docs/IMPLEMENTATION_GUIDE.md)
 - [Component Design Index](docs/design/README.md)
 - [Phase 1 Executable Contracts](contracts/README.md)
+- [Repository Architecture](docs/REPOSITORY_ARCHITECTURE.md)
+- [Contributing](CONTRIBUTING.md)
+
+## Quickstart
+
+Install the current contract-tooling dependency and run the repository gate:
+
+```powershell
+python -m pip install -r contracts\conformance\requirements.txt
+python tools\dev.py check
+```
+
+Start the fixture-backed local API:
+
+```powershell
+python tools\dev.py serve
+```
+
+Or use Docker:
+
+```powershell
+docker compose up --build mock-api
+```
+
+List available fixtures at `http://127.0.0.1:8080/_fixtures`. No cloud account
+is required.
 
 ## Repository layout
 
 ```text
-docs/          Product, concept, and component design documents
+apps/          Independently runnable services and user interfaces
+modules/       Business capabilities and module-owned ports
+packages/      Reusable and publishable SDK/contract packages
 contracts/     OpenAPI, JSON Schema, fixtures, conformance, and mock server
+tests/         Cross-module and end-to-end verification
+examples/      Small integrations and external showcase links
+deploy/        Container and deployment assets
+tools/         Repository development commands
+docs/          Product, architecture, and component design documents
 ```
