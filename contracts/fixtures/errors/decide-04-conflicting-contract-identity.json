@@ -1,6 +1,7 @@
 {
   "name": "decide-conflicting-contract-identity",
   "scenario": 8,
+  "intentionalIdentityConflict": true,
   "invariant": "Contract digest conflict returns 409 contract-conflict; a mismatched contractDigest for a known tuple is rejected without local fallback.",
   "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
   "responseSchema": "problem-details-v1.schema.json",

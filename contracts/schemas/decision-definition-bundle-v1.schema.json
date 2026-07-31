@@ -141,7 +141,7 @@
         "type": { "const": "number" },
         "min": { "type": "number" },
         "max": { "type": "number" },
-        "step": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 },
         "default": { "type": "number" }
       }
     },
@@ -160,7 +160,12 @@
       "additionalProperties": false,
       "properties": {
         "type": { "const": "string" },
-        "allowedValues": { "type": "array", "items": { "type": "string" } },
+        "allowedValues": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
         "default": { "type": "string" }
       }
     },
@@ -170,6 +175,33 @@
       "additionalProperties": false,
       "properties": {
         "value": { "$ref": "#/$defs/DecisionValue" },
+        "reason": { "type": "string" }
+      }
+    },
+    "BooleanFallbackContract": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    },
+    "NumberFallbackContract": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number" },
+        "reason": { "type": "string" }
+      }
+    },
+    "StringFallbackContract": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "string" },
         "reason": { "type": "string" }
       }
     },
@@ -372,25 +404,73 @@
         }
       ]
     },
-    "DecisionDefinitionBundleEntry": {
+    "DecisionDefinitionBundleEntryCommon": {
       "type": "object",
-      "required": ["key", "valueType", "actionSpace", "fallback", "policy"],
-      "additionalProperties": false,
+      "required": ["key", "policy"],
       "properties": {
         "definitionId": { "type": "string" },
         "key": { "type": "string", "minLength": 1 },
         "owner": { "type": "string" },
-        "valueType": { "$ref": "#/$defs/ValueType" },
-        "actionSpace": { "$ref": "#/$defs/ActionSpace" },
         "runtimeContextSchema": { "$ref": "#/$defs/RuntimeContextSchema" },
         "targetHierarchy": { "type": "array", "items": { "type": "string" } },
         "signals": { "$ref": "#/$defs/DecisionSignalReferences" },
         "inference": { "$ref": "#/$defs/InferenceDeclaration" },
         "intent": { "$ref": "#/$defs/DecisionIntent" },
-        "fallback": { "$ref": "#/$defs/FallbackContract" },
         "policy": { "$ref": "#/$defs/Policy" },
         "onlineStrategy": { "$ref": "#/$defs/OnlineStrategyDeclaration" }
       }
+    },
+    "BooleanDecisionDefinitionBundleEntry": {
+      "allOf": [
+        { "$ref": "#/$defs/DecisionDefinitionBundleEntryCommon" },
+        {
+          "type": "object",
+          "required": ["valueType", "actionSpace", "fallback"],
+          "properties": {
+            "valueType": { "const": "boolean" },
+            "actionSpace": { "$ref": "#/$defs/BooleanActionSpace" },
+            "fallback": { "$ref": "#/$defs/BooleanFallbackContract" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "NumberDecisionDefinitionBundleEntry": {
+      "allOf": [
+        { "$ref": "#/$defs/DecisionDefinitionBundleEntryCommon" },
+        {
+          "type": "object",
+          "required": ["valueType", "actionSpace", "fallback"],
+          "properties": {
+            "valueType": { "const": "number" },
+            "actionSpace": { "$ref": "#/$defs/NumberActionSpace" },
+            "fallback": { "$ref": "#/$defs/NumberFallbackContract" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "StringDecisionDefinitionBundleEntry": {
+      "allOf": [
+        { "$ref": "#/$defs/DecisionDefinitionBundleEntryCommon" },
+        {
+          "type": "object",
+          "required": ["valueType", "actionSpace", "fallback"],
+          "properties": {
+            "valueType": { "const": "string" },
+            "actionSpace": { "$ref": "#/$defs/StringActionSpace" },
+            "fallback": { "$ref": "#/$defs/StringFallbackContract" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "DecisionDefinitionBundleEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/BooleanDecisionDefinitionBundleEntry" },
+        { "$ref": "#/$defs/NumberDecisionDefinitionBundleEntry" },
+        { "$ref": "#/$defs/StringDecisionDefinitionBundleEntry" }
+      ]
     }
   }
 }

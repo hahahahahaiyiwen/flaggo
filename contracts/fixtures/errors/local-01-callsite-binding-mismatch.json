@@ -1,6 +1,7 @@
 {
   "name": "sdk-local-callsite-binding-mismatch",
   "scenario": 41,
+  "intentionalIdentityConflict": true,
   "invariant": "A missing or mismatched local call-site binding is a local contract error that forbids both the remote decide call and availability fallback; no network request is issued.",
   "sdkLocal": true,
   "request": {

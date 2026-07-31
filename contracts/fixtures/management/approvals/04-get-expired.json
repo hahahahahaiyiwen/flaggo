@@ -21,7 +21,7 @@
       "approvalRequestId": "apr_01JQ91C2D3E4F5G6H7J8K9M0N1",
       "application": "tetris-demo",
       "environment": "dev",
-      "bundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
+      "bundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
       "createdAt": "2026-07-30T18:30:00Z",
       "expiresAt": "2026-08-06T18:30:00Z",
       "snapshotUrl": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",

@@ -200,7 +200,7 @@
       },
       "IdempotencyKeyExpiresAt": {
         "description": "RFC 3339 UTC time when a retained idempotent result expires (24 hours from completion).",
-        "schema": { "type": "string", "format": "date-time" }
+        "schema": { "type": "string", "format": "date-time", "pattern": "Z$" }
       },
       "RetryAfter": {
         "description": "RFC 9110 Retry-After delay in seconds.",

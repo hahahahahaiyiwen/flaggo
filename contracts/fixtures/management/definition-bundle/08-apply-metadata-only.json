@@ -272,14 +272,14 @@
     "body": {
       "application": "tetris-demo",
       "environment": "dev",
-      "bundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
+      "bundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
       "buildId": "tetris-web-2026-07-25.1",
       "artifactDigest": "sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899",
       "acceptedDefinitions": {
         "tetris.dropInterval": {
           "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
           "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-          "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8"
+          "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9"
         }
       },
       "compatibility": "metadata-only",

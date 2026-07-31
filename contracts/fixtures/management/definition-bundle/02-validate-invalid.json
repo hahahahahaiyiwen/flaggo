@@ -270,7 +270,7 @@
     },
     "body": {
       "status": "invalid",
-      "bundleDigest": "sha256:7e7727b445220d820b88fd909ec1be361b75d1ee028769bfc81e56b166406e70",
+      "bundleDigest": "sha256:9588c9fdf9a5dbeb18ae1ae49ac8ce0c220795d9a0e81c563c48979b97711157",
       "issues": [
         {
           "code": "unknown-signal",

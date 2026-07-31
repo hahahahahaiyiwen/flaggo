@@ -1,0 +1,78 @@
+{
+  "name": "decide-targetless-global-value",
+  "scenario": 1,
+  "invariant": "A global or targetless definition may omit runtimeTarget and controlTarget while returning an audited active value.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+  "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+  "request": {
+    "method": "POST",
+    "path": "/v1/decisions/application.maintenanceMode:decide",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "expectedContract": {
+        "definitionId": "def_global_maintenance",
+        "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "revision": "rev_global_maintenance_1"
+      },
+      "runtimeContext": {},
+      "client": {
+        "appId": "operations-console",
+        "environment": "prod",
+        "sdk": "typescript",
+        "sdkVersion": "0.1.0"
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-targetless-global"
+    },
+    "body": {
+      "decisionKey": "application.maintenanceMode",
+      "definition": {
+        "appId": "operations-console",
+        "environment": "prod",
+        "key": "application.maintenanceMode",
+        "definitionId": "def_global_maintenance",
+        "revision": "rev_global_maintenance_1"
+      },
+      "decisionId": "decision-global-1",
+      "value": false,
+      "valueType": "boolean",
+      "decisionMode": "active-value",
+      "confidence": null,
+      "targetProvenance": [],
+      "resolutionChain": [
+        "global"
+      ],
+      "fallback": {
+        "source": "server",
+        "resolutionFallbackUsed": false,
+        "decisionFallbackUsed": false,
+        "reason": null
+      },
+      "policy": {
+        "result": "approved",
+        "reasons": [],
+        "appliedConstraints": []
+      },
+      "definitionStatus": {
+        "definitionId": "def_global_maintenance",
+        "revision": "rev_global_maintenance_1",
+        "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "integrity": "verified",
+        "compatibility": "identical"
+      },
+      "exposure": {
+        "confirmationRequired": false
+      },
+      "reason": "Returned the approved global value.",
+      "auditId": "audit-global-1"
+    }
+  }
+}

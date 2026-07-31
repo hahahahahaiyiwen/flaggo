@@ -128,6 +128,106 @@
         "confirmToken": "confirm-abc",
         "appliedAt": "not-a-date"
       }
+    },
+    {
+      "why": "runtime timestamp uses an offset instead of the required UTC Z suffix",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/Rfc3339",
+      "body": "2026-07-30T14:30:00-04:00"
+    },
+    {
+      "why": "management timestamp uses an offset instead of the required UTC Z suffix",
+      "schemaRef": "management-models-v1.schema.json#/$defs/Rfc3339",
+      "body": "2026-07-30T14:30:00-04:00"
+    },
+    {
+      "why": "number definition cannot use string action space and boolean fallback",
+      "schemaRef": "decision-definition-bundle-v1.schema.json#/$defs/DecisionDefinitionBundleEntry",
+      "body": {
+        "key": "invalid.mixedValueContract",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "string",
+          "allowedValues": [
+            "a",
+            "b"
+          ],
+          "default": "a"
+        },
+        "fallback": {
+          "value": false
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "why": "number action-space step must be positive",
+      "schemaRef": "decision-definition-bundle-v1.schema.json#/$defs/DecisionDefinitionBundleEntry",
+      "body": {
+        "key": "invalid.zeroStep",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 0,
+          "default": 5
+        },
+        "fallback": {
+          "value": 5
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "why": "valid validation result requires digest, compatibility, and definitions",
+      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "body": {
+        "status": "valid",
+        "issues": []
+      }
+    },
+    {
+      "why": "invalid validation result requires a non-empty error issue",
+      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "body": {
+        "status": "invalid",
+        "issues": [
+          {
+            "code": "informational-warning",
+            "severity": "warning",
+            "path": "/definitions/0",
+            "message": "Warning only."
+          }
+        ]
+      }
+    },
+    {
+      "why": "valid validation result cannot contain an error issue",
+      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "body": {
+        "status": "valid",
+        "bundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "compatibility": "identical",
+        "validatedDefinitions": {
+          "example.key": {
+            "contractDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "issues": [
+          {
+            "code": "contradictory-error",
+            "severity": "error",
+            "path": "/definitions/0",
+            "message": "A valid result cannot contain this error."
+          }
+        ]
+      }
     }
   ],
   "rejectedFixtureMutations": [

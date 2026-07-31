@@ -17,7 +17,7 @@ contracts/
   mock/          Fixture-backed development server
 ```
 
-The fixture manifest indexes 68 cases covering all 43 required scenarios from
+The fixture manifest indexes 69 cases covering all 43 required scenarios from
 the proposal. SDK and service implementations must use the same artifacts
 rather than maintain independent wire DTOs.
 
@@ -29,7 +29,8 @@ python contracts\conformance\validate.py
 ```
 
 Validation checks all schemas, OpenAPI structure and local references, fixture
-manifest coverage, positive request/response bodies, and negative schema cases.
+manifest coverage, positive request/response bodies, negative schema cases,
+semantic value contracts, and normalized per-definition and bundle digests.
 It does not start network services or access remote schema registries.
 
 ## Run the mock

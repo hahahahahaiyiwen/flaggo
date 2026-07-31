@@ -1,7 +1,11 @@
 {
   "name": "apply-invalid-bundle",
   "scenario": 15,
-  "scenarios": [15, 20, 35],
+  "scenarios": [
+    15,
+    20,
+    35
+  ],
   "invariant": "Apply returns 422 invalid-bundle with structured issues because no write can occur; previously registered resources are unchanged.",
   "statefulScenario": {
     "kind": "invalid-registration-blocked-startup"

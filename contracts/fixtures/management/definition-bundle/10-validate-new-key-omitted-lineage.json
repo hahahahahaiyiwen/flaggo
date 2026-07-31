@@ -269,11 +269,11 @@
     },
     "body": {
       "status": "valid",
-      "bundleDigest": "sha256:be08c09476ce5e70e39f254a3780d72cba9a9b618eb71ebabcdc87010e5fbe07",
+      "bundleDigest": "sha256:39bdb0da9522075814510d523c366cd5500057da4cc78ba9b289db11cebfd968",
       "compatibility": "new-contract-required",
       "validatedDefinitions": {
         "tetris.dropInterval": {
-          "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8"
+          "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9"
         }
       },
       "issues": []

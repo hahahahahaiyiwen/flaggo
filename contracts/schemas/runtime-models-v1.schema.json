@@ -11,7 +11,9 @@
     },
     "Rfc3339": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "RFC 3339 UTC timestamp using the Z suffix."
     },
     "RuntimeContextValue": {
       "type": ["boolean", "number", "string", "null"]
@@ -228,7 +230,6 @@
             "decisionId",
             "decisionMode",
             "confidence",
-            "runtimeTarget",
             "targetProvenance",
             "resolutionChain",
             "fallback",
@@ -309,7 +310,7 @@
                   "properties": { "decisionFallbackUsed": { "const": true } }
                 },
                 "policy": {
-                  "properties": { "result": { "const": "fallback" } }
+                  "properties": { "result": { "enum": ["blocked", "fallback"] } }
                 }
               },
               "not": { "required": ["strategyId"] }

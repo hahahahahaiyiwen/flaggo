@@ -14,7 +14,7 @@
     "body": {
       "expectedContract": {
         "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-        "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
+        "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
         "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
         "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
         "buildId": "tetris-web-2026-07-25.1",
@@ -71,7 +71,7 @@
     "decisionKey": "tetris.dropInterval",
     "expectedContract": {
       "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-      "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
+      "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
       "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
     },
     "decisionMode": "fallback",

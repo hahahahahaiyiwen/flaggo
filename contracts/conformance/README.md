@@ -10,10 +10,17 @@
 - requires an insufficient-scope case for every secured operation,
 - validates positive fixture bodies against their declared schemas,
 - confirms every schema-negative sample and result-mode mutation is rejected,
-- rejects non-finite JSON numbers and malformed RFC 3339 values,
+- rejects duplicate object keys, non-finite JSON numbers, and malformed RFC
+  3339 values,
+- requires every timestamp to use the RFC 3339 UTC `Z` form,
 - correlates validation issues with the offending request content,
 - verifies RFC 8785 canonical bundle and snapshot bytes against numeric and
   Unicode vectors, including `ETag` and `Content-Digest` values,
+- executes semantic digest vectors for combined/explicit equivalence, generated
+  fields, metadata exclusion, set ordering, per-definition hashes, and bundle
+  sorting,
+- executes number/string action-space bounds, default, fallback, and step
+  invariants,
 - executes concurrent startup convergence plus typed invalid-bundle and
   approval-pending SDK startup rejection through an in-memory registration
   harness.

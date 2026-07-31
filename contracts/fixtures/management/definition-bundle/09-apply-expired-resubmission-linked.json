@@ -274,7 +274,7 @@
       "approvalRequestId": "apr_01JQ95XR7Y8Z9A0B1C2D3E4F5G",
       "application": "tetris-demo",
       "environment": "dev",
-      "bundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
+      "bundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
       "compatibility": "new-contract-required",
       "expiresAt": "2026-08-14T18:30:00Z",
       "supersedesApprovalRequestId": "apr_01JQ91C2D3E4F5G6H7J8K9M0N1",

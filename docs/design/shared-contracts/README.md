@@ -94,9 +94,12 @@ type StringActionSpace = {
 Rules:
 
 - `default` is the source of the static fallback unless a scoped fallback overrides it.
+- `valueType`, action-space type, default, and fallback value form one discriminated contract and must use the same primitive type.
+- Number `min` must not exceed `max`; default and fallback values must remain inside that inclusive range.
+- Number `step`, when present, must be positive, and the default and fallback must be reachable from `min` by an integral number of steps.
 - Number values must be within `min` and `max`.
 - Number values must align to `step` when `step` is present.
-- String values should use `allowedValues` when the application expects a known set.
+- String values should use a non-empty, duplicate-free `allowedValues` set when the application expects known values; default and fallback values must belong to that set.
 
 ## Decision contract
 
@@ -319,7 +322,7 @@ Rules:
 
 - Policy reason codes should be stable strings.
 - Runtime should return fallback when policy result is `fallback`.
-- Runtime should not return a candidate value as approved when policy result is `blocked`.
+- Runtime should not return a candidate value as approved when policy result is `blocked`; a governed fallback response may preserve `blocked` as the policy result.
 - Omitted client-fallback permission means `forbid`. A `required-evidence-unavailable` error may advertise client fallback only when effective policy explicitly returns `allow`.
 
 ## Decision strategy
@@ -582,9 +585,9 @@ Normalization:
 2. Convert each bound signal input into its immutable `SignalRef`.
 3. Convert each typed target binding into a runtime-context schema entry. The original object property name is the canonical context field name; for example, `sessionId: flaggo.target.session(value)` becomes `sessionId: { type: "string", target: "session" }`.
 4. Normalize SDK-specific policy shorthand, such as client-library [`PolicyAuthoring`](../client-library/README.md#policy-authoring-normalization), into canonical `InlinePolicy` constraints.
-5. Materialize generated fields such as `signals.allowed` from role references.
+5. Materialize generated fields such as `signals.allowed` exclusively from semantic role references. A supplied generated allowlist is never an identity input; stale or extra entries are discarded during extraction.
 6. Reduce every signal role/reference to immutable `SignalRef { key }`. `schemaDigest` belongs to signal-declaration conflict detection and is excluded from decision-definition identity.
-7. Omit undefined fields and normalize equivalent optional/default forms according to the contract version.
+7. Omit undefined fields and normalize equivalent optional/default forms according to the contract version. In v1, omitted `clientFallback.requiredEvidenceUnavailable` and explicit `"forbid"` are identical.
 8. Sort JSON object keys recursively.
 9. Reject duplicate signal keys, duplicate context fields, duplicate policy constraint kinds, or conflicting role/schema declarations.
 10. Serialize with RFC 8785 JSON Canonicalization Scheme.
@@ -607,7 +610,9 @@ Order-insensitive collections are duplicate-free sets and are sorted by immutabl
 - signal declarations in a bundle,
 - `InlinePolicy.constraints`, sorted by constraint kind.
 
-For `bundleDigest`, decision definitions are sorted by stable decision key after each definition has been normalized. Duplicate decision keys with different definition digests are a `contract-conflict`; identical duplicates are deduplicated.
+For `bundleDigest`, decision definitions are sorted by stable decision key after each definition has been normalized. Duplicate decision keys with different definition digests are a `contract-conflict`; byte-identical duplicates are deduplicated. Duplicates with equal semantic digests but conflicting lineage or owner metadata are rejected rather than selecting the first entry.
+
+Definition metadata such as `definitionId` and `owner`, plus generated `revision`, `contractDigest`, and `schemaDigest` fields, is excluded from `contractDigest`. Bundle-level build/source metadata remains part of `bundleDigest` so the immutable bundle artifact stays distinguishable, while generated signal digests, set ordering, and definition ordering cannot create accidental differences.
 
 Runtime wire `inputs` are also key-sorted for deterministic transport and audit comparison. Duplicate signal keys are invalid; clients and servers must reject them rather than applying first-wins or last-wins behavior.
 

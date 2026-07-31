@@ -1,0 +1,735 @@
+{
+  "description": "Executable normalization vectors for definition and bundle identity.",
+  "definitionCases": [
+    {
+      "name": "combined-and-explicit-authoring-equivalence",
+      "expectedContractDigest": "sha256:5be71f0c4b612f9915a46497385bfb2bac40d7f503f0571480c8c4fd476719bd",
+      "variants": [
+        {
+          "label": "combined-generated-authoring",
+          "definition": {
+            "definitionId": "def_generated",
+            "owner": "checkout-team",
+            "key": "checkout.routing",
+            "valueType": "string",
+            "actionSpace": {
+              "type": "string",
+              "allowedValues": ["control", "new"],
+              "default": "control"
+            },
+            "runtimeContextSchema": {
+              "userId": {
+                "type": "string",
+                "target": "user"
+              }
+            },
+            "signals": {
+              "evidence": [
+                { "key": "checkout.latency" },
+                { "key": "checkout.errorRate" }
+              ],
+              "guardrails": [
+                { "key": "checkout.errorRate" }
+              ]
+            },
+            "inference": {
+              "target": "user",
+              "inputs": [
+                { "key": "checkout.latency" },
+                { "key": "checkout.errorRate" }
+              ]
+            },
+            "intent": {
+              "type": "metric-objective",
+              "primary": {
+                "signal": { "key": "checkout.errorRate" },
+                "direction": "minimize"
+              },
+              "secondary": [
+                {
+                  "signal": { "key": "checkout.latency" },
+                  "direction": "minimize"
+                }
+              ]
+            },
+            "fallback": {
+              "value": "control"
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": [
+                { "kind": "max-model-uncertainty", "value": 0.3 },
+                { "kind": "cooldown", "seconds": 10 }
+              ]
+            }
+          }
+        },
+        {
+          "label": "explicit-canonical-authoring",
+          "definition": {
+            "owner": "different-display-owner",
+            "key": "checkout.routing",
+            "valueType": "string",
+            "actionSpace": {
+              "type": "string",
+              "allowedValues": ["control", "new"],
+              "default": "control"
+            },
+            "runtimeContextSchema": {
+              "userId": {
+                "type": "string",
+                "target": "user"
+              }
+            },
+            "signals": {
+              "allowed": [
+                { "key": "checkout.errorRate" },
+                { "key": "checkout.latency" }
+              ],
+              "evidence": [
+                { "key": "checkout.errorRate" },
+                { "key": "checkout.latency" }
+              ],
+              "guardrails": [
+                { "key": "checkout.errorRate" }
+              ]
+            },
+            "inference": {
+              "target": "user",
+              "inputs": [
+                { "key": "checkout.errorRate" },
+                { "key": "checkout.latency" }
+              ]
+            },
+            "intent": {
+              "type": "metric-objective",
+              "primary": {
+                "signal": { "key": "checkout.errorRate" },
+                "direction": "minimize"
+              },
+              "secondary": [
+                {
+                  "signal": { "key": "checkout.latency" },
+                  "direction": "minimize"
+                }
+              ]
+            },
+            "fallback": {
+              "value": "control"
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": [
+                { "kind": "cooldown", "seconds": 10 },
+                { "kind": "max-model-uncertainty", "value": 0.3 }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generated-fields-and-metadata-exclusion",
+      "expectedContractDigest": "sha256:c56f6b0e83ca76cf112c2cb5720f7223679ca3d136cf4ff0958b941bb8d8d36c",
+      "variants": [
+        {
+          "label": "generated-fields-present",
+          "definition": {
+            "definitionId": "def_one",
+            "owner": "team-one",
+            "contractDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "revision": "rev_one",
+            "key": "global.enabled",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "signals": {
+              "allowed": [
+                { "key": "system.health" },
+                { "key": "stale.generated.entry" }
+              ],
+              "evidence": [
+                { "key": "system.health" }
+              ]
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        },
+        {
+          "label": "generated-fields-omitted",
+          "definition": {
+            "definitionId": "def_two",
+            "owner": "team-two",
+            "key": "global.enabled",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "signals": {
+              "evidence": [
+                { "key": "system.health" }
+              ]
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "explicit-default-policy-equivalence",
+      "expectedContractDigest": "sha256:53bb9aca09ce2af38b686cdee0c275db56adf549ee58ee99e76fc0af299cd696",
+      "variants": [
+        {
+          "label": "default-omitted",
+          "definition": {
+            "key": "global.defaultPolicy",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        },
+        {
+          "label": "default-explicit",
+          "definition": {
+            "key": "global.defaultPolicy",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": [],
+              "clientFallback": {
+                "requiredEvidenceUnavailable": "forbid"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "allowlist-only-generated-field-equivalence",
+      "expectedContractDigest": "sha256:4499d74da1ac6165575c46ddb9d8004d2c8d364a84ec7a90e75dcbe1c85d2380",
+      "variants": [
+        {
+          "label": "generated-allowlist-omitted",
+          "definition": {
+            "key": "global.noSignals",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        },
+        {
+          "label": "stale-generated-allowlist-present",
+          "definition": {
+            "key": "global.noSignals",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "signals": {
+              "allowed": [
+                { "key": "stale.generated.entry" }
+              ]
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "inequivalentDefinitionCases": [
+    {
+      "name": "nested-contract-like-field-names-remain-semantic",
+      "expectedLeftDigest": "sha256:9f857badc59c2c4aa0781cef28d37e3eedd7d248f635e21b29fafe667cd3be16",
+      "expectedRightDigest": "sha256:1131f4aa25671d28256f10847fd1291ea4d999f3a13f15f8d6b979de1b79111e",
+      "left": {
+        "key": "global.contextField",
+        "valueType": "boolean",
+        "actionSpace": {
+          "type": "boolean",
+          "default": false
+        },
+        "fallback": {
+          "value": false
+        },
+        "runtimeContextSchema": {
+          "revision": {
+            "type": "string"
+          }
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      },
+      "right": {
+        "key": "global.contextField",
+        "valueType": "boolean",
+        "actionSpace": {
+          "type": "boolean",
+          "default": false
+        },
+        "fallback": {
+          "value": false
+        },
+        "runtimeContextSchema": {
+          "contractDigest": {
+            "type": "string"
+          }
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    }
+  ],
+  "normalizationErrorCases": [
+    {
+      "name": "duplicate-definition-metadata-conflict",
+      "expectedError": "metadata-conflicting duplicate decision key",
+      "bundle": {
+        "format": "flaggo.decision-definition-bundle/v1",
+        "application": {
+          "id": "digest-vectors",
+          "environment": "test"
+        },
+        "source": {},
+        "definitions": [
+          {
+            "definitionId": "def_one",
+            "owner": "team-one",
+            "key": "duplicate.key",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          },
+          {
+            "definitionId": "def_two",
+            "owner": "team-two",
+            "key": "duplicate.key",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "valueContractCases": [
+    {
+      "name": "number-bounds-must-ascend",
+      "expectedErrors": ["invalid-bounds", "invalid-default", "invalid-fallback"],
+      "definition": {
+        "key": "invalid.bounds",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "number",
+          "min": 10,
+          "max": 1,
+          "default": 5
+        },
+        "fallback": {
+          "value": 5
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "name": "number-default-and-fallback-must-be-in-range",
+      "expectedErrors": ["invalid-default", "invalid-fallback"],
+      "definition": {
+        "key": "invalid.defaults",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "default": 11
+        },
+        "fallback": {
+          "value": -1
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "name": "number-step-must-be-positive",
+      "expectedErrors": ["invalid-step"],
+      "definition": {
+        "key": "invalid.step",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 0,
+          "default": 5
+        },
+        "fallback": {
+          "value": 5
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "name": "number-default-and-fallback-must-align-to-step",
+      "expectedErrors": ["invalid-default-step", "invalid-fallback-step"],
+      "definition": {
+        "key": "invalid.stepAlignment",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 2,
+          "default": 3
+        },
+        "fallback": {
+          "value": 5
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "name": "number-step-alignment-is-exact",
+      "expectedErrors": ["invalid-default-step", "invalid-fallback-step"],
+      "definition": {
+        "key": "invalid.preciseStepAlignment",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 1,
+          "default": 1.0000000005
+        },
+        "fallback": {
+          "value": 2.0000000005
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "name": "string-default-and-fallback-must-be-allowed",
+      "expectedErrors": ["invalid-default", "invalid-fallback"],
+      "definition": {
+        "key": "invalid.allowedValues",
+        "valueType": "string",
+        "actionSpace": {
+          "type": "string",
+          "allowedValues": ["a", "b"],
+          "default": "c"
+        },
+        "fallback": {
+          "value": "d"
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    },
+    {
+      "name": "valid-number-value-contract",
+      "expectedErrors": [],
+      "definition": {
+        "key": "valid.number",
+        "valueType": "number",
+        "actionSpace": {
+          "type": "number",
+          "min": 0,
+          "max": 10,
+          "step": 2,
+          "default": 4
+        },
+        "fallback": {
+          "value": 2
+        },
+        "policy": {
+          "kind": "inline",
+          "constraints": []
+        }
+      }
+    }
+  ],
+  "bundleCases": [
+    {
+      "name": "bundle-sorting-and-per-definition-digests",
+      "expectedBundleDigest": "sha256:3c8c73ffe8b404a9cde33bf4311586ecb34b8befc22ae3d211261787b79c5a81",
+      "expectedContractDigests": {
+        "global.enabled": "sha256:c56f6b0e83ca76cf112c2cb5720f7223679ca3d136cf4ff0958b941bb8d8d36c",
+        "tuning.limit": "sha256:f1183dd907519be55e66ae13819e69c959f53b48c2613171f706a6b68def9731"
+      },
+      "variants": [
+        {
+          "label": "reverse-order",
+          "bundle": {
+            "format": "flaggo.decision-definition-bundle/v1",
+            "application": {
+              "id": "digest-vectors",
+              "environment": "test"
+            },
+            "build": {
+              "buildId": "build-1"
+            },
+            "source": {
+              "repository": "github.com/example/digest-vectors",
+              "path": "contracts",
+              "commit": "abc123"
+            },
+            "signals": [
+              {
+                "kind": "metric",
+                "key": "system.load",
+                "type": "number",
+                "source": "app-emitted",
+                "schemaDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+              },
+              {
+                "kind": "metric",
+                "key": "system.health",
+                "type": "boolean",
+                "source": "app-emitted"
+              }
+            ],
+            "definitions": [
+              {
+                "definitionId": "def_limit",
+                "key": "tuning.limit",
+                "valueType": "number",
+                "actionSpace": {
+                  "type": "number",
+                  "min": 1,
+                  "max": 10,
+                  "step": 1,
+                  "default": 5
+                },
+                "signals": {
+                  "evidence": [
+                    { "key": "system.load" },
+                    { "key": "system.health" }
+                  ]
+                },
+                "inference": {
+                  "target": "global",
+                  "inputs": [
+                    { "key": "system.load" },
+                    { "key": "system.health" }
+                  ]
+                },
+                "fallback": {
+                  "value": 5
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": [
+                    { "kind": "max-delta", "value": 1 },
+                    { "kind": "cooldown", "seconds": 5 }
+                  ]
+                }
+              },
+              {
+                "definitionId": "def_enabled",
+                "key": "global.enabled",
+                "valueType": "boolean",
+                "actionSpace": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "signals": {
+                  "evidence": [
+                    { "key": "system.health" }
+                  ]
+                },
+                "fallback": {
+                  "value": false
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "label": "canonical-order",
+          "bundle": {
+            "format": "flaggo.decision-definition-bundle/v1",
+            "application": {
+              "id": "digest-vectors",
+              "environment": "test"
+            },
+            "build": {
+              "buildId": "build-1"
+            },
+            "source": {
+              "repository": "github.com/example/digest-vectors",
+              "path": "contracts",
+              "commit": "abc123"
+            },
+            "signals": [
+              {
+                "kind": "metric",
+                "key": "system.health",
+                "type": "boolean",
+                "source": "app-emitted"
+              },
+              {
+                "kind": "metric",
+                "key": "system.load",
+                "type": "number",
+                "source": "app-emitted"
+              }
+            ],
+            "definitions": [
+              {
+                "definitionId": "def_enabled",
+                "key": "global.enabled",
+                "valueType": "boolean",
+                "actionSpace": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "signals": {
+                  "allowed": [
+                    { "key": "system.health" }
+                  ],
+                  "evidence": [
+                    { "key": "system.health" }
+                  ]
+                },
+                "fallback": {
+                  "value": false
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": []
+                }
+              },
+              {
+                "definitionId": "def_limit",
+                "key": "tuning.limit",
+                "valueType": "number",
+                "actionSpace": {
+                  "type": "number",
+                  "min": 1,
+                  "max": 10,
+                  "step": 1,
+                  "default": 5
+                },
+                "signals": {
+                  "allowed": [
+                    { "key": "system.health" },
+                    { "key": "system.load" }
+                  ],
+                  "evidence": [
+                    { "key": "system.health" },
+                    { "key": "system.load" }
+                  ]
+                },
+                "inference": {
+                  "target": "global",
+                  "inputs": [
+                    { "key": "system.health" },
+                    { "key": "system.load" }
+                  ]
+                },
+                "fallback": {
+                  "value": 5
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": [
+                    { "kind": "cooldown", "seconds": 5 },
+                    { "kind": "max-delta", "value": 1 }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

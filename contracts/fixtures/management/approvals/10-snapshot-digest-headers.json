@@ -5,9 +5,9 @@
   "invariant": "The immutable snapshot returns the canonical bundle bytes with a quoted ETag holding sha256:<hex> and an RFC 9530 Content-Digest base64 over the same raw SHA-256 bytes.",
   "responseSchema": "decision-definition-bundle-v1.schema.json",
   "digest": {
-    "bundleDigest": "sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441",
-    "etag": "\"sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441\"",
-    "contentDigest": "sha-256=:czy+91rAmRD0d7TYhoOqyS7QqBIRSgy0P0LdEr/HFEE=:"
+    "bundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
+    "etag": "\"sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f\"",
+    "contentDigest": "sha-256=:uQas66YW3aAn1gAcuM2UpyzZa8EKN7mDqafA/v2Omm8=:"
   },
   "request": {
     "method": "GET",
@@ -21,8 +21,8 @@
     "status": 200,
     "headers": {
       "Content-Type": "application/json",
-      "ETag": "\"sha256:733cbef75ac09910f477b4d88683aac92ed0a812114a0cb43f42dd12bfc71441\"",
-      "Content-Digest": "sha-256=:czy+91rAmRD0d7TYhoOqyS7QqBIRSgy0P0LdEr/HFEE=:",
+      "ETag": "\"sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f\"",
+      "Content-Digest": "sha-256=:uQas66YW3aAn1gAcuM2UpyzZa8EKN7mDqafA/v2Omm8=:",
       "X-Flaggo-Correlation-Id": "srv-snapshot"
     },
     "body": {
@@ -54,44 +54,9 @@
         },
         {
           "kind": "metric",
-          "key": "tetris.recentPlacementTimeMs",
-          "type": "number",
-          "source": "app-emitted",
-          "unit": "ms"
-        },
-        {
-          "kind": "metric",
-          "key": "tetris.recoveryFailures",
-          "type": "number",
-          "source": "app-emitted"
-        },
-        {
-          "kind": "metric",
           "key": "tetris.currentLevel",
           "type": "number",
           "source": "app-emitted"
-        },
-        {
-          "kind": "event",
-          "key": "tetris.piecePlaced",
-          "fields": {
-            "placementTimeMs": "number",
-            "hardDrop": "boolean"
-          },
-          "units": {
-            "placementTimeMs": "ms"
-          }
-        },
-        {
-          "kind": "event",
-          "key": "tetris.sessionEnded",
-          "fields": {
-            "endReason": "string",
-            "durationSeconds": "number"
-          },
-          "units": {
-            "durationSeconds": "s"
-          }
         },
         {
           "kind": "metric",
@@ -118,6 +83,41 @@
           ],
           "aggregation": "rate(hardDrop == true)",
           "window": "24h"
+        },
+        {
+          "kind": "event",
+          "key": "tetris.piecePlaced",
+          "fields": {
+            "placementTimeMs": "number",
+            "hardDrop": "boolean"
+          },
+          "units": {
+            "placementTimeMs": "ms"
+          }
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.recentPlacementTimeMs",
+          "type": "number",
+          "source": "app-emitted",
+          "unit": "ms"
+        },
+        {
+          "kind": "metric",
+          "key": "tetris.recoveryFailures",
+          "type": "number",
+          "source": "app-emitted"
+        },
+        {
+          "kind": "event",
+          "key": "tetris.sessionEnded",
+          "fields": {
+            "endReason": "string",
+            "durationSeconds": "number"
+          },
+          "units": {
+            "durationSeconds": "s"
+          }
         }
       ],
       "definitions": [
@@ -174,16 +174,10 @@
                 "key": "tetris.hardDropRate24h"
               },
               {
-                "key": "tetris.piecePlaced"
-              },
-              {
                 "key": "tetris.recentPlacementTimeMs"
               },
               {
                 "key": "tetris.recoveryFailures"
-              },
-              {
-                "key": "tetris.sessionEnded"
               }
             ]
           },

@@ -1,0 +1,19 @@
+{
+  "vectors": [
+    {
+      "name": "ordinary-object-is-accepted",
+      "input": "{\"runtimeContextSchema\":{\"userId\":{\"type\":\"string\"}}}",
+      "accepted": true
+    },
+    {
+      "name": "duplicate-nested-context-field-is-rejected",
+      "input": "{\"runtimeContextSchema\":{\"userId\":{\"type\":\"string\"},\"userId\":{\"type\":\"number\"}}}",
+      "accepted": false
+    },
+    {
+      "name": "duplicate-top-level-field-is-rejected",
+      "input": "{\"key\":\"first\",\"key\":\"second\"}",
+      "accepted": false
+    }
+  ]
+}

@@ -271,7 +271,7 @@
     },
     "body": {
       "status": "invalid",
-      "bundleDigest": "sha256:6ecad7f750581502f76fc2759b73f88142d7273b17ffeaac74ba3aa314c2432a",
+      "bundleDigest": "sha256:c2e101a7414dafd85abc7a4b07d74203930cfedec1dde18a0b034e9fbb355b43",
       "issues": [
         {
           "code": "invalid-definition",

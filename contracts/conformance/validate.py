@@ -26,6 +26,7 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 
@@ -41,6 +42,8 @@ OPENAPI_DIR = CONTRACTS / "openapi"
 FIXTURES_DIR = CONTRACTS / "fixtures"
 MANIFEST = CONTRACTS / "conformance" / "fixture-manifest-v1.json"
 CANONICALIZATION_VECTORS = CONTRACTS / "conformance" / "canonicalization-vectors-v1.json"
+SEMANTIC_DIGEST_VECTORS = CONTRACTS / "conformance" / "semantic-digest-vectors-v1.json"
+STRICT_JSON_VECTORS = CONTRACTS / "conformance" / "strict-json-vectors-v1.json"
 
 SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 REQUIRED_SCENARIO_COUNT = 43
@@ -68,14 +71,27 @@ class Report:
         self.errors.append(message)
 
 
+def reject_duplicate_object_keys(pairs: list[tuple[str, object]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON object key '{key}'")
+        value[key] = item
+    return value
+
+
+def strict_json_loads(value: str):
+    return json.loads(
+        value,
+        object_pairs_hook=reject_duplicate_object_keys,
+        parse_constant=lambda constant: (_ for _ in ()).throw(
+            ValueError(f"non-finite JSON number '{constant}' is forbidden")
+        ),
+    )
+
+
 def load_json(path: Path):
-    with path.open(encoding="utf-8") as fh:
-        return json.load(
-            fh,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(f"non-finite JSON number '{value}' is forbidden")
-            ),
-        )
+    return strict_json_loads(path.read_text(encoding="utf-8"))
 
 
 def build_registry(rep: Report) -> Registry:
@@ -311,6 +327,161 @@ def canonical_json_bytes(value) -> bytes:
     return rfc8785.dumps(value)
 
 
+def _sorted_signal_refs(values: list[dict]) -> list[dict]:
+    by_key: dict[str, dict] = {}
+    for value in values:
+        key = value["key"]
+        if key in by_key:
+            raise ValueError(f"duplicate signal reference: {key}")
+        by_key[key] = {"key": key}
+    return [by_key[key] for key in sorted(by_key)]
+
+
+def _collect_signal_keys(definition: dict) -> set[str]:
+    keys: set[str] = set()
+    signal_roles = definition.get("signals", {})
+    for role in ("evidence", "guardrails"):
+        role_keys = [ref["key"] for ref in signal_roles.get(role, [])]
+        if len(role_keys) != len(set(role_keys)):
+            raise ValueError(f"duplicate {role} signal reference")
+        keys.update(role_keys)
+    input_keys = [ref["key"] for ref in definition.get("inference", {}).get("inputs", [])]
+    if len(input_keys) != len(set(input_keys)):
+        raise ValueError("duplicate inference signal reference")
+    keys.update(input_keys)
+
+    def visit(node) -> None:
+        if isinstance(node, dict):
+            signal = node.get("signal")
+            if isinstance(signal, dict) and isinstance(signal.get("key"), str):
+                keys.add(signal["key"])
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(definition.get("intent"))
+    return keys
+
+
+def normalize_definition(definition: dict, *, semantic_identity: bool = True) -> dict:
+    normalized = deepcopy(definition)
+    for key in ("contractDigest", "revision", "schemaDigest"):
+        normalized.pop(key, None)
+    if semantic_identity:
+        normalized.pop("definitionId", None)
+        normalized.pop("owner", None)
+
+    signal_keys = _collect_signal_keys(normalized)
+    signal_roles = normalized.get("signals")
+    if signal_roles is not None or signal_keys:
+        signal_roles = signal_roles or {}
+        for role in ("evidence", "guardrails"):
+            if role in signal_roles:
+                signal_roles[role] = _sorted_signal_refs(signal_roles[role])
+        if signal_keys:
+            signal_roles["allowed"] = [{"key": key} for key in sorted(signal_keys)]
+        else:
+            signal_roles.pop("allowed", None)
+        if signal_roles:
+            normalized["signals"] = signal_roles
+        else:
+            normalized.pop("signals", None)
+
+    inference = normalized.get("inference")
+    if inference and "inputs" in inference:
+        inference["inputs"] = _sorted_signal_refs(inference["inputs"])
+
+    policy = normalized.get("policy")
+    if policy and policy.get("kind") == "inline":
+        if policy.get("clientFallback", {}).get("requiredEvidenceUnavailable") == "forbid":
+            policy.pop("clientFallback", None)
+        constraints = policy.get("constraints", [])
+        kinds = [constraint["kind"] for constraint in constraints]
+        if len(kinds) != len(set(kinds)):
+            raise ValueError("duplicate inline policy constraint kind")
+        policy["constraints"] = sorted(
+            constraints,
+            key=lambda constraint: (constraint["kind"], canonical_json_bytes(constraint)),
+        )
+    return normalized
+
+
+def contract_digest(definition: dict) -> str:
+    normalized = normalize_definition(definition, semantic_identity=True)
+    return f"sha256:{hashlib.sha256(canonical_json_bytes(normalized)).hexdigest()}"
+
+
+def normalize_bundle(bundle: dict) -> dict:
+    normalized = deepcopy(bundle)
+    declarations: dict[str, dict] = {}
+    for declaration in normalized.get("signals", []):
+        declaration = deepcopy(declaration)
+        declaration.pop("schemaDigest", None)
+        key = declaration["key"]
+        if key in declarations:
+            raise ValueError(f"duplicate signal declaration: {key}")
+        declarations[key] = declaration
+    if "signals" in normalized:
+        normalized["signals"] = [declarations[key] for key in sorted(declarations)]
+
+    definitions: dict[str, dict] = {}
+    definition_digests: dict[str, str] = {}
+    for definition in normalized["definitions"]:
+        key = definition["key"]
+        candidate = normalize_definition(definition, semantic_identity=False)
+        digest = contract_digest(definition)
+        if key in definitions:
+            if definition_digests[key] != digest:
+                raise ValueError(f"conflicting duplicate decision key: {key}")
+            if canonical_json_bytes(definitions[key]) != canonical_json_bytes(candidate):
+                raise ValueError(f"metadata-conflicting duplicate decision key: {key}")
+            continue
+        definitions[key] = candidate
+        definition_digests[key] = digest
+    normalized["definitions"] = [definitions[key] for key in sorted(definitions)]
+    return normalized
+
+
+def bundle_digest(bundle: dict) -> str:
+    normalized = normalize_bundle(bundle)
+    return f"sha256:{hashlib.sha256(canonical_json_bytes(normalized)).hexdigest()}"
+
+
+def definition_value_contract_errors(definition: dict) -> set[str]:
+    action = definition["actionSpace"]
+    fallback = definition["fallback"]["value"]
+    default = action["default"]
+    value_type = definition["valueType"]
+    errors: set[str] = set()
+    if value_type == "number":
+        minimum, maximum = action["min"], action["max"]
+        step = action.get("step")
+        if minimum > maximum:
+            errors.add("invalid-bounds")
+        if not minimum <= default <= maximum:
+            errors.add("invalid-default")
+        if not minimum <= fallback <= maximum:
+            errors.add("invalid-fallback")
+        if step is not None:
+            if step <= 0:
+                errors.add("invalid-step")
+            elif minimum <= maximum:
+                for label, value in (("invalid-default-step", default), ("invalid-fallback-step", fallback)):
+                    offset = (Decimal(str(value)) - Decimal(str(minimum))) / Decimal(str(step))
+                    if offset != offset.to_integral_value():
+                        errors.add(label)
+    elif value_type == "string":
+        allowed = action.get("allowedValues")
+        if allowed is not None:
+            if default not in allowed:
+                errors.add("invalid-default")
+            if fallback not in allowed:
+                errors.add("invalid-fallback")
+    return errors
+
+
 def validate_canonicalization_vectors(rep: Report) -> None:
     document = load_json(CANONICALIZATION_VECTORS)
     vectors = document.get("vectors", [])
@@ -325,6 +496,102 @@ def validate_canonicalization_vectors(rep: Report) -> None:
             actual == vector["expected"],
             f"canonicalization vector '{vector.get('name')}' mismatch: {actual!r}",
         )
+
+
+def validate_strict_json_vectors(rep: Report) -> None:
+    vectors = load_json(STRICT_JSON_VECTORS).get("vectors", [])
+    rep.check(bool(vectors), "strict JSON vector set is empty")
+    for vector in vectors:
+        try:
+            strict_json_loads(vector["input"])
+        except ValueError:
+            accepted = False
+        else:
+            accepted = True
+        rep.check(
+            accepted == vector["accepted"],
+            f"strict JSON vector '{vector['name']}' acceptance mismatch",
+        )
+
+
+def validate_semantic_digest_vectors(rep: Report) -> None:
+    document = load_json(SEMANTIC_DIGEST_VECTORS)
+    definition_cases = document.get("definitionCases", [])
+    inequivalent_definition_cases = document.get("inequivalentDefinitionCases", [])
+    bundle_cases = document.get("bundleCases", [])
+    value_contract_cases = document.get("valueContractCases", [])
+    normalization_error_cases = document.get("normalizationErrorCases", [])
+    rep.check(bool(definition_cases), "semantic definition digest vector set is empty")
+    rep.check(
+        bool(inequivalent_definition_cases),
+        "inequivalent semantic definition digest vector set is empty",
+    )
+    rep.check(bool(bundle_cases), "semantic bundle digest vector set is empty")
+    rep.check(bool(value_contract_cases), "value contract vector set is empty")
+    rep.check(bool(normalization_error_cases), "normalization error vector set is empty")
+
+    for case in definition_cases:
+        digests = [contract_digest(variant["definition"]) for variant in case["variants"]]
+        rep.check(
+            len(set(digests)) == 1,
+            f"semantic definition vector '{case['name']}' variants diverged: {digests}",
+        )
+        rep.check(
+            digests[0] == case["expectedContractDigest"],
+            f"semantic definition vector '{case['name']}' digest mismatch: {digests[0]}",
+        )
+
+    for case in inequivalent_definition_cases:
+        left_digest = contract_digest(case["left"])
+        right_digest = contract_digest(case["right"])
+        rep.check(
+            left_digest == case["expectedLeftDigest"],
+            f"semantic definition vector '{case['name']}' left digest mismatch: {left_digest}",
+        )
+        rep.check(
+            right_digest == case["expectedRightDigest"],
+            f"semantic definition vector '{case['name']}' right digest mismatch: {right_digest}",
+        )
+        rep.check(
+            left_digest != right_digest,
+            f"semantic definition vector '{case['name']}' collapsed distinct definitions",
+        )
+
+    for case in bundle_cases:
+        digests = [bundle_digest(variant["bundle"]) for variant in case["variants"]]
+        rep.check(
+            len(set(digests)) == 1,
+            f"semantic bundle vector '{case['name']}' variants diverged: {digests}",
+        )
+        rep.check(
+            digests[0] == case["expectedBundleDigest"],
+            f"semantic bundle vector '{case['name']}' digest mismatch: {digests[0]}",
+        )
+        definitions = case["variants"][0]["bundle"]["definitions"]
+        actual_contracts = {definition["key"]: contract_digest(definition) for definition in definitions}
+        rep.check(
+            actual_contracts == case["expectedContractDigests"],
+            f"semantic bundle vector '{case['name']}' per-definition digests mismatch",
+        )
+
+    for case in value_contract_cases:
+        actual = definition_value_contract_errors(case["definition"])
+        expected = set(case["expectedErrors"])
+        rep.check(
+            actual == expected,
+            f"value contract vector '{case['name']}' errors mismatch: {sorted(actual)}",
+        )
+
+    for case in normalization_error_cases:
+        try:
+            normalize_bundle(case["bundle"])
+        except ValueError as exc:
+            rep.check(
+                case["expectedError"] in str(exc),
+                f"normalization error vector '{case['name']}' returned unexpected error: {exc}",
+            )
+        else:
+            rep.fail(f"normalization error vector '{case['name']}' was accepted")
 
 
 class StartupRegistrationError(RuntimeError):
@@ -402,6 +669,17 @@ def execute_stateful_scenarios(fixtures: list[dict], rep: Report) -> int:
                 harness.initialize_sdk() == results[0]["body"]["acceptedDefinitions"],
                 "scenario 19 SDK binding differs from the converged receipt",
             )
+            reordered = deepcopy(fixture)
+            reordered["request"]["body"]["signals"].reverse()
+            try:
+                harness.apply(reordered)
+            except RuntimeError as exc:
+                rep.check(
+                    "different canonical body" in str(exc),
+                    "scenario 19 returned the wrong idempotency conflict",
+                )
+            else:
+                rep.fail("scenario 19 replayed a semantically equivalent but byte-distinct request")
         elif kind == "approval-blocked-startup":
             result = harness.apply(fixture)
             rep.check(
@@ -475,13 +753,8 @@ def validate_issue_correlations(fx: dict, rep: Report, ctx: str) -> None:
                 f"{ctx}: invalid-signal-schema path does not identify a descending range",
             )
         elif code == "invalid-definition":
-            action = offending.get("actionSpace", {}) if isinstance(offending, dict) else {}
-            minimum, maximum, default = action.get("min"), action.get("max"), action.get("default")
             rep.check(
-                isinstance(minimum, (int, float))
-                and isinstance(maximum, (int, float))
-                and isinstance(default, (int, float))
-                and (minimum > maximum or not minimum <= default <= maximum),
+                isinstance(offending, dict) and bool(definition_value_contract_errors(offending)),
                 f"{ctx}: invalid-definition path does not identify invalid action-space bounds",
             )
         elif code == "invalid-objective":
@@ -517,7 +790,9 @@ def validate_snapshot_digest(fx: dict, rep: Report, ctx: str) -> None:
         return
     body = fx["expected"]["body"]
     headers = fx["expected"]["headers"]
-    digest = hashlib.sha256(canonical_json_bytes(body)).digest()
+    normalized_body = normalize_bundle(body)
+    rep.check(body == normalized_body, f"{ctx}: snapshot body is not normalized canonical bundle content")
+    digest = hashlib.sha256(canonical_json_bytes(normalized_body)).digest()
     project_digest = f"sha256:{digest.hex()}"
     etag = f'"{project_digest}"'
     content_digest = f"sha-256=:{base64.b64encode(digest).decode('ascii')}:"
@@ -537,7 +812,7 @@ def validate_bundle_digest(fx: dict, rep: Report, ctx: str) -> None:
         or request_body.get("format") != "flaggo.decision-definition-bundle/v1"
     ):
         return
-    project_digest = f"sha256:{hashlib.sha256(canonical_json_bytes(request_body)).hexdigest()}"
+    project_digest = bundle_digest(request_body)
     response_digest = fx.get("expected", {}).get("body", {}).get("bundleDigest")
     if response_digest is not None:
         rep.check(
@@ -550,6 +825,27 @@ def validate_bundle_digest(fx: dict, rep: Report, ctx: str) -> None:
             declared_digest == project_digest,
             f"{ctx}: fixture bundleDigest does not hash the canonical request body",
         )
+    response_body = fx.get("expected", {}).get("body", {})
+    definitions = {definition["key"]: definition for definition in request_body["definitions"]}
+    successful_status = response_body.get("status") in {"approved", "requires-approval", "valid"}
+    if successful_status:
+        for key, definition in definitions.items():
+            errors = definition_value_contract_errors(definition)
+            rep.check(
+                not errors,
+                f"{ctx}: successful bundle contains invalid value contract for '{key}': {sorted(errors)}",
+            )
+    for field in ("validatedDefinitions", "acceptedDefinitions"):
+        declared_definitions = response_body.get(field, {})
+        for key, identity in declared_definitions.items():
+            if key not in definitions:
+                rep.fail(f"{ctx}: {field} contains unknown decision key '{key}'")
+                continue
+            expected_digest = contract_digest(definitions[key])
+            rep.check(
+                identity.get("contractDigest") == expected_digest,
+                f"{ctx}: {field}.{key}.contractDigest does not hash normalized definition semantics",
+            )
 
 
 def validate_fixture(
@@ -568,6 +864,7 @@ def validate_fixture(
     rep.check(not missing, f"{ctx}: missing keys {sorted(missing)}")
     if missing:
         return fx
+
     req = fx["request"]
     rep.check(bool(req.get("method")), f"{ctx}: request.method required")
     rep.check(bool(req.get("path")), f"{ctx}: request.path required")
@@ -655,6 +952,65 @@ def validate_fixture(
     return fx
 
 
+def collect_identity_tuples(node, identities: list[tuple[str, str, str]]) -> None:
+    if isinstance(node, dict):
+        if all(isinstance(node.get(key), str) for key in ("definitionId", "revision", "contractDigest")):
+            identities.append((node["definitionId"], node["revision"], node["contractDigest"]))
+        for value in node.values():
+            collect_identity_tuples(value, identities)
+    elif isinstance(node, list):
+        for value in node:
+            collect_identity_tuples(value, identities)
+
+
+def validate_identity_consistency(fixtures: list[dict], rep: Report) -> None:
+    accepted_by_revision: dict[tuple[str, str], set[str]] = {}
+    for fixture in fixtures:
+        expected = fixture.get("expected", {})
+        response_body = expected.get("body", {})
+        if expected.get("status") != 200 or response_body.get("status") == "invalid":
+            continue
+        identities: list[tuple[str, str, str]] = []
+        collect_identity_tuples(fixture.get("request", {}).get("body"), identities)
+        collect_identity_tuples(response_body, identities)
+        for definition_id, revision, digest in identities:
+            accepted_by_revision.setdefault((definition_id, revision), set()).add(digest)
+
+        declared_digest = fixture.get("digest", {}).get("contractDigest")
+        identity_digests = {digest for _, _, digest in identities}
+        if declared_digest is not None:
+            rep.check(
+                len(identity_digests) == 1 and declared_digest in identity_digests,
+                f"fixture:{fixture.get('name')}: digest.contractDigest does not match its successful identity",
+            )
+
+    for (definition_id, revision), digests in accepted_by_revision.items():
+        rep.check(
+            len(digests) == 1,
+            f"successful fixtures assign multiple contract digests to {definition_id} + {revision}: {sorted(digests)}",
+        )
+
+    accepted = {
+        identity: next(iter(digests))
+        for identity, digests in accepted_by_revision.items()
+        if len(digests) == 1
+    }
+    for fixture in fixtures:
+        if fixture.get("schemaNegative") or fixture.get("intentionalIdentityConflict"):
+            continue
+        identities: list[tuple[str, str, str]] = []
+        collect_identity_tuples(fixture.get("request", {}).get("body"), identities)
+        collect_identity_tuples(fixture.get("expected", {}).get("body"), identities)
+        collect_identity_tuples(fixture.get("sdkOutcome"), identities)
+        for definition_id, revision, digest in identities:
+            expected_digest = accepted.get((definition_id, revision))
+            if expected_digest is not None:
+                rep.check(
+                    digest == expected_digest,
+                    f"fixture:{fixture.get('name')}: stale contract digest for {definition_id} + {revision}",
+                )
+
+
 def main() -> int:
     rep = Report()
 
@@ -663,7 +1019,7 @@ def main() -> int:
         list(SCHEMAS_DIR.glob("*.json"))
         + list(OPENAPI_DIR.glob("*.yaml"))
         + list(FIXTURES_DIR.rglob("*.json"))
-        + [MANIFEST, CANONICALIZATION_VECTORS]
+        + [MANIFEST, CANONICALIZATION_VECTORS, SEMANTIC_DIGEST_VECTORS, STRICT_JSON_VECTORS]
     )
     for p in doc_paths:
         try:
@@ -675,6 +1031,8 @@ def main() -> int:
     # 2/3. schemas -> registry
     registry = build_registry(rep)
     validate_canonicalization_vectors(rep)
+    validate_strict_json_vectors(rep)
+    validate_semantic_digest_vectors(rep)
 
     # 4. OpenAPI documents
     for name in ["flaggo-runtime-v1.yaml", "flaggo-management-v1.yaml"]:
@@ -691,6 +1049,10 @@ def main() -> int:
 
     cases = manifest.get("cases", [])
     rep.check(len(cases) > 0, "manifest has no cases")
+    rep.check(
+        manifest.get("totalCases") == len(cases),
+        f"manifest totalCases is {manifest.get('totalCases')}, expected {len(cases)}",
+    )
 
     indexed_paths: set[Path] = set()
     names: set[str] = set()
@@ -761,6 +1123,7 @@ def main() -> int:
         stateful_scenarios == 3,
         "scenario 19 and both scenario 20 rejection paths must execute statefully",
     )
+    validate_identity_consistency(loaded_fixtures, rep)
 
     print_report(rep, extra={
         "schemas": len(SCHEMA_FILES),

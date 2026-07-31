@@ -107,7 +107,7 @@ The SDK and service must consume the same fixtures. Generated language types are
 - JSON fields use `camelCase`.
 - Enum wire values use `kebab-case`.
 - IDs are opaque strings. Clients must not parse meaning from them.
-- Timestamps use RFC 3339 UTC strings.
+- Timestamps use RFC 3339 UTC strings with the `Z` suffix; numeric offsets are rejected.
 - SDK duration shorthand such as `"20s"` is normalized into canonical domain fields such as `{ "seconds": 20 }` before transport or hashing.
 
 ### Runtime identity semantics
@@ -120,6 +120,8 @@ The SDK and service must consume the same fixtures. Generated language types are
 - Metadata-only edits are recorded in registry/audit history but do not create a runtime revision or change `contractDigest`.
 - Approval of a semantic change atomically creates a new `revision` and `contractDigest` under the existing `definitionId`. The previous tuple remains addressable while lifecycle policy permits it.
 - A new `definitionId` is created only for a new decision lineage or an explicit fork, never by encoding a version into an ID.
+- Definition normalization regenerates signal associations only from semantic roles, sorts set-like collections, removes generated identity fields and definition metadata, canonicalizes default-valued options, and then hashes RFC 8785 bytes.
+- `bundleDigest` preserves submitted bundle metadata for artifact identity, but normalizes signal declarations and every definition before sorting definitions by `decisionKey` and hashing.
 
 ### Media types
 
@@ -317,6 +319,7 @@ Server response invariants:
 
 - A successful wire response always has `decisionId`, `auditId`, and `fallback.source = "server"`.
 - A successful wire response always repeats the exact accepted `definitionId + revision + contractDigest` and has `definitionStatus.integrity = "verified"`.
+- `runtimeTarget` and `controlTarget` are optional. Global or otherwise targetless decisions omit them and return an empty provenance list with a resolution chain ending at `global`.
 - `valueType` and `value` form a discriminated union: boolean with boolean, number with finite JSON number, and string with string.
 - The initial response never has `exposureId`.
 - `confidence` is `null` when `decisionFallbackUsed` is true and may also be null for a non-evidence-based `active-value`.
@@ -325,6 +328,7 @@ Server response invariants:
 - Exposure metadata is a union. `confirmationRequired: true` requires `confirmToken`; `confirmationRequired: false` forbids it.
 - Set-like arrays are emitted in canonical order; semantically ordered arrays retain their defined order.
 - The response contains structured reason codes in policy/fallback fields. Human-readable `reason` is explanatory and must not be used for program logic.
+- A blocked policy never approves its candidate. When policy supplies the governed fallback value, the `200` response uses `decisionMode: "fallback"`, `decisionFallbackUsed: true`, and may report `policy.result: "blocked"`.
 - The default response returns compact confidence and target-resolution provenance. Full evidence-view details remain in the audit record.
 
 The SDK may project this response into `DecisionReceipt<T>` or a detailed result. If the data plane is unavailable and application configuration explicitly enables availability fallback, the SDK creates a distinct client-fallback result with no server `decisionId`, `auditId`, `policy`, `definitionStatus`, or exposure confirmation metadata. It must never do this for a 4xx contract/configuration response.
@@ -549,6 +553,10 @@ Proposed response:
 ```
 
 Each issue should contain a stable `code`, severity, JSON Pointer `path`, human-readable message, and relevant decision or signal key.
+
+Validation results are a discriminated union. `status: "valid"` requires `bundleDigest`, `compatibility`, a non-empty `validatedDefinitions` map, and `issues`. `status: "invalid"` requires at least one error issue; digest and partial validation fields are optional when canonicalization reached them.
+
+Each definition entry is also a discriminated union keyed by `valueType`. Boolean, number, and string entries require matching action-space defaults and fallback value types. Numeric bounds must ascend, defaults and fallbacks must be in range, `step` must be positive, and numeric defaults/fallbacks must align to it. String defaults and fallbacks must belong to `allowedValues` when that set is present.
 
 Optional `definitionId` rules:
 

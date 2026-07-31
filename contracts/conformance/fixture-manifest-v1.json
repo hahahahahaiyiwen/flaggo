@@ -2,7 +2,7 @@
   "$schema-note": "Index of Phase 1 golden fixtures. Each case references a fixture file and the required scenario numbers it covers.",
   "version": "1",
   "generatedFor": "Phase 1 API contract freeze",
-  "totalCases": 65,
+  "totalCases": 69,
   "requiredScenarioCount": 43,
   "coveredScenarios": [
     1,
@@ -84,6 +84,22 @@
       "invariant": "Approved numeric strategy returns 200 with decisionMode strategy, a strategyId, and a required confidence object."
     },
     {
+      "name": "decide-targetless-global-value",
+      "scenarios": [
+        1
+      ],
+      "group": "runtime/decide",
+      "file": "fixtures/runtime/decide/10-targetless-global-value.json",
+      "method": "POST",
+      "httpPath": "/v1/decisions/application.maintenanceMode:decide",
+      "status": 200,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A global or targetless definition may omit runtimeTarget and controlTarget while returning an audited active value."
+    },
+    {
       "name": "decide-resolution-fallback-with-confidence",
       "scenarios": [
         3
@@ -113,7 +129,7 @@
       "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
       "sdkLocal": false,
       "schemaNegative": false,
-      "invariant": "Governed decision fallback returns 200 with decisionMode fallback, confidence null, decisionFallbackUsed true; exposure union sets confirmationRequired false and omits confirmToken."
+      "invariant": "A blocked policy produces a governed fallback response with decisionMode fallback, confidence null, and decisionFallbackUsed true; no blocked candidate is returned as approved."
     },
     {
       "name": "decide-idempotency-replay-returns-original",

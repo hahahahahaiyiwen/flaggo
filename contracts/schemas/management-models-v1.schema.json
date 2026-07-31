@@ -10,7 +10,9 @@
     },
     "Rfc3339": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "RFC 3339 UTC timestamp using the Z suffix."
     },
     "ContractCompatibility": {
       "type": "string",
@@ -143,23 +145,76 @@
         "compatibility": { "$ref": "#/$defs/ContractCompatibility" },
         "status": { "const": "approved" },
         "changes": { "type": "array", "items": { "$ref": "#/$defs/ContractChange" } },
-        "issues": { "type": "array", "items": { "$ref": "#/$defs/ContractIssue" } }
+        "issues": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/ContractIssue" },
+              {
+                "type": "object",
+                "properties": { "severity": { "const": "warning" } },
+                "required": ["severity"]
+              }
+            ]
+          }
+        }
       }
     },
     "DefinitionBundleValidationResult": {
-      "type": "object",
-      "required": ["status", "issues"],
-      "additionalProperties": false,
-      "properties": {
-        "status": { "type": "string", "enum": ["valid", "invalid"] },
-        "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
-        "compatibility": { "$ref": "#/$defs/ContractCompatibility" },
-        "validatedDefinitions": {
+      "oneOf": [
+        {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/ValidatedDefinition" }
+          "required": ["status", "bundleDigest", "compatibility", "validatedDefinitions", "issues"],
+          "additionalProperties": false,
+          "properties": {
+            "status": { "const": "valid" },
+            "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+            "compatibility": { "$ref": "#/$defs/ContractCompatibility" },
+            "validatedDefinitions": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "$ref": "#/$defs/ValidatedDefinition" }
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/ContractIssue" },
+                  {
+                    "type": "object",
+                    "properties": { "severity": { "const": "warning" } },
+                    "required": ["severity"]
+                  }
+                ]
+              }
+            }
+          }
         },
-        "issues": { "type": "array", "items": { "$ref": "#/$defs/ContractIssue" } }
-      }
+        {
+          "type": "object",
+          "required": ["status", "issues"],
+          "additionalProperties": false,
+          "properties": {
+            "status": { "const": "invalid" },
+            "bundleDigest": { "$ref": "#/$defs/Sha256Digest" },
+            "compatibility": { "$ref": "#/$defs/ContractCompatibility" },
+            "validatedDefinitions": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/ValidatedDefinition" }
+            },
+            "issues": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/ContractIssue" },
+              "contains": {
+                "type": "object",
+                "properties": { "severity": { "const": "error" } },
+                "required": ["severity"]
+              }
+            }
+          }
+        }
+      ]
     },
     "RequiresApprovalResult": {
       "type": "object",
