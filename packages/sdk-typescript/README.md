@@ -64,9 +64,11 @@ Correlation and retry identity remain separate:
 
 ## Signals and telemetry
 
-`createSignalHandle<T>` creates typed event or app-emitted metric producers.
-`createInferenceSignalHandle<T>` additionally creates typed runtime inputs.
-`createDerivedMetricHandle<T>` creates a non-emitting derived-metric identity.
+`createSignalHandle` creates event or app-emitted metric producers whose value
+types are inferred from the declaration. `createInferenceSignalHandle` accepts
+only app-emitted primitive metrics and creates runtime inputs of that metric's
+declared type. `createDerivedMetricHandle` creates a non-emitting
+derived-metric identity whose `valueType` cannot disagree with its declaration.
 All handles verify a supplied `schemaDigest`.
 
 Telemetry is emitted through the `TelemetrySink` interface. Use

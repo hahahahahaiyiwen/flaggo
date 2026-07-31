@@ -96,12 +96,12 @@ describe("canonical definition identity", () => {
     };
     const digest = signalSchemaDigest(declaration);
     expect(
-      createSignalHandle<number>({ ...declaration, schemaDigest: digest }, {
+      createSignalHandle({ ...declaration, schemaDigest: digest }, {
         emit() {},
       }).schemaDigest,
     ).toBe(digest);
     expect(() =>
-      createSignalHandle<number>({
+      createSignalHandle({
         ...declaration,
         schemaDigest: `sha256:${"0".repeat(64)}`,
       }, { emit() {} })
@@ -336,6 +336,114 @@ describe("runtime safety", () => {
     expect(result).not.toHaveProperty("decisionId");
     expect(result).not.toHaveProperty("policy");
     expect(result).not.toHaveProperty("auditId");
+  });
+
+  it("accepts eligible Problem Details when optional prose is omitted", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const unavailable = fixture<{
+      expected: { status: number; body: Record<string, unknown> };
+    }>("errors/fallback-01-service-unavailable-eligible.json");
+    const problem = structuredClone(unavailable.expected.body);
+    delete problem.title;
+    delete problem.detail;
+    delete problem.correlationId;
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(unavailable.expected.status, problem));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default" },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({ source: "client-fallback", value: 800 });
+  });
+
+  it("rejects malformed structured Problem Details extensions", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(503, {
+        type: "https://flaggo.dev/problems/service-unavailable",
+        status: 503,
+        code: "service-unavailable",
+        clientFallback: null,
+        issues: "invalid",
+      }));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default" },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("rejects malformed Problem Details URI references", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(503, {
+        type: "not a valid URI reference",
+        status: 503,
+        code: "service-unavailable",
+        clientFallback: { eligible: true },
+      }));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default" },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
   });
 
   it("surfaces contract errors even when local fallback is configured", async () => {
@@ -696,6 +804,47 @@ describe("runtime safety", () => {
       }),
     ).rejects.toBeInstanceOf(InvalidServerResponseError);
   });
+
+  it("rejects exposure directives with properties from both union branches", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const decide = fixture<{ expected: { body: unknown } }>(
+      "runtime/decide/02-active-numeric-strategy.json",
+    );
+    const invalid = decisionForReceipt(
+      decide.expected.body,
+      apply.expected.body,
+      "tetris.dropInterval",
+    ) as Record<string, unknown>;
+    invalid.exposure = {
+      confirmationRequired: false,
+      confirmToken: "must-not-be-present",
+    };
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(200, invalid));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
 });
 
 describe("exposure and telemetry", () => {
@@ -740,7 +889,7 @@ describe("exposure and telemetry", () => {
 
   it("creates typed inference inputs and emits through the configured sink", () => {
     const emit = vi.fn();
-    const signal = createInferenceSignalHandle<number>(
+    const signal = createInferenceSignalHandle(
       {
         kind: "metric",
         key: "tetris.boardPressure",
@@ -766,7 +915,7 @@ describe("exposure and telemetry", () => {
   it("projects telemetry through an OpenTelemetry-compatible logger", () => {
     const emit = vi.fn();
     const sink = createOpenTelemetrySink({ emit });
-    const signal = createSignalHandle<{ hardDrop: boolean }>(
+    const signal = createSignalHandle(
       {
         kind: "event",
         key: "tetris.piecePlaced",
@@ -790,7 +939,7 @@ describe("exposure and telemetry", () => {
   });
 
   it("creates non-emitting handles for derived metrics", () => {
-    const signal = createDerivedMetricHandle<number>({
+    const signal = createDerivedMetricHandle({
       kind: "metric",
       key: "tetris.earlyLossRate24h",
       type: "number",

@@ -210,13 +210,80 @@ function projectReceipt(
 }
 
 function isProblem(value: unknown): value is ProblemDetails {
-  if (value === null || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
+  const problem = record(value);
+  if (problem === undefined) return false;
+  const fallback = problem.clientFallback === undefined
+    ? undefined
+    : record(problem.clientFallback);
   return (
-    typeof record.status === "number"
-    && typeof record.code === "string"
-    && typeof record.detail === "string"
+    isUriReference(problem.type)
+    && Number.isInteger(problem.status)
+    && Number(problem.status) >= 100
+    && Number(problem.status) <= 599
+    && typeof problem.code === "string"
+    && /^[a-z][a-z0-9-]*$/.test(problem.code)
+    && (problem.title === undefined || typeof problem.title === "string")
+    && (problem.detail === undefined || typeof problem.detail === "string")
+    && (problem.instance === undefined || isUriReference(problem.instance))
+    && (
+      problem.correlationId === undefined
+      || typeof problem.correlationId === "string"
+    )
+    && (
+      problem.retryAfterSeconds === undefined
+      || (
+        Number.isInteger(problem.retryAfterSeconds)
+        && Number(problem.retryAfterSeconds) >= 0
+      )
+    )
+    && (
+      problem.clientFallback === undefined
+      || (
+        fallback !== undefined
+        && Object.keys(fallback).every(
+          (key) => key === "eligible" || key === "reason",
+        )
+        && typeof fallback.eligible === "boolean"
+        && (fallback.reason === undefined || typeof fallback.reason === "string")
+      )
+    )
+    && (
+      problem.issues === undefined
+      || (
+        Array.isArray(problem.issues)
+        && problem.issues.every(isProblemIssue)
+      )
+    )
   );
+}
+
+function isUriReference(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (!/^[\x21-\x7e]*$/.test(value) || /%(?![0-9a-f]{2})/i.test(value)) {
+    return false;
+  }
+  return URL.canParse(value, "https://flaggo.invalid/");
+}
+
+function isProblemIssue(value: unknown): boolean {
+  const issue = record(value);
+  if (issue === undefined) return false;
+  const allowedKeys = new Set([
+    "code",
+    "severity",
+    "path",
+    "message",
+    "decisionKey",
+    "signalKey",
+  ]);
+  return Object.keys(issue).every((key) => allowedKeys.has(key))
+    && typeof issue.code === "string"
+    && /^[a-z][a-z0-9-]*$/.test(issue.code)
+    && (issue.severity === "error" || issue.severity === "warning")
+    && typeof issue.path === "string"
+    && typeof issue.message === "string"
+    && (issue.decisionKey === undefined || typeof issue.decisionKey === "string")
+    && (issue.signalKey === undefined || typeof issue.signalKey === "string");
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -288,14 +355,16 @@ function isTargetProvenance(value: unknown): boolean {
 
 function isExposure(value: unknown): boolean {
   const exposure = record(value);
-  return exposure !== undefined
-    && (
-      exposure.confirmationRequired === false
-      || (
-        exposure.confirmationRequired === true
-        && nonEmptyString(exposure.confirmToken)
-      )
-    );
+  if (exposure === undefined) return false;
+  const keys = Object.keys(exposure);
+  if (exposure.confirmationRequired === false) {
+    return keys.length === 1 && keys[0] === "confirmationRequired";
+  }
+  return exposure.confirmationRequired === true
+    && keys.length === 2
+    && keys.includes("confirmationRequired")
+    && keys.includes("confirmToken")
+    && nonEmptyString(exposure.confirmToken);
 }
 
 function isConfidence(value: unknown): boolean {

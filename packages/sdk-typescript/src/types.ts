@@ -296,16 +296,18 @@ export interface ExposureConfirmationResult {
 
 export interface ProblemDetails {
   type: string;
-  title: string;
+  title?: string;
   status: number;
-  detail: string;
+  detail?: string;
+  instance?: string;
   code: string;
-  correlationId: string;
+  correlationId?: string;
   clientFallback?: {
     eligible: boolean;
     reason?: string;
   };
   issues?: ContractIssue[];
+  retryAfterSeconds?: number;
 }
 
 export type FetchLike = (

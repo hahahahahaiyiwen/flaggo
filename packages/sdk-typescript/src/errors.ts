@@ -47,7 +47,7 @@ export class ContractConflictError extends FlaggoError {
 
 export class FlaggoHttpError extends FlaggoError {
   constructor(readonly problem: ProblemDetails) {
-    super(`${problem.code}: ${problem.detail}`);
+    super(`${problem.code}: ${problem.detail ?? problem.title ?? "Flaggo request failed"}`);
   }
 }
 

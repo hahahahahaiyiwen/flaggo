@@ -1,6 +1,8 @@
 import { signalSchemaDigest } from "./canonical.js";
 import type {
+  AppEmittedMetricSignalDeclaration,
   DerivedMetricSignalDeclaration,
+  EventSignalDeclaration,
   RuntimeContextValue,
   Sha256Digest,
   SignalDeclaration,
@@ -25,6 +27,33 @@ export interface SignalIdentity {
 export interface SignalHandle<T> extends SignalIdentity {
   emit(value: T): void;
 }
+
+type PrimitiveSignalType = "boolean" | "number" | "string";
+
+export type SignalValue<TType extends PrimitiveSignalType> =
+  TType extends "boolean"
+    ? boolean
+    : TType extends "number"
+      ? number
+      : string;
+
+export type EventValue<
+  TFields extends Record<string, PrimitiveSignalType>,
+> = {
+  [TKey in keyof TFields]: SignalValue<TFields[TKey]>;
+};
+
+type EmittableSignalDeclaration =
+  | EventSignalDeclaration
+  | AppEmittedMetricSignalDeclaration;
+
+type ValueForDeclaration<
+  TDeclaration extends EmittableSignalDeclaration,
+> = TDeclaration extends EventSignalDeclaration
+  ? EventValue<TDeclaration["fields"]>
+  : TDeclaration extends AppEmittedMetricSignalDeclaration
+    ? SignalValue<TDeclaration["type"]>
+    : never;
 
 export interface DerivedMetricHandle<T extends RuntimeContextValue>
   extends SignalIdentity {
@@ -88,18 +117,22 @@ function verifiedSchemaDigest(declaration: SignalDeclaration): Sha256Digest {
   return computed;
 }
 
-export function createSignalHandle<T>(
-  declaration: SignalDeclaration,
+export function createSignalHandle<
+  const TDeclaration extends EmittableSignalDeclaration,
+>(
+  declaration: TDeclaration,
+  sink: TelemetrySink,
+): SignalHandle<ValueForDeclaration<TDeclaration>> {
+  return createTypedSignalHandle<ValueForDeclaration<TDeclaration>>(
+    declaration,
+    sink,
+  );
+}
+
+function createTypedSignalHandle<T>(
+  declaration: EmittableSignalDeclaration,
   sink: TelemetrySink,
 ): SignalHandle<T> {
-  if (
-    declaration.kind === "metric"
-    && declaration.source === "derived"
-  ) {
-    throw new Error(
-      `derived metric '${declaration.key}' cannot emit application telemetry`,
-    );
-  }
   const schemaDigest = verifiedSchemaDigest(declaration);
   return {
     key: declaration.key,
@@ -114,11 +147,16 @@ export function createSignalHandle<T>(
   };
 }
 
-export function createInferenceSignalHandle<T extends RuntimeContextValue>(
-  declaration: SignalDeclaration,
+export function createInferenceSignalHandle<
+  const TDeclaration extends AppEmittedMetricSignalDeclaration,
+>(
+  declaration: TDeclaration,
   sink: TelemetrySink,
-): InferenceSignalHandle<T> {
-  const handle = createSignalHandle<T>(declaration, sink);
+): InferenceSignalHandle<SignalValue<TDeclaration["type"]>> {
+  const handle = createTypedSignalHandle<SignalValue<TDeclaration["type"]>>(
+    declaration,
+    sink,
+  );
   return {
     ...handle,
     input(value) {
@@ -127,12 +165,16 @@ export function createInferenceSignalHandle<T extends RuntimeContextValue>(
   };
 }
 
-export function createDerivedMetricHandle<T extends RuntimeContextValue>(
-  declaration: DerivedMetricSignalDeclaration,
-): DerivedMetricHandle<T> {
+export function createDerivedMetricHandle<
+  const TDeclaration extends DerivedMetricSignalDeclaration,
+>(
+  declaration: TDeclaration,
+): DerivedMetricHandle<SignalValue<TDeclaration["type"]>> {
   return {
     key: declaration.key,
     schemaDigest: verifiedSchemaDigest(declaration),
-    valueType: declaration.type as DerivedMetricHandle<T>["valueType"],
+    valueType: declaration.type as DerivedMetricHandle<
+      SignalValue<TDeclaration["type"]>
+    >["valueType"],
   };
 }
