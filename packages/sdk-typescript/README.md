@@ -1,12 +1,83 @@
 # TypeScript SDK
 
-The TypeScript SDK owns the code-first `declare -> decide -> observe`
-experience, bundle extraction, accepted-binding initialization, runtime calls,
-exposure confirmation, and explicitly configured availability fallback.
+`@flaggo/sdk` owns the TypeScript application boundary for Flaggo decisions:
+canonical bundle registration, accepted runtime bindings, numeric decision
+calls, exposure confirmation, typed signals, and telemetry emission. It does
+not implement policy, strategy selection, approval, or server state.
 
-Generated or hand-verified wire models must conform to `contracts/`. The SDK
-does not hide contract/configuration errors and never treats correlation
-identity as retry identity.
+## Client lifecycle
 
-Update this document whenever public API, fallback, extraction, or release
-behavior changes.
+```ts
+import { createFlaggoClient } from "@flaggo/sdk";
+
+const flaggo = await createFlaggoClient({
+  appId: "tetris-demo",
+  environment: "dev",
+  dataPlaneUrl: "http://localhost:8080",
+  controlPlane: {
+    mode: "startup-register",
+    url: "http://localhost:8081",
+    bundle,
+    credential: { mode: "local-development" },
+  },
+});
+
+const decision = await flaggo.tune.number("tetris.dropInterval", {
+  definition: bundle.definitions[0],
+  context: { sessionId: "game-456" },
+  correlationId: "game-loop-123",
+  idempotencyKey: "tick-456",
+});
+```
+
+Startup registration must finish before a client is returned. A semantic
+change requiring approval rejects initialization with `RequiresApprovalError`.
+Production callers can use `{ mode: "bearer", getToken }` credentials.
+`local-development` is an explicit insecure bypass for trusted local use.
+Already registered workloads may instead pass a registration receipt with
+`controlPlane.mode: "pre-registered"`.
+
+Every runtime call recomputes the local definition digest and compares it with
+`receipt.acceptedDefinitions[decisionKey]` before network access or fallback.
+The data-plane request contains only compact accepted identity and runtime
+values; full definitions are never sent.
+
+## Results and fallback
+
+`tune.number` returns a compact `DecisionReceipt<number>`.
+`tune.numberDetailed` returns provenance, policy, confidence, fallback, and
+target-resolution details. Server results are accepted only when the returned
+definition ID, revision, digest, bundle/build/deployment identity, and
+integrity match the expected binding.
+
+Availability fallback is disabled by default. Enabling
+`availabilityFallback: { mode: "local-default" }` permits the declared default
+only for transport failures or a valid HTTP 503 Problem Details response with
+`clientFallback.eligible: true`. Contract, identity, authorization, and invalid
+response errors never fall back. A client fallback has no server decision,
+policy, audit, or exposure identity.
+
+Correlation and retry identity remain separate:
+
+- `correlationId` becomes only `X-Flaggo-Correlation-Id`.
+- `idempotencyKey` becomes only `Idempotency-Key`.
+
+## Signals and telemetry
+
+`createSignalHandle<T>` creates typed event or app-emitted metric producers.
+`createInferenceSignalHandle<T>` additionally creates typed runtime inputs.
+`createDerivedMetricHandle<T>` creates a non-emitting derived-metric identity.
+All handles verify a supplied `schemaDigest`.
+
+Telemetry is emitted through the `TelemetrySink` interface. Use
+`createOpenTelemetrySink(logger)` with a structurally compatible OpenTelemetry
+logger, or provide a direct sink for local development and tests.
+
+## Contract maintenance
+
+Wire models are hand-verified against `contracts/`. Any wire-semantic change
+must update OpenAPI, JSON Schema, fixtures, and conformance before this package.
+Keep canonical normalization aligned with
+`contracts/conformance/validate.py`, add fixture-driven tests for behavior
+changes, and update this README whenever public API, fallback, extraction, or
+release behavior changes.
