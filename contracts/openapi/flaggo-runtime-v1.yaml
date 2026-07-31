@@ -110,6 +110,7 @@
         "responses": {
           "200": {
             "description": "Process can serve the handler.",
+            "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
             "content": {
               "application/json": {
                 "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/LivenessResult" }
@@ -129,6 +130,7 @@
         "responses": {
           "200": {
             "description": "Ready or degraded readiness.",
+            "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
             "content": {
               "application/json": {
                 "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/ReadinessResult" }
@@ -137,6 +139,7 @@
           },
           "503": {
             "description": "Not-ready: a required dependency is not up.",
+            "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },
             "content": {
               "application/json": {
                 "schema": { "$ref": "../schemas/runtime-models-v1.schema.json#/$defs/ReadinessResult" }

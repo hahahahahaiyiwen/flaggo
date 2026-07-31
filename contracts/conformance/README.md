@@ -19,6 +19,9 @@
 - executes semantic digest vectors for combined/explicit equivalence, generated
   fields, metadata exclusion, set ordering, per-definition hashes, and bundle
   sorting,
+- recomputes canonical signal-declaration digests, verifies supplied digests,
+  and rejects same-key schema conflicts,
+- requires correlation headers on every HTTP fixture, including health,
 - executes number/string action-space bounds, default, fallback, and step
   invariants,
 - executes concurrent startup convergence plus typed invalid-bundle and

@@ -45,15 +45,14 @@
         "environment": "dev",
         "sdk": "typescript",
         "sdkVersion": "0.1.0"
-      },
-      "correlationId": "different-trace"
+      }
     }
   },
   "expected": {
     "status": 200,
     "headers": {
       "Content-Type": "application/json",
-      "X-Flaggo-Correlation-Id": "srv-fingerprint-converge",
+      "X-Flaggo-Correlation-Id": "different-trace",
       "Idempotency-Key-Expires-At": "2026-07-31T19:20:01Z"
     },
     "body": {

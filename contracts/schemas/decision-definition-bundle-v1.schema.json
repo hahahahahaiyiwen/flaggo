@@ -46,6 +46,10 @@
     }
   },
   "$defs": {
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "ValueType": { "type": "string", "enum": ["boolean", "number", "string"] },
     "DecisionValue": {
       "type": ["boolean", "number", "string"]
@@ -78,7 +82,7 @@
           "type": "object",
           "additionalProperties": { "type": "string" }
         },
-        "schemaDigest": { "type": "string" }
+        "schemaDigest": { "$ref": "#/$defs/Sha256Digest" }
       }
     },
     "AppEmittedMetricSignalDeclaration": {
@@ -97,7 +101,7 @@
           "minItems": 2,
           "maxItems": 2
         },
-        "schemaDigest": { "type": "string" }
+        "schemaDigest": { "$ref": "#/$defs/Sha256Digest" }
       }
     },
     "DerivedMetricSignalDeclaration": {
@@ -123,7 +127,7 @@
           "minItems": 2,
           "maxItems": 2
         },
-        "schemaDigest": { "type": "string" }
+        "schemaDigest": { "$ref": "#/$defs/Sha256Digest" }
       }
     },
     "ActionSpace": {

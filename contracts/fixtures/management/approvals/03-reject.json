@@ -14,8 +14,7 @@
     "body": {
       "expectedBundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
       "reasonCode": "operator-rejected",
-      "comment": "The new required signal has not completed warmup.",
-      "correlationId": "release-2026-07-30"
+      "comment": "The new required signal has not completed warmup."
     }
   },
   "expected": {

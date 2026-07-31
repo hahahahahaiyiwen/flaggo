@@ -130,6 +130,59 @@
       }
     },
     {
+      "why": "runtime request correlation is header-only",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "body": {
+        "expectedContract": {
+          "definitionId": "def_example",
+          "revision": "rev_example",
+          "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "runtimeContext": {},
+        "client": {
+          "appId": "example",
+          "environment": "test"
+        },
+        "correlationId": "body-source-is-forbidden"
+      }
+    },
+    {
+      "why": "exposure confirmation correlation is header-only",
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "body": {
+        "confirmToken": "confirm-abc",
+        "correlationId": "body-source-is-forbidden"
+      }
+    },
+    {
+      "why": "approval correlation is header-only",
+      "schemaRef": "management-models-v1.schema.json#/$defs/ApproveRequest",
+      "body": {
+        "expectedBundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "correlationId": "body-source-is-forbidden"
+      }
+    },
+    {
+      "why": "rejection correlation is header-only",
+      "schemaRef": "management-models-v1.schema.json#/$defs/RejectRequest",
+      "body": {
+        "expectedBundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reasonCode": "operator-rejected",
+        "correlationId": "body-source-is-forbidden"
+      }
+    },
+    {
+      "why": "signal schema digest requires project SHA-256 syntax",
+      "schemaRef": "decision-definition-bundle-v1.schema.json#/$defs/SignalDeclaration",
+      "body": {
+        "kind": "metric",
+        "key": "system.load",
+        "type": "number",
+        "source": "app-emitted",
+        "schemaDigest": "not-a-digest"
+      }
+    },
+    {
       "why": "runtime timestamp uses an offset instead of the required UTC Z suffix",
       "schemaRef": "runtime-models-v1.schema.json#/$defs/Rfc3339",
       "body": "2026-07-30T14:30:00-04:00"
@@ -260,6 +313,41 @@
         "evidenceQuality": 0.8
       },
       "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+    },
+    {
+      "why": "requires-approval must contain a semantic change",
+      "fixture": "management/definition-bundle/06-apply-requires-approval.json",
+      "path": "/changes",
+      "value": [],
+      "schemaRef": "management-models-v1.schema.json#/$defs/RequiresApprovalResult"
+    },
+    {
+      "why": "requires-approval issues must be warning-only",
+      "fixture": "management/definition-bundle/06-apply-requires-approval.json",
+      "path": "/issues",
+      "value": [
+        {
+          "code": "contradictory-error",
+          "severity": "error",
+          "path": "/definitions/0",
+          "message": "Approval cannot proceed with an error."
+        }
+      ],
+      "schemaRef": "management-models-v1.schema.json#/$defs/RequiresApprovalResult"
+    },
+    {
+      "why": "semantic changes require a non-empty canonical diff",
+      "fixture": "management/definition-bundle/06-apply-requires-approval.json",
+      "path": "/changes/0/semanticDiff",
+      "value": [],
+      "schemaRef": "management-models-v1.schema.json#/$defs/RequiresApprovalResult"
+    },
+    {
+      "why": "approval resources must contain a semantic change",
+      "fixture": "management/approvals/01-get-approval-review.json",
+      "path": "/changes",
+      "value": [],
+      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult"
     }
   ],
   "acceptedFixtureMutations": [

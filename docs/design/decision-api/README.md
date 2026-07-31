@@ -561,7 +561,8 @@ Production data-plane requests use OAuth 2.0/OIDC access tokens. Decide requires
 - the same key and fingerprint returns the original decision result,
 - reuse with another fingerprint returns `409 idempotency-conflict`,
 - omitting the header creates a new decision record,
-- `correlationId` and trace metadata are excluded from the fingerprint.
+- `X-Flaggo-Correlation-Id` and trace metadata are excluded from the fingerprint;
+  the adapter maps the resolved header into internal `correlationId`.
 
 Phase 1 exposes only the singular decide operation. Batch decisions are deferred until ordering, partial-failure, policy, and idempotency semantics can be designed explicitly.
 

@@ -121,6 +121,7 @@ The SDK and service must consume the same fixtures. Generated language types are
 - Approval of a semantic change atomically creates a new `revision` and `contractDigest` under the existing `definitionId`. The previous tuple remains addressable while lifecycle policy permits it.
 - A new `definitionId` is created only for a new decision lineage or an explicit fork, never by encoding a version into an ID.
 - Definition normalization regenerates signal associations only from semantic roles, sorts set-like collections, removes generated identity fields and definition metadata, canonicalizes default-valued options, and then hashes RFC 8785 bytes.
+- Each signal declaration's `schemaDigest` is `sha256:<lowercase-hex>` over its RFC 8785 canonical declaration with `schemaDigest` omitted. Supplied digests are recomputed and verified; the same signal key with a different computed digest is a contract conflict.
 - `bundleDigest` preserves submitted bundle metadata for artifact identity, but normalizes signal declarations and every definition before sorting definitions by `decisionKey` and hashing.
 
 ### Media types
@@ -131,8 +132,9 @@ The SDK and service must consume the same fixtures. Generated language types are
 
 ### Correlation and retries
 
-- Clients may send `correlationId`; the service echoes or records it for tracing.
-- The service returns its own request correlation header on every response.
+- Clients may send `X-Flaggo-Correlation-Id` only as an HTTP header. Body `correlationId` fields are forbidden.
+- The HTTP adapter maps the resolved header value into the internal domain request's `correlationId`; when absent, the service generates one.
+- The service returns the resolved `X-Flaggo-Correlation-Id` on every response, including liveness and readiness responses.
 - Decide callers may send an optional `Idempotency-Key` header.
 - Without the header, each successful call creates a distinct decision record.
 - Exposure confirmation and bundle application require idempotent retry semantics.
@@ -146,7 +148,7 @@ authorized tenant/application/environment
   + Idempotency-Key
 ```
 
-The request fingerprint is SHA-256 over the HTTP method, normalized route template and parameters, negotiated API version/media type, and RFC 8785 canonical JSON body after removing `correlationId`. Authorization credentials, request-correlation headers, trace headers, and other tracing-only metadata are excluded from the fingerprint but remain part of the authorization namespace.
+The request fingerprint is SHA-256 over the HTTP method, normalized route template and parameters, negotiated API version/media type, and RFC 8785 canonical JSON body. Authorization credentials, `X-Flaggo-Correlation-Id`, trace headers, and other tracing-only metadata are excluded from the fingerprint but remain part of the authorization namespace.
 
 Decide idempotency behavior:
 
@@ -223,17 +225,16 @@ Proposed request body:
     "environment": "dev",
     "sdk": "typescript",
     "sdkVersion": "0.1.0"
-  },
-  "correlationId": "game-loop-123"
+  }
 }
 ```
 
-The HTTP adapter combines the route key and body into the internal canonical `DecideRequest`.
+The HTTP adapter combines the route key and body into the internal canonical `DecideRequest` and maps `X-Flaggo-Correlation-Id` into its tracing metadata.
 
 Request invariants:
 
 - `expectedContract` is required and contains `definitionId + revision + contractDigest`.
-- Optional `Idempotency-Key` controls retry deduplication; `correlationId` remains tracing metadata and is not uniqueness identity.
+- Optional `Idempotency-Key` controls retry deduplication; the correlation header remains tracing metadata and is not uniqueness identity.
 - `inputs` contains unique signal keys and is key-sorted by conforming clients.
 - The server rejects duplicate signal keys within `inputs`; deterministic ordering does not make conflicting values valid.
 - Every input must be declared for the decision's inference role and resolve to an app-emitted primitive metric.
@@ -383,8 +384,7 @@ Proposed request:
 ```json
 {
   "confirmToken": "confirm-abc",
-  "appliedAt": "2026-07-29T19:20:00Z",
-  "correlationId": "game-loop-123"
+  "appliedAt": "2026-07-29T19:20:00Z"
 }
 ```
 
@@ -476,8 +476,7 @@ Approve request:
 ```json
 {
   "expectedBundleDigest": "sha256:bundle...",
-  "comment": "Reviewed signal and policy changes.",
-  "correlationId": "release-2026-07-30"
+  "comment": "Reviewed signal and policy changes."
 }
 ```
 
@@ -487,12 +486,11 @@ Reject request:
 {
   "expectedBundleDigest": "sha256:bundle...",
   "reasonCode": "operator-rejected",
-  "comment": "The new required signal has not completed warmup.",
-  "correlationId": "release-2026-07-30"
+  "comment": "The new required signal has not completed warmup."
 }
 ```
 
-Every approval resource variant requires `approvalRequestId`, `application`, `environment`, `bundleDigest`, `createdAt`, `expiresAt`, `changes`, and `snapshotUrl`. A renewed request also carries `supersedesApprovalRequestId`. Its status-specific fields form a discriminated union:
+Every approval resource variant requires `approvalRequestId`, `application`, `environment`, `bundleDigest`, `createdAt`, `expiresAt`, `changes`, and `snapshotUrl`. `changes` is non-empty, contains at least one `semantic-change`, and every semantic change carries a non-empty canonical `semanticDiff`. A renewed request also carries `supersedesApprovalRequestId`. Its status-specific fields form a discriminated union:
 
 - `pending` has no receipt or terminal decision.
 - `approved` requires `decidedAt`, the complete `RegistrationReceipt`, and approval metadata containing the server-derived actor plus optional persisted comment.
@@ -555,6 +553,8 @@ Proposed response:
 Each issue should contain a stable `code`, severity, JSON Pointer `path`, human-readable message, and relevant decision or signal key.
 
 Validation results are a discriminated union. `status: "valid"` requires `bundleDigest`, `compatibility`, a non-empty `validatedDefinitions` map, and `issues`. `status: "invalid"` requires at least one error issue; digest and partial validation fields are optional when canonicalization reached them.
+
+`requires-approval` is also strict: it requires at least one `semantic-change`, every semantic change requires a non-empty `semanticDiff`, and `issues` may contain warnings only. Approval resources preserve that semantic-change invariant in every lifecycle state.
 
 Each definition entry is also a discriminated union keyed by `valueType`. Boolean, number, and string entries require matching action-space defaults and fallback value types. Numeric bounds must ascend, defaults and fallbacks must be in range, `step` must be positive, and numeric defaults/fallbacks must align to it. String defaults and fallbacks must belong to `allowedValues` when that set is present.
 

@@ -49,8 +49,7 @@
         "environment": "dev",
         "sdk": "typescript",
         "sdkVersion": "0.1.0"
-      },
-      "correlationId": "game-loop-123"
+      }
     }
   },
   "expected": {

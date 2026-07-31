@@ -13,8 +13,7 @@
     },
     "body": {
       "confirmToken": "confirm-abc",
-      "appliedAt": "2026-07-29T19:20:00Z",
-      "correlationId": "game-loop-123"
+      "appliedAt": "2026-07-29T19:20:00Z"
     }
   },
   "expected": {

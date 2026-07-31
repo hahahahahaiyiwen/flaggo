@@ -330,7 +330,137 @@
       }
     }
   ],
+  "signalDeclarationCases": [
+    {
+      "name": "event-schema-digest-excludes-generated-digest",
+      "expectedSchemaDigest": "sha256:d4a6acb6e2a53e08cd22a85e96c55fcd87cefa83f91de2840c259dc5354ced60",
+      "variants": [
+        {
+          "kind": "event",
+          "key": "game.piecePlaced",
+          "fields": {
+            "hardDrop": "boolean",
+            "placementTimeMs": "number"
+          },
+          "units": {
+            "placementTimeMs": "ms"
+          }
+        },
+        {
+          "schemaDigest": "sha256:d4a6acb6e2a53e08cd22a85e96c55fcd87cefa83f91de2840c259dc5354ced60",
+          "units": {
+            "placementTimeMs": "ms"
+          },
+          "fields": {
+            "placementTimeMs": "number",
+            "hardDrop": "boolean"
+          },
+          "key": "game.piecePlaced",
+          "kind": "event"
+        }
+      ]
+    },
+    {
+      "name": "derived-metric-schema-digest",
+      "expectedSchemaDigest": "sha256:67035f1693cc2d6563b668a1256ea947d6feca6d195ac0fa7fb0f15502f913e5",
+      "variants": [
+        {
+          "kind": "metric",
+          "key": "game.lossRate24h",
+          "type": "number",
+          "source": "derived",
+          "from": [
+            { "key": "game.sessionEnded" }
+          ],
+          "aggregation": "rate(endReason == 'loss')",
+          "window": "24h",
+          "range": [0, 1]
+        }
+      ]
+    }
+  ],
   "normalizationErrorCases": [
+    {
+      "name": "supplied-signal-schema-digest-mismatch",
+      "expectedError": "schema digest mismatch for signal key",
+      "bundle": {
+        "format": "flaggo.decision-definition-bundle/v1",
+        "application": {
+          "id": "digest-vectors",
+          "environment": "test"
+        },
+        "source": {},
+        "signals": [
+          {
+            "kind": "metric",
+            "key": "system.load",
+            "type": "number",
+            "source": "app-emitted",
+            "schemaDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        ],
+        "definitions": [
+          {
+            "key": "global.enabled",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "same-key-signal-schema-conflict",
+      "expectedError": "conflicting signal declaration for key",
+      "bundle": {
+        "format": "flaggo.decision-definition-bundle/v1",
+        "application": {
+          "id": "digest-vectors",
+          "environment": "test"
+        },
+        "source": {},
+        "signals": [
+          {
+            "kind": "metric",
+            "key": "system.load",
+            "type": "number",
+            "source": "app-emitted"
+          },
+          {
+            "kind": "metric",
+            "key": "system.load",
+            "type": "string",
+            "source": "app-emitted"
+          }
+        ],
+        "definitions": [
+          {
+            "key": "global.enabled",
+            "valueType": "boolean",
+            "actionSpace": {
+              "type": "boolean",
+              "default": false
+            },
+            "fallback": {
+              "value": false
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        ]
+      }
+    },
     {
       "name": "duplicate-definition-metadata-conflict",
       "expectedError": "metadata-conflicting duplicate decision key",
@@ -563,7 +693,7 @@
                 "key": "system.load",
                 "type": "number",
                 "source": "app-emitted",
-                "schemaDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                "schemaDigest": "sha256:0b803288518debd9387d9f4358472c4ab3675415b96e0f34d8ed95e6d22329e9"
               },
               {
                 "kind": "metric",

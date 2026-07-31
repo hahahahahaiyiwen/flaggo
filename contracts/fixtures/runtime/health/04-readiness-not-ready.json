@@ -11,7 +11,8 @@
   "expected": {
     "status": 503,
     "headers": {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-health-not-ready"
     },
     "body": {
       "status": "not-ready",

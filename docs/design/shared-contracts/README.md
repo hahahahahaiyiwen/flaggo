@@ -60,7 +60,7 @@ Rules:
 - `DecisionTargetRef.type` is extensible, but MVP built-ins are `session`, `user`, `cohort`, and `global`.
 - Runtime context must stay primitive and JSON-serializable for audit and policy evaluation.
 - A signal `key` is its immutable semantic identity. Any schema or meaning change requires a new key; schema digests detect conflicting definitions under the same key.
-- `schemaDigest` is generated from the canonical signal declaration with the digest field omitted. Tooling recomputes and verifies it when supplied; authors do not control it. Signal references contain only `key`, so presence or absence of digest metadata cannot change a decision-definition digest.
+- `schemaDigest` is `sha256:<lowercase-hex>` over the RFC 8785 canonical signal declaration with `schemaDigest` omitted. Tooling recomputes and verifies it when supplied; a mismatch is invalid. Reusing one signal key with a different computed digest is a contract conflict. Signal references contain only `key`, so digest metadata cannot change decision-definition identity.
 - A decision may only use signals referenced by explicit roles such as objectives, inference inputs, evidence, or guardrails. Tooling may materialize an associated-signal set in the extracted contract for governance, but authored definitions should not duplicate role references by hand.
 
 ## Action space
@@ -559,6 +559,9 @@ type ExposureConfirmationResult = {
 
 Rules:
 
+- `correlationId` is internal tracing metadata. HTTP adapters source it only
+  from `X-Flaggo-Correlation-Id` (or generate it when absent); runtime and
+  management JSON request bodies never serialize it.
 - The response returns the final concrete value for application code.
 - `valueType` discriminates `value`; mismatched pairs and non-finite number values are invalid.
 - `decisionMode` explains how the value was produced without exposing internals.

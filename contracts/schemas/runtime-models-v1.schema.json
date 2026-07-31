@@ -214,8 +214,7 @@
             "sdk": { "type": "string" },
             "sdkVersion": { "type": "string" }
           }
-        },
-        "correlationId": { "type": "string" }
+        }
       }
     },
     "ServerDecisionResult": {
@@ -357,8 +356,7 @@
       "additionalProperties": false,
       "properties": {
         "confirmToken": { "type": "string", "minLength": 1 },
-        "appliedAt": { "$ref": "#/$defs/Rfc3339" },
-        "correlationId": { "type": "string" }
+        "appliedAt": { "$ref": "#/$defs/Rfc3339" }
       }
     },
     "ExposureConfirmationResult": {

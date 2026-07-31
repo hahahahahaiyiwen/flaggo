@@ -413,16 +413,33 @@ def contract_digest(definition: dict) -> str:
     return f"sha256:{hashlib.sha256(canonical_json_bytes(normalized)).hexdigest()}"
 
 
+def normalize_signal_declaration(declaration: dict) -> dict:
+    normalized = deepcopy(declaration)
+    normalized.pop("schemaDigest", None)
+    return normalized
+
+
+def signal_schema_digest(declaration: dict) -> str:
+    normalized = normalize_signal_declaration(declaration)
+    return f"sha256:{hashlib.sha256(canonical_json_bytes(normalized)).hexdigest()}"
+
+
 def normalize_bundle(bundle: dict) -> dict:
     normalized = deepcopy(bundle)
     declarations: dict[str, dict] = {}
+    declaration_digests: dict[str, str] = {}
     for declaration in normalized.get("signals", []):
-        declaration = deepcopy(declaration)
-        declaration.pop("schemaDigest", None)
+        supplied_digest = declaration.get("schemaDigest")
+        computed_digest = signal_schema_digest(declaration)
         key = declaration["key"]
+        if supplied_digest is not None and supplied_digest != computed_digest:
+            raise ValueError(f"schema digest mismatch for signal key: {key}")
         if key in declarations:
+            if declaration_digests[key] != computed_digest:
+                raise ValueError(f"conflicting signal declaration for key: {key}")
             raise ValueError(f"duplicate signal declaration: {key}")
-        declarations[key] = declaration
+        declarations[key] = normalize_signal_declaration(declaration)
+        declaration_digests[key] = computed_digest
     if "signals" in normalized:
         normalized["signals"] = [declarations[key] for key in sorted(declarations)]
 
@@ -518,6 +535,7 @@ def validate_semantic_digest_vectors(rep: Report) -> None:
     document = load_json(SEMANTIC_DIGEST_VECTORS)
     definition_cases = document.get("definitionCases", [])
     inequivalent_definition_cases = document.get("inequivalentDefinitionCases", [])
+    signal_declaration_cases = document.get("signalDeclarationCases", [])
     bundle_cases = document.get("bundleCases", [])
     value_contract_cases = document.get("valueContractCases", [])
     normalization_error_cases = document.get("normalizationErrorCases", [])
@@ -526,6 +544,7 @@ def validate_semantic_digest_vectors(rep: Report) -> None:
         bool(inequivalent_definition_cases),
         "inequivalent semantic definition digest vector set is empty",
     )
+    rep.check(bool(signal_declaration_cases), "signal declaration digest vector set is empty")
     rep.check(bool(bundle_cases), "semantic bundle digest vector set is empty")
     rep.check(bool(value_contract_cases), "value contract vector set is empty")
     rep.check(bool(normalization_error_cases), "normalization error vector set is empty")
@@ -555,6 +574,17 @@ def validate_semantic_digest_vectors(rep: Report) -> None:
         rep.check(
             left_digest != right_digest,
             f"semantic definition vector '{case['name']}' collapsed distinct definitions",
+        )
+
+    for case in signal_declaration_cases:
+        digests = [signal_schema_digest(variant) for variant in case["variants"]]
+        rep.check(
+            len(set(digests)) == 1,
+            f"signal declaration vector '{case['name']}' variants diverged: {digests}",
+        )
+        rep.check(
+            digests[0] == case["expectedSchemaDigest"],
+            f"signal declaration vector '{case['name']}' digest mismatch: {digests[0]}",
         )
 
     for case in bundle_cases:
@@ -873,6 +903,17 @@ def validate_fixture(
     if not fx.get("sdkLocal"):
         rep.check(isinstance(exp.get("status"), int), f"{ctx}: expected.status required")
         rep.check(isinstance(exp.get("headers", {}), dict), f"{ctx}: expected.headers must be an object")
+        if not fx.get("schemaNegative"):
+            rep.check(
+                bool(exp.get("headers", {}).get("X-Flaggo-Correlation-Id")),
+                f"{ctx}: every HTTP response requires X-Flaggo-Correlation-Id",
+            )
+            supplied_correlation = req.get("headers", {}).get("X-Flaggo-Correlation-Id")
+            if supplied_correlation is not None:
+                rep.check(
+                    exp["headers"].get("X-Flaggo-Correlation-Id") == supplied_correlation,
+                    f"{ctx}: response must echo supplied X-Flaggo-Correlation-Id",
+                )
     if not fx.get("sdkLocal") and not fx.get("schemaNegative"):
         operation = match_operation(req.get("method"), req.get("path"), operations)
         rep.check(operation is not None, f"{ctx}: request does not match an OpenAPI operation")

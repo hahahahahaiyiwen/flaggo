@@ -41,8 +41,7 @@
       "client": {
         "appId": "other-app",
         "environment": "prod"
-      },
-      "correlationId": "game-loop-123"
+      }
     }
   },
   "expected": {

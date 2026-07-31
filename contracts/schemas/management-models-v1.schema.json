@@ -121,6 +121,7 @@
             "proposed": { "$ref": "#/$defs/ProposedDefinition" },
             "semanticDiff": {
               "type": "array",
+              "minItems": 1,
               "items": { "$ref": "#/$defs/ContractSemanticDiffOperation" }
             }
           }
@@ -230,8 +231,29 @@
         "expiresAt": { "$ref": "#/$defs/Rfc3339" },
         "snapshotUrl": { "type": "string" },
         "supersedesApprovalRequestId": { "type": "string" },
-        "changes": { "type": "array", "items": { "$ref": "#/$defs/ContractChange" } },
-        "issues": { "type": "array", "items": { "$ref": "#/$defs/ContractIssue" } }
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ContractChange" },
+          "contains": {
+            "type": "object",
+            "properties": { "kind": { "const": "semantic-change" } },
+            "required": ["kind"]
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/ContractIssue" },
+              {
+                "type": "object",
+                "properties": { "severity": { "const": "warning" } },
+                "required": ["severity"]
+              }
+            ]
+          }
+        }
       }
     },
     "DefinitionBundleApplyResult": {
@@ -265,7 +287,16 @@
             "expiresAt": { "$ref": "#/$defs/Rfc3339" },
             "snapshotUrl": { "type": "string" },
             "supersedesApprovalRequestId": { "type": "string" },
-            "changes": { "type": "array", "items": { "$ref": "#/$defs/ContractChange" } },
+            "changes": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/ContractChange" },
+              "contains": {
+                "type": "object",
+                "properties": { "kind": { "const": "semantic-change" } },
+                "required": ["kind"]
+              }
+            },
             "status": { "type": "string", "enum": ["pending", "approved", "rejected", "expired"] }
           }
         },
@@ -337,8 +368,7 @@
       "additionalProperties": false,
       "properties": {
         "expectedBundleDigest": { "$ref": "#/$defs/Sha256Digest" },
-        "comment": { "type": "string" },
-        "correlationId": { "type": "string" }
+        "comment": { "type": "string" }
       }
     },
     "RejectRequest": {
@@ -348,8 +378,7 @@
       "properties": {
         "expectedBundleDigest": { "$ref": "#/$defs/Sha256Digest" },
         "reasonCode": { "type": "string", "minLength": 1 },
-        "comment": { "type": "string" },
-        "correlationId": { "type": "string" }
+        "comment": { "type": "string" }
       }
     }
   }

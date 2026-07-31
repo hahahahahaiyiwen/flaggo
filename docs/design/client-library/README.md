@@ -838,7 +838,7 @@ Different builds of the same service can be deployed at the same time. The SDK s
 
 If expected identity is missing, unknown, conflicting, or retired, the SDK surfaces the Problem Details contract error. It must not invoke local fallback or retry with another revision. Local fallback is reserved for explicitly configured data-plane availability failures.
 
-Production credentials use OAuth 2.0/OIDC scopes. The SDK keeps management credentials out of runtime/browser clients and exposes an explicit insecure local-development bypass only when configured. Decide retries may supply an optional `Idempotency-Key`; the SDK must not use `correlationId` as retry identity. Detailed results expose server-resolved target provenance so callers can distinguish verified, derived, and replaced cohort claims.
+Production credentials use OAuth 2.0/OIDC scopes. The SDK keeps management credentials out of runtime/browser clients and exposes an explicit insecure local-development bypass only when configured. Decide retries may supply an optional `Idempotency-Key`; the SDK sends tracing identity only through `X-Flaggo-Correlation-Id` and never uses it as retry identity. Detailed results expose server-resolved target provenance so callers can distinguish verified, derived, and replaced cohort claims.
 
 The exact availability classifier and retry defaults are defined in the [API Contract Proposal](../API_CONTRACT_PROPOSAL.md#sdk-availability-fallback-classifier). The SDK must compare each generated call-site digest with `RegistrationReceipt.acceptedDefinitions[decisionKey]` before a remote attempt or local fallback. Availability fallback is forbidden until that accepted binding exists and matches.
 
