@@ -164,6 +164,7 @@ export interface RequiresApprovalResult {
   compatibility: "new-contract-required";
   expiresAt: string;
   snapshotUrl: string;
+  supersedesApprovalRequestId?: string;
   changes: unknown[];
   issues: ContractIssue[];
 }
@@ -234,7 +235,10 @@ export interface ServerDecisionResult<T extends DecisionValue = DecisionValue> {
     reasons: string[];
     appliedConstraints: string[];
   };
-  definitionStatus: RuntimeContractIdentity & {
+  definitionStatus: AcceptedDefinition & {
+    bundleDigest?: Sha256Digest;
+    buildId?: string;
+    deploymentId?: string;
     integrity: "verified";
     compatibility?: "identical" | "metadata-only" | "new-contract-required";
   };

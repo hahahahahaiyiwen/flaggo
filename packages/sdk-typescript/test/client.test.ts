@@ -15,6 +15,7 @@ import {
   createSignalHandle,
   normalizeBundle,
   signalSchemaDigest,
+  type AcceptedDefinition,
   type DecisionDefinitionBundle,
   type FetchLike,
   type RegistrationReceipt,
@@ -47,9 +48,6 @@ function decisionForReceipt(
     ...receipt.acceptedDefinitions[decisionKey],
     bundleDigest: receipt.bundleDigest,
     ...(receipt.buildId === undefined ? {} : { buildId: receipt.buildId }),
-    ...(receipt.artifactDigest === undefined
-      ? {}
-      : { artifactDigest: receipt.artifactDigest }),
     ...(deploymentId === undefined ? {} : { deploymentId }),
     integrity: "verified",
     compatibility: "identical",
@@ -207,6 +205,31 @@ describe("startup registration", () => {
     );
   });
 
+  it("rejects an approval response for another bundle identity", async () => {
+    const pending = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: Record<string, unknown> };
+    }>("management/definition-bundle/06-apply-requires-approval.json");
+    const invalid = structuredClone(pending.expected.body);
+    invalid.application = "another-app";
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(response(202, invalid));
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: pending.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        fetch,
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
   it("rejects a receipt whose digest does not match the submitted bundle", async () => {
     const apply = fixture<{
       request: { body: DecisionDefinitionBundle };
@@ -226,6 +249,61 @@ describe("startup registration", () => {
           credential: { mode: "local-development" },
         },
         appId: "tetris-demo",
+        environment: "dev",
+        fetch,
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("rejects schema-invalid registration receipt fields", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const receipt = structuredClone(apply.expected.body) as RegistrationReceipt
+      & Record<string, unknown>;
+    receipt.buildId = 42 as unknown as string;
+    receipt.unexpected = true;
+    const accepted = receipt.acceptedDefinitions["tetris.dropInterval"] as
+      AcceptedDefinition & Record<string, unknown>;
+    accepted.unexpected = true;
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(response(200, receipt));
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: apply.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        fetch,
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("binds approved receipt identity to the submitted bundle", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const receipt = structuredClone(apply.expected.body);
+    receipt.application = "another-app";
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(response(200, receipt));
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: apply.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "another-app",
         environment: "dev",
         fetch,
       }),
@@ -729,6 +807,45 @@ describe("runtime safety", () => {
     ).rejects.toBeInstanceOf(InvalidServerResponseError);
   });
 
+  it("rejects undeclared runtime definition status identity", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const decide = fixture<{ expected: { body: unknown } }>(
+      "runtime/decide/02-active-numeric-strategy.json",
+    );
+    const invalid = decisionForReceipt(
+      decide.expected.body,
+      apply.expected.body,
+      "tetris.dropInterval",
+    ) as Record<string, unknown>;
+    (invalid.definitionStatus as Record<string, unknown>).artifactDigest =
+      "sha256:undeclared-on-runtime-status";
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(200, invalid));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
   it("rejects an incomplete success response instead of projecting it", async () => {
     const apply = fixture<{
       request: { body: DecisionDefinitionBundle };
@@ -885,6 +1002,78 @@ describe("exposure and telemetry", () => {
       "game-loop-123",
     );
     expect(JSON.parse(String(request.body))).not.toHaveProperty("correlationId");
+  });
+
+  it("rejects schema-invalid exposure confirmation results", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const confirmation = fixture<{
+      expected: { body: Record<string, unknown> };
+    }>("runtime/exposure-confirmation/01-confirm-success.json");
+    const invalid = structuredClone(confirmation.expected.body);
+    invalid.confirmedAt = "2026-07-29T19:20:00+01:00";
+    invalid.unexpected = true;
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(200, invalid));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      fetch,
+    });
+
+    await expect(
+      client.exposures.confirm("decision-123", "confirm-abc"),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("matches contract RFC 3339 UTC timestamp semantics", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const confirmation = fixture<{
+      expected: { body: Record<string, unknown> };
+    }>("runtime/exposure-confirmation/01-confirm-success.json");
+    const valid = structuredClone(confirmation.expected.body);
+    valid.confirmedAt = "2026-07-29t19:20:00Z";
+    const invalid = structuredClone(confirmation.expected.body);
+    invalid.confirmedAt = "2026-07-29T19:20:60Z";
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(200, valid))
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(200, invalid));
+    const config = {
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register" as const,
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" as const },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      fetch,
+    };
+    const validClient = await createFlaggoClient(config);
+    await expect(
+      validClient.exposures.confirm("decision-123", "confirm-abc"),
+    ).resolves.toMatchObject({ status: "confirmed" });
+
+    const invalidClient = await createFlaggoClient(config);
+    await expect(
+      invalidClient.exposures.confirm("decision-123", "confirm-abc"),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
   });
 
   it("creates typed inference inputs and emits through the configured sink", () => {

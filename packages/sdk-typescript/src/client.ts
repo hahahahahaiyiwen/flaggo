@@ -142,17 +142,12 @@ async function register(
   );
   const body = await parseJson(response);
   if (response.status === 202) {
-    if (
-      body === null
-      || typeof body !== "object"
-      || (body as Record<string, unknown>).status !== "requires-approval"
-      || typeof (body as Record<string, unknown>).approvalRequestId !== "string"
-    ) {
+    if (!isRequiresApprovalResult(body, bundle, digest)) {
       throw new InvalidServerResponseError(
         "Flaggo returned a malformed requires-approval result.",
       );
     }
-    throw new RequiresApprovalError(body as RequiresApprovalResult);
+    throw new RequiresApprovalError(body);
   }
   if (!response.ok) {
     throw new FlaggoHttpError(problemOrThrow(body, response.status));
@@ -163,7 +158,12 @@ async function register(
     );
   }
   const receipt = body;
-  if (receipt.status !== "approved" || receipt.bundleDigest !== digest) {
+  if (
+    receipt.status !== "approved"
+    || receipt.bundleDigest !== digest
+    || receipt.application !== bundle.application.id
+    || receipt.environment !== bundle.application.environment
+  ) {
     throw new InvalidServerResponseError(
       "Registration receipt does not match the submitted canonical bundle.",
     );
@@ -296,6 +296,18 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function hasOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -307,18 +319,118 @@ function isDigest(value: unknown): value is `sha256:${string}` {
 function isAcceptedDefinition(value: unknown): value is AcceptedDefinition {
   const accepted = record(value);
   return accepted !== undefined
+    && hasOnlyKeys(accepted, ["definitionId", "revision", "contractDigest"])
     && nonEmptyString(accepted.definitionId)
     && nonEmptyString(accepted.revision)
     && isDigest(accepted.contractDigest);
+}
+
+function isProposedDefinition(value: unknown): boolean {
+  const proposed = record(value);
+  return proposed !== undefined
+    && hasOnlyKeys(proposed, ["definitionId", "contractDigest"])
+    && nonEmptyString(proposed.definitionId)
+    && isDigest(proposed.contractDigest);
+}
+
+function isCanonicalJsonValue(value: unknown): boolean {
+  if (
+    value === null
+    || typeof value === "boolean"
+    || typeof value === "string"
+  ) return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isCanonicalJsonValue);
+  const object = record(value);
+  return object !== undefined && Object.values(object).every(isCanonicalJsonValue);
+}
+
+function isSemanticDiffOperation(value: unknown): boolean {
+  const operation = record(value);
+  if (operation === undefined || typeof operation.path !== "string") return false;
+  if (operation.op === "add") {
+    return hasOnlyKeys(operation, ["op", "path", "after"])
+      && hasOwn(operation, "after")
+      && isCanonicalJsonValue(operation.after);
+  }
+  if (operation.op === "remove") {
+    return hasOnlyKeys(operation, ["op", "path", "before"])
+      && hasOwn(operation, "before")
+      && isCanonicalJsonValue(operation.before);
+  }
+  return operation.op === "replace"
+    && hasOnlyKeys(operation, ["op", "path", "before", "after"])
+    && hasOwn(operation, "before")
+    && hasOwn(operation, "after")
+    && isCanonicalJsonValue(operation.before)
+    && isCanonicalJsonValue(operation.after);
+}
+
+function isContractChange(value: unknown): boolean {
+  const change = record(value);
+  if (change === undefined || !nonEmptyString(change.decisionKey)) return false;
+  if (
+    change.kind === "created"
+    || change.kind === "metadata-updated"
+    || change.kind === "deprecation-candidate"
+  ) {
+    return hasOnlyKeys(change, ["kind", "decisionKey"]);
+  }
+  return change.kind === "semantic-change"
+    && hasOnlyKeys(
+      change,
+      ["kind", "decisionKey", "previous", "proposed", "semanticDiff"],
+    )
+    && isAcceptedDefinition(change.previous)
+    && isProposedDefinition(change.proposed)
+    && Array.isArray(change.semanticDiff)
+    && change.semanticDiff.length > 0
+    && change.semanticDiff.every(isSemanticDiffOperation);
+}
+
+function isContractIssue(value: unknown, warningOnly = false): boolean {
+  const issue = record(value);
+  if (issue === undefined) return false;
+  return hasOnlyKeys(
+    issue,
+    ["code", "severity", "path", "message", "decisionKey", "signalKey"],
+  )
+    && typeof issue.code === "string"
+    && /^[a-z][a-z0-9-]*$/.test(issue.code)
+    && (
+      issue.severity === "warning"
+      || (!warningOnly && issue.severity === "error")
+    )
+    && typeof issue.path === "string"
+    && typeof issue.message === "string"
+    && (issue.decisionKey === undefined || typeof issue.decisionKey === "string")
+    && (issue.signalKey === undefined || typeof issue.signalKey === "string");
 }
 
 function isRegistrationReceipt(value: unknown): value is RegistrationReceipt {
   const receipt = record(value);
   const accepted = record(receipt?.acceptedDefinitions);
   return receipt !== undefined
+    && hasOnlyKeys(receipt, [
+      "application",
+      "environment",
+      "bundleDigest",
+      "buildId",
+      "artifactDigest",
+      "acceptedDefinitions",
+      "compatibility",
+      "status",
+      "changes",
+      "issues",
+    ])
     && nonEmptyString(receipt.application)
     && nonEmptyString(receipt.environment)
     && isDigest(receipt.bundleDigest)
+    && (receipt.buildId === undefined || typeof receipt.buildId === "string")
+    && (
+      receipt.artifactDigest === undefined
+      || typeof receipt.artifactDigest === "string"
+    )
     && accepted !== undefined
     && Object.keys(accepted).length > 0
     && Object.values(accepted).every(isAcceptedDefinition)
@@ -326,12 +438,63 @@ function isRegistrationReceipt(value: unknown): value is RegistrationReceipt {
       String(receipt.compatibility),
     )
     && receipt.status === "approved"
-    && Array.isArray(receipt.issues);
+    && (
+      receipt.changes === undefined
+      || (
+        Array.isArray(receipt.changes)
+        && receipt.changes.every(isContractChange)
+      )
+    )
+    && Array.isArray(receipt.issues)
+    && receipt.issues.every((issue) => isContractIssue(issue, true));
+}
+
+function isRequiresApprovalResult(
+  value: unknown,
+  bundle: DecisionDefinitionBundle,
+  digest: `sha256:${string}`,
+): value is RequiresApprovalResult {
+  const result = record(value);
+  return result !== undefined
+    && hasOnlyKeys(result, [
+      "status",
+      "approvalRequestId",
+      "application",
+      "environment",
+      "bundleDigest",
+      "compatibility",
+      "expiresAt",
+      "snapshotUrl",
+      "supersedesApprovalRequestId",
+      "changes",
+      "issues",
+    ])
+    && result.status === "requires-approval"
+    && nonEmptyString(result.approvalRequestId)
+    && result.application === bundle.application.id
+    && result.environment === bundle.application.environment
+    && result.bundleDigest === digest
+    && result.compatibility === "new-contract-required"
+    && isRfc3339Utc(result.expiresAt)
+    && typeof result.snapshotUrl === "string"
+    && (
+      result.supersedesApprovalRequestId === undefined
+      || typeof result.supersedesApprovalRequestId === "string"
+    )
+    && Array.isArray(result.changes)
+    && result.changes.length > 0
+    && result.changes.every(isContractChange)
+    && result.changes.some(
+      (change) => record(change)?.kind === "semantic-change",
+    )
+    && Array.isArray(result.issues)
+    && result.issues.every((issue) => isContractIssue(issue, true));
 }
 
 function isTarget(value: unknown): boolean {
   const target = record(value);
   return target !== undefined
+    && hasOnlyKeys(target, ["type", "id"])
     && nonEmptyString(target.type)
     && nonEmptyString(target.id);
 }
@@ -339,6 +502,10 @@ function isTarget(value: unknown): boolean {
 function isTargetProvenance(value: unknown): boolean {
   const provenance = record(value);
   return provenance !== undefined
+    && hasOnlyKeys(
+      provenance,
+      ["targetType", "claimedId", "resolvedId", "source"],
+    )
     && nonEmptyString(provenance.targetType)
     && (
       provenance.claimedId === undefined
@@ -376,6 +543,10 @@ function isConfidence(value: unknown): boolean {
     && candidate >= 0
     && candidate <= 1;
   return confidence !== undefined
+    && hasOnlyKeys(
+      confidence,
+      ["evidenceQuality", "modelUncertainty", "expectedOutcome"],
+    )
     && probability(confidence.evidenceQuality)
     && (
       confidence.modelUncertainty === undefined
@@ -384,6 +555,32 @@ function isConfidence(value: unknown): boolean {
     && (
       confidence.expectedOutcome === undefined
       || probability(confidence.expectedOutcome)
+    );
+}
+
+function isPolicyResult(value: unknown): boolean {
+  const policy = record(value);
+  if (policy === undefined) return false;
+  const clientFallback = policy.clientFallback === undefined
+    ? undefined
+    : record(policy.clientFallback);
+  return hasOnlyKeys(
+    policy,
+    ["result", "reasons", "appliedConstraints", "clientFallback"],
+  )
+    && ["approved", "blocked", "fallback"].includes(String(policy.result))
+    && stringArray(policy.reasons)
+    && stringArray(policy.appliedConstraints)
+    && (
+      policy.clientFallback === undefined
+      || (
+        clientFallback !== undefined
+        && hasOnlyKeys(clientFallback, ["requiredEvidenceUnavailable"])
+        && (
+          clientFallback.requiredEvidenceUnavailable === "allow"
+          || clientFallback.requiredEvidenceUnavailable === "forbid"
+        )
+      )
     );
 }
 
@@ -406,6 +603,26 @@ function isVerifiedNumberResult(
     || fallback === undefined
     || policy === undefined
   ) return false;
+  if (!hasOnlyKeys(result, [
+    "decisionKey",
+    "definition",
+    "decisionId",
+    "value",
+    "valueType",
+    "decisionMode",
+    "strategyId",
+    "confidence",
+    "runtimeTarget",
+    "controlTarget",
+    "targetProvenance",
+    "resolutionChain",
+    "fallback",
+    "policy",
+    "definitionStatus",
+    "exposure",
+    "reason",
+    "auditId",
+  ])) return false;
   const mode = result.decisionMode;
   const modeValid = (
     mode === "active-value"
@@ -427,6 +644,10 @@ function isVerifiedNumberResult(
   );
   return (
     result.decisionKey === decisionKey
+    && hasOnlyKeys(
+      definition,
+      ["appId", "environment", "key", "definitionId", "revision"],
+    )
     && definition.key === decisionKey
     && definition.appId === appId
     && definition.environment === environment
@@ -443,17 +664,46 @@ function isVerifiedNumberResult(
     && result.targetProvenance.every(isTargetProvenance)
     && Array.isArray(result.resolutionChain)
     && stringArray(result.resolutionChain)
+    && hasOnlyKeys(
+      fallback,
+      [
+        "source",
+        "resolutionFallbackUsed",
+        "decisionFallbackUsed",
+        "reason",
+      ],
+    )
     && fallback.source === "server"
     && typeof fallback.resolutionFallbackUsed === "boolean"
     && typeof fallback.decisionFallbackUsed === "boolean"
     && (fallback.reason === null || typeof fallback.reason === "string")
-    && ["approved", "blocked", "fallback"].includes(String(policy.result))
-    && stringArray(policy.reasons)
-    && stringArray(policy.appliedConstraints)
+    && isPolicyResult(policy)
+    && hasOnlyKeys(definitionStatus, [
+      "definitionId",
+      "revision",
+      "contractDigest",
+      "bundleDigest",
+      "buildId",
+      "deploymentId",
+      "integrity",
+      "compatibility",
+    ])
     && definitionStatus.definitionId === expected.definitionId
     && definitionStatus.revision === expected.revision
     && definitionStatus.contractDigest === expected.contractDigest
     && definitionStatus.integrity === "verified"
+    && (
+      definitionStatus.bundleDigest === undefined
+      || isDigest(definitionStatus.bundleDigest)
+    )
+    && (
+      definitionStatus.buildId === undefined
+      || typeof definitionStatus.buildId === "string"
+    )
+    && (
+      definitionStatus.deploymentId === undefined
+      || typeof definitionStatus.deploymentId === "string"
+    )
     && (
       expected.bundleDigest === undefined
       || definitionStatus.bundleDigest === expected.bundleDigest
@@ -465,6 +715,14 @@ function isVerifiedNumberResult(
     && (
       expected.deploymentId === undefined
       || definitionStatus.deploymentId === expected.deploymentId
+    )
+    && (
+      definitionStatus.compatibility === undefined
+      || [
+        "identical",
+        "metadata-only",
+        "new-contract-required",
+      ].includes(String(definitionStatus.compatibility))
     )
     && isExposure(result.exposure)
     && typeof result.reason === "string"
@@ -478,10 +736,54 @@ function isExposureConfirmationResult(
 ): value is ExposureConfirmationResult {
   const result = record(value);
   return result !== undefined
+    && hasOnlyKeys(
+      result,
+      ["exposureId", "decisionId", "status", "confirmedAt"],
+    )
     && nonEmptyString(result.exposureId)
     && result.decisionId === decisionId
     && result.status === "confirmed"
-    && typeof result.confirmedAt === "string";
+    && isRfc3339Utc(result.confirmedAt);
+}
+
+function isRfc3339Utc(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/
+    .exec(value);
+  if (match === null) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] =
+    match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  if (
+    year < 1
+    || month < 1
+    || month > 12
+    || day < 1
+    || hour > 23
+    || minute > 59
+    || second > 59
+  ) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ][month - 1]!;
+  return day <= daysInMonth;
 }
 
 export async function createFlaggoClient(

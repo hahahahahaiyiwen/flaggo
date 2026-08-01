@@ -37,6 +37,9 @@ Production callers can use `{ mode: "bearer", getToken }` credentials.
 Already registered workloads may instead pass a registration receipt with
 `controlPlane.mode: "pre-registered"`.
 
+Registration receipts and `requires-approval` responses are validated as
+strict wire contracts before their identity or metadata is trusted.
+
 Every runtime call recomputes the local definition digest and compares it with
 `receipt.acceptedDefinitions[decisionKey]` before network access or fallback.
 The data-plane request contains only compact accepted identity and runtime
