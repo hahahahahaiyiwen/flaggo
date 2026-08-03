@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\packages\shared-contracts\src\Flaggo.Shared.Contracts\Flaggo.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\modules\registry\src\Flaggo.Registry\Flaggo.Registry.csproj" />
+    <ProjectReference Include="..\..\modules\audit\src\Flaggo.Audit\Flaggo.Audit.csproj" />
+    <ProjectReference Include="..\..\modules\state\src\Flaggo.State\Flaggo.State.csproj" />
+    <ProjectReference Include="..\..\modules\reasoning\src\Flaggo.Decisioning\Flaggo.Decisioning.csproj" />
+    <ProjectReference Include="..\..\apps\data-plane\src\Flaggo.DataPlane\Flaggo.DataPlane.csproj" />
+  </ItemGroup>
+
+</Project>

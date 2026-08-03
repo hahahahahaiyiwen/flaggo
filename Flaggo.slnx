@@ -1,0 +1,32 @@
+<Solution>
+  <Folder Name="/apps/" />
+  <Folder Name="/apps/data-plane/" />
+  <Folder Name="/apps/data-plane/src/">
+    <Project Path="apps/data-plane/src/Flaggo.DataPlane/Flaggo.DataPlane.csproj" />
+  </Folder>
+  <Folder Name="/modules/" />
+  <Folder Name="/modules/audit/" />
+  <Folder Name="/modules/audit/src/">
+    <Project Path="modules/audit/src/Flaggo.Audit/Flaggo.Audit.csproj" />
+  </Folder>
+  <Folder Name="/modules/reasoning/" />
+  <Folder Name="/modules/reasoning/src/">
+    <Project Path="modules/reasoning/src/Flaggo.Decisioning/Flaggo.Decisioning.csproj" />
+  </Folder>
+  <Folder Name="/modules/registry/" />
+  <Folder Name="/modules/registry/src/">
+    <Project Path="modules/registry/src/Flaggo.Registry/Flaggo.Registry.csproj" />
+  </Folder>
+  <Folder Name="/modules/state/" />
+  <Folder Name="/modules/state/src/">
+    <Project Path="modules/state/src/Flaggo.State/Flaggo.State.csproj" />
+  </Folder>
+  <Folder Name="/packages/" />
+  <Folder Name="/packages/shared-contracts/" />
+  <Folder Name="/packages/shared-contracts/src/">
+    <Project Path="packages/shared-contracts/src/Flaggo.Shared.Contracts/Flaggo.Shared.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Flaggo.Decisioning.Tests/Flaggo.Decisioning.Tests.csproj" />
+  </Folder>
+</Solution>
