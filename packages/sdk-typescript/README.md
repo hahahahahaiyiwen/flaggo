@@ -55,10 +55,17 @@ integrity match the expected binding.
 
 Availability fallback is disabled by default. Enabling
 `availabilityFallback: { mode: "local-default" }` permits the declared default
-only for transport failures or a valid HTTP 503 Problem Details response with
-`clientFallback.eligible: true`. Contract, identity, authorization, and invalid
-response errors never fall back. A client fallback has no server decision,
-policy, audit, or exposure identity.
+only after retries are exhausted for DNS, refused/reset connection, or
+connection/read timeout failures; intermediary HTTP 502/504 responses; or a
+valid HTTP 503 Problem Details response with `clientFallback.eligible: true`.
+Cancellation, TLS/certificate, proxy/authentication/configuration, malformed
+response, contract, and identity errors never fall back. A client fallback has
+no server decision, policy, audit, or exposure identity.
+
+The default is one retry after the initial attempt. Configure zero, one, or two
+with `availabilityFallback.retries`. Retries reuse a caller-supplied
+`Idempotency-Key`, or one generated for that decision call, and honor
+`Retry-After` for at most one second.
 
 Correlation and retry identity remain separate:
 

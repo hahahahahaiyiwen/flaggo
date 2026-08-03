@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   bundleDigest,
   compareCanonicalStrings,
@@ -24,7 +26,7 @@ import type {
   RegistrationReceipt,
   RequiresApprovalResult,
   RuntimeContractIdentity,
-  ServerDecisionResult,
+  ServerDecisionPayload,
 } from "./types.js";
 
 export type CredentialProvider =
@@ -52,6 +54,7 @@ export interface FlaggoClientConfig {
   controlPlane: StartupRegistrationConfig | PreRegisteredConfig;
   availabilityFallback?: {
     mode: "disabled" | "local-default";
+    retries?: 0 | 1 | 2;
   };
   fetch?: FetchLike;
 }
@@ -114,7 +117,7 @@ async function parseJson(response: Response): Promise<unknown> {
 }
 
 function problemOrThrow(body: unknown, status: number): ProblemDetails {
-  if (!isProblem(body)) {
+  if (!isProblem(body) || body.status !== status) {
     throw new InvalidServerResponseError(
       `Flaggo returned malformed Problem Details for HTTP ${status}.`,
     );
@@ -590,7 +593,7 @@ function isVerifiedNumberResult(
   expected: RuntimeContractIdentity,
   appId: string,
   environment: string,
-): value is Omit<ServerDecisionResult<number>, "source"> {
+): value is ServerDecisionPayload<number> {
   if (value === null || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
   const definitionStatus = record(result.definitionStatus);
@@ -786,6 +789,86 @@ function isRfc3339Utc(value: unknown): value is string {
   return day <= daysInMonth;
 }
 
+const RETRYABLE_TRANSPORT_CODES = new Set([
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+function isRetryableTransportFailure(error: unknown): boolean {
+  let current = error;
+  const visited = new Set<unknown>();
+  while (
+    current !== null
+    && typeof current === "object"
+    && !visited.has(current)
+  ) {
+    visited.add(current);
+    const candidate = current as {
+      name?: unknown;
+      code?: unknown;
+      cause?: unknown;
+    };
+    if (candidate.name === "AbortError") return false;
+    if (candidate.name === "TimeoutError") return true;
+    if (
+      typeof candidate.code === "string"
+      && RETRYABLE_TRANSPORT_CODES.has(candidate.code)
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
+}
+
+function errorChainHasName(error: unknown, name: string): boolean {
+  return findErrorInChain(error, name) !== undefined;
+}
+
+function findErrorInChain(error: unknown, name: string): unknown {
+  let current = error;
+  const visited = new Set<unknown>();
+  while (
+    current !== null
+    && typeof current === "object"
+    && !visited.has(current)
+  ) {
+    visited.add(current);
+    const candidate = current as { name?: unknown; cause?: unknown };
+    if (candidate.name === name) return current;
+    current = candidate.cause;
+  }
+  return undefined;
+}
+
+function retryDelayMilliseconds(response?: Response): number {
+  const retryAfter = response?.headers.get("Retry-After");
+  if (retryAfter !== null && retryAfter !== undefined) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1_000, 1_000);
+    }
+    const date = Date.parse(retryAfter);
+    if (Number.isFinite(date)) {
+      return Math.min(Math.max(date - Date.now(), 0), 1_000);
+    }
+  }
+  return 50 + Math.floor(Math.random() * 101);
+}
+
+async function waitBeforeRetry(response?: Response): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, retryDelayMilliseconds(response));
+  });
+}
+
 export async function createFlaggoClient(
   config: FlaggoClientConfig,
 ): Promise<FlaggoClient> {
@@ -843,81 +926,201 @@ export async function createFlaggoClient(
       config,
     );
     const auth = await authorization(config.dataPlaneCredential);
-    let response: Response;
-    try {
-      response = await fetch(
-        `${config.dataPlaneUrl.replace(/\/$/, "")}/v1/decisions/${encodeURIComponent(decisionKey)}:decide`,
-        {
-          method: "POST",
-          headers: {
-            ...Object.fromEntries(headers(auth, request.correlationId)),
-            ...(request.idempotencyKey === undefined
-              ? {}
-              : { "Idempotency-Key": request.idempotencyKey }),
-          },
-          body: JSON.stringify({
-            expectedContract,
-            ...(request.runtimeTarget === undefined
-              ? {}
-              : { runtimeTarget: request.runtimeTarget }),
-            runtimeContext: request.context,
-            ...(request.inputs === undefined
-              ? {}
-              : {
-                  inputs: [...request.inputs].sort((left, right) =>
-                    compareCanonicalStrings(left.signal.key, right.signal.key)
-                  ),
-                }),
-            client: {
-              appId: config.appId,
-              environment: config.environment,
-              sdk: "typescript",
-              sdkVersion: "0.1.0",
-            },
+    const fallbackEnabled =
+      config.availabilityFallback?.mode === "local-default";
+    const retries = fallbackEnabled
+      ? config.availabilityFallback?.retries ?? 1
+      : 0;
+    const idempotencyKey = request.idempotencyKey
+      ?? (retries > 0 ? `flaggo-sdk:${randomUUID()}` : undefined);
+    const requestBody = JSON.stringify({
+      expectedContract,
+      ...(request.runtimeTarget === undefined
+        ? {}
+        : { runtimeTarget: request.runtimeTarget }),
+      runtimeContext: request.context,
+      ...(request.inputs === undefined
+        ? {}
+        : {
+            inputs: [...request.inputs].sort((left, right) =>
+              compareCanonicalStrings(left.signal.key, right.signal.key)
+            ),
           }),
-        },
-      );
-    } catch (error) {
-      if (config.availabilityFallback?.mode !== "local-default") throw error;
-      return localFallback(
-        decisionKey,
-        request.definition.actionSpace.default,
-        expectedContract,
-        "data-plane transport failure",
-      );
-    }
+      client: {
+        appId: config.appId,
+        environment: config.environment,
+        sdk: "typescript",
+        sdkVersion: "0.1.0",
+      },
+    });
+    const requestInit: RequestInit = {
+      method: "POST",
+      headers: {
+        ...Object.fromEntries(headers(auth, request.correlationId)),
+        ...(idempotencyKey === undefined
+          ? {}
+          : { "Idempotency-Key": idempotencyKey }),
+      },
+      body: requestBody,
+    };
+    const url =
+      `${config.dataPlaneUrl.replace(/\/$/, "")}/v1/decisions/${encodeURIComponent(decisionKey)}:decide`;
 
-    const body = await parseJson(response);
-    if (!response.ok) {
-      if (
-        response.status === 503
-        && isProblem(body)
-        && body.clientFallback?.eligible === true
-        && config.availabilityFallback?.mode === "local-default"
-      ) {
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(url, requestInit);
+      } catch (error) {
+        if (!fallbackEnabled || !isRetryableTransportFailure(error)) throw error;
+        if (attempt < retries) {
+          await waitBeforeRetry();
+          continue;
+        }
         return localFallback(
           decisionKey,
           request.definition.actionSpace.default,
           expectedContract,
-          body.clientFallback.reason ?? body.code,
+          "data-plane transport failure",
         );
       }
-      throw new FlaggoHttpError(problemOrThrow(body, response.status));
+
+      const intermediaryStatus =
+        response.status === 502 || response.status === 504;
+      const problemContentType = response.headers
+        .get("Content-Type")
+        ?.toLowerCase()
+        .includes("application/problem+json") === true;
+      let body: unknown;
+      let bodyParsed = false;
+      if (intermediaryStatus && problemContentType) {
+        try {
+          body = await parseJson(response);
+          bodyParsed = true;
+        } catch (error) {
+          const genericIntermediaryBody =
+            errorChainHasName(error, "SyntaxError");
+          const cancellation = findErrorInChain(error, "AbortError");
+          if (cancellation !== undefined) throw cancellation;
+          if (
+            !fallbackEnabled
+            || (
+              !isRetryableTransportFailure(error)
+              && !genericIntermediaryBody
+            )
+          ) {
+            throw error;
+          }
+          if (attempt < retries) {
+            await waitBeforeRetry(response);
+            continue;
+          }
+          return localFallback(
+            decisionKey,
+            request.definition.actionSpace.default,
+            expectedContract,
+            `intermediary HTTP ${response.status}`,
+          );
+        }
+        const genericProblem = record(body);
+        if (
+          genericProblem !== undefined
+          && hasOwn(genericProblem, "status")
+          && (
+            !Number.isInteger(genericProblem.status)
+            || genericProblem.status !== response.status
+          )
+        ) {
+          throw new InvalidServerResponseError(
+            `Problem Details status does not match HTTP ${response.status}.`,
+          );
+        }
+      }
+      if (
+        intermediaryStatus
+        && (!problemContentType || !isProblem(body))
+      ) {
+        if (!fallbackEnabled) {
+          if (!bodyParsed) body = await parseJson(response);
+          throw new InvalidServerResponseError(
+            `Intermediary HTTP ${response.status} is not Flaggo Problem Details.`,
+          );
+        }
+        if (attempt < retries) {
+          await waitBeforeRetry(response);
+          continue;
+        }
+        return localFallback(
+          decisionKey,
+          request.definition.actionSpace.default,
+          expectedContract,
+          `intermediary HTTP ${response.status}`,
+        );
+      }
+
+      if (!bodyParsed) {
+        try {
+          body = await parseJson(response);
+        } catch (error) {
+          const cancellation = findErrorInChain(error, "AbortError");
+          if (cancellation !== undefined) throw cancellation;
+          if (
+            !fallbackEnabled
+            || !response.ok
+            || !isRetryableTransportFailure(error)
+          ) {
+            throw error;
+          }
+          if (attempt < retries) {
+            await waitBeforeRetry(response);
+            continue;
+          }
+          return localFallback(
+            decisionKey,
+            request.definition.actionSpace.default,
+            expectedContract,
+            "data-plane response transport failure",
+          );
+        }
+      }
+      if (!response.ok) {
+        const problem = problemOrThrow(body, response.status);
+        if (
+          (response.status === 502
+            || response.status === 503
+            || response.status === 504)
+          && problem.clientFallback?.eligible === true
+        ) {
+          if (fallbackEnabled && attempt < retries) {
+            await waitBeforeRetry(response);
+            continue;
+          }
+          if (fallbackEnabled) {
+            return localFallback(
+              decisionKey,
+              request.definition.actionSpace.default,
+              expectedContract,
+              problem.clientFallback.reason ?? problem.code,
+            );
+          }
+        }
+        throw new FlaggoHttpError(problem);
+      }
+      if (
+        !isVerifiedNumberResult(
+          body,
+          decisionKey,
+          expectedContract,
+          config.appId,
+          config.environment,
+        )
+      ) {
+        throw new InvalidServerResponseError(
+          `Decision '${decisionKey}' returned an invalid or unverified result.`,
+        );
+      }
+      return { ...body, source: "server" };
     }
-    if (
-      !isVerifiedNumberResult(
-        body,
-        decisionKey,
-        expectedContract,
-        config.appId,
-        config.environment,
-      )
-    ) {
-      throw new InvalidServerResponseError(
-        `Decision '${decisionKey}' returned an invalid or unverified result.`,
-      );
-    }
-    return { ...body, source: "server" };
+    throw new Error("Unreachable retry state.");
   }
 
   return {

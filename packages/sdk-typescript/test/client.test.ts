@@ -36,6 +36,10 @@ function response(status: number, body: unknown): Response {
   });
 }
 
+function networkFailure(code: string): TypeError {
+  return new TypeError("fetch failed", { cause: { code } });
+}
+
 function decisionForReceipt(
   body: unknown,
   receipt: RegistrationReceipt,
@@ -395,7 +399,7 @@ describe("runtime safety", () => {
       },
       appId: "tetris-demo",
       environment: "dev",
-      availabilityFallback: { mode: "local-default" },
+      availabilityFallback: { mode: "local-default", retries: 0 },
       fetch,
     });
 
@@ -441,7 +445,7 @@ describe("runtime safety", () => {
       },
       appId: "tetris-demo",
       environment: "dev",
-      availabilityFallback: { mode: "local-default" },
+      availabilityFallback: { mode: "local-default", retries: 0 },
       fetch,
     });
 
@@ -477,7 +481,7 @@ describe("runtime safety", () => {
       },
       appId: "tetris-demo",
       environment: "dev",
-      availabilityFallback: { mode: "local-default" },
+      availabilityFallback: { mode: "local-default", retries: 0 },
       fetch,
     });
 
@@ -512,7 +516,7 @@ describe("runtime safety", () => {
       },
       appId: "tetris-demo",
       environment: "dev",
-      availabilityFallback: { mode: "local-default" },
+      availabilityFallback: { mode: "local-default", retries: 0 },
       fetch,
     });
 
@@ -545,7 +549,7 @@ describe("runtime safety", () => {
       },
       appId: "tetris-demo",
       environment: "dev",
-      availabilityFallback: { mode: "local-default" },
+      availabilityFallback: { mode: "local-default", retries: 0 },
       fetch,
     });
 
@@ -564,7 +568,48 @@ describe("runtime safety", () => {
     }>("management/definition-bundle/04-apply-approved-receipt.json");
     const fetch = vi.fn<FetchLike>()
       .mockResolvedValueOnce(response(200, apply.expected.body))
-      .mockRejectedValueOnce(new TypeError("network unavailable"));
+      .mockRejectedValueOnce(networkFailure("ECONNREFUSED"));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({ source: "client-fallback", value: 800 });
+  });
+
+  it("retries eligible transport failures with stable retry identity", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const decide = fixture<{ expected: { body: unknown } }>(
+      "runtime/decide/02-active-numeric-strategy.json",
+    );
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockRejectedValueOnce(networkFailure("ENOTFOUND"))
+      .mockResolvedValueOnce(response(
+        200,
+        decisionForReceipt(
+          decide.expected.body,
+          apply.expected.body,
+          "tetris.dropInterval",
+        ),
+      ));
     const client = await createFlaggoClient({
       dataPlaneUrl: "https://data.flaggo.test",
       controlPlane: {
@@ -584,7 +629,406 @@ describe("runtime safety", () => {
         definition: apply.request.body.definitions[0]!,
         context: {},
       }),
-    ).resolves.toMatchObject({ source: "client-fallback", value: 800 });
+    ).resolves.toMatchObject({ source: "server", value: 700 });
+
+    const firstHeaders = new Headers(fetch.mock.calls[1]![1]!.headers);
+    const retryHeaders = new Headers(fetch.mock.calls[2]![1]!.headers);
+    expect(firstHeaders.get("Idempotency-Key")).toMatch(/^flaggo-sdk:/);
+    expect(retryHeaders.get("Idempotency-Key")).toBe(
+      firstHeaders.get("Idempotency-Key"),
+    );
+  });
+
+  it("retries eligible transport failures while reading the response", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const decide = fixture<{ expected: { body: unknown } }>(
+      "runtime/decide/02-active-numeric-strategy.json",
+    );
+    const interruptedResponse = {
+      status: 200,
+      ok: true,
+      headers: new Headers(),
+      json: vi.fn().mockRejectedValue(
+        networkFailure("UND_ERR_BODY_TIMEOUT"),
+      ),
+    } as unknown as Response;
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(interruptedResponse)
+      .mockResolvedValueOnce(response(
+        200,
+        decisionForReceipt(
+          decide.expected.body,
+          apply.expected.body,
+          "tetris.dropInterval",
+        ),
+      ));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default" },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({ source: "server", value: 700 });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("falls back after retrying intermediary 504 responses", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const gatewayTimeout = () => new Response(null, {
+      status: 504,
+      headers: { "Retry-After": "0" },
+    });
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(gatewayTimeout())
+      .mockResolvedValueOnce(gatewayTimeout());
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default" },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({
+      source: "client-fallback",
+      reason: "intermediary HTTP 504",
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries an eligible 503 before using local fallback", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const unavailable = fixture<{
+      expected: { status: number; body: unknown };
+    }>("errors/fallback-01-service-unavailable-eligible.json");
+    const unavailableResponse = () => new Response(
+      JSON.stringify(unavailable.expected.body),
+      {
+        status: unavailable.expected.status,
+        headers: {
+          "Content-Type": "application/problem+json",
+          "Retry-After": "0",
+        },
+      },
+    );
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(unavailableResponse())
+      .mockResolvedValueOnce(unavailableResponse());
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default" },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({
+      source: "client-fallback",
+      value: 800,
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not treat ineligible Flaggo 504 problems as intermediary fallback", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const problem = {
+      type: "https://flaggo.dev/problems/gateway-timeout",
+      status: 504,
+      code: "gateway-timeout",
+      clientFallback: { eligible: false },
+    };
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(new Response(JSON.stringify(problem), {
+        status: 504,
+        headers: { "Content-Type": "application/problem+json" },
+      }));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(FlaggoHttpError);
+  });
+
+  it("treats generic intermediary Problem Details as gateway fallback", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const genericProblem = {
+      type: "https://gateway.example/problems/upstream-timeout",
+      title: "Upstream timeout",
+      status: 504,
+    };
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(new Response(JSON.stringify(genericProblem), {
+        status: 504,
+        headers: { "Content-Type": "application/problem+json" },
+      }));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({
+      source: "client-fallback",
+      reason: "intermediary HTTP 504",
+    });
+  });
+
+  it("rejects generic intermediary Problem Details with mismatched status", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const genericProblem = {
+      type: "https://gateway.example/problems/upstream-timeout",
+      title: "Upstream timeout",
+      status: 400,
+    };
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(new Response(JSON.stringify(genericProblem), {
+        status: 504,
+        headers: { "Content-Type": "application/problem+json" },
+      }));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("does not fall back when forbidden responses fail during body reads", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const failures = [
+      {
+        response: {
+          status: 401,
+          ok: false,
+          headers: new Headers(),
+          json: vi.fn().mockRejectedValue(
+            networkFailure("UND_ERR_BODY_TIMEOUT"),
+          ),
+        } as unknown as Response,
+        expected: InvalidServerResponseError,
+      },
+      {
+        response: {
+          status: 504,
+          ok: false,
+          headers: new Headers({
+            "Content-Type": "application/problem+json",
+          }),
+          json: vi.fn().mockRejectedValue(
+            new DOMException("cancelled", "AbortError"),
+          ),
+        } as unknown as Response,
+        expected: DOMException,
+      },
+    ];
+
+    for (const item of failures) {
+      const fetch = vi.fn<FetchLike>()
+        .mockResolvedValueOnce(response(200, apply.expected.body))
+        .mockResolvedValueOnce(item.response);
+      const client = await createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: apply.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        availabilityFallback: { mode: "local-default", retries: 0 },
+        fetch,
+      });
+
+      await expect(
+        client.tune.number("tetris.dropInterval", {
+          definition: apply.request.body.definitions[0]!,
+          context: {},
+        }),
+      ).rejects.toBeInstanceOf(item.expected);
+    }
+  });
+
+  it("rejects Problem Details whose status disagrees with HTTP", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const problem = {
+      type: "https://flaggo.dev/problems/service-unavailable",
+      status: 400,
+      code: "service-unavailable",
+      clientFallback: { eligible: true },
+    };
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(new Response(JSON.stringify(problem), {
+        status: 503,
+        headers: { "Content-Type": "application/problem+json" },
+      }));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("does not fall back for abort, TLS, or unknown failures", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const failures = [
+      new DOMException("cancelled", "AbortError"),
+      networkFailure("CERT_HAS_EXPIRED"),
+      networkFailure("ENETUNREACH"),
+      new TypeError("unknown fetch failure"),
+    ];
+
+    for (const failure of failures) {
+      const fetch = vi.fn<FetchLike>()
+        .mockResolvedValueOnce(response(200, apply.expected.body))
+        .mockRejectedValueOnce(failure);
+      const client = await createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: apply.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        availabilityFallback: { mode: "local-default", retries: 0 },
+        fetch,
+      });
+
+      await expect(
+        client.tune.number("tetris.dropInterval", {
+          definition: apply.request.body.definitions[0]!,
+          context: {},
+        }),
+      ).rejects.toBe(failure);
+    }
   });
 
   it("surfaces transport failures when local fallback is disabled", async () => {

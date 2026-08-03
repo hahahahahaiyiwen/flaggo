@@ -200,8 +200,44 @@ export interface TargetResolutionProvenance {
     | "server-replaced";
 }
 
-export interface ServerDecisionResult<T extends DecisionValue = DecisionValue> {
-  source: "server";
+export interface ConfidenceReport {
+  evidenceQuality: number;
+  modelUncertainty?: number;
+  expectedOutcome?: number;
+}
+
+export interface PolicyEvaluationResult<
+  TResult extends "approved" | "blocked" | "fallback" =
+    | "approved"
+    | "blocked"
+    | "fallback",
+> {
+  result: TResult;
+  reasons: string[];
+  appliedConstraints: string[];
+  clientFallback?: {
+    requiredEvidenceUnavailable: "allow" | "forbid";
+  };
+}
+
+export interface ContractRuntimeStatus extends AcceptedDefinition {
+  bundleDigest?: Sha256Digest;
+  buildId?: string;
+  deploymentId?: string;
+  integrity: "verified";
+  compatibility?: "identical" | "metadata-only" | "new-contract-required";
+}
+
+type DecisionValuePayload<T extends DecisionValue> =
+  T extends boolean
+    ? { valueType: "boolean"; value: T }
+    : T extends number
+      ? { valueType: "number"; value: T }
+      : T extends string
+        ? { valueType: "string"; value: T }
+        : never;
+
+interface ServerDecisionCommon {
   decisionKey: string;
   definition: {
     appId: string;
@@ -211,49 +247,88 @@ export interface ServerDecisionResult<T extends DecisionValue = DecisionValue> {
     revision: string;
   };
   decisionId: string;
-  value: T;
-  valueType: "boolean" | "number" | "string";
-  decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
-  strategyId?: string;
-  confidence: {
-    evidenceQuality: number;
-    modelUncertainty?: number;
-    expectedOutcome?: number;
-  } | null;
   runtimeTarget?: DecisionTargetRef;
   controlTarget?: DecisionTargetRef;
   targetProvenance: TargetResolutionProvenance[];
   resolutionChain: string[];
-  fallback: {
-    source: "server";
-    resolutionFallbackUsed: boolean;
-    decisionFallbackUsed: boolean;
-    reason: string | null;
-  };
-  policy: {
-    result: "approved" | "blocked" | "fallback";
-    reasons: string[];
-    appliedConstraints: string[];
-  };
-  definitionStatus: AcceptedDefinition & {
-    bundleDigest?: Sha256Digest;
-    buildId?: string;
-    deploymentId?: string;
-    integrity: "verified";
-    compatibility?: "identical" | "metadata-only" | "new-contract-required";
-  };
+  definitionStatus: ContractRuntimeStatus;
   exposure: ExposureDirective;
   reason: string;
   auditId: string;
 }
 
-export interface ClientFallbackResult<T extends DecisionValue = DecisionValue> {
+interface ActiveValueDecision {
+  decisionMode: "active-value";
+  strategyId?: never;
+  confidence: ConfidenceReport | null;
+  fallback: {
+    source: "server";
+    resolutionFallbackUsed: boolean;
+    decisionFallbackUsed: false;
+    reason: string | null;
+  };
+  policy: PolicyEvaluationResult<"approved">;
+}
+
+interface StrategyDecision {
+  decisionMode: "strategy" | "experiment";
+  strategyId: string;
+  confidence: ConfidenceReport;
+  fallback: {
+    source: "server";
+    resolutionFallbackUsed: boolean;
+    decisionFallbackUsed: false;
+    reason: string | null;
+  };
+  policy: PolicyEvaluationResult<"approved">;
+}
+
+interface ServerFallbackDecision {
+  decisionMode: "fallback";
+  strategyId?: never;
+  confidence: null;
+  fallback: {
+    source: "server";
+    resolutionFallbackUsed: boolean;
+    decisionFallbackUsed: true;
+    reason: string | null;
+  };
+  policy: PolicyEvaluationResult<"blocked" | "fallback">;
+}
+
+export type ActiveValueDecisionResult<
+  T extends DecisionValue = DecisionValue,
+> = {
+  source: "server";
+} & ServerDecisionCommon & DecisionValuePayload<T> & ActiveValueDecision;
+
+export type StrategyDecisionResult<
+  T extends DecisionValue = DecisionValue,
+> = {
+  source: "server";
+} & ServerDecisionCommon & DecisionValuePayload<T> & StrategyDecision;
+
+export type ServerFallbackDecisionResult<
+  T extends DecisionValue = DecisionValue,
+> = {
+  source: "server";
+} & ServerDecisionCommon & DecisionValuePayload<T> & ServerFallbackDecision;
+
+export type ServerDecisionResult<T extends DecisionValue = DecisionValue> =
+  | ActiveValueDecisionResult<T>
+  | StrategyDecisionResult<T>
+  | ServerFallbackDecisionResult<T>;
+
+type WithoutSource<T> = T extends unknown ? Omit<T, "source"> : never;
+
+export type ServerDecisionPayload<T extends DecisionValue = DecisionValue> =
+  WithoutSource<ServerDecisionResult<T>>;
+
+export type ClientFallbackResult<T extends DecisionValue = DecisionValue> = {
   source: "client-fallback";
   decisionKey: string;
   expectedContract: RuntimeContractIdentity;
   decisionMode: "fallback";
-  value: T;
-  valueType: "boolean" | "number" | "string";
   confidence: null;
   reason: string;
   fallback: {
@@ -262,7 +337,7 @@ export interface ClientFallbackResult<T extends DecisionValue = DecisionValue> {
     decisionFallbackUsed: true;
     reason: string;
   };
-}
+} & DecisionValuePayload<T>;
 
 export type DecisionResult<T extends DecisionValue = DecisionValue> =
   | ServerDecisionResult<T>
