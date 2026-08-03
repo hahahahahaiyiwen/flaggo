@@ -38,7 +38,9 @@ Already registered workloads may instead pass a registration receipt with
 `controlPlane.mode: "pre-registered"`.
 
 Registration receipts and `requires-approval` responses are validated as
-strict wire contracts before their identity or metadata is trusted.
+strict wire contracts before their identity or metadata is trusted. An
+approved receipt must contain exactly one accepted binding for every submitted
+definition, with matching canonical contract digests.
 
 Every runtime call recomputes the local definition digest and compares it with
 `receipt.acceptedDefinitions[decisionKey]` before network access or fallback.
@@ -67,6 +69,10 @@ with `availabilityFallback.retries`. Retries reuse a caller-supplied
 `Idempotency-Key`, or one generated for that decision call, and honor
 `Retry-After` for at most one second.
 
+`409 idempotency-in-progress` is retry-only: the SDK waits within the same
+retry budget and resends the identical body and key, then surfaces the 409 if
+the budget is exhausted. It never authorizes local fallback.
+
 Correlation and retry identity remain separate:
 
 - `correlationId` becomes only `X-Flaggo-Correlation-Id`.
@@ -80,6 +86,10 @@ only app-emitted primitive metrics and creates runtime inputs of that metric's
 declared type. `createDerivedMetricHandle` creates a non-emitting
 derived-metric identity whose `valueType` cannot disagree with its declaration.
 All handles verify a supplied `schemaDigest`.
+
+Definition authoring types expose boolean, number, and string action-space
+unions. Reference policies require `policyId`; inline policies require a
+typed constraint array and optionally declare governed client fallback.
 
 Telemetry is emitted through the `TelemetrySink` interface. Use
 `createOpenTelemetrySink(logger)` with a structurally compatible OpenTelemetry

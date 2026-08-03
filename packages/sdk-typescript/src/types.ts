@@ -24,16 +24,46 @@ export interface NumberActionSpace {
   default: number;
 }
 
-export interface NumberDecisionDefinition {
+export interface BooleanActionSpace {
+  type: "boolean";
+  default: boolean;
+}
+
+export interface StringActionSpace {
+  type: "string";
+  allowedValues?: string[];
+  default: string;
+}
+
+export type PolicyConstraint =
+  | { kind: "number-bounds"; min: number; max: number }
+  | { kind: "max-delta"; value: number }
+  | { kind: "cooldown"; seconds: number }
+  | { kind: "min-evidence-quality"; value: number }
+  | { kind: "max-model-uncertainty"; value: number }
+  | { kind: "min-expected-outcome"; value: number }
+  | { kind: "min-sample-size"; value: number }
+  | { kind: "pause"; paused: boolean };
+
+export interface ReferencePolicy {
+  kind: "reference";
+  policyId: string;
+}
+
+export interface InlinePolicy {
+  kind: "inline";
+  constraints: PolicyConstraint[];
+  clientFallback?: {
+    requiredEvidenceUnavailable: "allow" | "forbid";
+  };
+}
+
+export type DecisionPolicy = ReferencePolicy | InlinePolicy;
+
+interface DecisionDefinitionCommon {
   definitionId?: string;
   owner?: string;
   key: string;
-  valueType: "number";
-  actionSpace: NumberActionSpace;
-  fallback: {
-    value: number;
-    reason?: string;
-  };
   runtimeContextSchema?: Record<
     string,
     {
@@ -55,21 +85,44 @@ export interface NumberDecisionDefinition {
   };
   intent: Record<string, unknown>;
   onlineStrategy?: Record<string, unknown>;
-  policy: {
-    kind: "inline" | "reference";
-    constraints?: Array<{ kind: string; [key: string]: unknown }>;
-    clientFallback?: {
-      requiredEvidenceUnavailable: "allow" | "forbid";
-    };
-    [key: string]: unknown;
-  };
+  policy: DecisionPolicy;
   requestedApproval?: "automatic" | "human" | "policy-default";
   revision?: string;
   contractDigest?: Sha256Digest;
   schemaDigest?: Sha256Digest;
 }
 
-export type DecisionDefinition = NumberDecisionDefinition;
+export interface BooleanDecisionDefinition extends DecisionDefinitionCommon {
+  valueType: "boolean";
+  actionSpace: BooleanActionSpace;
+  fallback: {
+    value: boolean;
+    reason?: string;
+  };
+}
+
+export interface NumberDecisionDefinition extends DecisionDefinitionCommon {
+  valueType: "number";
+  actionSpace: NumberActionSpace;
+  fallback: {
+    value: number;
+    reason?: string;
+  };
+}
+
+export interface StringDecisionDefinition extends DecisionDefinitionCommon {
+  valueType: "string";
+  actionSpace: StringActionSpace;
+  fallback: {
+    value: string;
+    reason?: string;
+  };
+}
+
+export type DecisionDefinition =
+  | BooleanDecisionDefinition
+  | NumberDecisionDefinition
+  | StringDecisionDefinition;
 
 interface SignalDeclarationBase {
   key: string;

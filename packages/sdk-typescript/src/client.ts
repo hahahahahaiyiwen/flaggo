@@ -171,6 +171,25 @@ async function register(
       "Registration receipt does not match the submitted canonical bundle.",
     );
   }
+  const submittedDefinitions = new Map(
+    bundle.definitions.map((definition) => [
+      definition.key,
+      contractDigest(definition),
+    ]),
+  );
+  const acceptedKeys = Object.keys(receipt.acceptedDefinitions);
+  if (
+    acceptedKeys.length !== submittedDefinitions.size
+    || acceptedKeys.some((key) => {
+      const accepted = receipt.acceptedDefinitions[key];
+      return accepted === undefined
+        || accepted.contractDigest !== submittedDefinitions.get(key);
+    })
+  ) {
+    throw new InvalidServerResponseError(
+      "Registration receipt bindings do not match the submitted definitions.",
+    );
+  }
   return receipt;
 }
 
@@ -802,6 +821,10 @@ const RETRYABLE_TRANSPORT_CODES = new Set([
 ]);
 
 function isRetryableTransportFailure(error: unknown): boolean {
+  const chain: Array<{
+    name?: unknown;
+    code?: unknown;
+  }> = [];
   let current = error;
   const visited = new Set<unknown>();
   while (
@@ -815,17 +838,24 @@ function isRetryableTransportFailure(error: unknown): boolean {
       code?: unknown;
       cause?: unknown;
     };
-    if (candidate.name === "AbortError") return false;
-    if (candidate.name === "TimeoutError") return true;
-    if (
-      typeof candidate.code === "string"
-      && RETRYABLE_TRANSPORT_CODES.has(candidate.code)
-    ) {
-      return true;
-    }
+    chain.push(candidate);
     current = candidate.cause;
   }
-  return false;
+  if (
+    chain.some(({ name }) => name === "AbortError")
+    || chain.some(
+      ({ code }) =>
+        typeof code === "string"
+        && !RETRYABLE_TRANSPORT_CODES.has(code),
+    )
+  ) return false;
+  return chain.some(({ name, code }) =>
+    name === "TimeoutError"
+    || (
+      typeof code === "string"
+      && RETRYABLE_TRANSPORT_CODES.has(code)
+    )
+  );
 }
 
 function errorChainHasName(error: unknown, name: string): boolean {
@@ -928,11 +958,13 @@ export async function createFlaggoClient(
     const auth = await authorization(config.dataPlaneCredential);
     const fallbackEnabled =
       config.availabilityFallback?.mode === "local-default";
-    const retries = fallbackEnabled
-      ? config.availabilityFallback?.retries ?? 1
-      : 0;
+    const retries = config.availabilityFallback?.retries ?? 1;
     const idempotencyKey = request.idempotencyKey
-      ?? (retries > 0 ? `flaggo-sdk:${randomUUID()}` : undefined);
+      ?? (
+        fallbackEnabled && retries > 0
+          ? `flaggo-sdk:${randomUUID()}`
+          : undefined
+      );
     const requestBody = JSON.stringify({
       expectedContract,
       ...(request.runtimeTarget === undefined
@@ -1084,6 +1116,15 @@ export async function createFlaggoClient(
       }
       if (!response.ok) {
         const problem = problemOrThrow(body, response.status);
+        if (
+          response.status === 409
+          && problem.code === "idempotency-in-progress"
+          && idempotencyKey !== undefined
+          && attempt < retries
+        ) {
+          await waitBeforeRetry(response);
+          continue;
+        }
         if (
           (response.status === 502
             || response.status === 503

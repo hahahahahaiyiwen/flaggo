@@ -16,12 +16,20 @@ import {
   normalizeBundle,
   signalSchemaDigest,
   type AcceptedDefinition,
-  type DecisionDefinitionBundle,
+  type DecisionDefinitionBundle as ContractDecisionDefinitionBundle,
   type FetchLike,
+  type NumberDecisionDefinition,
   type RegistrationReceipt,
 } from "../src/index.js";
 
 const repositoryRoot = resolve(import.meta.dirname, "../../..");
+
+type DecisionDefinitionBundle = Omit<
+  ContractDecisionDefinitionBundle,
+  "definitions"
+> & {
+  definitions: NumberDecisionDefinition[];
+};
 
 function fixture<T>(path: string): T {
   return JSON.parse(
@@ -342,6 +350,60 @@ describe("startup registration", () => {
     );
     expect(keys[0]).toBeTruthy();
     expect(keys[1]).toBe(keys[0]);
+  });
+
+  it("requires accepted bindings to exactly match submitted definitions", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const receipts = [
+      (() => {
+        const receipt = structuredClone(apply.expected.body);
+        delete receipt.acceptedDefinitions["tetris.dropInterval"];
+        receipt.acceptedDefinitions.extra = {
+          definitionId: "def_extra",
+          revision: "rev_extra",
+          contractDigest: `sha256:${"1".repeat(64)}`,
+        };
+        return receipt;
+      })(),
+      (() => {
+        const receipt = structuredClone(apply.expected.body);
+        receipt.acceptedDefinitions["tetris.dropInterval"]!.contractDigest =
+          `sha256:${"2".repeat(64)}`;
+        return receipt;
+      })(),
+      (() => {
+        const receipt = structuredClone(apply.expected.body);
+        receipt.acceptedDefinitions.extra = {
+          definitionId: "def_extra",
+          revision: "rev_extra",
+          contractDigest: `sha256:${"3".repeat(64)}`,
+        };
+        return receipt;
+      })(),
+    ];
+
+    for (const receipt of receipts) {
+      const fetch = vi.fn<FetchLike>().mockResolvedValue(
+        response(200, receipt),
+      );
+      await expect(
+        createFlaggoClient({
+          dataPlaneUrl: "https://data.flaggo.test",
+          controlPlane: {
+            mode: "startup-register",
+            url: "https://control.flaggo.test",
+            bundle: apply.request.body,
+            credential: { mode: "local-development" },
+          },
+          appId: "tetris-demo",
+          environment: "dev",
+          fetch,
+        }),
+      ).rejects.toBeInstanceOf(InvalidServerResponseError);
+    }
   });
 });
 
@@ -1029,6 +1091,124 @@ describe("runtime safety", () => {
         }),
       ).rejects.toBe(failure);
     }
+  });
+
+  it("fails closed when retryable outer errors wrap forbidden causes", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const failures = [
+      new TypeError("socket failed", {
+        cause: {
+          code: "UND_ERR_SOCKET",
+          cause: new DOMException("cancelled", "AbortError"),
+        },
+      }),
+      new TypeError("socket failed", {
+        cause: {
+          code: "UND_ERR_SOCKET",
+          cause: { code: "CERT_HAS_EXPIRED" },
+        },
+      }),
+      new TypeError("socket failed", {
+        cause: {
+          code: "UND_ERR_SOCKET",
+          cause: { code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" },
+        },
+      }),
+      new TypeError("socket failed", {
+        cause: {
+          code: "UND_ERR_SOCKET",
+          cause: { code: "ERR_SSL_WRONG_VERSION_NUMBER" },
+        },
+      }),
+    ];
+
+    for (const failure of failures) {
+      const fetch = vi.fn<FetchLike>()
+        .mockResolvedValueOnce(response(200, apply.expected.body))
+        .mockRejectedValueOnce(failure);
+      const client = await createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: apply.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        availabilityFallback: { mode: "local-default", retries: 0 },
+        fetch,
+      });
+
+      await expect(
+        client.tune.number("tetris.dropInterval", {
+          definition: apply.request.body.definitions[0]!,
+          context: {},
+        }),
+      ).rejects.toBe(failure);
+    }
+  });
+
+  it("retries idempotency-in-progress with the same key", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const inProgress = fixture<{
+      expected: { status: number; body: unknown };
+    }>("errors/decide-09-idempotency-in-progress.json");
+    const decide = fixture<{ expected: { body: unknown } }>(
+      "runtime/decide/02-active-numeric-strategy.json",
+    );
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify(inProgress.expected.body),
+        {
+          status: inProgress.expected.status,
+          headers: {
+            "Content-Type": "application/problem+json",
+            "Retry-After": "0",
+          },
+        },
+      ))
+      .mockResolvedValueOnce(response(
+        200,
+        decisionForReceipt(
+          decide.expected.body,
+          apply.expected.body,
+          "tetris.dropInterval",
+        ),
+      ));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+        idempotencyKey: "idem-key-abc",
+      }),
+    ).resolves.toMatchObject({ source: "server", value: 700 });
+    expect(
+      new Headers(fetch.mock.calls[1]![1]!.headers).get("Idempotency-Key"),
+    ).toBe("idem-key-abc");
+    expect(
+      new Headers(fetch.mock.calls[2]![1]!.headers).get("Idempotency-Key"),
+    ).toBe("idem-key-abc");
   });
 
   it("surfaces transport failures when local fallback is disabled", async () => {
