@@ -23,6 +23,9 @@ import {
 } from "../src/index.js";
 
 const repositoryRoot = resolve(import.meta.dirname, "../../..");
+const sdkPackage = JSON.parse(
+  readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8"),
+) as { version: string };
 
 type DecisionDefinitionBundle = Omit<
   ContractDecisionDefinitionBundle,
@@ -184,6 +187,12 @@ describe("startup registration", () => {
     expect(runtimeBody).not.toHaveProperty("definition");
     expect(runtimeBody).toMatchObject({
       expectedContract: apply.expected.body.acceptedDefinitions["tetris.dropInterval"],
+      client: {
+        appId: "tetris-demo",
+        environment: "dev",
+        sdk: "typescript",
+        sdkVersion: sdkPackage.version,
+      },
     });
   });
 

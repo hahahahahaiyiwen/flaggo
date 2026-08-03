@@ -13,6 +13,7 @@ import {
   MissingAcceptedDefinitionError,
   RequiresApprovalError,
 } from "./errors.js";
+import { SDK_VERSION } from "./package-version.js";
 import type {
   AcceptedDefinition,
   ClientFallbackResult,
@@ -990,7 +991,7 @@ export async function createFlaggoClient(
         appId: config.appId,
         environment: config.environment,
         sdk: "typescript",
-        sdkVersion: "0.1.0",
+        sdkVersion: SDK_VERSION,
       },
     });
     const requestInit: RequestInit = {

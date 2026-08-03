@@ -45,7 +45,9 @@ definition, with matching canonical contract digests.
 Every runtime call recomputes the local definition digest and compares it with
 `receipt.acceptedDefinitions[decisionKey]` before network access or fallback.
 The data-plane request contains only compact accepted identity and runtime
-values; full definitions are never sent.
+values; full definitions are never sent. Its client identity reads
+`sdkVersion` from this package's metadata so release version bumps cannot
+drift from runtime telemetry.
 
 ## Results and fallback
 
