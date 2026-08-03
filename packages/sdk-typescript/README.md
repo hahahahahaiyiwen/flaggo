@@ -59,7 +59,8 @@ Availability fallback is disabled by default. Enabling
 `availabilityFallback: { mode: "local-default" }` permits the declared default
 only after retries are exhausted for DNS, refused/reset connection, or
 connection/read timeout failures; intermediary HTTP 502/504 responses; or a
-valid HTTP 503 Problem Details response with `clientFallback.eligible: true`.
+valid Flaggo 5xx Problem Details response with
+`clientFallback.eligible: true`, except HTTP 500, 501, and 505.
 Cancellation, TLS/certificate, proxy/authentication/configuration, malformed
 response, contract, and identity errors never fall back. A client fallback has
 no server decision, policy, audit, or exposure identity.

@@ -838,6 +838,93 @@ describe("runtime safety", () => {
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
+  it("allows explicitly eligible non-gateway 5xx fallback", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const problem = {
+      type: "https://flaggo.dev/problems/insufficient-storage",
+      status: 507,
+      code: "insufficient-storage",
+      clientFallback: {
+        eligible: true,
+        reason: "temporary-capacity-failure",
+      },
+    };
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(new Response(JSON.stringify(problem), {
+        status: 507,
+        headers: { "Content-Type": "application/problem+json" },
+      }));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({
+      source: "client-fallback",
+      reason: "temporary-capacity-failure",
+    });
+  });
+
+  it.each([500, 501, 505])(
+    "forbids fallback for explicitly excluded HTTP %s",
+    async (status) => {
+      const apply = fixture<{
+        request: { body: DecisionDefinitionBundle };
+        expected: { body: RegistrationReceipt };
+      }>("management/definition-bundle/04-apply-approved-receipt.json");
+      const problem = {
+        type: `https://flaggo.dev/problems/http-${status}`,
+        status,
+        code: `http-${status}`,
+        clientFallback: { eligible: true },
+      };
+      const fetch = vi.fn<FetchLike>()
+        .mockResolvedValueOnce(response(200, apply.expected.body))
+        .mockResolvedValueOnce(new Response(JSON.stringify(problem), {
+          status,
+          headers: { "Content-Type": "application/problem+json" },
+        }));
+      const client = await createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: apply.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        availabilityFallback: { mode: "local-default", retries: 0 },
+        fetch,
+      });
+
+      await expect(
+        client.tune.number("tetris.dropInterval", {
+          definition: apply.request.body.definitions[0]!,
+          context: {},
+        }),
+      ).rejects.toBeInstanceOf(FlaggoHttpError);
+    },
+  );
+
   it("does not treat ineligible Flaggo 504 problems as intermediary fallback", async () => {
     const apply = fixture<{
       request: { body: DecisionDefinitionBundle };

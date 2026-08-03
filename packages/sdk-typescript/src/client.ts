@@ -893,6 +893,14 @@ function retryDelayMilliseconds(response?: Response): number {
   return 50 + Math.floor(Math.random() * 101);
 }
 
+function permitsEligibleFlaggoFallback(status: number): boolean {
+  return status >= 500
+    && status <= 599
+    && status !== 500
+    && status !== 501
+    && status !== 505;
+}
+
 async function waitBeforeRetry(response?: Response): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, retryDelayMilliseconds(response));
@@ -1126,9 +1134,7 @@ export async function createFlaggoClient(
           continue;
         }
         if (
-          (response.status === 502
-            || response.status === 503
-            || response.status === 504)
+          permitsEligibleFlaggoFallback(response.status)
           && problem.clientFallback?.eligible === true
         ) {
           if (fallbackEnabled && attempt < retries) {
