@@ -73,7 +73,7 @@ public static class RuntimeHttp
 
     public static string Fingerprint(byte[] json, string decisionKey)
     {
-        using var document = JsonDocument.Parse(json.ToArray());
+        using var document = JsonDocument.Parse(json);
         using var memory = new MemoryStream();
         var requestIdentity = Encoding.UTF8.GetBytes(
             $"POST\n/v1/decisions/{{decisionKey}}:decide\ndecisionKey={decisionKey}\nv1\napplication/json\n");
@@ -206,9 +206,9 @@ public static class RuntimeHttp
         }
     }
 
-    private static void EnsureRequestNullability<T>(ReadOnlySpan<byte> json)
+    private static void EnsureRequestNullability<T>(byte[] json)
     {
-        using var document = JsonDocument.Parse(json.ToArray());
+        using var document = JsonDocument.Parse(json);
         if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
             return;
