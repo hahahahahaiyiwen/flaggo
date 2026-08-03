@@ -10,7 +10,7 @@ behavior aligned with `contracts/openapi/flaggo-runtime-v1.yaml`.
 
 ## Current implementation
 
-`src/Flaggo.DataPlane` is the .NET 8 composition root. The first vertical slice
+`src/Flaggo.DataPlane` is the .NET 10 composition root. The first vertical slice
 exposes decide, exposure confirmation, liveness, and readiness endpoints over
 in-memory registry, state, and audit adapters. Runtime decisions require an
 exact registered definition tuple; mismatches return contract Problem Details
