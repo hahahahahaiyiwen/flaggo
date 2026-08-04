@@ -72,6 +72,13 @@ public sealed record ConfidenceReport(
     double? ModelUncertainty = null,
     double? ExpectedOutcome = null);
 
+public sealed record DecisionEvidenceSnapshot(
+    double EvidenceQuality,
+    double? ModelUncertainty = null,
+    double? ExpectedOutcome = null,
+    double? SampleSize = null,
+    IReadOnlyDictionary<string, JsonElement>? Details = null);
+
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ServerFallbackInfo(
     string Source,

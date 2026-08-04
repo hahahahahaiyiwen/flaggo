@@ -1,4 +1,5 @@
 using Flaggo.Audit;
+using Flaggo.Decisioning;
 using Flaggo.Registry;
 using Flaggo.State;
 
@@ -24,7 +25,7 @@ public sealed class RuntimeReadinessProbe(
     IRegistryHealth registry,
     IStateHealth state,
     IAuditHealth audit,
-    IConfiguration configuration)
+    IEvidenceHealth evidence)
     : IRuntimeReadinessProbe
 {
     public async Task<IReadOnlyList<RuntimeDependencyCheck>> CheckAsync(
@@ -33,10 +34,7 @@ public sealed class RuntimeReadinessProbe(
         var registryAvailable = await registry.IsAvailableAsync(cancellationToken);
         var stateAvailable = await state.IsAvailableAsync(cancellationToken);
         var auditAvailable = await audit.IsAvailableAsync(cancellationToken);
-        var evidenceAvailable = !string.Equals(
-            configuration["Flaggo:Health:Evidence"],
-            "down",
-            StringComparison.OrdinalIgnoreCase);
+        var evidenceAvailable = await evidence.IsAvailableAsync(cancellationToken);
         return
         [
             Check("contract-registry", registryAvailable, true),

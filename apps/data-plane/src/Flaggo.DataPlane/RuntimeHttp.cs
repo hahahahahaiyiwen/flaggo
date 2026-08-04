@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using Microsoft.Net.Http.Headers;
+using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 
 namespace Flaggo.DataPlane;
@@ -259,6 +260,21 @@ public static class RuntimeHttp
             else if (typeof(T) == typeof(ExposureConfirmationRequest))
             {
                 RejectNullProperties(document.RootElement, "confirmToken", "appliedAt");
+            }
+            else if (typeof(T) == typeof(ApproveDefinitionBundleRequest))
+            {
+                RejectNullProperties(
+                    document.RootElement,
+                    "expectedBundleDigest",
+                    "comment");
+            }
+            else if (typeof(T) == typeof(RejectDefinitionBundleRequest))
+            {
+                RejectNullProperties(
+                    document.RootElement,
+                    "expectedBundleDigest",
+                    "reasonCode",
+                    "comment");
             }
         }
 

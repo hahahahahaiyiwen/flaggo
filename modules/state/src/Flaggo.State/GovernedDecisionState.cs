@@ -3,6 +3,12 @@ using Flaggo.Shared.Contracts;
 
 namespace Flaggo.State;
 
+public sealed record NumericRuleStrategy(
+    string InputSignalKey,
+    double Threshold,
+    double ValueAtOrAbove,
+    double ValueBelow);
+
 public sealed record GovernedDecisionState(
     string DefinitionId,
     string Revision,
@@ -10,7 +16,9 @@ public sealed record GovernedDecisionState(
     JsonElement Value,
     DecisionTargetRef? ControlTarget = null,
     string Mode = "active-value",
-    string? StrategyId = null);
+    string? StrategyId = null,
+    NumericRuleStrategy? NumericRule = null,
+    DateTimeOffset? LastChangedAt = null);
 
 public interface IStateStore
 {
@@ -184,7 +192,9 @@ public sealed record DecisionSnapshot(
     DecisionTargetRef? ControlTarget,
     IReadOnlyList<TargetResolutionProvenance> TargetProvenance,
     IReadOnlyList<string> ResolutionChain,
-    PolicyEvaluationResult Policy);
+    PolicyEvaluationResult Policy,
+    DecisionEvidenceSnapshot? Evidence = null,
+    ConfidenceReport? Confidence = null);
 
 public sealed class ExposureNotFoundException : Exception;
 

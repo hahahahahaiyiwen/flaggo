@@ -15,4 +15,7 @@ rules change.
 `src/Flaggo.Shared.Contracts` contains strict .NET runtime request, response,
 Problem Details, and exposure confirmation DTOs. Unknown JSON members are
 rejected, absent optional members are omitted, and required nullable contract
-members remain present on the wire.
+members remain present on the wire. It also provides the shared evidence
+snapshot and RFC 8785 canonical JSON implementation used to compute bundle and
+semantic contract digests. Canonical behavior is regression-tested against
+every frozen canonicalization and semantic-digest vector.

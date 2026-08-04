@@ -18,7 +18,9 @@ public sealed class LocalDevelopmentAuthenticationHandler(
             new Claim(ClaimTypes.NameIdentifier, "local-development"),
             new Claim(
                 "scope",
-                "polari.decisions:decide polari.exposures:confirm"),
+                "polari.decisions:decide polari.exposures:confirm " +
+                "polari.definitions:validate polari.definitions:apply " +
+                "polari.definitions:approve"),
             new Claim("polari_app_id", "tetris-demo"),
             new Claim("polari_environment", "dev"),
             new Claim("polari_tenant_id", "local-development")
