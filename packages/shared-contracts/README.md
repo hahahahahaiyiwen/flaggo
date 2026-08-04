@@ -9,3 +9,10 @@ conformance before publication.
 
 Update this document when generation, compatibility, or package-versioning
 rules change.
+
+## Current implementation
+
+`src/Flaggo.Shared.Contracts` contains strict .NET runtime request, response,
+Problem Details, and exposure confirmation DTOs. Unknown JSON members are
+rejected, absent optional members are omitted, and required nullable contract
+members remain present on the wire.

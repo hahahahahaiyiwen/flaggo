@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
+    <ProjectReference Include="..\..\..\..\packages\shared-contracts\src\Flaggo.Shared.Contracts\Flaggo.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\..\modules\registry\src\Flaggo.Registry\Flaggo.Registry.csproj" />
+    <ProjectReference Include="..\..\..\..\modules\audit\src\Flaggo.Audit\Flaggo.Audit.csproj" />
+    <ProjectReference Include="..\..\..\..\modules\state\src\Flaggo.State\Flaggo.State.csproj" />
+    <ProjectReference Include="..\..\..\..\modules\reasoning\src\Flaggo.Decisioning\Flaggo.Decisioning.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\packages\shared-contracts\src\Flaggo.Shared.Contracts\Flaggo.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\registry\src\Flaggo.Registry\Flaggo.Registry.csproj" />
+    <ProjectReference Include="..\..\..\audit\src\Flaggo.Audit\Flaggo.Audit.csproj" />
+    <ProjectReference Include="..\..\..\state\src\Flaggo.State\Flaggo.State.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
