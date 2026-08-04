@@ -27,7 +27,15 @@ public sealed record DecisionPolicyContract(
     double? MaximumModelUncertainty = null,
     double? MinimumExpectedOutcome = null,
     double? MinimumSampleSize = null,
-    bool Paused = false);
+    bool Paused = false,
+    string RequiredEvidenceUnavailable = "forbid")
+{
+    public bool RequiresEvidence =>
+        MinimumEvidenceQuality is not null ||
+        MaximumModelUncertainty is not null ||
+        MinimumExpectedOutcome is not null ||
+        MinimumSampleSize is not null;
+}
 
 public sealed record RegisteredDecisionDefinition(
     string AppId,

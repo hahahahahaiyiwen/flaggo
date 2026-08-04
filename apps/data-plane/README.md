@@ -35,8 +35,9 @@ change replay identity.
 Request parsing rejects unsupported media types, duplicate JSON properties,
 incorrectly cased or unknown members, null input entries, and malformed digest
 identities before evaluation. Explicit null optional members and numeric values
-outside the canonical IEEE-754 range are also rejected. Correlation identity is preserved in both
-headers and Problem Details through exception handling. Decide
+that cannot round-trip through the canonical IEEE-754 representation are also
+rejected. Correlation identity is preserved in both headers and Problem Details
+through exception handling. Decide
 idempotency fingerprints include the HTTP operation identity and canonical
 request body; deterministic terminal responses are retained for 24 hours, and
 followers exceeding the one-second wait budget receive

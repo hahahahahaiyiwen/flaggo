@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using Flaggo.DataPlane;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
 
@@ -6,6 +8,16 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class RuntimeStateTests
 {
+    [Fact]
+    public void Fingerprint_RejectsNumberThatWouldCollideAfterRounding()
+    {
+        var body = Encoding.UTF8.GetBytes(
+            """{"runtimeContext":{"score":9007199254740993}}""");
+
+        Assert.Throws<JsonException>(
+            () => RuntimeHttp.Fingerprint(body, "decision.test"));
+    }
+
     [Fact]
     public async Task IdempotencyStore_ReplaysOriginalResult()
     {

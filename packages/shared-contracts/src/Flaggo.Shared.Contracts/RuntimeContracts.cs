@@ -146,7 +146,8 @@ public sealed record DecisionFailure(
     int Status,
     string Code,
     string Detail,
-    IReadOnlyList<ProblemIssue>? Issues = null);
+    IReadOnlyList<ProblemIssue>? Issues = null,
+    ClientFallbackEligibility? ClientFallback = null);
 
 public sealed record DecideTerminalOutcome(
     ServerDecisionResult? Result,

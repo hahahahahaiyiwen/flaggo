@@ -100,7 +100,11 @@ public sealed class DecisionPortTests
     [Fact]
     public async Task TargetResolver_ProducesDeterministicFallbackPlan()
     {
-        var resolver = new DefaultTargetResolver();
+        var resolver = new DefaultTargetResolver(
+            new Dictionary<string, string>
+            {
+                ["new_players"] = "new_players"
+            });
         var runtimeTarget = new DecisionTargetRef("session", "game-1");
         var context = new Dictionary<string, JsonElement>
         {
@@ -114,9 +118,11 @@ public sealed class DecisionPortTests
             CancellationToken.None);
         var result = plan.Describe(
             new DecisionTargetRef("cohort", "new_players"),
-            selectedTargetIndex: 0);
+            selectedTargetIndex: 2);
 
-        Assert.Equal("cohort", plan.StateTargets[0]!.Type);
+        Assert.Equal("session", plan.StateTargets[0]!.Type);
+        Assert.Equal("user", plan.StateTargets[1]!.Type);
+        Assert.Equal("cohort", plan.StateTargets[2]!.Type);
         Assert.Equal(
             ["session:game-1", "user:user-1", "cohort:new_players", "global"],
             plan.ResolutionChain);
@@ -147,6 +153,61 @@ public sealed class DecisionPortTests
         Assert.Equal("whales", provenance.ClaimedId);
         Assert.Equal("new_players", provenance.ResolvedId);
         Assert.Contains("cohort:new_players", plan.ResolutionChain);
+    }
+
+    [Fact]
+    public async Task TargetResolver_DoesNotTrustUnverifiedCohortClaim()
+    {
+        var resolver = new DefaultTargetResolver();
+        var context = new Dictionary<string, JsonElement>
+        {
+            ["cohort"] = JsonSerializer.SerializeToElement("admin_users")
+        };
+
+        var plan = await resolver.ResolveAsync(null, context, CancellationToken.None);
+
+        Assert.DoesNotContain(
+            plan.StateTargets,
+            target => target?.Type == "cohort");
+        Assert.DoesNotContain("cohort:admin_users", plan.ResolutionChain);
+    }
+
+    [Fact]
+    public async Task TargetResolver_DoesNotTrustUnverifiedCohortRuntimeTarget()
+    {
+        var resolver = new DefaultTargetResolver();
+        var claimedTarget = new DecisionTargetRef("cohort", "admin_users");
+
+        var plan = await resolver.ResolveAsync(
+            claimedTarget,
+            new Dictionary<string, JsonElement>(),
+            CancellationToken.None);
+
+        Assert.DoesNotContain(
+            plan.StateTargets,
+            target => target?.Type == "cohort");
+        Assert.DoesNotContain("cohort:admin_users", plan.ResolutionChain);
+    }
+
+    [Fact]
+    public async Task TargetResolver_PreservesMappedRuntimeCohortProvenance()
+    {
+        var resolver = new DefaultTargetResolver(
+            new Dictionary<string, string>
+            {
+                ["whales"] = "new_players"
+            });
+
+        var plan = await resolver.ResolveAsync(
+            new DecisionTargetRef("cohort", "whales"),
+            new Dictionary<string, JsonElement>(),
+            CancellationToken.None);
+        var result = plan.Describe(plan.StateTargets[0], selectedTargetIndex: 0);
+        var provenance = Assert.Single(result.TargetProvenance);
+
+        Assert.Equal("whales", provenance.ClaimedId);
+        Assert.Equal("new_players", provenance.ResolvedId);
+        Assert.Equal("server-replaced", provenance.Source);
     }
 
     private static GovernedDecisionState State() =>

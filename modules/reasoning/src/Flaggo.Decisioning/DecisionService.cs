@@ -122,6 +122,25 @@ public sealed class DecisionService(
                     request.RuntimeContext,
                     request.Inputs ?? []),
                 cancellationToken);
+            if (evidence is null && definition.Policy?.RequiresEvidence == true)
+            {
+                var eligible = string.Equals(
+                    definition.Policy.RequiredEvidenceUnavailable,
+                    "allow",
+                    StringComparison.Ordinal);
+                throw new DecisionContractException(
+                    503,
+                    "required-evidence-unavailable",
+                    eligible
+                        ? "Required evidence is unavailable; policy permits client fallback."
+                        : "Required evidence is unavailable and policy forbids governed fallback.",
+                    clientFallback: new ClientFallbackEligibility(
+                        eligible,
+                        eligible
+                            ? "policy-permitted-required-evidence-unavailable"
+                            : "policy-forbids-required-evidence-unavailable"));
+            }
+
             execution = await strategyExecutor.ExecuteAsync(
                 new StrategyExecutionRequest(
                     state,

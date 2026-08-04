@@ -173,7 +173,13 @@ builder.Services.AddSingleton<IExposureStore>(provider =>
         provider.GetRequiredService<TimeProvider>(),
         ids.CreateExposureId);
 });
-builder.Services.AddSingleton<ITargetResolver, DefaultTargetResolver>();
+builder.Services.AddSingleton<ITargetResolver>(
+    new DefaultTargetResolver(
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["new_players"] = "new_players",
+            ["whales"] = "new_players"
+        }));
 builder.Services.AddSingleton<InMemoryEvidenceProvider>();
 builder.Services.AddSingleton<IEvidenceProvider>(
     provider => provider.GetRequiredService<InMemoryEvidenceProvider>());
@@ -832,7 +838,12 @@ static async Task<DecideTerminalOutcome> EvaluateDecisionAsync(
     catch (DecisionContractException error)
     {
         return DecideTerminalOutcome.Rejected(
-            new DecisionFailure(error.Status, error.Code, error.Message, error.Issues));
+            new DecisionFailure(
+                error.Status,
+                error.Code,
+                error.Message,
+                error.Issues,
+                error.ClientFallback));
     }
 }
 
@@ -902,7 +913,8 @@ static IResult RenderOutcome(HttpContext context, DecideTerminalOutcome outcome)
             failure.Status,
             failure.Code,
             failure.Detail,
-            failure.Issues));
+            failure.Issues,
+            clientFallback: failure.ClientFallback));
 }
 
 public partial class Program

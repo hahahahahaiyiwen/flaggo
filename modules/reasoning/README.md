@@ -18,12 +18,18 @@ bounds and step plus max delta, cooldown, evidence quality, uncertainty,
 expected outcome, sample size, and pause constraints. A blocked candidate is
 never returned; orchestration returns the governed fallback with null
 confidence and explicit policy reasons.
+When configured evidence constraints require evidence and none is available,
+orchestration returns `required-evidence-unavailable` instead of producing a
+server fallback. The definition's client-fallback policy determines whether
+the Problem Details response permits SDK-local availability fallback.
 
 Runtime responses expose compact confidence and provenance. Audit and pending
 exposure snapshots retain the full evidence view. Cohort claims resolved by the
 target adapter are marked `client-verified` when unchanged and
 `server-replaced` when an authoritative mapping changes them. Broader target
-selection records server-derived resolution fallback.
+selection records server-derived resolution fallback. Unverified cohort claims
+are excluded from governed-state lookup, whose precedence is runtime target,
+user, authoritative cohort, then global.
 
 Owns candidate selection and proposal generation across deterministic rules,
 experiments, statistical methods, and approved AI-assisted strategies.

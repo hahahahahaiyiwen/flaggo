@@ -18,4 +18,6 @@ rejected, absent optional members are omitted, and required nullable contract
 members remain present on the wire. It also provides the shared evidence
 snapshot and RFC 8785 canonical JSON implementation used to compute bundle and
 semantic contract digests. Canonical behavior is regression-tested against
-every frozen canonicalization and semantic-digest vector.
+every frozen canonicalization and semantic-digest vector. Numbers that would
+change mathematical value when converted to the RFC 8785 IEEE-754 domain are
+rejected, preventing distinct inputs from collapsing to one digest.

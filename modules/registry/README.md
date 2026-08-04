@@ -21,7 +21,11 @@ mutation. Apply retains idempotent outcomes, immediately commits compatible
 updates, and stores semantic changes as immutable pending snapshots.
 
 Approvals compare the expected bundle digest before atomically committing a
-new runtime revision. Approval and rejection are replay-safe terminal
-transitions; expiry and opposite-terminal operations fail explicitly.
+new runtime revision. Each approval captures its active-definition baseline;
+approval fails with a conflict if another approval changes that baseline first.
+Approval and rejection are replay-safe terminal transitions; expiry and
+opposite-terminal operations fail explicitly. Reference policies are rejected
+until a policy-resolution adapter is available rather than being activated
+without enforcement.
 Runtime lookup continues to require the complete application, environment,
 decision key, definition ID, and revision tuple.

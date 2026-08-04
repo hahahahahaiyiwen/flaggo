@@ -1,11 +1,9 @@
 using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Globalization;
 using Microsoft.Net.Http.Headers;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
@@ -79,12 +77,7 @@ public static class RuntimeHttp
         var requestIdentity = Encoding.UTF8.GetBytes(
             $"POST\n/v1/decisions/{{decisionKey}}:decide\ndecisionKey={decisionKey}\nv1\napplication/json\n");
         memory.Write(requestIdentity);
-        using (var writer = new Utf8JsonWriter(
-                   memory,
-                   new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
-        {
-            WriteCanonical(writer, document.RootElement);
-        }
+        memory.Write(CanonicalJson.Canonicalize(document.RootElement));
 
         return Convert.ToHexString(SHA256.HashData(memory.ToArray())).ToLowerInvariant();
     }
@@ -143,8 +136,7 @@ public static class RuntimeHttp
             JsonValueKind.False or
             JsonValueKind.Null ||
         value.ValueKind == JsonValueKind.Number &&
-        value.TryGetDouble(out var number) &&
-        double.IsFinite(number);
+        CanonicalJson.IsIeee754CompatibleNumber(value);
 
     public static bool IsValidSignalInput(SignalInput? input) =>
         input?.Signal is not null &&
@@ -302,101 +294,4 @@ public static class RuntimeHttp
             }
     }
 
-    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
-    {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.Object:
-                writer.WriteStartObject();
-                foreach (var property in element.EnumerateObject().OrderBy(
-                             property => property.Name,
-                             StringComparer.Ordinal))
-                {
-                    writer.WritePropertyName(property.Name);
-                    WriteCanonical(writer, property.Value);
-                }
-
-                writer.WriteEndObject();
-                break;
-            case JsonValueKind.Array:
-                writer.WriteStartArray();
-                foreach (var item in element.EnumerateArray())
-                {
-                    WriteCanonical(writer, item);
-                }
-
-                writer.WriteEndArray();
-                break;
-            case JsonValueKind.Number:
-                writer.WriteRawValue(
-                    FormatCanonicalNumber(element.GetDouble()),
-                    skipInputValidation: true);
-                break;
-            default:
-                element.WriteTo(writer);
-                break;
-        }
-    }
-
-    private static string FormatCanonicalNumber(double value)
-    {
-        if (!double.IsFinite(value))
-        {
-            throw new JsonException("Non-finite numbers are not valid JSON.");
-        }
-
-        if (value == 0)
-        {
-            return "0";
-        }
-
-        var roundTrip = value.ToString("R", CultureInfo.InvariantCulture);
-        var exponentIndex = roundTrip.IndexOfAny(['E', 'e']);
-        var absolute = Math.Abs(value);
-        if (exponentIndex < 0)
-        {
-            return roundTrip;
-        }
-
-        var mantissa = roundTrip[..exponentIndex];
-        var exponent = int.Parse(
-            roundTrip[(exponentIndex + 1)..],
-            NumberStyles.AllowLeadingSign,
-            CultureInfo.InvariantCulture);
-        if (absolute >= 1e-6 && absolute < 1e21)
-        {
-            return ExpandDecimal(mantissa, exponent);
-        }
-
-        var normalizedExponent = exponent >= 0 ? $"+{exponent}" : exponent.ToString(
-            CultureInfo.InvariantCulture);
-        return $"{mantissa.ToLowerInvariant()}e{normalizedExponent}";
-    }
-
-    private static string ExpandDecimal(string mantissa, int exponent)
-    {
-        var negative = mantissa.StartsWith('-');
-        var unsigned = negative ? mantissa[1..] : mantissa;
-        var decimalIndex = unsigned.IndexOf('.');
-        var digits = decimalIndex < 0
-            ? unsigned
-            : unsigned.Remove(decimalIndex, 1);
-        var originalDecimalPosition = decimalIndex < 0 ? unsigned.Length : decimalIndex;
-        var decimalPosition = originalDecimalPosition + exponent;
-        string expanded;
-        if (decimalPosition <= 0)
-        {
-            expanded = $"0.{new string('0', -decimalPosition)}{digits}";
-        }
-        else if (decimalPosition >= digits.Length)
-        {
-            expanded = $"{digits}{new string('0', decimalPosition - digits.Length)}";
-        }
-        else
-        {
-            expanded = $"{digits[..decimalPosition]}.{digits[decimalPosition..]}";
-        }
-
-        return negative ? $"-{expanded}" : expanded;
-    }
 }

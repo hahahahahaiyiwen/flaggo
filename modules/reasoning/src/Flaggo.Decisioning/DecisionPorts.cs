@@ -12,13 +12,30 @@ public sealed record TargetResolutionDescription(
 public sealed record TargetResolutionPlan(
     IReadOnlyList<DecisionTargetRef?> StateTargets,
     IReadOnlyList<string> ResolutionChain,
-    IReadOnlyDictionary<string, JsonElement> RuntimeContext)
+    IReadOnlyDictionary<string, JsonElement> RuntimeContext,
+    TargetResolutionProvenance? RuntimeTargetProvenance = null)
 {
     public TargetResolutionDescription Describe(
         DecisionTargetRef? controlTarget,
         int selectedTargetIndex)
     {
-        var fallbackUsed = selectedTargetIndex > 0;
+        var fallbackUsed = controlTarget?.Type == "global" || selectedTargetIndex < 0;
+        if (controlTarget is not null &&
+            RuntimeTargetProvenance is not null &&
+            string.Equals(
+                RuntimeTargetProvenance.TargetType,
+                controlTarget.Type,
+                StringComparison.Ordinal) &&
+            string.Equals(
+                RuntimeTargetProvenance.ResolvedId,
+                controlTarget.Id,
+                StringComparison.Ordinal))
+        {
+            return new TargetResolutionDescription(
+                [RuntimeTargetProvenance],
+                fallbackUsed);
+        }
+
         if (controlTarget?.Type == "cohort" &&
             TryGetString(RuntimeContext, "cohort", out var claimedCohort))
         {
@@ -104,14 +121,30 @@ public sealed class DefaultTargetResolver(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var targets = new List<DecisionTargetRef?>();
-        if (TryGetString(runtimeContext, "cohort", out var cohort))
+        TargetResolutionProvenance? runtimeTargetProvenance = null;
+        if (runtimeTarget is not null)
         {
-            var resolvedCohort = _authoritativeCohorts.TryGetValue(
-                cohort,
-                out var authoritativeCohort)
-                ? authoritativeCohort
-                : cohort;
-            targets.Add(new DecisionTargetRef("cohort", resolvedCohort));
+            if (runtimeTarget.Type != "cohort")
+            {
+                targets.Add(runtimeTarget);
+            }
+            else if (_authoritativeCohorts.TryGetValue(
+                         runtimeTarget.Id,
+                         out var authoritativeRuntimeCohort))
+            {
+                targets.Add(
+                    new DecisionTargetRef("cohort", authoritativeRuntimeCohort));
+                runtimeTargetProvenance = new TargetResolutionProvenance(
+                    "cohort",
+                    authoritativeRuntimeCohort,
+                    string.Equals(
+                        runtimeTarget.Id,
+                        authoritativeRuntimeCohort,
+                        StringComparison.Ordinal)
+                        ? "client-verified"
+                        : "server-replaced",
+                    runtimeTarget.Id);
+            }
         }
 
         if (TryGetString(runtimeContext, "userId", out var userId))
@@ -119,9 +152,10 @@ public sealed class DefaultTargetResolver(
             targets.Add(new DecisionTargetRef("user", userId));
         }
 
-        if (runtimeTarget is not null)
+        if (TryGetString(runtimeContext, "cohort", out var cohort) &&
+            _authoritativeCohorts.TryGetValue(cohort, out var authoritativeCohort))
         {
-            targets.Add(runtimeTarget);
+            targets.Add(new DecisionTargetRef("cohort", authoritativeCohort));
         }
 
         if (targets.Count == 0)
@@ -137,7 +171,16 @@ public sealed class DefaultTargetResolver(
         var chain = new List<string>();
         if (runtimeTarget is not null)
         {
-            chain.Add($"{runtimeTarget.Type}:{runtimeTarget.Id}");
+            if (runtimeTarget.Type != "cohort")
+            {
+                chain.Add($"{runtimeTarget.Type}:{runtimeTarget.Id}");
+            }
+            else if (_authoritativeCohorts.TryGetValue(
+                         runtimeTarget.Id,
+                         out var authoritativeRuntimeCohort))
+            {
+                chain.Add($"cohort:{authoritativeRuntimeCohort}");
+            }
         }
 
         if (TryGetString(runtimeContext, "userId", out userId))
@@ -145,22 +188,19 @@ public sealed class DefaultTargetResolver(
             chain.Add($"user:{userId}");
         }
 
-        if (TryGetString(runtimeContext, "cohort", out cohort))
+        if (TryGetString(runtimeContext, "cohort", out cohort) &&
+            _authoritativeCohorts.TryGetValue(cohort, out authoritativeCohort))
         {
-            var resolvedCohort = _authoritativeCohorts.TryGetValue(
-                cohort,
-                out var authoritativeCohort)
-                ? authoritativeCohort
-                : cohort;
-            chain.Add($"cohort:{resolvedCohort}");
+            chain.Add($"cohort:{authoritativeCohort}");
         }
 
         chain.Add("global");
         return Task.FromResult(
             new TargetResolutionPlan(
-                targets,
+                targets.Distinct().ToArray(),
                 chain.Distinct(StringComparer.Ordinal).ToArray(),
-                runtimeContext));
+                runtimeContext,
+                runtimeTargetProvenance));
     }
 
     private static bool TryGetString(

@@ -341,6 +341,7 @@ public sealed partial class InMemoryDefinitionRegistry :
                     "The approval request has expired.");
             }
 
+            VerifyApprovalBaseline(entry);
             var validation = ValidateCore(entry.Bundle);
             if (validation.Status != "valid")
             {
@@ -647,7 +648,12 @@ public sealed partial class InMemoryDefinitionRegistry :
         var canonicalBytes = CanonicalJson.NormalizeBundleBytes(bundle);
         _approvals.Add(
             approvalRequestId,
-            new ApprovalEntry(bundle.Clone(), canonicalBytes, result, expiresAt));
+            new ApprovalEntry(
+                bundle.Clone(),
+                canonicalBytes,
+                result,
+                expiresAt,
+                CaptureApprovalBaselines(bundle)));
         var outcome = new DefinitionBundleApplyResult(202, pending);
         _applyEntries[idempotencyKey] = new ApplyEntry(bundleDigest, outcome);
         return outcome;
@@ -938,20 +944,62 @@ public sealed partial class InMemoryDefinitionRegistry :
                 decisionKey));
         }
 
-        if (definition.TryGetProperty("policy", out var policy) &&
-            policy.TryGetProperty("constraints", out var constraints) &&
-            constraints.ValueKind == JsonValueKind.Array)
+        if (!definition.TryGetProperty("policy", out var policy) ||
+            policy.ValueKind != JsonValueKind.Object)
         {
-            foreach (var constraint in constraints.EnumerateArray())
+            issues.Add(Issue(
+                "invalid-policy",
+                $"{path}/policy",
+                "A policy declaration is required.",
+                decisionKey));
+        }
+        else
+        {
+            var constraints = default(JsonElement);
+            var validInlinePolicy =
+                TryString(policy, "kind", out var policyKind) &&
+                policyKind == "inline" &&
+                policy.TryGetProperty("constraints", out constraints) &&
+                constraints.ValueKind == JsonValueKind.Array;
+            if (!validInlinePolicy)
             {
-                if (IsInvalidConstraint(constraint))
+                issues.Add(Issue(
+                    "invalid-policy",
+                    $"{path}/policy",
+                    "Referenced policies are not supported by the local policy adapter.",
+                    decisionKey));
+            }
+            else
+            {
+                var invalidPolicy = false;
+                foreach (var constraint in constraints.EnumerateArray())
+                {
+                    if (IsInvalidConstraint(constraint))
+                    {
+                        invalidPolicy = true;
+                        break;
+                    }
+                }
+
+                if (!invalidPolicy &&
+                    policy.TryGetProperty("clientFallback", out var clientFallback))
+                {
+                    invalidPolicy =
+                        clientFallback.ValueKind != JsonValueKind.Object ||
+                        !TryString(
+                            clientFallback,
+                            "requiredEvidenceUnavailable",
+                            out var unavailableBehavior) ||
+                        unavailableBehavior is not ("allow" or "forbid");
+                }
+
+                if (invalidPolicy)
                 {
                     issues.Add(Issue(
                         "invalid-policy",
                         $"{path}/policy",
-                        "Inline constraint is invalid.",
+                        "Inline policy configuration is invalid.",
                         decisionKey));
-                    break;
                 }
             }
         }
@@ -1031,6 +1079,8 @@ public sealed partial class InMemoryDefinitionRegistry :
     private static DecisionPolicyContract? ReadPolicy(JsonElement definition)
     {
         if (!definition.TryGetProperty("policy", out var policy) ||
+            !TryString(policy, "kind", out var policyKind) ||
+            policyKind != "inline" ||
             !policy.TryGetProperty("constraints", out var constraints) ||
             constraints.ValueKind != JsonValueKind.Array)
         {
@@ -1046,6 +1096,7 @@ public sealed partial class InMemoryDefinitionRegistry :
         double? minimumExpectedOutcome = null;
         double? minimumSampleSize = null;
         var paused = false;
+        var requiredEvidenceUnavailable = "forbid";
         foreach (var constraint in constraints.EnumerateArray())
         {
             if (!TryString(constraint, "kind", out var kind))
@@ -1097,6 +1148,15 @@ public sealed partial class InMemoryDefinitionRegistry :
             }
         }
 
+        if (policy.TryGetProperty("clientFallback", out var clientFallback) &&
+            TryString(
+                clientFallback,
+                "requiredEvidenceUnavailable",
+                out var configuredRequiredEvidenceUnavailable))
+        {
+            requiredEvidenceUnavailable = configuredRequiredEvidenceUnavailable;
+        }
+
         return new DecisionPolicyContract(
             minimum,
             maximum,
@@ -1106,7 +1166,8 @@ public sealed partial class InMemoryDefinitionRegistry :
             maximumModelUncertainty,
             minimumExpectedOutcome,
             minimumSampleSize,
-            paused);
+            paused,
+            requiredEvidenceUnavailable);
     }
 
     private IReadOnlyList<JsonElement> BuildSemanticChanges(JsonElement bundle)
@@ -1188,6 +1249,58 @@ public sealed partial class InMemoryDefinitionRegistry :
                 definition.LifecycleStatus == "active")
             .OrderByDescending(definition => definition.Identity.Revision, StringComparer.Ordinal)
             .FirstOrDefault();
+
+    private IReadOnlyDictionary<string, ApprovalBaseline?> CaptureApprovalBaselines(
+        JsonElement bundle)
+    {
+        var application = bundle.GetProperty("application");
+        var appId = application.GetProperty("id").GetString()!;
+        var environment = application.GetProperty("environment").GetString()!;
+        return bundle.GetProperty("definitions")
+            .EnumerateArray()
+            .ToDictionary(
+                definition => definition.GetProperty("key").GetString()!,
+                definition =>
+                {
+                    var current = FindCurrent(
+                        appId,
+                        environment,
+                        definition.GetProperty("key").GetString()!);
+                    return current is null
+                        ? null
+                        : new ApprovalBaseline(
+                            current.Identity.DefinitionId,
+                            current.Identity.Revision,
+                            current.Identity.ContractDigest,
+                            current.Identity.BundleDigest);
+                },
+                StringComparer.Ordinal);
+    }
+
+    private void VerifyApprovalBaseline(ApprovalEntry entry)
+    {
+        var application = entry.Bundle.GetProperty("application");
+        var appId = application.GetProperty("id").GetString()!;
+        var environment = application.GetProperty("environment").GetString()!;
+        foreach (var (decisionKey, baseline) in entry.Baselines)
+        {
+            var current = FindCurrent(appId, environment, decisionKey);
+            var currentBaseline = current is null
+                ? null
+                : new ApprovalBaseline(
+                    current.Identity.DefinitionId,
+                    current.Identity.Revision,
+                    current.Identity.ContractDigest,
+                    current.Identity.BundleDigest);
+            if (currentBaseline != baseline)
+            {
+                throw new DefinitionLifecycleException(
+                    409,
+                    "approval-stale-conflict",
+                    "The active definition changed after this approval was requested.");
+            }
+        }
+    }
 
     private ApprovalEntry GetApprovalEntry(string approvalRequestId)
     {
@@ -1333,11 +1446,18 @@ public sealed partial class InMemoryDefinitionRegistry :
         string BundleDigest,
         DefinitionBundleApplyResult Outcome);
 
+    private sealed record ApprovalBaseline(
+        string DefinitionId,
+        string Revision,
+        string ContractDigest,
+        string? BundleDigest);
+
     private sealed class ApprovalEntry(
         JsonElement bundle,
         byte[] canonicalBytes,
         DefinitionBundleApprovalResult result,
-        DateTimeOffset expiresAt)
+        DateTimeOffset expiresAt,
+        IReadOnlyDictionary<string, ApprovalBaseline?> baselines)
     {
         public JsonElement Bundle { get; } = bundle;
 
@@ -1346,5 +1466,8 @@ public sealed partial class InMemoryDefinitionRegistry :
         public DefinitionBundleApprovalResult Result { get; set; } = result;
 
         public DateTimeOffset ExpiresAt { get; } = expiresAt;
+
+        public IReadOnlyDictionary<string, ApprovalBaseline?> Baselines { get; } =
+            baselines;
     }
 }

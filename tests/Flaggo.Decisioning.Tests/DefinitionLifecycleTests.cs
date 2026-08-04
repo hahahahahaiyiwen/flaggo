@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text;
+using System.Text.Json.Nodes;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 
@@ -42,6 +43,17 @@ public sealed class DefinitionLifecycleTests
                 Encoding.UTF8.GetString(
                     CanonicalJson.Canonicalize(vector.GetProperty("input"))));
         }
+    }
+
+    [Fact]
+    public void Canonicalization_RejectsNumberThatWouldLosePrecision()
+    {
+        using var document = JsonDocument.Parse("9007199254740993");
+
+        var error = Assert.Throws<JsonException>(
+            () => CanonicalJson.Canonicalize(document.RootElement));
+
+        Assert.Contains("IEEE 754", error.Message);
     }
 
     [Fact]
@@ -263,6 +275,145 @@ public sealed class DefinitionLifecycleTests
         Assert.Same(first, replay);
         Assert.Equal("user:operator-1", replay.Approval!.Actor.Subject);
         Assert.Equal("Reviewed.", replay.Approval.Comment);
+    }
+
+    [Fact]
+    public async Task Approval_RejectsSnapshotWhenActiveBaselineChanged()
+    {
+        var registry = CreateRegistry(PreviousRevision, PreviousDigest);
+        var original = FixtureBody(
+            "definition-bundle",
+            "06-apply-requires-approval.json");
+        var competingNode = JsonNode.Parse(original.GetRawText())!.AsObject();
+        competingNode["definitions"]![0]!["fallback"]!["value"] = 850;
+        competingNode["definitions"]![0]!["actionSpace"]!["default"] = 850;
+        using var competingDocument = JsonDocument.Parse(competingNode.ToJsonString());
+        var competing = competingDocument.RootElement.Clone();
+        var originalPending = Assert.IsType<RequiresApprovalResult>(
+            (await registry.ApplyAsync("original-key", original)).Body);
+        var competingPending = Assert.IsType<RequiresApprovalResult>(
+            (await registry.ApplyAsync("competing-key", competing)).Body);
+
+        var competingApproved = await registry.ApproveAsync(
+            competingPending.ApprovalRequestId,
+            competingPending.BundleDigest,
+            new ApprovalActor("user:operator-1"),
+            null);
+        var stale = await Assert.ThrowsAsync<DefinitionLifecycleException>(
+            () => registry.ApproveAsync(
+                originalPending.ApprovalRequestId,
+                originalPending.BundleDigest,
+                new ApprovalActor("user:operator-2"),
+                null));
+
+        Assert.Equal(409, stale.Status);
+        Assert.Equal("approval-stale-conflict", stale.Code);
+        var accepted = Assert.Single(
+            competingApproved.Receipt!.AcceptedDefinitions).Value;
+        var active = await registry.ResolveAsync(
+            "tetris-demo",
+            "dev",
+            "tetris.dropInterval",
+            accepted.DefinitionId,
+            accepted.Revision,
+            CancellationToken.None);
+        Assert.Equal(
+            accepted.ContractDigest,
+            active.Definition!.Identity.ContractDigest);
+    }
+
+    [Fact]
+    public async Task Approval_RejectsSnapshotAfterMetadataChangesBundleIdentity()
+    {
+        var registry = CreateRegistry(ActiveRevision, ActiveDigest);
+        var pendingNode = JsonNode.Parse(
+            FixtureBody(
+                "definition-bundle",
+                "06-apply-requires-approval.json").GetRawText())!.AsObject();
+        pendingNode["definitions"]![0]!["fallback"]!["value"] = 850;
+        pendingNode["definitions"]![0]!["actionSpace"]!["default"] = 850;
+        using var pendingDocument = JsonDocument.Parse(pendingNode.ToJsonString());
+        var pending = Assert.IsType<RequiresApprovalResult>(
+            (await registry.ApplyAsync(
+                "semantic-key",
+                pendingDocument.RootElement)).Body);
+        var metadataNode = JsonNode.Parse(
+            FixtureBody(
+                "definition-bundle",
+                "08-apply-metadata-only.json").GetRawText())!.AsObject();
+        metadataNode["build"]!["version"] = "0.1.1";
+        using var metadataDocument = JsonDocument.Parse(metadataNode.ToJsonString());
+
+        var metadataApply = await registry.ApplyAsync(
+            "metadata-key",
+            metadataDocument.RootElement);
+        var stale = await Assert.ThrowsAsync<DefinitionLifecycleException>(
+            () => registry.ApproveAsync(
+                pending.ApprovalRequestId,
+                pending.BundleDigest,
+                new ApprovalActor("user:operator-1"),
+                null));
+
+        Assert.Equal(200, metadataApply.StatusCode);
+        Assert.Equal("approval-stale-conflict", stale.Code);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_RejectsUnresolvedPolicyReference()
+    {
+        var registry = CreateRegistry(ActiveRevision, ActiveDigest);
+        var node = JsonNode.Parse(
+            FixtureBody(
+                "definition-bundle",
+                "01-validate-identical.json").GetRawText())!.AsObject();
+        node["definitions"]![0]!["policy"] = new JsonObject
+        {
+            ["kind"] = "reference",
+            ["policyId"] = "policy-unresolved"
+        };
+        using var document = JsonDocument.Parse(node.ToJsonString());
+
+        var result = await registry.ValidateAsync(document.RootElement);
+
+        Assert.Equal("invalid", result.Status);
+        Assert.Contains(result.Issues, issue => issue.Code == "invalid-policy");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_RejectsDefinitionWithoutPolicy()
+    {
+        var registry = CreateRegistry(ActiveRevision, ActiveDigest);
+        var node = JsonNode.Parse(
+            FixtureBody(
+                "definition-bundle",
+                "01-validate-identical.json").GetRawText())!.AsObject();
+        node["definitions"]![0]!.AsObject().Remove("policy");
+        using var document = JsonDocument.Parse(node.ToJsonString());
+
+        var result = await registry.ValidateAsync(document.RootElement);
+
+        Assert.Equal("invalid", result.Status);
+        Assert.Contains(result.Issues, issue => issue.Code == "invalid-policy");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_RejectsInvalidClientFallbackPolicy()
+    {
+        var registry = CreateRegistry(ActiveRevision, ActiveDigest);
+        var node = JsonNode.Parse(
+            FixtureBody(
+                "definition-bundle",
+                "01-validate-identical.json").GetRawText())!.AsObject();
+        node["definitions"]![0]!["policy"]!["clientFallback"] = new JsonObject
+        {
+            ["requiredEvidenceUnavailable"] = "sometimes"
+        };
+        using var document = JsonDocument.Parse(node.ToJsonString());
+
+        var result = await registry.ValidateAsync(document.RootElement);
+
+        Assert.Equal("invalid", result.Status);
+        Assert.Contains(result.Issues, issue => issue.Code == "invalid-policy");
     }
 
     private static InMemoryDefinitionRegistry CreateRegistry(

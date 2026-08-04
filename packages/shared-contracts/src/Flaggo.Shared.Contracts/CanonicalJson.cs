@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -25,6 +26,21 @@ public static class CanonicalJson
         var node = JsonNode.Parse(value.GetRawText())
             ?? throw new JsonException("A JSON value is required.");
         return Serialize(node);
+    }
+
+    public static bool IsIeee754CompatibleNumber(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Number ||
+            !value.TryGetDouble(out var number) ||
+            !double.IsFinite(number))
+        {
+            return false;
+        }
+
+        var canonical = FormatCanonicalNumber(number);
+        return TryNormalizeDecimal(value.GetRawText(), out var original) &&
+            TryNormalizeDecimal(canonical, out var roundTripped) &&
+            original == roundTripped;
     }
 
     private static JsonNode NormalizeDefinition(
@@ -308,6 +324,12 @@ public static class CanonicalJson
                 builder.Append(']');
                 break;
             case JsonValueKind.Number:
+                if (!IsIeee754CompatibleNumber(element))
+                {
+                    throw new JsonException(
+                        "JSON number cannot round-trip through IEEE 754 without changing value.");
+                }
+
                 builder.Append(FormatCanonicalNumber(element.GetDouble()));
                 break;
             case JsonValueKind.String:
@@ -421,4 +443,80 @@ public static class CanonicalJson
         };
         return negative ? $"-{expanded}" : expanded;
     }
+
+    private static bool TryNormalizeDecimal(
+        string text,
+        out NormalizedDecimal normalized)
+    {
+        normalized = default;
+        var span = text.AsSpan();
+        var negative = false;
+        if (!span.IsEmpty && span[0] == '-')
+        {
+            negative = true;
+            span = span[1..];
+        }
+
+        var exponent = 0;
+        var exponentIndex = span.IndexOfAny('e', 'E');
+        if (exponentIndex >= 0)
+        {
+            if (!int.TryParse(
+                    span[(exponentIndex + 1)..],
+                    NumberStyles.AllowLeadingSign,
+                    CultureInfo.InvariantCulture,
+                    out exponent))
+            {
+                return false;
+            }
+
+            span = span[..exponentIndex];
+        }
+
+        var decimalIndex = span.IndexOf('.');
+        var fractionalDigits = decimalIndex >= 0
+            ? span.Length - decimalIndex - 1
+            : 0;
+        var digits = decimalIndex >= 0
+            ? string.Concat(span[..decimalIndex], span[(decimalIndex + 1)..])
+            : span.ToString();
+        digits = digits.TrimStart('0');
+        if (digits.Length == 0)
+        {
+            normalized = new NormalizedDecimal(BigInteger.Zero, 0);
+            return true;
+        }
+
+        try
+        {
+            exponent = checked(exponent - fractionalDigits);
+            while (digits[^1] == '0')
+            {
+                digits = digits[..^1];
+                exponent = checked(exponent + 1);
+            }
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        if (!BigInteger.TryParse(
+                digits,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var coefficient))
+        {
+            return false;
+        }
+
+        normalized = new NormalizedDecimal(
+            negative ? -coefficient : coefficient,
+            exponent);
+        return true;
+    }
+
+    private readonly record struct NormalizedDecimal(
+        BigInteger Coefficient,
+        int Exponent);
 }

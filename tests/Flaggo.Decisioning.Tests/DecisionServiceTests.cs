@@ -372,6 +372,36 @@ public sealed class DecisionServiceTests
         Assert.False(result.Exposure.ConfirmationRequired);
     }
 
+    [Theory]
+    [InlineData("forbid", false)]
+    [InlineData("allow", true)]
+    public async Task DecideAsync_FailsWhenRequiredEvidenceIsUnavailable(
+        string requiredEvidenceUnavailable,
+        bool clientFallbackEligible)
+    {
+        var state = new GovernedDecisionState(
+            Identity.DefinitionId,
+            Identity.Revision,
+            Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(750));
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            state,
+            evidenceProvider: new InMemoryEvidenceProvider(),
+            policy: new DecisionPolicyContract(
+                MinimumEvidenceQuality: 0.7,
+                RequiredEvidenceUnavailable: requiredEvidenceUnavailable));
+
+        var error = await Assert.ThrowsAsync<DecisionContractException>(
+            () => service.DecideAsync(
+                "tetris.dropInterval",
+                CreateRequest()));
+
+        Assert.Equal(503, error.Status);
+        Assert.Equal("required-evidence-unavailable", error.Code);
+        Assert.Equal(clientFallbackEligible, error.ClientFallback!.Eligible);
+    }
+
     private static DecisionService CreateService(
         IAuditSink auditSink,
         GovernedDecisionState? state = null,
@@ -410,7 +440,11 @@ public sealed class DecisionServiceTests
             auditSink,
             new TestIdGenerator(),
             new FixedTimeProvider(),
-            new DefaultTargetResolver(),
+            new DefaultTargetResolver(
+                new Dictionary<string, string>
+                {
+                    ["new_players"] = "new_players"
+                }),
             evidenceProvider ?? new InMemoryEvidenceProvider(),
             new DeterministicStrategyExecutor(),
             new DefaultPolicyEvaluator(new FixedTimeProvider()),
