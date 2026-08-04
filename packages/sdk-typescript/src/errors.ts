@@ -32,6 +32,15 @@ export class MissingAcceptedDefinitionError extends FlaggoError {
   }
 }
 
+export class MissingStaticDefinitionError extends FlaggoError {
+  constructor(readonly decisionKey: string) {
+    super(
+      `No static definition exists for '${decisionKey}'. `
+        + "Supply its extracted bundle at startup or pass definition explicitly.",
+    );
+  }
+}
+
 export class ContractConflictError extends FlaggoError {
   constructor(
     readonly decisionKey: string,

@@ -19,6 +19,7 @@ export {
   FlaggoHttpError,
   InvalidServerResponseError,
   MissingAcceptedDefinitionError,
+  MissingStaticDefinitionError,
   RequiresApprovalError,
 } from "./errors.js";
 export {

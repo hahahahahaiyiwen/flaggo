@@ -83,7 +83,7 @@ interface DecisionDefinitionCommon {
     inputs?: SignalRef[];
     fallbackOrder?: string[];
   };
-  intent: Record<string, unknown>;
+  intent?: Record<string, unknown>;
   onlineStrategy?: Record<string, unknown>;
   policy: DecisionPolicy;
   requestedApproval?: "automatic" | "human" | "policy-default";
@@ -411,7 +411,7 @@ export type DecisionReceipt<T extends DecisionValue = DecisionValue> =
     };
 
 export interface NumberTuneRequest {
-  definition: NumberDecisionDefinition;
+  definition?: NumberDecisionDefinition;
   context: Record<string, RuntimeContextValue>;
   runtimeTarget?: DecisionTargetRef;
   inputs?: SignalInput[];
