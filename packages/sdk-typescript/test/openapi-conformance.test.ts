@@ -92,7 +92,7 @@ function expectResponseSchema(
 ): void {
   expect(
     operationValue.responses[status]?.content?.["application/json"]?.schema
-      .$ref,
+      ?.$ref,
   ).toBe(reference);
 }
 
@@ -127,7 +127,7 @@ describe("frozen OpenAPI SDK compatibility", () => {
     expect(apply.requestBody?.$ref).toBe("#/components/requestBodies/Bundle");
     expect(
       management.components.requestBodies.Bundle!.content?.["application/json"]
-        ?.schema.$ref,
+        ?.schema?.$ref,
     ).toBe("../schemas/decision-definition-bundle-v1.schema.json");
     expectResponseSchema(
       apply,
@@ -196,7 +196,7 @@ describe("frozen OpenAPI SDK compatibility", () => {
     ]);
     expect(decide.requestBody?.required).toBe(true);
     expect(
-      decide.requestBody?.content?.["application/json"]?.schema.$ref,
+      decide.requestBody?.content?.["application/json"]?.schema?.$ref,
     ).toBe("../schemas/runtime-models-v1.schema.json#/$defs/DecideRequest");
     expectResponseSchema(
       decide,
@@ -262,7 +262,7 @@ describe("frozen OpenAPI SDK compatibility", () => {
       "#/components/parameters/CorrelationIdHeader",
     ]);
     expect(
-      confirm.requestBody?.content?.["application/json"]?.schema.$ref,
+      confirm.requestBody?.content?.["application/json"]?.schema?.$ref,
     ).toBe(
       "../schemas/runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
     );
