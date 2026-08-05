@@ -73,6 +73,14 @@ public sealed record ConfidenceReport(
     double? ExpectedOutcome = null);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DecisionEvidenceSnapshot(
+    double EvidenceQuality,
+    double? ModelUncertainty = null,
+    double? ExpectedOutcome = null,
+    double? SampleSize = null,
+    IReadOnlyDictionary<string, JsonElement>? Details = null);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ServerFallbackInfo(
     string Source,
     bool ResolutionFallbackUsed,
@@ -135,11 +143,13 @@ public sealed record FlaggoProblem(
     int? RetryAfterSeconds = null,
     ClientFallbackEligibility? ClientFallback = null);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DecisionFailure(
     int Status,
     string Code,
     string Detail,
-    IReadOnlyList<ProblemIssue>? Issues = null);
+    IReadOnlyList<ProblemIssue>? Issues = null,
+    ClientFallbackEligibility? ClientFallback = null);
 
 public sealed record DecideTerminalOutcome(
     ServerDecisionResult? Result,

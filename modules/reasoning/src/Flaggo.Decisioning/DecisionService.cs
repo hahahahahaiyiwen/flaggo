@@ -3,6 +3,7 @@ using Flaggo.Audit;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
+using Microsoft.Extensions.Logging;
 
 namespace Flaggo.Decisioning;
 
@@ -34,7 +35,12 @@ public sealed class DecisionService(
     IExposureStore exposureStore,
     IAuditSink auditSink,
     IRuntimeIdGenerator idGenerator,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ITargetResolver targetResolver,
+    IEvidenceProvider evidenceProvider,
+    IStrategyExecutor strategyExecutor,
+    IPolicyEvaluator policyEvaluator,
+    ILogger<DecisionService> logger)
 {
     public async Task<ServerDecisionResult> DecideAsync(
         string decisionKey,
@@ -75,12 +81,15 @@ public sealed class DecisionService(
         VerifyRuntimeContext(definition.RuntimeContext, request.RuntimeContext);
         VerifyInputs(definition.Inputs, request.Inputs);
 
-        var resolutionTargets = ResolveStateTargets(request.RuntimeTarget, request.RuntimeContext);
+        var targetPlan = await targetResolver.ResolveAsync(
+            request.RuntimeTarget,
+            request.RuntimeContext,
+            cancellationToken);
         var state = await stateStore.GetActiveAsync(
             decisionKey,
             definition.Identity.DefinitionId,
             definition.Identity.Revision,
-            resolutionTargets,
+            targetPlan.StateTargets,
             cancellationToken);
 
         if (state is not null &&
@@ -92,39 +101,98 @@ public sealed class DecisionService(
                 "Governed state does not match the registered contract.");
         }
 
-        var usesFallback = state is null;
-        var value = usesFallback ? definition.FallbackValue : state!.Value;
+        DecisionEvidenceSnapshot? evidence = null;
+        StrategyExecutionResult? execution = null;
+        PolicyDecision policyDecision;
+        if (state is null)
+        {
+            policyDecision = new PolicyDecision(
+                false,
+                new PolicyEvaluationResult(
+                    "fallback",
+                    ["no-governed-state"],
+                    []));
+        }
+        else
+        {
+            evidence = await evidenceProvider.GetEvidenceAsync(
+                new DecisionEvidenceRequest(
+                    definition,
+                    state,
+                    request.RuntimeContext,
+                    request.Inputs ?? []),
+                cancellationToken);
+            if (evidence is null && definition.Policy?.RequiresEvidence == true)
+            {
+                var eligible = string.Equals(
+                    definition.Policy.RequiredEvidenceUnavailable,
+                    "allow",
+                    StringComparison.Ordinal);
+                throw new DecisionContractException(
+                    503,
+                    "required-evidence-unavailable",
+                    eligible
+                        ? "Required evidence is unavailable; policy permits client fallback."
+                        : "Required evidence is unavailable and policy forbids governed fallback.",
+                    clientFallback: new ClientFallbackEligibility(
+                        eligible,
+                        eligible
+                            ? "policy-permitted-required-evidence-unavailable"
+                            : "policy-forbids-required-evidence-unavailable"));
+            }
+
+            execution = await strategyExecutor.ExecuteAsync(
+                new StrategyExecutionRequest(
+                    state,
+                    request.Inputs ?? [],
+                    evidence),
+                cancellationToken);
+            policyDecision = await policyEvaluator.EvaluateAsync(
+                new PolicyEvaluationRequest(
+                    execution.Candidate,
+                    state.Value,
+                    definition.NumberActionSpace,
+                    definition.Policy,
+                    evidence,
+                    state.LastChangedAt,
+                    execution.FailureReason),
+                cancellationToken);
+        }
+
+        var usesFallback = state is null || !policyDecision.Approved;
+        var value = usesFallback
+            ? definition.FallbackValue
+            : execution!.Candidate!.Value;
         VerifyValueType(definition.ValueType, value);
 
         var decisionId = idGenerator.CreateDecisionId();
         var auditId = idGenerator.CreateAuditId();
-        var mode = usesFallback ? "fallback" : state!.Mode;
+        var mode = usesFallback ? "fallback" : execution!.Mode;
+        var confidence = usesFallback ? null : execution!.Confidence;
         var controlTarget = state?.ControlTarget;
         var selectedTargetIndex = state is null
             ? -1
-            : resolutionTargets.ToList().FindIndex(
+            : targetPlan.StateTargets.ToList().FindIndex(
                 target => TargetsEqual(target, state.ControlTarget));
-        var resolutionFallbackUsed = selectedTargetIndex > 0;
+        var targetResolution = targetPlan.Describe(
+            controlTarget,
+            selectedTargetIndex);
         var hasAttributableTarget = request.RuntimeTarget is not null || controlTarget is not null;
         var confirmToken = usesFallback || !hasAttributableTarget
             ? null
             : idGenerator.CreateConfirmToken();
-        var targetProvenance = ResolveTargetProvenance(
-            controlTarget,
-            request.RuntimeContext,
-            resolutionFallbackUsed);
-        var resolutionChain = ResolveChain(request.RuntimeTarget, request.RuntimeContext);
-        var policy = new PolicyEvaluationResult(
-            usesFallback ? "fallback" : "approved",
-            usesFallback ? ["no-governed-state"] : [],
-            []);
+        var targetProvenance = targetResolution.TargetProvenance;
+        var resolutionChain = targetPlan.ResolutionChain;
+        var policy = policyDecision.Result;
         var fallback = new ServerFallbackInfo(
             "server",
-            resolutionFallbackUsed,
+            targetResolution.ResolutionFallbackUsed,
             usesFallback,
             usesFallback
-                ? definition.FallbackReason
-                : resolutionFallbackUsed
+                ? state is null
+                    ? definition.FallbackReason
+                    : "fallback_required"
+                : targetResolution.ResolutionFallbackUsed
                     ? "resolution_fallback_broader_target"
                     : null);
         var snapshot = new DecisionSnapshot(
@@ -140,7 +208,9 @@ public sealed class DecisionService(
             controlTarget,
             targetProvenance,
             resolutionChain,
-            policy);
+            policy,
+            evidence,
+            confidence);
 
         if (confirmToken is not null)
         {
@@ -172,7 +242,9 @@ public sealed class DecisionService(
                     targetProvenance,
                     resolutionChain,
                     policy,
-                    timeProvider.GetUtcNow()),
+                    timeProvider.GetUtcNow(),
+                    evidence,
+                    confidence),
                 cancellationToken);
         }
         catch
@@ -184,6 +256,14 @@ public sealed class DecisionService(
 
             throw;
         }
+
+        logger.LogInformation(
+            "Decision {DecisionId} completed for {DecisionKey} in mode {DecisionMode} with policy {PolicyResult} and audit {AuditId}",
+            decisionId,
+            decisionKey,
+            mode,
+            policy.Result,
+            auditId);
 
         return new ServerDecisionResult(
             decisionKey,
@@ -197,7 +277,7 @@ public sealed class DecisionService(
             value,
             definition.ValueType,
             mode,
-            null,
+            confidence,
             targetProvenance,
             resolutionChain,
             fallback,
@@ -213,12 +293,14 @@ public sealed class DecisionService(
                 "identical"),
             new ExposureDirective(confirmToken is not null, confirmToken),
             usesFallback
-                ? "No governed state exists; returned the configured fallback value."
-                : "Returned the active governed value.",
+                ? state is null
+                    ? "No governed state exists; returned the configured fallback value."
+                    : "No safe adaptive candidate; returned the configured fallback value."
+                : execution!.Reason,
             auditId,
             request.RuntimeTarget,
             controlTarget,
-            state?.StrategyId);
+            usesFallback ? null : execution!.StrategyId);
     }
 
     private static void VerifyInputs(
@@ -334,114 +416,12 @@ public sealed class DecisionService(
         }
     }
 
-    private static IReadOnlyList<DecisionTargetRef?> ResolveStateTargets(
-        DecisionTargetRef? runtimeTarget,
-        IReadOnlyDictionary<string, JsonElement> runtimeContext)
-    {
-        var targets = new List<DecisionTargetRef?>();
-        if (TryGetString(runtimeContext, "cohort", out var cohort))
-        {
-            targets.Add(new DecisionTargetRef("cohort", cohort));
-        }
-
-        if (TryGetString(runtimeContext, "userId", out var userId))
-        {
-            targets.Add(new DecisionTargetRef("user", userId));
-        }
-
-        if (runtimeTarget is not null)
-        {
-            targets.Add(runtimeTarget);
-        }
-
-        if (targets.Count == 0)
-        {
-            targets.Add(null);
-        }
-        else
-        {
-            targets.Add(new DecisionTargetRef("global", "global"));
-            targets.Add(null);
-        }
-
-        return targets;
-    }
-
-    private static IReadOnlyList<TargetResolutionProvenance> ResolveTargetProvenance(
-        DecisionTargetRef? controlTarget,
-        IReadOnlyDictionary<string, JsonElement> runtimeContext,
-        bool resolutionFallbackUsed)
-    {
-        if (resolutionFallbackUsed &&
-            TryGetString(runtimeContext, "cohort", out var claimedCohort))
-        {
-            return
-            [
-                new TargetResolutionProvenance(
-                    "cohort",
-                    controlTarget?.Id ?? "global",
-                    "server-derived",
-                    claimedCohort)
-            ];
-        }
-
-        return
-        controlTarget is null
-            ? []
-            : [new TargetResolutionProvenance(
-                controlTarget.Type,
-                controlTarget.Id,
-                "client-claimed",
-                controlTarget.Id)];
-    }
-
     private static bool TargetsEqual(DecisionTargetRef? left, DecisionTargetRef? right) =>
         left is null && right is null ||
         left is not null &&
         right is not null &&
         string.Equals(left.Type, right.Type, StringComparison.Ordinal) &&
         string.Equals(left.Id, right.Id, StringComparison.Ordinal);
-
-    private static IReadOnlyList<string> ResolveChain(
-        DecisionTargetRef? runtimeTarget,
-        IReadOnlyDictionary<string, JsonElement> runtimeContext)
-    {
-        var chain = new List<string>();
-        if (runtimeTarget is not null)
-        {
-            chain.Add($"{runtimeTarget.Type}:{runtimeTarget.Id}");
-        }
-
-        if (TryGetString(runtimeContext, "userId", out var userId))
-        {
-            chain.Add($"user:{userId}");
-        }
-
-        if (TryGetString(runtimeContext, "cohort", out var cohort))
-        {
-            chain.Add($"cohort:{cohort}");
-        }
-
-        chain.Add("global");
-        return chain.Distinct(StringComparer.Ordinal).ToArray();
-    }
-
-    private static bool TryGetString(
-        IReadOnlyDictionary<string, JsonElement> context,
-        string key,
-        out string value)
-    {
-        if (context.TryGetValue(key, out var element) &&
-            element.ValueKind == JsonValueKind.String &&
-            !string.IsNullOrWhiteSpace(element.GetString()))
-        {
-            value = element.GetString()!;
-            return true;
-        }
-
-        value = string.Empty;
-        return false;
-    }
 
     private static void VerifyIdentity(
         RuntimeContractIdentity registered,

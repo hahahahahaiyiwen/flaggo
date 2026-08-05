@@ -6,11 +6,14 @@ public sealed class DecisionContractException(
     int status,
     string code,
     string message,
-    IReadOnlyList<ProblemIssue>? issues = null) : Exception(message)
+    IReadOnlyList<ProblemIssue>? issues = null,
+    ClientFallbackEligibility? clientFallback = null) : Exception(message)
 {
     public int Status { get; } = status;
 
     public string Code { get; } = code;
 
     public IReadOnlyList<ProblemIssue>? Issues { get; } = issues;
+
+    public ClientFallbackEligibility? ClientFallback { get; } = clientFallback;
 }

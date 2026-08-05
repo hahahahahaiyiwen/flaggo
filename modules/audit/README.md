@@ -17,5 +17,7 @@ returning a server success; sink failures propagate and therefore cannot
 produce a falsely audited response. Records preserve runtime context and
 inputs, runtime/control targets, target provenance, resolution chain, policy
 result, accepted contract identity, returned value and type, and complete
-fallback attribution. Application and environment ownership are immutable
-parts of every audit record.
+fallback attribution. Adaptive decisions additionally retain full evidence and
+compact confidence while the runtime response omits evidence detail.
+Application and environment ownership are immutable parts of every audit
+record.

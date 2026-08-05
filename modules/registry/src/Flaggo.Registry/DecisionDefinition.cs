@@ -13,6 +13,30 @@ public sealed record RegisteredRuntimeContextField(
     string Key,
     string ValueType);
 
+public sealed record NumberActionSpaceContract(
+    double Minimum,
+    double Maximum,
+    double? Step = null);
+
+public sealed record DecisionPolicyContract(
+    double? Minimum = null,
+    double? Maximum = null,
+    double? MaximumDelta = null,
+    double? CooldownSeconds = null,
+    double? MinimumEvidenceQuality = null,
+    double? MaximumModelUncertainty = null,
+    double? MinimumExpectedOutcome = null,
+    double? MinimumSampleSize = null,
+    bool Paused = false,
+    string RequiredEvidenceUnavailable = "forbid")
+{
+    public bool RequiresEvidence =>
+        MinimumEvidenceQuality is not null ||
+        MaximumModelUncertainty is not null ||
+        MinimumExpectedOutcome is not null ||
+        MinimumSampleSize is not null;
+}
+
 public sealed record RegisteredDecisionDefinition(
     string AppId,
     string Environment,
@@ -23,7 +47,9 @@ public sealed record RegisteredDecisionDefinition(
     string FallbackReason,
     IReadOnlyList<RegisteredSignalInput> Inputs,
     IReadOnlyList<RegisteredRuntimeContextField> RuntimeContext,
-    string LifecycleStatus = "active");
+    string LifecycleStatus = "active",
+    NumberActionSpaceContract? NumberActionSpace = null,
+    DecisionPolicyContract? Policy = null);
 
 public sealed record DefinitionLookup(
     bool DecisionKeyExists,
@@ -45,11 +71,14 @@ public interface IRegistryHealth
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken);
 }
 
-public sealed class InMemoryDefinitionRegistry(
+public sealed partial class InMemoryDefinitionRegistry(
     IEnumerable<RegisteredDecisionDefinition> definitions,
+    IDefinitionIdentityGenerator? identityGenerator = null,
+    TimeProvider? timeProvider = null,
     bool available = true) : IDefinitionRegistry, IRegistryHealth
 {
-    private readonly IReadOnlyDictionary<
+    private readonly object _gate = new();
+    private readonly Dictionary<
             (string AppId, string Environment, string Key, string DefinitionId, string Revision),
             RegisteredDecisionDefinition>
         _definitions = definitions.ToDictionary(
@@ -59,12 +88,15 @@ public sealed class InMemoryDefinitionRegistry(
                 definition.DecisionKey,
                 definition.Identity.DefinitionId,
                 definition.Identity.Revision));
-    private readonly IReadOnlySet<(string AppId, string Environment, string Key)> _decisionKeys =
+    private readonly HashSet<(string AppId, string Environment, string Key)> _decisionKeys =
         definitions.Select(definition => (
                 definition.AppId,
                 definition.Environment,
                 definition.DecisionKey))
             .ToHashSet();
+    private readonly IDefinitionIdentityGenerator _identityGenerator =
+        identityGenerator ?? new GuidDefinitionIdentityGenerator();
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public Task<DefinitionLookup> ResolveAsync(
         string appId,
@@ -75,13 +107,16 @@ public sealed class InMemoryDefinitionRegistry(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _definitions.TryGetValue(
-            (appId, environment, decisionKey, definitionId, revision),
-            out var definition);
-        return Task.FromResult(
-            new DefinitionLookup(
-                _decisionKeys.Contains((appId, environment, decisionKey)),
-                definition));
+        lock (_gate)
+        {
+            _definitions.TryGetValue(
+                (appId, environment, decisionKey, definitionId, revision),
+                out var definition);
+            return Task.FromResult(
+                new DefinitionLookup(
+                    _decisionKeys.Contains((appId, environment, decisionKey)),
+                    definition));
+        }
     }
 
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)

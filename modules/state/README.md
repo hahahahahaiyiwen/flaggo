@@ -16,8 +16,10 @@ change.
 adapter keyed by decision key, definition lineage, and runtime revision. State
 also carries the canonical contract digest so orchestration can reject stale
 or incompatible governed state. Governed values carry their actual control
-target, and lookup follows the request resolution hierarchy so attribution is
-derived from the state selected rather than independently from client claims.
+target, optional deterministic numeric-rule strategy, and last-change time for
+cooldown evaluation. Lookup follows the request resolution hierarchy so
+attribution is derived from the selected state rather than independently from
+client claims.
 
 The module also defines in-memory async ports for 24-hour decide idempotency
 and exposure confirmation. Concurrent requests with the same key and request
@@ -27,7 +29,8 @@ repeatedly and conflicts if a later confirmation changes it.
 
 Pending exposures retain the immutable decision-time attribution snapshot.
 The snapshot includes application/environment ownership, returned treatment
-value/type, and fallback attribution; confirmation hides records from
+value/type, fallback attribution, policy result, confidence, and full evidence;
+confirmation hides records from
 credentials outside that ownership scope.
 Accepted exposure confirmations are replayed before first-confirmation clock
 validation, preserving the original exposure identity across later retries.

@@ -21,7 +21,9 @@ public sealed record DecisionAuditRecord(
     IReadOnlyList<TargetResolutionProvenance> TargetProvenance,
     IReadOnlyList<string> ResolutionChain,
     PolicyEvaluationResult Policy,
-    DateTimeOffset RecordedAt);
+    DateTimeOffset RecordedAt,
+    DecisionEvidenceSnapshot? Evidence = null,
+    ConfidenceReport? Confidence = null);
 
 public interface IAuditSink
 {

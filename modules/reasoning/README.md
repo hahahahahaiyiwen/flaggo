@@ -7,19 +7,29 @@ contracts to the hosting application.
 
 ## Current implementation
 
-`src/Flaggo.Decisioning` implements the fixed-value vertical slice. It rejects
+`src/Flaggo.Decisioning` implements fixed-value and deterministic numeric-rule
+execution. It rejects
 unknown or conflicting contract identities, returns the configured governed
 fallback when no state exists, verifies value types, and records audit state
-before returning a server result. It enforces registered signal declarations,
-types and ranges, rejects retired revisions, resolves target provenance, and
-writes the same immutable attribution snapshot to audit and pending exposure
-state. Unverified cohort membership remains `client-claimed`; targetless active
-decisions omit control targets and do not create exposure confirmation state.
-When lookup selects a broader governed target, responses and attribution
-snapshots record resolution fallback and server-derived provenance.
+before returning a server result. Constructor-injected `ITargetResolver`,
+`IEvidenceProvider`, `IStrategyExecutor`, and `IPolicyEvaluator` ports isolate
+all cross-module collaboration. Numeric candidates are checked against action
+bounds and step plus max delta, cooldown, evidence quality, uncertainty,
+expected outcome, sample size, and pause constraints. A blocked candidate is
+never returned; orchestration returns the governed fallback with null
+confidence and explicit policy reasons.
+When configured evidence constraints require evidence and none is available,
+orchestration returns `required-evidence-unavailable` instead of producing a
+server fallback. The definition's client-fallback policy determines whether
+the Problem Details response permits SDK-local availability fallback.
 
-Future slices add target resolution, evidence, strategy execution, and policy
-evaluation without moving infrastructure calls into this module.
+Runtime responses expose compact confidence and provenance. Audit and pending
+exposure snapshots retain the full evidence view. Cohort claims resolved by the
+target adapter are marked `client-verified` when unchanged and
+`server-replaced` when an authoritative mapping changes them. Broader target
+selection records server-derived resolution fallback. Unverified cohort claims
+are excluded from governed-state lookup, whose precedence is runtime target,
+user, authoritative cohort, then global.
 
 Owns candidate selection and proposal generation across deterministic rules,
 experiments, statistical methods, and approved AI-assisted strategies.

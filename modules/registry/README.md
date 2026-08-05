@@ -13,8 +13,19 @@ invariants change.
 
 ## Current implementation
 
-`src/Flaggo.Registry` defines the async `IDefinitionRegistry` runtime lookup
-port and an exact-key in-memory adapter. Runtime lookup resolves the complete
-application, environment, decision key, definition ID, and revision tuple.
-Registered revisions retain lifecycle status and inference input contracts so
-retired identities and invalid signal values are rejected explicitly.
+`src/Flaggo.Registry` defines separate async runtime lookup, bundle-management,
+and approval-management ports over one atomic in-memory adapter. Validation
+recomputes RFC 8785 bundle and semantic contract digests, checks lineage,
+signals, objectives, strategies, and policy structure, and performs no
+mutation. Apply retains idempotent outcomes, immediately commits compatible
+updates, and stores semantic changes as immutable pending snapshots.
+
+Approvals compare the expected bundle digest before atomically committing a
+new runtime revision. Each approval captures its active-definition baseline;
+approval fails with a conflict if another approval changes that baseline first.
+Approval and rejection are replay-safe terminal transitions; expiry and
+opposite-terminal operations fail explicitly. Reference policies are rejected
+until a policy-resolution adapter is available rather than being activated
+without enforcement.
+Runtime lookup continues to require the complete application, environment,
+decision key, definition ID, and revision tuple.

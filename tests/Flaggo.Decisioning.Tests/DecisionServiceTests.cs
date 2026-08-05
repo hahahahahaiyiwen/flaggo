@@ -4,6 +4,7 @@ using Flaggo.Decisioning;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Flaggo.Decisioning.Tests;
 
@@ -175,7 +176,7 @@ public sealed class DecisionServiceTests
         Assert.Equal(700, pending.Snapshot.Value.GetInt32());
         Assert.Equal("number", pending.Snapshot.ValueType);
         Assert.False(pending.Snapshot.Fallback.DecisionFallbackUsed);
-        Assert.Equal("client-claimed", Assert.Single(pending.Snapshot.TargetProvenance).Source);
+        Assert.Equal("client-verified", Assert.Single(pending.Snapshot.TargetProvenance).Source);
         Assert.Contains("user:user-1", pending.Snapshot.ResolutionChain);
     }
 
@@ -256,10 +257,158 @@ public sealed class DecisionServiceTests
         Assert.Equal("server-derived", Assert.Single(result.TargetProvenance).Source);
     }
 
+    [Fact]
+    public async Task DecideAsync_ExecutesNumericRuleWithEvidenceAndPolicy()
+    {
+        var audit = new InMemoryAuditSink();
+        var evidence = new DecisionEvidenceSnapshot(
+            0.82,
+            0.31,
+            0.72,
+            50,
+            new Dictionary<string, JsonElement>
+            {
+                ["window"] = JsonSerializer.SerializeToElement("24h")
+            });
+        var state = new GovernedDecisionState(
+            Identity.DefinitionId,
+            Identity.Revision,
+            Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(750),
+            new DecisionTargetRef("cohort", "new_players"),
+            "strategy",
+            "strategy-test",
+            new NumericRuleStrategy(
+                "tetris.boardPressure",
+                0.75,
+                700,
+                800),
+            new DateTimeOffset(2026, 7, 31, 17, 59, 0, TimeSpan.Zero));
+        var service = CreateService(
+            audit,
+            state,
+            evidenceProvider: new InMemoryEvidenceProvider(
+                new Dictionary<string, DecisionEvidenceSnapshot>
+                {
+                    ["strategy-test"] = evidence
+                }),
+            numberActionSpace: new NumberActionSpaceContract(200, 1500, 50),
+            policy: new DecisionPolicyContract(
+                Minimum: 200,
+                Maximum: 1500,
+                MaximumDelta: 50,
+                CooldownSeconds: 20,
+                MinimumEvidenceQuality: 0.7,
+                MaximumModelUncertainty: 0.35,
+                MinimumSampleSize: 30));
+        var request = CreateRequest() with
+        {
+            RuntimeContext = new Dictionary<string, JsonElement>
+            {
+                ["cohort"] = JsonSerializer.SerializeToElement("new_players")
+            },
+            Inputs =
+            [
+                new SignalInput(
+                    new SignalRef("tetris.boardPressure"),
+                    JsonSerializer.SerializeToElement(0.82))
+            ]
+        };
+
+        var result = await service.DecideAsync("tetris.dropInterval", request);
+
+        Assert.Equal("strategy", result.DecisionMode);
+        Assert.Equal(700, result.Value.GetInt32());
+        Assert.Equal("strategy-test", result.StrategyId);
+        Assert.Equal(0.82, result.Confidence!.EvidenceQuality);
+        Assert.Equal("approved", result.Policy.Result);
+        Assert.Equal(evidence, Assert.Single(audit.Records).Evidence);
+    }
+
+    [Fact]
+    public async Task DecideAsync_PolicyBlockReturnsGovernedFallback()
+    {
+        var state = new GovernedDecisionState(
+            Identity.DefinitionId,
+            Identity.Revision,
+            Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(750),
+            Mode: "strategy",
+            StrategyId: "strategy-test",
+            NumericRule: new NumericRuleStrategy(
+                "tetris.boardPressure",
+                0.75,
+                700,
+                800));
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            state,
+            evidenceProvider: new InMemoryEvidenceProvider(
+                new Dictionary<string, DecisionEvidenceSnapshot>
+                {
+                    ["strategy-test"] = new(0.5, 0.31, 0.72, 50)
+                }),
+            numberActionSpace: new NumberActionSpaceContract(200, 1500, 50),
+            policy: new DecisionPolicyContract(MinimumEvidenceQuality: 0.7));
+        var request = CreateRequest() with
+        {
+            Inputs =
+            [
+                new SignalInput(
+                    new SignalRef("tetris.boardPressure"),
+                    JsonSerializer.SerializeToElement(0.82))
+            ]
+        };
+
+        var result = await service.DecideAsync("tetris.dropInterval", request);
+
+        Assert.Equal("fallback", result.DecisionMode);
+        Assert.Equal(800, result.Value.GetInt32());
+        Assert.Null(result.Confidence);
+        Assert.Null(result.StrategyId);
+        Assert.Equal("blocked", result.Policy.Result);
+        Assert.Contains("insufficient_evidence_quality", result.Policy.Reasons);
+        Assert.True(result.Fallback.DecisionFallbackUsed);
+        Assert.False(result.Exposure.ConfirmationRequired);
+    }
+
+    [Theory]
+    [InlineData("forbid", false)]
+    [InlineData("allow", true)]
+    public async Task DecideAsync_FailsWhenRequiredEvidenceIsUnavailable(
+        string requiredEvidenceUnavailable,
+        bool clientFallbackEligible)
+    {
+        var state = new GovernedDecisionState(
+            Identity.DefinitionId,
+            Identity.Revision,
+            Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(750));
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            state,
+            evidenceProvider: new InMemoryEvidenceProvider(),
+            policy: new DecisionPolicyContract(
+                MinimumEvidenceQuality: 0.7,
+                RequiredEvidenceUnavailable: requiredEvidenceUnavailable));
+
+        var error = await Assert.ThrowsAsync<DecisionContractException>(
+            () => service.DecideAsync(
+                "tetris.dropInterval",
+                CreateRequest()));
+
+        Assert.Equal(503, error.Status);
+        Assert.Equal("required-evidence-unavailable", error.Code);
+        Assert.Equal(clientFallbackEligible, error.ClientFallback!.Eligible);
+    }
+
     private static DecisionService CreateService(
         IAuditSink auditSink,
         GovernedDecisionState? state = null,
-        IExposureStore? exposureStore = null)
+        IExposureStore? exposureStore = null,
+        IEvidenceProvider? evidenceProvider = null,
+        NumberActionSpaceContract? numberActionSpace = null,
+        DecisionPolicyContract? policy = null)
     {
         var definition = new RegisteredDecisionDefinition(
             "tetris-demo",
@@ -275,7 +424,9 @@ public sealed class DecisionServiceTests
                 new RegisteredRuntimeContextField("sessionId", "string"),
                 new RegisteredRuntimeContextField("cohort", "string"),
                 new RegisteredRuntimeContextField("deviceType", "string")
-            ]);
+            ],
+            NumberActionSpace: numberActionSpace,
+            Policy: policy);
 
         return new DecisionService(
             new InMemoryDefinitionRegistry([definition]),
@@ -288,7 +439,16 @@ public sealed class DecisionServiceTests
                 () => "exposure-test"),
             auditSink,
             new TestIdGenerator(),
-            new FixedTimeProvider());
+            new FixedTimeProvider(),
+            new DefaultTargetResolver(
+                new Dictionary<string, string>
+                {
+                    ["new_players"] = "new_players"
+                }),
+            evidenceProvider ?? new InMemoryEvidenceProvider(),
+            new DeterministicStrategyExecutor(),
+            new DefaultPolicyEvaluator(new FixedTimeProvider()),
+            NullLogger<DecisionService>.Instance);
     }
 
     private static DecideRequest CreateRequest() => new(
