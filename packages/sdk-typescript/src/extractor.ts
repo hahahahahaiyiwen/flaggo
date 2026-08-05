@@ -278,12 +278,28 @@ function isFlaggoRoot(expression: ts.Expression): boolean {
   return ts.isIdentifier(value) && value.text === "flaggo";
 }
 
+function elementAccessName(
+  expression: ts.ElementAccessExpression,
+): string | undefined {
+  const argument = expression.argumentExpression === undefined
+    ? undefined
+    : unwrap(expression.argumentExpression);
+  return argument !== undefined
+      && (
+        ts.isStringLiteral(argument)
+        || ts.isNoSubstitutionTemplateLiteral(argument)
+      )
+    ? argument.text
+    : undefined;
+}
+
 function isDirectFlaggoTune(expression: ts.Expression): boolean {
   const value = unwrap(expression);
   if (ts.isPropertyAccessExpression(value)) {
     return value.name.text === "tune" && isFlaggoRoot(value.expression);
   }
   return ts.isElementAccessExpression(value)
+    && elementAccessName(value) === "tune"
     && isFlaggoRoot(value.expression);
 }
 
@@ -305,7 +321,10 @@ function tuneMethod(
   }
   const receiver = unwrap(expression.expression);
   if (ts.isElementAccessExpression(receiver)) {
-    return isFlaggoRoot(receiver.expression) ? "unsupported" : undefined;
+    return isFlaggoRoot(receiver.expression)
+        && elementAccessName(receiver) === "tune"
+      ? "unsupported"
+      : undefined;
   }
   if (
     !ts.isPropertyAccessExpression(receiver)
@@ -467,6 +486,7 @@ export function extractDecisionBundle(
         && isFlaggoRootReference(value.expression);
     }
     return ts.isElementAccessExpression(value)
+      && elementAccessName(value) === "tune"
       && isFlaggoRootReference(value.expression);
   };
 

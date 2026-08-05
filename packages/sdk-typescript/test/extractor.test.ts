@@ -335,6 +335,25 @@ describe("static decision extraction", () => {
         },
         context: {}
       });
+      flaggo["anything"].number("other.decision", {
+        definition: {
+          ${numberDefinition().slice(1, -1).replaceAll(
+            "tetris.dropInterval",
+            "other.decision",
+          )}
+        },
+        context: {}
+      });
+      const otherApi = flaggo["anything"];
+      otherApi.number("aliased.other.decision", {
+        definition: {
+          ${numberDefinition().slice(1, -1).replaceAll(
+            "tetris.dropInterval",
+            "aliased.other.decision",
+          )}
+        },
+        context: {}
+      });
       flaggo.tune.number("tetris.dropInterval", {
         definition: ${numberDefinition()},
         context: {}
