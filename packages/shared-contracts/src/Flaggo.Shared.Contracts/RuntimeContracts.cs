@@ -72,6 +72,7 @@ public sealed record ConfidenceReport(
     double? ModelUncertainty = null,
     double? ExpectedOutcome = null);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DecisionEvidenceSnapshot(
     double EvidenceQuality,
     double? ModelUncertainty = null,
@@ -142,6 +143,7 @@ public sealed record FlaggoProblem(
     int? RetryAfterSeconds = null,
     ClientFallbackEligibility? ClientFallback = null);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DecisionFailure(
     int Status,
     string Code,
