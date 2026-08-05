@@ -4,6 +4,7 @@ import type {
   BooleanDecisionDefinition,
   DecisionDefinition,
   InlinePolicy,
+  NumberDecisionDefinition,
   ReferencePolicy,
   StringDecisionDefinition,
 } from "../src/index.js";
@@ -37,5 +38,21 @@ describe("definition contract unions", () => {
       policy: { kind: "inline", constraints: [] },
     };
     void invalid;
+  });
+
+  it("keeps intent optional as defined by the frozen bundle schema", () => {
+    const definition: NumberDecisionDefinition = {
+      key: "tetris.dropInterval",
+      valueType: "number",
+      actionSpace: {
+        type: "number",
+        min: 200,
+        max: 1500,
+        default: 800,
+      },
+      fallback: { value: 800 },
+      policy: { kind: "inline", constraints: [] },
+    };
+    expectTypeOf(definition).toMatchTypeOf<DecisionDefinition>();
   });
 });

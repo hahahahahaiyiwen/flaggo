@@ -11,6 +11,7 @@ import {
   FlaggoHttpError,
   InvalidServerResponseError,
   MissingAcceptedDefinitionError,
+  MissingStaticDefinitionError,
   RequiresApprovalError,
 } from "./errors.js";
 import { SDK_VERSION } from "./package-version.js";
@@ -22,6 +23,7 @@ import type {
   DecisionResult,
   ExposureConfirmationResult,
   FetchLike,
+  NumberDecisionDefinition,
   NumberTuneRequest,
   ProblemDetails,
   RegistrationReceipt,
@@ -44,6 +46,7 @@ export interface StartupRegistrationConfig {
 export interface PreRegisteredConfig {
   mode: "pre-registered";
   receipt: RegistrationReceipt;
+  bundle?: DecisionDefinitionBundle;
 }
 
 export interface FlaggoClientConfig {
@@ -172,6 +175,14 @@ async function register(
       "Registration receipt does not match the submitted canonical bundle.",
     );
   }
+  validateReceiptBindings(receipt, bundle);
+  return receipt;
+}
+
+function validateReceiptBindings(
+  receipt: RegistrationReceipt,
+  bundle: DecisionDefinitionBundle,
+): void {
   const submittedDefinitions = new Map(
     bundle.definitions.map((definition) => [
       definition.key,
@@ -191,7 +202,6 @@ async function register(
       "Registration receipt bindings do not match the submitted definitions.",
     );
   }
-  return receipt;
 }
 
 function expectedIdentity(
@@ -924,11 +934,35 @@ export async function createFlaggoClient(
       "Registration receipt does not match the configured application identity.",
     );
   }
-  const bundle = config.controlPlane.mode === "startup-register"
-    ? normalizeBundle(config.controlPlane.bundle)
-    : undefined;
+  const configuredBundle = config.controlPlane.bundle;
+  const bundle = configuredBundle === undefined
+    ? undefined
+    : normalizeBundle(configuredBundle);
+  if (bundle !== undefined) {
+    if (
+      receipt.bundleDigest !== bundleDigest(bundle)
+      || receipt.application !== bundle.application.id
+      || receipt.environment !== bundle.application.environment
+    ) {
+      throw new InvalidServerResponseError(
+        "Registration receipt does not match the configured static bundle.",
+      );
+    }
+    validateReceiptBindings(receipt, bundle);
+  }
   const definitions = new Map(
-    bundle?.definitions.map((definition) => [definition.key, definition]),
+    bundle?.definitions
+      .filter(
+        (definition): definition is NumberDecisionDefinition =>
+          definition.valueType === "number",
+      )
+      .map((definition) => [
+        definition.key,
+        {
+          definition,
+          contractDigest: contractDigest(definition),
+        },
+      ]),
   );
 
   async function numberDetailed(
@@ -939,22 +973,23 @@ export async function createFlaggoClient(
     if (accepted === undefined) {
       throw new MissingAcceptedDefinitionError(decisionKey);
     }
-    const actualDigest = contractDigest(request.definition);
+    const staticBinding = definitions.get(decisionKey);
+    let definition: NumberDecisionDefinition;
+    let actualDigest: ReturnType<typeof contractDigest>;
+    if (staticBinding === undefined) {
+      if (request.definition === undefined) {
+        throw new MissingStaticDefinitionError(decisionKey);
+      }
+      definition = request.definition;
+      actualDigest = contractDigest(definition);
+    } else {
+      definition = staticBinding.definition;
+      actualDigest = staticBinding.contractDigest;
+    }
     if (actualDigest !== accepted.contractDigest) {
       throw new ContractConflictError(
         decisionKey,
         accepted.contractDigest,
-        actualDigest,
-      );
-    }
-    const startupDefinition = definitions.get(decisionKey);
-    if (
-      startupDefinition !== undefined
-      && contractDigest(startupDefinition) !== actualDigest
-    ) {
-      throw new ContractConflictError(
-        decisionKey,
-        contractDigest(startupDefinition),
         actualDigest,
       );
     }
@@ -1019,7 +1054,7 @@ export async function createFlaggoClient(
         }
         return localFallback(
           decisionKey,
-          request.definition.actionSpace.default,
+          definition.actionSpace.default,
           expectedContract,
           "data-plane transport failure",
         );
@@ -1057,7 +1092,7 @@ export async function createFlaggoClient(
           }
           return localFallback(
             decisionKey,
-            request.definition.actionSpace.default,
+            definition.actionSpace.default,
             expectedContract,
             `intermediary HTTP ${response.status}`,
           );
@@ -1092,7 +1127,7 @@ export async function createFlaggoClient(
         }
         return localFallback(
           decisionKey,
-          request.definition.actionSpace.default,
+          definition.actionSpace.default,
           expectedContract,
           `intermediary HTTP ${response.status}`,
         );
@@ -1117,7 +1152,7 @@ export async function createFlaggoClient(
           }
           return localFallback(
             decisionKey,
-            request.definition.actionSpace.default,
+            definition.actionSpace.default,
             expectedContract,
             "data-plane response transport failure",
           );
@@ -1145,7 +1180,7 @@ export async function createFlaggoClient(
           if (fallbackEnabled) {
             return localFallback(
               decisionKey,
-              request.definition.actionSpace.default,
+              definition.actionSpace.default,
               expectedContract,
               problem.clientFallback.reason ?? problem.code,
             );

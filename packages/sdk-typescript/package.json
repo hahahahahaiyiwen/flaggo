@@ -9,7 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./extractor": {
+      "types": "./dist/extractor.d.ts",
+      "import": "./dist/extractor.js"
     }
+  },
+  "bin": {
+    "flaggo-extract": "./dist/extract-cli.js"
   },
   "files": [
     "dist",
@@ -21,11 +28,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "json-canonicalize": "2.0.0"
+    "json-canonicalize": "2.0.0",
+    "typescript": "5.8.3"
   },
   "devDependencies": {
     "@types/node": "24.1.0",
-    "typescript": "5.8.3",
     "vitest": "3.2.4"
   },
   "engines": {

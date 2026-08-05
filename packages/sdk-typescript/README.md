@@ -42,8 +42,45 @@ strict wire contracts before their identity or metadata is trusted. An
 approved receipt must contain exactly one accepted binding for every submitted
 definition, with matching canonical contract digests.
 
-Every runtime call recomputes the local definition digest and compares it with
-`receipt.acceptedDefinitions[decisionKey]` before network access or fallback.
+At startup, the client normalizes the supplied bundle and caches each numeric
+definition and contract digest. Runtime calls use that static binding and
+compare it with `receipt.acceptedDefinitions[decisionKey]` before network
+access or fallback. When a static bundle is configured, a call's `definition`
+property remains authoring input for extraction but is not hashed or consumed
+at runtime; the registered bundle is authoritative. Callers using a
+pre-registered receipt without its bundle may pass `definition` explicitly;
+that compatibility path validates the definition on each call.
+
+## Static extraction
+
+`flaggo-extract` scans TypeScript application sources before compilation and
+emits `flaggo.static-extraction/v1`, containing a canonical definition bundle,
+its digest, and source-located decision descriptors. Configure startup
+registration with the generated `bundle`:
+
+```powershell
+flaggo-extract --project .\tsconfig.json --app tetris-demo `
+  --environment dev --out .\.flaggo\definitions.json
+```
+
+The MVP extractor accepts direct `flaggo.tune.number("literal-key", { ... })`
+calls whose `definition` is an object literal composed only of JSON literals,
+literal arrays, and literal objects. Directly imported signal-handle constants
+are allowed where the frozen contract expects a signal reference; extraction
+resolves them to `{ key }` and includes their literal declarations. Supported
+factories are `createSignalHandle`, `createInferenceSignalHandle`, and
+`createDerivedMetricHandle`. Parentheses, `as const`, and `satisfies` wrappers
+are allowed.
+
+Extraction fails the build for dynamic decision keys, spreads, computed or
+shorthand properties, method declarations, function calls inside static
+definitions, non-literal definition references, conditional or loop-dependent
+decision calls, and schema-invalid definitions. Identical definitions for one
+key deduplicate in the bundle; different canonical digests for one key fail
+with `contract-conflict`.
+Runtime expressions remain in `context`, `runtimeTarget`, and `inputs`; they
+are never evaluated by extraction or included in definition identity.
+
 The data-plane request contains only compact accepted identity and runtime
 values; full definitions are never sent. Its client identity reads
 `sdkVersion` from this package's metadata so release version bumps cannot

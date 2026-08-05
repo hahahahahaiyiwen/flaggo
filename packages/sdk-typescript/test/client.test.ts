@@ -6,6 +6,7 @@ import {
   ContractConflictError,
   FlaggoHttpError,
   InvalidServerResponseError,
+  MissingStaticDefinitionError,
   RequiresApprovalError,
   contractDigest,
   createDerivedMetricHandle,
@@ -168,7 +169,6 @@ describe("startup registration", () => {
     });
 
     const result = await client.tune.numberDetailed("tetris.dropInterval", {
-      definition: apply.request.body.definitions[0]!,
       runtimeTarget: { type: "session", id: "game-456" },
       context: {
         sessionId: "game-456",
@@ -422,16 +422,12 @@ describe("runtime safety", () => {
       request: { body: DecisionDefinitionBundle };
       expected: { body: RegistrationReceipt };
     }>("management/definition-bundle/04-apply-approved-receipt.json");
-    const fetch = vi.fn<FetchLike>().mockResolvedValue(
-      response(200, apply.expected.body),
-    );
+    const fetch = vi.fn<FetchLike>();
     const client = await createFlaggoClient({
       dataPlaneUrl: "https://data.flaggo.test",
       controlPlane: {
-        mode: "startup-register",
-        url: "https://control.flaggo.test",
-        bundle: apply.request.body,
-        credential: { mode: "local-development" },
+        mode: "pre-registered",
+        receipt: apply.expected.body,
       },
       appId: "tetris-demo",
       environment: "dev",
@@ -446,7 +442,7 @@ describe("runtime safety", () => {
         context: {},
       }),
     ).rejects.toBeInstanceOf(ContractConflictError);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("returns a provenance-limited local value only for eligible availability failure", async () => {
@@ -1372,6 +1368,71 @@ describe("runtime safety", () => {
 
     expect(fetch).toHaveBeenCalledOnce();
     expect(String(fetch.mock.calls[0]![0])).toContain(":decide");
+  });
+
+  it("uses cached definitions with pre-registered bindings", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const decide = fixture<{ expected: { body: unknown } }>(
+      "runtime/decide/02-active-numeric-strategy.json",
+    );
+    const fetch = vi.fn<FetchLike>().mockImplementation(async () =>
+      response(
+        200,
+        decisionForReceipt(
+          decide.expected.body,
+          apply.expected.body,
+          "tetris.dropInterval",
+        ),
+      )
+    );
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "pre-registered",
+        receipt: apply.expected.body,
+        bundle: apply.request.body,
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      fetch,
+    });
+
+    await client.tune.number("tetris.dropInterval", { context: {} });
+    const runtimeDefinition = structuredClone(
+      apply.request.body.definitions[0]!,
+    );
+    runtimeDefinition.actionSpace.default = 850;
+    await client.tune.number("tetris.dropInterval", {
+      definition: runtimeDefinition,
+      context: {},
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires a local definition when no static bundle is configured", async () => {
+    const apply = fixture<{
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const fetch = vi.fn<FetchLike>();
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "pre-registered",
+        receipt: apply.expected.body,
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", { context: {} }),
+    ).rejects.toBeInstanceOf(MissingStaticDefinitionError);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("rejects a pre-registered receipt for another application", async () => {
