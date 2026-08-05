@@ -342,6 +342,7 @@ public sealed partial class InMemoryDefinitionRegistry :
             }
 
             VerifyApprovalBaseline(entry);
+            var applyEntry = FindPendingApplyEntry(approvalRequestId);
             var validation = ValidateCore(entry.Bundle);
             if (validation.Status != "valid")
             {
@@ -366,6 +367,9 @@ public sealed partial class InMemoryDefinitionRegistry :
                 Approval = new ApprovalDecision(actor, comment)
             };
             entry.Result = approved;
+            _applyEntries[applyEntry.Key] = new ApplyEntry(
+                applyEntry.Value.BundleDigest,
+                new DefinitionBundleApplyResult(200, receipt));
             return Task.FromResult(approved);
         }
     }
@@ -1315,6 +1319,25 @@ public sealed partial class InMemoryDefinitionRegistry :
         return entry;
     }
 
+    private KeyValuePair<string, ApplyEntry> FindPendingApplyEntry(
+        string approvalRequestId)
+    {
+        foreach (var pair in _applyEntries)
+        {
+            if (pair.Value.Outcome.Body is RequiresApprovalResult pending &&
+                string.Equals(
+                    pending.ApprovalRequestId,
+                    approvalRequestId,
+                    StringComparison.Ordinal))
+            {
+                return pair;
+            }
+        }
+
+        throw new InvalidDataException(
+            $"Approval request '{approvalRequestId}' has no pending apply outcome.");
+    }
+
     private ApprovalEntry ExpireIfNeeded(ApprovalEntry entry)
     {
         if (entry.Result.Status == "pending" &&
@@ -1323,7 +1346,7 @@ public sealed partial class InMemoryDefinitionRegistry :
             entry.Result = entry.Result with
             {
                 Status = "expired",
-                ExpiredAt = Timestamp(entry.ExpiresAt)
+                ExpiredAt = Timestamp(_timeProvider.GetUtcNow())
             };
         }
 

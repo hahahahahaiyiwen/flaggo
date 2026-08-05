@@ -2,6 +2,9 @@ using System.Text.Json;
 using Flaggo.Audit;
 using Flaggo.DataPlane;
 using Flaggo.Decisioning;
+using Flaggo.Evidence;
+using Flaggo.Hosting;
+using Flaggo.Policy;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
@@ -68,84 +71,22 @@ builder.Services.AddAuthorization(options =>
             .RequireAuthenticatedUser()
             .RequireAssertion(context =>
                 RuntimeHttp.HasScope(context.User, "polari.exposures:confirm")));
-    options.AddPolicy(
-        "ValidateDefinitions",
-        policy => policy
-            .RequireAuthenticatedUser()
-            .RequireAssertion(context =>
-                RuntimeHttp.HasScope(context.User, "polari.definitions:validate")));
-    options.AddPolicy(
-        "ApplyDefinitions",
-        policy => policy
-            .RequireAuthenticatedUser()
-            .RequireAssertion(context =>
-                RuntimeHttp.HasScope(context.User, "polari.definitions:apply")));
-    options.AddPolicy(
-        "ApproveDefinitions",
-        policy => policy
-            .RequireAuthenticatedUser()
-            .RequireAssertion(context =>
-                RuntimeHttp.HasScope(context.User, "polari.definitions:approve")));
 });
 
-var contractIdentity = new RuntimeContractIdentity(
-    "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-    "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
-    "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-    "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1");
-var retiredIdentity = new RuntimeContractIdentity(
-    contractIdentity.DefinitionId,
-    "sha256:313cf567ee322f3f7028a48095cd4da6016d9d99759761d5651ac4ce84f3ff4e",
-    "rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K");
-RegisteredSignalInput[] registeredInputs =
-[
-    new("tetris.boardPressure", "number", 0, 1),
-    new("tetris.currentLevel", "number"),
-    new("tetris.recentPlacementTimeMs", "number"),
-    new("tetris.recoveryFailures", "number")
-];
-RegisteredRuntimeContextField[] registeredRuntimeContext =
-[
-    new("userId", "string"),
-    new("sessionId", "string"),
-    new("cohort", "string"),
-    new("deviceType", "string")
-];
+var contractIdentity = LocalRegistryHosting.DefaultDefinitions()
+    .Single(definition => definition.LifecycleStatus == "active")
+    .Identity;
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(
-    new InMemoryDefinitionRegistry(
-    [
-        new RegisteredDecisionDefinition(
-            "tetris-demo",
-            "dev",
-            "tetris.dropInterval",
-            contractIdentity,
-            "number",
-            JsonSerializer.SerializeToElement(800),
-            "safe_default_drop_interval",
-            registeredInputs,
-            registeredRuntimeContext),
-        new RegisteredDecisionDefinition(
-            "tetris-demo",
-            "dev",
-            "tetris.dropInterval",
-            retiredIdentity,
-            "number",
-            JsonSerializer.SerializeToElement(800),
-            "safe_default_drop_interval",
-            registeredInputs,
-            registeredRuntimeContext,
-            "retired")
-    ]));
+    LocalRegistryHosting.CreateDefinitionRegistry(
+        builder.Configuration,
+        builder.Environment.ContentRootPath,
+        TimeProvider.System));
 builder.Services.AddSingleton<IDefinitionRegistry>(
-    provider => provider.GetRequiredService<InMemoryDefinitionRegistry>());
-builder.Services.AddSingleton<IDefinitionBundleManager>(
-    provider => provider.GetRequiredService<InMemoryDefinitionRegistry>());
-builder.Services.AddSingleton<IDefinitionApprovalManager>(
-    provider => provider.GetRequiredService<InMemoryDefinitionRegistry>());
+    provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IRegistryHealth>(
-    provider => provider.GetRequiredService<InMemoryDefinitionRegistry>());
+    provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IStateStore>(
     new InMemoryStateStore(
     [
@@ -250,299 +191,6 @@ app.UseStatusCodePages(async statusContext =>
 });
 app.UseAuthentication();
 app.UseAuthorization();
-
-app.MapPost(
-        "/v1/definition-bundles:validate",
-        async (
-            HttpContext context,
-            IDefinitionBundleManager manager,
-            CancellationToken cancellationToken) =>
-        {
-            var (bundle, _, error) =
-                await RuntimeHttp.ReadJsonAsync<JsonElement>(context, cancellationToken);
-            if (error is not null)
-            {
-                return RuntimeHttp.ProblemResult(context, error);
-            }
-
-            var authorizationError = ManagementHttp.AuthorizeBundle(context, bundle);
-            if (authorizationError is not null)
-            {
-                return RuntimeHttp.ProblemResult(context, authorizationError);
-            }
-
-            var result = await manager.ValidateAsync(bundle, cancellationToken);
-            return Results.Json(result, RuntimeHttp.JsonOptions);
-        })
-    .RequireAuthorization("ValidateDefinitions");
-
-app.MapPost(
-        "/v1/definition-bundles:apply",
-        async (
-            HttpContext context,
-            IDefinitionBundleManager manager,
-            CancellationToken cancellationToken) =>
-        {
-            var (bundle, _, error) =
-                await RuntimeHttp.ReadJsonAsync<JsonElement>(context, cancellationToken);
-            if (error is not null)
-            {
-                return RuntimeHttp.ProblemResult(context, error);
-            }
-
-            var authorizationError = ManagementHttp.AuthorizeBundle(context, bundle);
-            if (authorizationError is not null)
-            {
-                return RuntimeHttp.ProblemResult(context, authorizationError);
-            }
-
-            var idempotencyKey = context.Request.Headers["Idempotency-Key"].FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(idempotencyKey))
-            {
-                return RuntimeHttp.ProblemResult(
-                    context,
-                    RuntimeHttp.Problem(
-                        context,
-                        400,
-                        "idempotency-key-required",
-                        "Idempotency-Key is required."));
-            }
-
-            try
-            {
-                var outcome = await manager.ApplyAsync(
-                    idempotencyKey,
-                    bundle,
-                    cancellationToken);
-                return Results.Json(
-                    outcome.Body,
-                    RuntimeHttp.JsonOptions,
-                    statusCode: outcome.StatusCode);
-            }
-            catch (DefinitionLifecycleException exception)
-            {
-                return ManagementHttp.Problem(context, exception);
-            }
-        })
-    .RequireAuthorization("ApplyDefinitions");
-
-app.MapGet(
-        "/v1/definition-bundle-approvals/{approvalRequestId}",
-        async (
-            string approvalRequestId,
-            HttpContext context,
-            IDefinitionApprovalManager manager,
-            CancellationToken cancellationToken) =>
-        {
-            var result = await manager.GetApprovalAsync(
-                approvalRequestId,
-                cancellationToken);
-            if (result is null)
-            {
-                return RuntimeHttp.ProblemResult(
-                    context,
-                    RuntimeHttp.Problem(
-                        context,
-                        404,
-                        "approval-not-found",
-                        "The approval request does not exist."));
-            }
-
-            var authorizationError = ManagementHttp.AuthorizeScope(
-                context,
-                result.Application,
-                result.Environment);
-            return authorizationError is null
-                ? Results.Json(result, RuntimeHttp.JsonOptions)
-                : RuntimeHttp.ProblemResult(context, authorizationError);
-        })
-    .RequireAuthorization("ApproveDefinitions");
-
-app.MapGet(
-        "/v1/definition-bundle-approvals/{approvalRequestId}/bundle",
-        async (
-            string approvalRequestId,
-            HttpContext context,
-            IDefinitionApprovalManager manager,
-            CancellationToken cancellationToken) =>
-        {
-            var approval = await manager.GetApprovalAsync(
-                approvalRequestId,
-                cancellationToken);
-            if (approval is null)
-            {
-                return RuntimeHttp.ProblemResult(
-                    context,
-                    RuntimeHttp.Problem(
-                        context,
-                        404,
-                        "approval-not-found",
-                        "The approval request does not exist."));
-            }
-
-            var authorizationError = ManagementHttp.AuthorizeScope(
-                context,
-                approval.Application,
-                approval.Environment);
-            if (authorizationError is not null)
-            {
-                return RuntimeHttp.ProblemResult(context, authorizationError);
-            }
-
-            var snapshot = await manager.GetSnapshotAsync(
-                approvalRequestId,
-                cancellationToken);
-            if (snapshot is null)
-            {
-                return RuntimeHttp.ProblemResult(
-                    context,
-                    RuntimeHttp.Problem(
-                        context,
-                        404,
-                        "approval-not-found",
-                        "The approval request does not exist."));
-            }
-
-            context.Response.Headers.ETag = $"\"{snapshot.BundleDigest}\"";
-            context.Response.Headers["Content-Digest"] =
-                ManagementHttp.ContentDigest(snapshot.BundleDigest);
-            return Results.Bytes(snapshot.CanonicalBytes, "application/json");
-        })
-    .RequireAuthorization("ApproveDefinitions");
-
-app.MapPost(
-        "/v1/definition-bundle-approvals/{approvalRequestId}:approve",
-        async (
-            string approvalRequestId,
-            HttpContext context,
-            IDefinitionApprovalManager manager,
-            CancellationToken cancellationToken) =>
-        {
-            var (request, _, error) =
-                await RuntimeHttp.ReadJsonAsync<ApproveDefinitionBundleRequest>(
-                    context,
-                    cancellationToken);
-            if (error is not null)
-            {
-                return RuntimeHttp.ProblemResult(context, error);
-            }
-
-            if (request is null ||
-                !RuntimeHttp.IsSha256Digest(request.ExpectedBundleDigest))
-            {
-                return RuntimeHttp.ProblemResult(
-                    context,
-                    RuntimeHttp.Problem(
-                        context,
-                        422,
-                        "invalid-approval",
-                        "expectedBundleDigest must be a canonical sha256 digest."));
-            }
-
-            try
-            {
-                var pending = await manager.GetApprovalAsync(
-                    approvalRequestId,
-                    cancellationToken);
-                if (pending is null)
-                {
-                    throw new DefinitionLifecycleException(
-                        404,
-                        "approval-not-found",
-                        "The approval request does not exist.");
-                }
-
-                var authorizationError = ManagementHttp.AuthorizeScope(
-                    context,
-                    pending.Application,
-                    pending.Environment);
-                if (authorizationError is not null)
-                {
-                    return RuntimeHttp.ProblemResult(context, authorizationError);
-                }
-
-                var result = await manager.ApproveAsync(
-                    approvalRequestId,
-                    request.ExpectedBundleDigest,
-                    ManagementHttp.Actor(context),
-                    request.Comment,
-                    cancellationToken);
-                return Results.Json(result, RuntimeHttp.JsonOptions);
-            }
-            catch (DefinitionLifecycleException exception)
-            {
-                return ManagementHttp.Problem(context, exception);
-            }
-        })
-    .RequireAuthorization("ApproveDefinitions");
-
-app.MapPost(
-        "/v1/definition-bundle-approvals/{approvalRequestId}:reject",
-        async (
-            string approvalRequestId,
-            HttpContext context,
-            IDefinitionApprovalManager manager,
-            CancellationToken cancellationToken) =>
-        {
-            var (request, _, error) =
-                await RuntimeHttp.ReadJsonAsync<RejectDefinitionBundleRequest>(
-                    context,
-                    cancellationToken);
-            if (error is not null)
-            {
-                return RuntimeHttp.ProblemResult(context, error);
-            }
-
-            if (request is null ||
-                !RuntimeHttp.IsSha256Digest(request.ExpectedBundleDigest) ||
-                string.IsNullOrWhiteSpace(request.ReasonCode))
-            {
-                return RuntimeHttp.ProblemResult(
-                    context,
-                    RuntimeHttp.Problem(
-                        context,
-                        422,
-                        "invalid-rejection",
-                        "expectedBundleDigest and reasonCode are required."));
-            }
-
-            try
-            {
-                var pending = await manager.GetApprovalAsync(
-                    approvalRequestId,
-                    cancellationToken);
-                if (pending is null)
-                {
-                    throw new DefinitionLifecycleException(
-                        404,
-                        "approval-not-found",
-                        "The approval request does not exist.");
-                }
-
-                var authorizationError = ManagementHttp.AuthorizeScope(
-                    context,
-                    pending.Application,
-                    pending.Environment);
-                if (authorizationError is not null)
-                {
-                    return RuntimeHttp.ProblemResult(context, authorizationError);
-                }
-
-                var result = await manager.RejectAsync(
-                    approvalRequestId,
-                    request.ExpectedBundleDigest,
-                    ManagementHttp.Actor(context),
-                    request.ReasonCode,
-                    request.Comment,
-                    cancellationToken);
-                return Results.Json(result, RuntimeHttp.JsonOptions);
-            }
-            catch (DefinitionLifecycleException exception)
-            {
-                return ManagementHttp.Problem(context, exception);
-            }
-        })
-    .RequireAuthorization("ApproveDefinitions");
 
 app.MapPost(
         "/v1/decisions/{decisionKey}:decide",
@@ -843,7 +491,8 @@ static async Task<DecideTerminalOutcome> EvaluateDecisionAsync(
                 error.Code,
                 error.Message,
                 error.Issues,
-                error.ClientFallback));
+                error.ClientFallback,
+                error.RetryAfterSeconds));
     }
 }
 
@@ -906,6 +555,12 @@ static IResult RenderOutcome(HttpContext context, DecideTerminalOutcome outcome)
 
     var failure = outcome.Failure ??
                   new DecisionFailure(500, "service-unavailable", "The request failed.");
+    if (failure.RetryAfterSeconds is int retryAfterSeconds)
+    {
+        context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     return RuntimeHttp.ProblemResult(
         context,
         RuntimeHttp.Problem(
@@ -914,6 +569,7 @@ static IResult RenderOutcome(HttpContext context, DecideTerminalOutcome outcome)
             failure.Code,
             failure.Detail,
             failure.Issues,
+            failure.RetryAfterSeconds,
             clientFallback: failure.ClientFallback));
 }
 

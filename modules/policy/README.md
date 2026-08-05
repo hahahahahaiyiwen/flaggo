@@ -8,5 +8,13 @@ candidate cannot be returned as approved, and policy never performs rollout or
 storage operations directly. Collaborators are constructor-injected async
 ports.
 
+## Current implementation
+
+`src/Flaggo.Policy` owns `IPolicyEvaluator`, `PolicyEvaluationRequest`,
+`PolicyDecision`, and `DefaultPolicyEvaluator`. The local evaluator enforces
+pause, bounds, step, maximum delta, cooldown, evidence quality, model
+uncertainty, expected outcome, and sample-size constraints. Reasoning receives
+the evaluator through constructor injection.
+
 Update this document when policy composition, constraints, or fallback
 authority changes.

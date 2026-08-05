@@ -183,6 +183,10 @@ Both SDK and service tests consume the same schemas and fixtures. Neither branch
 
 - Definition-bundle validate/apply belongs to the control plane.
 - Decide and exposure confirmation belong to the data plane.
+- Local development composes both hosts over one explicitly configured,
+  registry-owned file adapter. Writes must be atomic, reads must observe
+  cross-process approvals, and storage failure must not fall back to a
+  process-local registry.
 - Application deployment is external and must not be modeled as a Polari-owned operation.
 - MVP trusted application/bootstrap startup acts as the first control-plane client: it atomically applies the statically extracted bundle before enabling data-plane calls.
 - Future clients may use startup verify-only, CLI, CI/CD, GitOps, init/deployment hooks, or registry-first workflows without changing service boundaries.
@@ -424,6 +428,16 @@ Validation:
 - runtime results expose compact confidence and target provenance while audit retains full evidence.
 
 Parallel-work rule: Track 2A and Track 2B may not change shared wire semantics independently. Any contract change first updates OpenAPI/schema, canonical fixtures, and both conformance suites.
+
+Phase 2 conformance is executable at both implementation boundaries:
+`npm run check:openapi` validates the SDK-required operations and schemas
+directly from the frozen OpenAPI YAML documents, while the .NET service suite
+requires explicit schema, endpoint-owner, authentication, and behavior
+assertions for every case in the shared fixture manifest. Management routes are
+hosted only by the control-plane executable; runtime decide, exposure, and
+health routes are hosted only by the data-plane executable. Evidence and policy
+ports and local adapters are owned by their respective modules and injected
+into reasoning.
 
 ### Phase 3: Integration and Tetris adaptive demo
 

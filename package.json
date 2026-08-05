@@ -6,6 +6,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
+    "check:openapi": "npm run check:openapi --workspace @flaggo/sdk",
     "test": "npm run test --workspaces",
     "typecheck": "npm run typecheck --workspaces"
   }

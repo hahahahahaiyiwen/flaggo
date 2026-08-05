@@ -422,6 +422,13 @@ describe("runtime safety", () => {
       request: { body: DecisionDefinitionBundle };
       expected: { body: RegistrationReceipt };
     }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const localMismatch = fixture<{
+      sdkLocal: boolean;
+      expected: {
+        networkCallIssued: boolean;
+        clientFallbackAllowed: boolean;
+      };
+    }>("errors/local-01-callsite-binding-mismatch.json");
     const fetch = vi.fn<FetchLike>();
     const client = await createFlaggoClient({
       dataPlaneUrl: "https://data.flaggo.test",
@@ -442,6 +449,9 @@ describe("runtime safety", () => {
         context: {},
       }),
     ).rejects.toBeInstanceOf(ContractConflictError);
+    expect(localMismatch.sdkLocal).toBe(true);
+    expect(localMismatch.expected.networkCallIssued).toBe(false);
+    expect(localMismatch.expected.clientFallbackAllowed).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
   });
 

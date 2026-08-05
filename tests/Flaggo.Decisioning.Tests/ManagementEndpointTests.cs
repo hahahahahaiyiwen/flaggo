@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Flaggo.ControlPlane;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 using Microsoft.AspNetCore.Hosting;
@@ -16,7 +17,8 @@ public sealed class ManagementEndpointTests
     [Fact]
     public async Task ValidateAndApply_ExposeSdkStartupContract()
     {
-        await using var factory = new FlaggoApplicationFactory();
+        using var registryFile = new TestRegistryFile();
+        await using var factory = new FlaggoApplicationFactory(registryFile.Path);
         using var client = factory.CreateClient();
         var fixture = Fixture("definition-bundle", "04-apply-approved-receipt.json");
         var body = fixture.GetProperty("request").GetProperty("body");
@@ -50,9 +52,12 @@ public sealed class ManagementEndpointTests
     }
 
     [Fact]
-    public async Task SemanticApply_ExposesPendingApprovalAndCanonicalSnapshot()
+    public async Task SemanticApply_ReplaysApprovedReceiptForSdkStartup()
     {
-        await using var factory = new FlaggoApplicationFactory(usePreviousRevision: true);
+        using var registryFile = new TestRegistryFile();
+        await using var factory = new FlaggoApplicationFactory(
+            registryFile.Path,
+            usePreviousRevision: true);
         using var client = factory.CreateClient();
         var fixture = Fixture("definition-bundle", "06-apply-requires-approval.json");
         var body = fixture.GetProperty("request").GetProperty("body");
@@ -80,6 +85,32 @@ public sealed class ManagementEndpointTests
         Assert.Equal(
             CanonicalJson.NormalizeBundleBytes(body),
             snapshotBytes);
+
+        using var approve = await client.PostAsJsonAsync(
+            $"/v1/definition-bundle-approvals/{approvalRequestId}:approve",
+            new
+            {
+                expectedBundleDigest =
+                    pending.GetProperty("bundleDigest").GetString(),
+                comment = "Approved for startup retry."
+            });
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        using var replayRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/definition-bundles:apply")
+        {
+            Content = Json(body)
+        };
+        replayRequest.Headers.Add("Idempotency-Key", "semantic-http-test");
+        using var replay = await client.SendAsync(replayRequest);
+
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        var receipt = await replay.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("approved", receipt.GetProperty("status").GetString());
+        Assert.Equal(
+            pending.GetProperty("bundleDigest").GetString(),
+            receipt.GetProperty("bundleDigest").GetString());
     }
 
     private static StringContent Json(JsonElement body) =>
@@ -104,8 +135,10 @@ public sealed class ManagementEndpointTests
         return document.RootElement.Clone();
     }
 
-    private sealed class FlaggoApplicationFactory(bool usePreviousRevision = false)
-        : WebApplicationFactory<Program>
+    private sealed class FlaggoApplicationFactory(
+        string registryPath,
+        bool usePreviousRevision = false)
+        : WebApplicationFactory<ControlPlaneAssemblyMarker>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -113,6 +146,9 @@ public sealed class ManagementEndpointTests
             builder.UseSetting(
                 "Flaggo:Authentication:LocalDevelopmentBypass",
                 "true");
+            builder.UseSetting(
+                "Flaggo:Registry:LocalFilePath",
+                registryPath);
             if (!usePreviousRevision)
             {
                 return;
@@ -120,6 +156,9 @@ public sealed class ManagementEndpointTests
 
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<LocalFileDefinitionRegistry>();
+                services.RemoveAll<IDefinitionBundleManager>();
+                services.RemoveAll<IDefinitionApprovalManager>();
                 services.RemoveAll<InMemoryDefinitionRegistry>();
                 services.AddSingleton(
                     new InMemoryDefinitionRegistry(
@@ -140,6 +179,10 @@ public sealed class ManagementEndpointTests
                             [])
                     ],
                     new SequenceDefinitionIdentityGenerator()));
+                services.AddSingleton<IDefinitionBundleManager>(
+                    provider => provider.GetRequiredService<InMemoryDefinitionRegistry>());
+                services.AddSingleton<IDefinitionApprovalManager>(
+                    provider => provider.GetRequiredService<InMemoryDefinitionRegistry>());
             });
         }
     }

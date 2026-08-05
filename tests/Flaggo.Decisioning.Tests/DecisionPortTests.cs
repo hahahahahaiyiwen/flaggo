@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Flaggo.Decisioning;
+using Flaggo.Policy;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
@@ -129,6 +130,34 @@ public sealed class DecisionPortTests
         Assert.Equal(
             "client-verified",
             Assert.Single(result.TargetProvenance).Source);
+    }
+
+    [Fact]
+    public async Task TargetResolver_AttributesGlobalFallbackToClaimedCohort()
+    {
+        var resolver = new DefaultTargetResolver(
+            new Dictionary<string, string>
+            {
+                ["new_players"] = "new_players"
+            });
+        var context = new Dictionary<string, JsonElement>
+        {
+            ["cohort"] = JsonSerializer.SerializeToElement("new_players")
+        };
+        var plan = await resolver.ResolveAsync(
+            new DecisionTargetRef("session", "game-1"),
+            context,
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            new DecisionTargetRef("global", "global"),
+            selectedTargetIndex: 1);
+
+        var provenance = Assert.Single(result.TargetProvenance);
+        Assert.Equal("cohort", provenance.TargetType);
+        Assert.Equal("new_players", provenance.ClaimedId);
+        Assert.Equal("global", provenance.ResolvedId);
+        Assert.Equal("server-derived", provenance.Source);
     }
 
     [Fact]

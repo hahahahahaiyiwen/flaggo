@@ -7,8 +7,9 @@ using System.Text.RegularExpressions;
 using Microsoft.Net.Http.Headers;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
+using Microsoft.AspNetCore.Http;
 
-namespace Flaggo.DataPlane;
+namespace Flaggo.Hosting;
 
 public static class RuntimeHttp
 {
