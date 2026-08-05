@@ -1,9 +1,10 @@
 using System.Security.Claims;
 using System.Text.Json;
+using Flaggo.Hosting;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 
-namespace Flaggo.DataPlane;
+namespace Flaggo.ControlPlane;
 
 public static class ManagementHttp
 {

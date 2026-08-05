@@ -14,14 +14,18 @@ invariants change.
 ## Current implementation
 
 `src/Flaggo.Registry` defines separate async runtime lookup, bundle-management,
-and approval-management ports over one atomic in-memory adapter. Validation
+and approval-management ports over a shared lifecycle implementation. Validation
 recomputes RFC 8785 bundle and semantic contract digests, checks lineage,
 signals, objectives, strategies, and policy structure, and performs no
 mutation. Apply retains idempotent outcomes, immediately commits compatible
 updates, and stores semantic changes as immutable pending snapshots.
 
 Approvals compare the expected bundle digest before atomically committing a
-new runtime revision. Each approval captures its active-definition baseline;
+new runtime revision and replacing the original apply idempotency outcome with
+the approved registration receipt. Replaying that apply key and canonical
+bundle therefore returns `200` after approval, including after adapter restart;
+the same key with a different bundle remains a conflict. Each approval captures
+its active-definition baseline;
 approval fails with a conflict if another approval changes that baseline first.
 Approval and rejection are replay-safe terminal transitions; expiry and
 opposite-terminal operations fail explicitly. Reference policies are rejected
@@ -29,3 +33,18 @@ until a policy-resolution adapter is available rather than being activated
 without enforcement.
 Runtime lookup continues to require the complete application, environment,
 decision key, definition ID, and revision tuple.
+
+`InMemoryDefinitionRegistry` remains the deterministic unit-test adapter.
+`LocalFileDefinitionRegistry` is the portable local shared adapter used by both
+executable hosts. Every operation takes an exclusive cross-process lease,
+reloads the complete registry state, and publishes mutations with a same-volume
+temporary file plus atomic replace. The persisted state includes definitions,
+apply idempotency outcomes, immutable approval snapshots, captured baselines,
+expiry, and terminal decisions, so restarting either host does not weaken
+lifecycle semantics. Reads reload under the same lease, making an approved
+revision visible to already-running data-plane processes without polling or
+domain-layer file access.
+
+The persistence document is versioned and parsed strictly. Corrupt,
+unsupported, inaccessible, or lock-starved storage fails explicitly; readiness
+reports the registry unavailable rather than falling back to seeded state.

@@ -39,3 +39,13 @@ python contracts\conformance\validate.py
 tests. Implementations may generate language-specific models from the OpenAPI
 and schemas, but generated output is not committed until an implementation
 track selects its generator.
+
+The .NET service suite additionally dispatches every HTTP manifest case through
+the owning data-plane or control-plane host with deterministic fixture-specific
+state, credentials, clocks, concurrency, expiry, and failure adapters. It
+asserts actual status, required headers, and JSON semantics. SDK-local and
+schema-negative cases have narrow executable boundary checks, and the
+TypeScript SDK directly exercises the no-network binding mismatch fixture.
+The SDK also runs `npm run check:openapi` to parse the frozen OpenAPI YAML
+documents and verify the operations, security scopes, headers, and schemas it
+uses.

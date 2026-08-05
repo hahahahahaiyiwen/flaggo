@@ -10,19 +10,20 @@ behavior aligned with `contracts/openapi/flaggo-runtime-v1.yaml`.
 
 ## Current implementation
 
-`src/Flaggo.DataPlane` is the .NET 10 composition root. It exposes definition
-validate/apply, approval status/snapshot/approve/reject, decide, exposure
-confirmation, liveness, and readiness endpoints over in-memory adapters.
+`src/Flaggo.DataPlane` is the .NET 10 runtime composition root. It exposes only
+decide, exposure confirmation, liveness, and readiness endpoints over
+local adapters. Definition validation, application, and approval routes
+are owned by `apps/control-plane`.
 Runtime decisions require an
 exact registered definition tuple; mismatches return contract Problem Details
 rather than a fallback. Decide requests support 24-hour idempotent replay and
 exposure confirmation is idempotent for the same observation.
 
-Runtime endpoints require OAuth bearer authentication and operation-specific
+Protected runtime endpoints require OAuth bearer authentication and
+operation-specific
 scopes. The explicit `Flaggo__Authentication__LocalDevelopmentBypass=true`
-setting provides a Development-environment-only principal with runtime and
-definition-management scopes and
-the seeded application/environment claims. The host fails at startup when the
+setting provides a Development-environment-only principal with runtime scopes
+and the seeded application/environment claims. The host fails at startup when the
 bypass is enabled in another environment or when neither the bypass nor OAuth
 authority and audience are configured. OAuth credentials must carry
 `polari_app_id` and `polari_environment` claims matching the request body.
@@ -54,6 +55,14 @@ Run locally:
 dotnet run --project apps\data-plane\src\Flaggo.DataPlane
 ```
 
-The seeded `tetris.dropInterval` definition supports local startup registration
-and runtime exercises. Management state is process-local; durable adapters
-remain a later infrastructure concern.
+The seeded `tetris.dropInterval` definition supports local runtime exercises.
+Registry reads reload the shared repository-local
+`.flaggo/definition-registry-v1.json` under a cross-process lease, so approved
+control-plane revisions become visible without restarting this host. Override
+the location with an absolute `Flaggo__Registry__LocalFilePath`. Registry file,
+parse, or lock failures make the required readiness dependency unavailable and
+do not fall back to the seed.
+
+Rate-limited decision failures carry matching `Retry-After` and
+`retryAfterSeconds` values. Global resolution fallback retains the originating
+cohort claim in target provenance while identifying the resolved global target.

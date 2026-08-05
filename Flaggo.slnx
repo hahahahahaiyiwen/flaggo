@@ -1,13 +1,29 @@
 <Solution>
   <Folder Name="/apps/" />
+  <Folder Name="/apps/control-plane/" />
+  <Folder Name="/apps/control-plane/src/">
+    <Project Path="apps/control-plane/src/Flaggo.ControlPlane/Flaggo.ControlPlane.csproj" />
+  </Folder>
   <Folder Name="/apps/data-plane/" />
   <Folder Name="/apps/data-plane/src/">
     <Project Path="apps/data-plane/src/Flaggo.DataPlane/Flaggo.DataPlane.csproj" />
+  </Folder>
+  <Folder Name="/apps/shared/" />
+  <Folder Name="/apps/shared/src/">
+    <Project Path="apps/shared/src/Flaggo.Hosting/Flaggo.Hosting.csproj" />
   </Folder>
   <Folder Name="/modules/" />
   <Folder Name="/modules/audit/" />
   <Folder Name="/modules/audit/src/">
     <Project Path="modules/audit/src/Flaggo.Audit/Flaggo.Audit.csproj" />
+  </Folder>
+  <Folder Name="/modules/evidence/" />
+  <Folder Name="/modules/evidence/src/">
+    <Project Path="modules/evidence/src/Flaggo.Evidence/Flaggo.Evidence.csproj" />
+  </Folder>
+  <Folder Name="/modules/policy/" />
+  <Folder Name="/modules/policy/src/">
+    <Project Path="modules/policy/src/Flaggo.Policy/Flaggo.Policy.csproj" />
   </Folder>
   <Folder Name="/modules/reasoning/" />
   <Folder Name="/modules/reasoning/src/">

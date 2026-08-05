@@ -173,7 +173,7 @@ public sealed class DefinitionLifecycleTests
     }
 
     [Fact]
-    public async Task SemanticApply_DoesNotMutateUntilApprovalCommits()
+    public async Task SemanticApply_ReplaysApprovedReceiptAndRejectsConflictingBody()
     {
         var registry = CreateRegistry(PreviousRevision, PreviousDigest);
         var bundle = FixtureBody("definition-bundle", "06-apply-requires-approval.json");
@@ -197,8 +197,11 @@ public sealed class DefinitionLifecycleTests
             new ApprovalActor("user:operator-1", "Release Operator"),
             "Reviewed.",
             CancellationToken.None);
+        var replay = await registry.ApplyAsync("semantic-key", bundle);
 
         Assert.Equal("approved", approved.Status);
+        Assert.Equal(200, replay.StatusCode);
+        Assert.Same(approved.Receipt, replay.Body);
         var accepted = Assert.Single(approved.Receipt!.AcceptedDefinitions).Value;
         var after = await registry.ResolveAsync(
             "tetris-demo",
@@ -208,6 +211,13 @@ public sealed class DefinitionLifecycleTests
             accepted.Revision,
             CancellationToken.None);
         Assert.Equal(ActiveDigest, after.Definition!.Identity.ContractDigest);
+
+        var conflictBundle = FixtureBody(
+            "definition-bundle",
+            "05-apply-idempotency-conflict.json");
+        var conflict = await Assert.ThrowsAsync<DefinitionLifecycleException>(
+            () => registry.ApplyAsync("semantic-key", conflictBundle));
+        Assert.Equal("bundle-idempotency-conflict", conflict.Code);
     }
 
     [Fact]

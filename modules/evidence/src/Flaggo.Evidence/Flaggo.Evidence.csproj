@@ -1,16 +1,9 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\packages\shared-contracts\src\Flaggo.Shared.Contracts\Flaggo.Shared.Contracts.csproj" />
     <ProjectReference Include="..\..\..\registry\src\Flaggo.Registry\Flaggo.Registry.csproj" />
-    <ProjectReference Include="..\..\..\audit\src\Flaggo.Audit\Flaggo.Audit.csproj" />
-    <ProjectReference Include="..\..\..\evidence\src\Flaggo.Evidence\Flaggo.Evidence.csproj" />
-    <ProjectReference Include="..\..\..\policy\src\Flaggo.Policy\Flaggo.Policy.csproj" />
     <ProjectReference Include="..\..\..\state\src\Flaggo.State\Flaggo.State.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
   </ItemGroup>
 
   <PropertyGroup>

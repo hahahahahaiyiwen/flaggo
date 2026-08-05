@@ -7,7 +7,8 @@ public sealed class DecisionContractException(
     string code,
     string message,
     IReadOnlyList<ProblemIssue>? issues = null,
-    ClientFallbackEligibility? clientFallback = null) : Exception(message)
+    ClientFallbackEligibility? clientFallback = null,
+    int? retryAfterSeconds = null) : Exception(message)
 {
     public int Status { get; } = status;
 
@@ -16,4 +17,6 @@ public sealed class DecisionContractException(
     public IReadOnlyList<ProblemIssue>? Issues { get; } = issues;
 
     public ClientFallbackEligibility? ClientFallback { get; } = clientFallback;
+
+    public int? RetryAfterSeconds { get; } = retryAfterSeconds;
 }

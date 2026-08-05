@@ -15,6 +15,7 @@ repos
 *.tmp
 *.temp
 *.cache
+.flaggo/
 __pycache__/
 *.py[cod]
 .venv/

@@ -24,6 +24,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "check:openapi": "vitest run test/openapi-conformance.test.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -33,7 +34,8 @@
   },
   "devDependencies": {
     "@types/node": "24.1.0",
-    "vitest": "3.2.4"
+    "vitest": "3.2.4",
+    "yaml": "2.8.1"
   },
   "engines": {
     "node": ">=20"

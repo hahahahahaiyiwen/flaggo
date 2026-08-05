@@ -137,8 +137,11 @@ logger, or provide a direct sink for local development and tests.
 
 ## Contract maintenance
 
-Wire models are hand-verified against `contracts/`. Any wire-semantic change
-must update OpenAPI, JSON Schema, fixtures, and conformance before this package.
+`npm run check:openapi` parses both frozen OpenAPI YAML documents and verifies
+the startup apply, decide, and exposure operations, OAuth scopes, headers, and
+the external request/response schemas required by the SDK. `npm test` also runs
+this gate. Any wire-semantic change must update OpenAPI, JSON Schema, fixtures,
+and conformance before this package.
 Keep canonical normalization aligned with
 `contracts/conformance/validate.py`, add fixture-driven tests for behavior
 changes, and update this README whenever public API, fallback, extraction, or
