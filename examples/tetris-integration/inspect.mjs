@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export async function inspectIntegration(auditPath, telemetryPath) {
-  const audit = await readJsonLines(auditPath);
+  const audit = await readAuditJsonLines(auditPath);
   const telemetry = await readJsonLines(telemetryPath);
   const decisions = audit
     .filter(({ kind }) => kind === "decision")
@@ -41,17 +42,65 @@ export async function inspectIntegration(auditPath, telemetryPath) {
   };
 }
 
+async function readAuditJsonLines(path) {
+  const segmentsPath = `${path}.d`;
+  let manifestContent;
+  try {
+    manifestContent = await readFile(
+      join(segmentsPath, "manifest.json"),
+      "utf8",
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    return readJsonLines(path);
+  }
+  const directory = join(segmentsPath, "segments");
+  const manifest = JSON.parse(manifestContent);
+  if (
+    manifest?.version !== 1
+    || !Array.isArray(manifest.segments)
+    || manifest.segments.length === 0
+  ) {
+    throw new Error("Audit segment manifest is invalid.");
+  }
+  const listed = [...manifest.segments]
+    .sort((left, right) => left.sequence - right.sequence);
+  const segments = await Promise.all(
+    listed.map((segment) =>
+      readManifestSegment(join(directory, segment.fileName), segment)
+    ),
+  );
+  return segments.flat().filter(({ kind }) => kind !== "segment");
+}
+
+async function readManifestSegment(path, catalog) {
+  const bytes = await readFile(path);
+  const hash =
+    `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  if (
+    bytes.byteLength !== catalog.length
+    || hash !== catalog.contentHash
+  ) {
+    throw new Error("Audit segment does not match its durable manifest.");
+  }
+  return parseJsonLines(bytes.toString("utf8"));
+}
+
 async function readJsonLines(path) {
   try {
     const content = await readFile(path, "utf8");
-    return content
-      .split(/\r?\n/u)
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line));
+    return parseJsonLines(content);
   } catch (error) {
     if (error?.code === "ENOENT") return [];
     throw error;
   }
+}
+
+function parseJsonLines(content) {
+  return content
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
 }
 
 function option(args, name) {

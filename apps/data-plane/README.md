@@ -18,6 +18,13 @@ Runtime decisions require an
 exact registered definition tuple; mismatches return contract Problem Details
 rather than a fallback. Decide requests support 24-hour idempotent replay and
 exposure confirmation is idempotent for the same observation.
+Confirmation commits only after durable exposure audit succeeds. Audit I/O
+failure returns retryable `503 service-unavailable` with correlation and
+`Retry-After` metadata but remains client-fallback ineligible; exposure
+confirmation timeouts are also explicitly ineligible. Unexpected
+infrastructure failure returns `500 internal-error`. Endpoint operation
+metadata is captured before execution so the single global exception boundary
+can preserve decide timeout eligibility while denying exposure fallback.
 
 Protected runtime endpoints require OAuth bearer authentication and
 operation-specific
@@ -48,7 +55,7 @@ Readiness is derived from registry, state, audit, policy, and optional evidence
 health ports. Required dependency loss returns `503 not-ready`; optional
 evidence loss returns `200 degraded`. Unhandled infrastructure failures are
 mapped to stable Problem Details. Generic I/O failures remain explicitly
-client-fallback ineligible; only classified availability failures or
+client-fallback ineligible; only decide timeouts or
 definition-policy-approved required-evidence failures can authorize SDK-local
 fallback.
 
@@ -78,3 +85,10 @@ hardcode the Tetris strategy. Local evidence supplies compact strategy
 confidence. Exposure confirmation is composed through the constructor-injected
 confirmation service, which records the exposure audit before committing state.
 Local audit inspection is file/tool based and adds no runtime debug route.
+
+The Tetris harness instead sets `Flaggo__Bootstrap__LocalGenerationPath`.
+Startup strictly resolves its atomic `current.json` pointer once and takes both
+state and evidence from the same immutable generation directory, preventing a
+mixed receipt/state/evidence publication from being observed. The receipt is
+published in that generation for bootstrap and SDK consumers but is not a
+data-plane runtime adapter input.

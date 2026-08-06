@@ -12,9 +12,11 @@ public static class LocalRuntimeAdapterHosting
     public static void AddStateAdapter(
         IServiceCollection services,
         IConfiguration configuration,
-        RuntimeContractIdentity defaultIdentity)
+        RuntimeContractIdentity defaultIdentity,
+        BootstrapGenerationPaths? bootstrapGeneration = null)
     {
-        var statePath = configuration["Flaggo:State:LocalFilePath"];
+        var statePath = bootstrapGeneration?.StatePath ??
+            configuration["Flaggo:State:LocalFilePath"];
         if (!string.IsNullOrWhiteSpace(statePath))
         {
             services.AddSingleton(
@@ -73,9 +75,11 @@ public static class LocalRuntimeAdapterHosting
 
     public static void AddEvidenceAdapter(
         IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        BootstrapGenerationPaths? bootstrapGeneration = null)
     {
-        var evidencePath = configuration["Flaggo:Evidence:LocalFilePath"];
+        var evidencePath = bootstrapGeneration?.EvidencePath ??
+            configuration["Flaggo:Evidence:LocalFilePath"];
         if (!string.IsNullOrWhiteSpace(evidencePath))
         {
             services.AddSingleton(

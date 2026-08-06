@@ -41,6 +41,8 @@ Registration receipts and `requires-approval` responses are validated as
 strict wire contracts before their identity or metadata is trusted. An
 approved receipt must contain exactly one accepted binding for every submitted
 definition, with matching canonical contract digests.
+Digest and RFC 3339 validators require exact whole-string matches; encoded
+trailing line breaks or other boundary characters are not accepted.
 
 At startup, the client normalizes the supplied bundle and caches each numeric
 definition and contract digest. Runtime calls use that static binding and
@@ -78,6 +80,9 @@ definitions, non-literal definition references, conditional or loop-dependent
 decision calls, and schema-invalid definitions. Identical definitions for one
 key deduplicate in the bundle; different canonical digests for one key fail
 with `contract-conflict`.
+Authored cooldown constraints may use any finite nonnegative number, preserving
+the frozen v1 contract. Static extraction rejects negative and nonfinite values
+before emitting an artifact.
 Runtime expressions remain in `context`, `runtimeTarget`, and `inputs`; they
 are never evaluated by extraction or included in definition identity.
 

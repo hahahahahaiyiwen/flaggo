@@ -36,6 +36,7 @@ function digest(value: unknown): boolean {
   return value === undefined
     || (
       typeof value === "string"
+      && value.length === 71
       && /^sha256:[0-9a-f]{64}$/u.test(value)
     );
 }

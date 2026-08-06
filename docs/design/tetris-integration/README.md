@@ -13,7 +13,8 @@ or trusted registration behavior in browser code.
   bootstrap command, governed-state activation template, local harness, and
   audit/telemetry inspection workflow.
 - The registry remains the source of accepted definition identity. Bootstrap
-  writes activated state only from the approved registration receipt.
+  writes activated state only from the approved registration receipt and
+  publishes receipt, state, and evidence through one generation pointer.
 - The state module owns the file-backed governed-state adapter. The data-plane
   host selects it through configuration and does not encode Tetris strategy
   behavior in `Program.cs`.
@@ -38,9 +39,10 @@ or trusted registration behavior in browser code.
 2. Run the trusted bootstrap command with the canonical bundle.
 3. If the SDK returns typed `RequiresApprovalError`, bootstrap approves the
    immutable snapshot through the management API and retries registration.
-4. Bootstrap writes the approved receipt and activated governed state.
-5. Start the data plane against the same registry plus the state, evidence,
-   and audit paths.
+4. Bootstrap durably writes receipt, activated state, and evidence into one
+   unique generation, then atomically switches `current.json`.
+5. Start the data plane against the same registry, bootstrap generation root,
+   and audit path. Hosting resolves state and evidence from one pointer read.
 6. Drive SDK and direct REST decisions, confirm only applied receipts, emit
    linked outcome telemetry, and inspect the local JSON Lines records.
 
@@ -65,6 +67,10 @@ or trusted registration behavior in browser code.
   values, and nonfinite numeric-rule parameters make state readiness fail.
 - Malformed or torn audit files fail readiness. Audit append failure leaves a
   receipt unconfirmed, while replay after recovery reuses one exposure record.
+- Failed bootstrap sibling writes are drained and cleaned before publication;
+  readers see either the complete old generation or the complete new one.
+- Any control/data host exit before requested shutdown fails the harness even
+  when the remaining workflow assertions would otherwise pass.
 - No browser-facing code receives management credentials, and no production
   runtime route exposes local audit or registry internals.
 

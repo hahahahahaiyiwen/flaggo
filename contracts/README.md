@@ -16,7 +16,7 @@ contracts/
   mock/          Fixture-backed development server
 ```
 
-The fixture manifest indexes 69 cases covering all 43 required scenarios from
+The fixture manifest indexes 71 cases covering all 43 required scenarios from
 the proposal. SDK and service implementations must use the same artifacts
 rather than maintain independent wire DTOs.
 
@@ -33,6 +33,10 @@ semantic value contracts, and normalized per-definition and bundle digests.
 It also validates the canonical Tetris definition artifact directly against
 the frozen Draft 2020-12 bundle schema and proves additional and unevaluated
 properties are rejected.
+The SDK artifact test pins both the full canonical bundle digest and the
+per-definition semantic digest. Intentional artifact edits must pass this
+frozen-schema gate first, then update both SDK-computed pins in the same
+reviewed change.
 It does not start network services or access remote schema registries.
 
 The `Contracts` GitHub Actions workflow runs the local Tetris host harness in a

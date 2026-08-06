@@ -55,6 +55,13 @@ function numberDefinition(defaultValue = 800): string {
   }`;
 }
 
+function cooldownDefinition(seconds: string): string {
+  return numberDefinition().replace(
+    "constraints: []",
+    `constraints: [{ kind: "cooldown", seconds: ${seconds} }]`,
+  );
+}
+
 function extract(source: string) {
   const { fileName, rootDir } = sourceFile(source);
   return extractDecisionBundle({
@@ -430,6 +437,37 @@ describe("static decision extraction", () => {
         context: {}
       });
     `).bundle.definitions).toHaveLength(1);
+  });
+
+  it("accepts huge finite cooldowns from the frozen v1 contract", () => {
+    const definition = extract(`
+      flaggo.tune.number("tetris.dropInterval", {
+        definition: ${cooldownDefinition("1.7976931348623157e308")},
+        context: {}
+      });
+    `).bundle.definitions[0]!;
+
+    expect(definition.policy).toMatchObject({
+      constraints: [
+        { kind: "cooldown", seconds: Number.MAX_VALUE },
+      ],
+    });
+  });
+
+  it.each([
+    ["negative", "-1"],
+    ["positive infinity", "1e309"],
+    ["negative infinity", "-1e309"],
+    ["NaN", "NaN"],
+  ])("rejects %s cooldowns", (_name, seconds) => {
+    expect(() =>
+      extract(`
+        flaggo.tune.number("tetris.dropInterval", {
+          definition: ${cooldownDefinition(seconds)},
+          context: {}
+        });
+      `)
+    ).toThrowError(StaticExtractionError);
   });
 
   it("rejects invalid numeric value contracts and descending ranges", () => {

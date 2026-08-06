@@ -16,7 +16,7 @@ public static class RuntimeHttp
     private static readonly object CorrelationIdItemKey = new();
 
     private static readonly Regex Sha256DigestPattern = new(
-        "^sha256:[0-9a-f]{64}$",
+        "\\Asha256:[0-9a-f]{64}\\z",
         RegexOptions.CultureInvariant);
 
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -53,7 +53,7 @@ public static class RuntimeHttp
             using var memory = new MemoryStream();
             await context.Request.Body.CopyToAsync(memory, cancellationToken);
             var body = memory.ToArray();
-            EnsureNoDuplicateProperties(body);
+            StrictJson.Validate(body);
             EnsureRequestNullability<T>(body);
             var value = JsonSerializer.Deserialize<T>(body, JsonOptions);
             return (value, body, null);
@@ -172,33 +172,6 @@ public static class RuntimeHttp
 
     public static bool IsSha256Digest(string? value) =>
         value is not null && Sha256DigestPattern.IsMatch(value);
-
-    private static void EnsureNoDuplicateProperties(ReadOnlySpan<byte> json)
-    {
-        var reader = new Utf8JsonReader(json);
-        var objectProperties = new Stack<HashSet<string>>();
-        while (reader.Read())
-        {
-            switch (reader.TokenType)
-            {
-                case JsonTokenType.StartObject:
-                    objectProperties.Push(new HashSet<string>(StringComparer.Ordinal));
-                    break;
-                case JsonTokenType.EndObject:
-                    objectProperties.Pop();
-                    break;
-                case JsonTokenType.PropertyName:
-                    var propertyName = reader.GetString()!;
-                    if (!objectProperties.Peek().Add(propertyName))
-                    {
-                        throw new JsonException(
-                            $"Duplicate JSON property '{propertyName}' is not allowed.");
-                    }
-
-                    break;
-            }
-        }
-    }
 
     private static void EnsureRequestNullability<T>(byte[] json)
     {

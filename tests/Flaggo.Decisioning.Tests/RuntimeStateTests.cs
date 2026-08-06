@@ -139,6 +139,140 @@ public sealed class RuntimeStateTests
     }
 
     [Fact]
+    public async Task IdempotencyStore_ReleasesRetryableFailureAfterFollowersConverge()
+    {
+        var calls = 0;
+        var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new InMemoryDecideIdempotencyStore(new FixedTimeProvider());
+        var owner = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                calls++;
+                return ownerCompletion.Task;
+            },
+            CancellationToken.None);
+        var follower = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                calls++;
+                return Task.FromResult(CreateOutcome("unexpected"));
+            },
+            CancellationToken.None);
+        var unavailable = DecideTerminalOutcome.Rejected(
+            new DecisionFailure(
+                503,
+                "required-evidence-unavailable",
+                "Required evidence is unavailable."));
+
+        ownerCompletion.SetResult(unavailable);
+        var attempts = await Task.WhenAll(owner, follower);
+
+        Assert.All(
+            attempts,
+            attempt =>
+            {
+                Assert.Equal(503, attempt.Outcome.Failure!.Status);
+                Assert.Null(attempt.ExpiresAt);
+            });
+        Assert.Equal(1, calls);
+
+        var recovered = await store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                calls++;
+                return Task.FromResult(CreateOutcome("decision-recovered"));
+            },
+            CancellationToken.None);
+
+        Assert.Equal("decision-recovered", recovered.Outcome.Result!.DecisionId);
+        Assert.NotNull(recovered.ExpiresAt);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task IdempotencyStore_PublishesRetryableCompletionBeforeReleasingClaim()
+    {
+        using var completionPublished = new ManualResetEventSlim();
+        using var releaseClaim = new ManualResetEventSlim();
+        var calls = 0;
+        var recoveryAttempted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var recoveryStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new InMemoryDecideIdempotencyStore(
+            new FixedTimeProvider(),
+            followerWaitBudget: TimeSpan.FromSeconds(5),
+            retryableCompletionPublished: () =>
+            {
+                completionPublished.Set();
+                releaseClaim.Wait();
+            });
+        var owner = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                Interlocked.Increment(ref calls);
+                return ownerCompletion.Task;
+            },
+            CancellationToken.None);
+        var follower = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ => Task.FromResult(CreateOutcome("unexpected")),
+            CancellationToken.None);
+        var unavailable = DecideTerminalOutcome.Rejected(
+            new DecisionFailure(503, "unavailable", "retry"));
+
+        ownerCompletion.SetResult(unavailable);
+        Assert.True(completionPublished.Wait(TimeSpan.FromSeconds(5)));
+        var followerResult = await follower.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(503, followerResult.Outcome.Failure!.Status);
+
+        var recovery = Task.Run(() =>
+        {
+            recoveryAttempted.SetResult();
+            return store.ExecuteAsync(
+                "tenant/app/dev",
+                "key",
+                "fingerprint",
+                _ =>
+                {
+                    Interlocked.Increment(ref calls);
+                    recoveryStarted.SetResult();
+                    return Task.FromResult(CreateOutcome("decision-recovered"));
+                },
+                CancellationToken.None);
+        });
+
+        await recoveryAttempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(recoveryStarted.Task.IsCompleted);
+        Assert.Equal(1, Volatile.Read(ref calls));
+
+        releaseClaim.Set();
+        var ownerResult = await owner;
+        var recovered = await recovery.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(503, ownerResult.Outcome.Failure!.Status);
+        Assert.Equal("decision-recovered", recovered.Outcome.Result!.DecisionId);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task IdempotencyStore_ReturnsInProgressAfterFollowerBudget()
     {
         var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>();

@@ -309,7 +309,116 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public async Task DataPlane_DoesNotMarkGenericIoFailureClientFallbackEligible()
+    public async Task RequiredEvidenceUnavailable_ReleasesIdempotencyClaimForRecovery()
+    {
+        using var registryFile = new TestRegistryFile();
+        using var evidenceFile = new TestJsonFile("evidence-idempotency-recovery");
+        await evidenceFile.WriteAsync(
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {}
+            }
+            """);
+        var definition = RequiredEvidenceDefinition("forbid");
+        var state = new GovernedDecisionState(
+            definition.Identity.DefinitionId,
+            definition.Identity.Revision,
+            definition.Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(800),
+            new DecisionTargetRef("cohort", "new_players"),
+            "strategy",
+            "strategy-test",
+            new NumericRuleStrategy("tetris.boardPressure", 0.5, 850, 750));
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(
+                registryFile.Path,
+                services =>
+                {
+                    services.RemoveAll<IDefinitionRegistry>();
+                    services.AddSingleton<IDefinitionRegistry>(
+                        new InMemoryDefinitionRegistry([definition]));
+                    services.RemoveAll<IStateStore>();
+                    services.AddSingleton<IStateStore>(
+                        new InMemoryStateStore([("tetris.dropInterval", state)]));
+                    services.RemoveAll<IEvidenceProvider>();
+                    services.AddSingleton<IEvidenceProvider>(
+                        new LocalFileEvidenceProvider(
+                            new LocalFileEvidenceProviderOptions(evidenceFile.Path)));
+                });
+        using var client = factory.CreateClient();
+        var requestBody = JsonSerializer.Serialize(
+            new
+            {
+                expectedContract = new
+                {
+                    definition.Identity.DefinitionId,
+                    definition.Identity.ContractDigest,
+                    definition.Identity.Revision
+                },
+                runtimeContext = new { },
+                runtimeTarget = new { type = "cohort", id = "new_players" },
+                inputs = new[]
+                {
+                    new
+                    {
+                        signal = new { key = "tetris.boardPressure" },
+                        value = 0.8
+                    }
+                },
+                client = new { appId = "tetris-demo", environment = "dev" }
+            },
+            RuntimeHttp.JsonOptions);
+
+        using var unavailableRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/decisions/tetris.dropInterval:decide")
+        {
+            Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
+        };
+        unavailableRequest.Headers.Add("Idempotency-Key", "evidence-recovery");
+        using var unavailable = await client.SendAsync(unavailableRequest);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        Assert.False(unavailable.Headers.Contains("Idempotency-Key-Expires-At"));
+        var problem = await unavailable.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            "required-evidence-unavailable",
+            problem.GetProperty("code").GetString());
+
+        await evidenceFile.WriteAsync(
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {
+                "strategy-test": {
+                  "evidenceQuality": 0.9,
+                  "modelUncertainty": 0.1,
+                  "sampleSize": 100
+                }
+              }
+            }
+            """);
+        using var recoveredRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/decisions/tetris.dropInterval:decide")
+        {
+            Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
+        };
+        recoveredRequest.Headers.Add("Idempotency-Key", "evidence-recovery");
+        using var recovered = await client.SendAsync(recoveredRequest);
+
+        Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
+        Assert.True(recovered.Headers.Contains("Idempotency-Key-Expires-At"));
+    }
+
+    [Theory]
+    [InlineData("timeout", true, "service-unavailable")]
+    [InlineData("io", false, "unclassified-io-failure")]
+    public async Task DataPlane_DecideAvailabilityFailurePreservesFallbackRules(
+        string failureKind,
+        bool clientFallbackEligible,
+        string fallbackReason)
     {
         using var registryFile = new TestRegistryFile();
         await using var factory =
@@ -318,36 +427,128 @@ public sealed class HostBoundaryTests
                 services =>
                 {
                     services.RemoveAll<IAuditSink>();
-                    services.AddSingleton<IAuditSink, FailingAuditSink>();
+                    services.AddSingleton<IAuditSink>(
+                        new ThrowingAuditSink(
+                            AvailabilityException(failureKind)));
                 });
         using var client = factory.CreateClient();
         var identity = LocalRegistryHosting.DefaultDefinitions()
             .Single(definition => definition.LifecycleStatus == "active")
             .Identity;
+        var correlationId = $"decide-{failureKind}-correlation";
 
-        using var response = await client.PostAsJsonAsync(
-            "/v1/decisions/tetris.dropInterval:decide",
-            new
-            {
-                expectedContract = new
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/decisions/tetris.dropInterval:decide")
+        {
+            Content = JsonContent.Create(
+                new
                 {
-                    identity.DefinitionId,
-                    identity.ContractDigest,
-                    identity.Revision
-                },
-                runtimeContext = new { },
-                runtimeTarget = new { type = "cohort", id = "new_players" },
-                client = new { appId = "tetris-demo", environment = "dev" }
-            });
+                    expectedContract = new
+                    {
+                        identity.DefinitionId,
+                        identity.ContractDigest,
+                        identity.Revision
+                    },
+                    runtimeContext = new { },
+                    runtimeTarget = new { type = "cohort", id = "new_players" },
+                    client = new { appId = "tetris-demo", environment = "dev" }
+                })
+        };
+        request.Headers.Add("X-Flaggo-Correlation-Id", correlationId);
+
+        using var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(
+            correlationId,
+            Assert.Single(response.Headers.GetValues("X-Flaggo-Correlation-Id")));
+        Assert.Equal(
+            "1",
+            Assert.Single(response.Headers.GetValues("Retry-After")));
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            correlationId,
+            problem.GetProperty("correlationId").GetString());
+        Assert.Equal(1, problem.GetProperty("retryAfterSeconds").GetInt32());
+        Assert.Equal(
+            clientFallbackEligible,
+            problem.GetProperty("clientFallback").GetProperty("eligible").GetBoolean());
+        Assert.Equal(
+            fallbackReason,
+            problem.GetProperty("clientFallback").GetProperty("reason").GetString());
+    }
+
+    [Theory]
+    [InlineData("timeout", "service-unavailable")]
+    [InlineData("io", "unclassified-io-failure")]
+    public async Task DataPlane_ExposureAvailabilityFailureNeverAllowsFallback(
+        string failureKind,
+        string fallbackReason)
+    {
+        using var registryFile = new TestRegistryFile();
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(
+                registryFile.Path,
+                services =>
+                {
+                    services.RemoveAll<IExposureAuditSink>();
+                    services.AddSingleton<IExposureAuditSink>(
+                        new ThrowingExposureAuditSink(
+                            AvailabilityException(failureKind)));
+                });
+        using var client = factory.CreateClient();
+        var exposures = factory.Services.GetRequiredService<IExposureStore>();
+        await exposures.CreatePendingAsync(
+            "decision-operation-aware",
+            "confirm-operation-aware",
+            Snapshot(),
+            CancellationToken.None);
+        var correlationId = $"exposure-{failureKind}-correlation";
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/exposures/decision-operation-aware:confirm")
+        {
+            Content = JsonContent.Create(
+                new
+                {
+                    confirmToken = "confirm-operation-aware"
+                })
+        };
+        request.Headers.Add("X-Flaggo-Correlation-Id", correlationId);
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(
+            correlationId,
+            Assert.Single(response.Headers.GetValues("X-Flaggo-Correlation-Id")));
+        Assert.Equal(
+            "1",
+            Assert.Single(response.Headers.GetValues("Retry-After")));
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            correlationId,
+            problem.GetProperty("correlationId").GetString());
+        Assert.Equal(1, problem.GetProperty("retryAfterSeconds").GetInt32());
         Assert.False(
             problem.GetProperty("clientFallback").GetProperty("eligible").GetBoolean());
         Assert.Equal(
-            "unclassified-io-failure",
+            fallbackReason,
             problem.GetProperty("clientFallback").GetProperty("reason").GetString());
+        Assert.Null(
+            Assert.IsType<InMemoryExposureStore>(exposures)
+                .Find("decision-operation-aware")!
+                .Confirmation);
     }
+
+    private static Exception AvailabilityException(string failureKind) =>
+        failureKind switch
+        {
+            "timeout" => new TimeoutException("dependency timed out"),
+            "io" => new IOException("dependency unavailable"),
+            _ => throw new ArgumentOutOfRangeException(nameof(failureKind))
+        };
 
     private static DecisionSnapshot Snapshot() => new(
         "tetris-demo",
@@ -409,12 +610,21 @@ public sealed class HostBoundaryTests
         }
     }
 
-    private sealed class FailingAuditSink : IAuditSink
+    private sealed class ThrowingAuditSink(Exception error) : IAuditSink
     {
         public Task RecordDecisionAsync(
             DecisionAuditRecord record,
             CancellationToken cancellationToken) =>
-            Task.FromException(new IOException("audit unavailable"));
+            Task.FromException(error);
+    }
+
+    private sealed class ThrowingExposureAuditSink(Exception error) :
+        IExposureAuditSink
+    {
+        public Task RecordExposureAsync(
+            ExposureAuditRecord record,
+            CancellationToken cancellationToken) =>
+            Task.FromException(error);
     }
 
     private sealed class FailOnceExposureAuditSink : IExposureAuditSink

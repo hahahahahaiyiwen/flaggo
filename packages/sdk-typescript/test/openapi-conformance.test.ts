@@ -271,6 +271,20 @@ describe("frozen OpenAPI SDK compatibility", () => {
       "200",
       "../schemas/runtime-models-v1.schema.json#/$defs/ExposureConfirmationResult",
     );
+    expect(confirm.responses["500"]?.$ref).toBe(
+      "#/components/responses/Problem",
+    );
+    expect(confirm.responses["503"]?.$ref).toBe(
+      "#/components/responses/ProblemWithRetryAfter",
+    );
+    expect(
+      runtime.components.responses.ProblemWithRetryAfter!.headers,
+    ).toMatchObject({
+      "X-Flaggo-Correlation-Id": {
+        $ref: "#/components/headers/CorrelationId",
+      },
+      "Retry-After": { $ref: "#/components/headers/RetryAfter" },
+    });
     expectRequired(runtimeModels.$defs!.ExposureConfirmationRequest!, [
       "confirmToken",
     ]);

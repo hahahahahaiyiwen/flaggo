@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  bundleDigest,
   contractDigest,
   normalizeBundle,
   type DecisionDefinitionBundle,
@@ -25,8 +26,20 @@ describe("Phase 3 Tetris artifact", () => {
     const normalized = normalizeBundle(bundle);
     const definition = normalized.definitions[0] as NumberDecisionDefinition;
 
+    // Intentional artifact changes must pass the frozen-schema conformance gate,
+    // then update both SDK-computed identity pins in the same reviewed change.
+    expect(bundleDigest(bundle)).toBe(
+      "sha256:24c061cdab45dcc28420945c6b5008f327886ce85bb3e41bb67c62a801d8a6c8",
+    );
+    expect(contractDigest(definition)).toBe(
+      "sha256:e801be125f7e6b6406feb89092117cdbd2016975a38ee8b03421f5640229d6a6",
+    );
     expect(definition.key).toBe("tetris.dropInterval");
     expect(definition).not.toHaveProperty("requestedApproval");
+    expect(bundle.definitions[0]).not.toHaveProperty("contractDigest");
+    expect(bundle.definitions[0]).not.toHaveProperty("revision");
+    expect(bundle.signals?.every((signal) => signal.schemaDigest === undefined))
+      .toBe(true);
     expect(definition.actionSpace).toEqual({
       type: "number",
       min: 200,
@@ -50,9 +63,6 @@ describe("Phase 3 Tetris artifact", () => {
         { kind: "number-bounds", min: 200, max: 1500 },
       ],
     });
-    expect(contractDigest(definition)).not.toBe(
-      "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
-    );
     expect(
       normalized.signals?.find(({ key }) => key === "tetris.outcomeObserved"),
     ).toMatchObject({

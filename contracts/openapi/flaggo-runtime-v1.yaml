@@ -68,7 +68,7 @@
         "tags": ["exposure"],
         "operationId": "confirmExposure",
         "summary": "Confirm that the application applied or rendered a decision.",
-        "description": "Creates exposure identity only after application. Retrying the same valid confirmation returns the same exposureId. Invalid or mismatched capability returns 404 to avoid a token-validity oracle.",
+        "description": "Creates exposure identity only after application. Retrying the same valid confirmation returns the same exposureId. Invalid or mismatched capability returns 404 to avoid a token-validity oracle. Durable audit or infrastructure failure returns Problem Details without committing confirmation; a retryable 503 carries Retry-After but does not authorize SDK-local fallback.",
         "security": [{ "oauth2": ["polari.exposures:confirm"] }],
         "parameters": [
           { "$ref": "#/components/parameters/DecisionIdPath" },
@@ -97,7 +97,9 @@
           "404": { "$ref": "#/components/responses/Problem" },
           "409": { "$ref": "#/components/responses/Problem" },
           "415": { "$ref": "#/components/responses/Problem" },
-          "422": { "$ref": "#/components/responses/Problem" }
+          "422": { "$ref": "#/components/responses/Problem" },
+          "500": { "$ref": "#/components/responses/Problem" },
+          "503": { "$ref": "#/components/responses/ProblemWithRetryAfter" }
         }
       }
     },

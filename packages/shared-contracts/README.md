@@ -21,3 +21,12 @@ semantic contract digests. Canonical behavior is regression-tested against
 every frozen canonicalization and semantic-digest vector. Numbers that would
 change mathematical value when converted to the RFC 8785 IEEE-754 domain are
 rejected, preventing distinct inputs from collapsing to one digest.
+
+The package also owns the strict JSON structural validator shared by HTTP and
+local persistence adapters. It rejects malformed or trailing data and
+case-sensitive duplicate member names independently within every object before
+typed deserialization.
+
+The frozen v1 cooldown contract remains any finite nonnegative number.
+Overflow safety belongs to elapsed-time policy evaluation rather than a new
+shared contract ceiling or persisted-state timestamp bound.

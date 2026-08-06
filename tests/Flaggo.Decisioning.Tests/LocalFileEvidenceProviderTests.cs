@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Flaggo.Evidence;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
@@ -124,6 +125,168 @@ public sealed class LocalFileEvidenceProviderTests
         Assert.False(await provider.IsAvailableAsync(CancellationToken.None));
     }
 
+    public static TheoryData<string, string> DuplicatePropertyDocuments()
+    {
+        var cases = new TheoryData<string, string>();
+        cases.Add(
+            "root",
+            """
+            {
+              "version": 1,
+              "version": 1,
+              "evidenceByStrategy": {}
+            }
+            """);
+        cases.Add(
+            "evidence map",
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {
+                "strategy": { "evidenceQuality": 0.8 },
+                "strategy": { "evidenceQuality": 0.9 }
+              }
+            }
+            """);
+        cases.Add(
+            "evidence entry",
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {
+                "strategy": {
+                  "evidenceQuality": 0.8,
+                  "evidenceQuality": 0.9
+                }
+              }
+            }
+            """);
+        cases.Add(
+            "escaped equivalent evidence entry",
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {
+                "strategy": {
+                  "evidenceQuality": 0.8,
+                  "\u0065videnceQuality": 0.9
+                }
+              }
+            }
+            """);
+        return cases;
+    }
+
+    [Theory]
+    [MemberData(nameof(DuplicatePropertyDocuments))]
+    public async Task DuplicateJsonProperty_FailsBeforeEvidenceDeserialization(
+        string location,
+        string document)
+    {
+        _ = location;
+        using var file = new TestJsonFile("evidence-duplicate-property");
+        await file.WriteAsync(document);
+        var provider = new LocalFileEvidenceProvider(
+            new LocalFileEvidenceProviderOptions(file.Path));
+
+        var error = await Assert.ThrowsAsync<EvidenceUnavailableException>(
+            () => provider.GetEvidenceAsync(
+                Request("strategy"),
+                CancellationToken.None));
+
+        var jsonError = Assert.IsType<System.Text.Json.JsonException>(
+            error.InnerException);
+        Assert.Contains("Duplicate JSON property", jsonError.Message);
+        Assert.False(await provider.IsAvailableAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task TrailingJsonData_FailsBeforeEvidenceDeserialization()
+    {
+        using var file = new TestJsonFile("evidence-trailing-data");
+        await file.WriteAsync(
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {}
+            }
+            {}
+            """);
+        var provider = new LocalFileEvidenceProvider(
+            new LocalFileEvidenceProviderOptions(file.Path));
+
+        var error = await Assert.ThrowsAsync<EvidenceUnavailableException>(
+            () => provider.GetEvidenceAsync(
+                Request("strategy"),
+                CancellationToken.None));
+
+        Assert.IsAssignableFrom<System.Text.Json.JsonException>(
+            error.InnerException);
+        Assert.False(await provider.IsAvailableAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SamePropertyNamesInSiblingEvidenceEntries_AreAccepted()
+    {
+        using var file = new TestJsonFile("evidence-sibling-properties");
+        await file.WriteAsync(
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {
+                "strategy-a": {
+                  "evidenceQuality": 0.8,
+                  "details": { "source": "fixture-a" }
+                },
+                "strategy-b": {
+                  "evidenceQuality": 0.9,
+                  "details": { "source": "fixture-b" }
+                }
+              }
+            }
+            """);
+        var provider = new LocalFileEvidenceProvider(
+            new LocalFileEvidenceProviderOptions(file.Path));
+
+        var evidence = await provider.GetEvidenceAsync(
+            Request("strategy-b"),
+            CancellationToken.None);
+
+        Assert.Equal(0.9, evidence!.EvidenceQuality);
+        Assert.True(await provider.IsAvailableAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PropertyNamesThatDifferOnlyByCase_AreDistinct()
+    {
+        using var file = new TestJsonFile("evidence-property-case");
+        await file.WriteAsync(
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {
+                "strategy": {
+                  "evidenceQuality": 0.8,
+                  "details": {
+                    "source": "lower",
+                    "Source": "upper"
+                  }
+                }
+              }
+            }
+            """);
+        var provider = new LocalFileEvidenceProvider(
+            new LocalFileEvidenceProviderOptions(file.Path));
+
+        var evidence = await provider.GetEvidenceAsync(
+            Request("strategy"),
+            CancellationToken.None);
+
+        Assert.Equal(2, evidence!.Details!.Count);
+        Assert.Equal("lower", evidence.Details["source"].GetString());
+        Assert.Equal("upper", evidence.Details["Source"].GetString());
+    }
+
     [Fact]
     public async Task MissingEvidenceFile_FailsThroughEvidenceBoundary()
     {
@@ -161,6 +324,57 @@ public sealed class LocalFileEvidenceProviderTests
             Directory.Delete(file.Path);
         }
     }
+
+    [Fact]
+    public async Task SnapshotLease_BlocksInPlaceRewriteAndAllowsAtomicReplacement()
+    {
+        using var file = new TestJsonFile("evidence-snapshot");
+        using var replacement = new TestJsonFile("evidence-snapshot-replacement");
+        await file.WriteAsync(EvidenceDocument(0.8));
+        await replacement.WriteAsync(EvidenceDocument(0.9));
+        var provider = new LocalFileEvidenceProvider(
+            new LocalFileEvidenceProviderOptions(file.Path));
+
+        await using var snapshot =
+            LocalFileEvidenceProvider.OpenSnapshotRead(file.Path);
+        Assert.Throws<IOException>(
+            () =>
+            {
+                using var writer = new FileStream(
+                    file.Path,
+                    FileMode.Truncate,
+                    FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete);
+            });
+
+        File.Replace(replacement.Path, file.Path, destinationBackupFileName: null);
+        using var memory = new MemoryStream();
+        await snapshot.CopyToAsync(memory);
+        using var original = JsonDocument.Parse(memory.ToArray());
+        Assert.Equal(
+            0.8,
+            original.RootElement
+                .GetProperty("evidenceByStrategy")
+                .GetProperty("strategy")
+                .GetProperty("evidenceQuality")
+                .GetDouble());
+
+        var current = await provider.GetEvidenceAsync(
+            Request("strategy"),
+            CancellationToken.None);
+        Assert.Equal(0.9, current!.EvidenceQuality);
+    }
+
+    private static string EvidenceDocument(double evidenceQuality) =>
+        JsonSerializer.Serialize(
+            new
+            {
+                version = 1,
+                evidenceByStrategy = new Dictionary<string, object>
+                {
+                    ["strategy"] = new { evidenceQuality }
+                }
+            });
 
     private static DecisionEvidenceRequest Request(string strategyId) => new(
         new RegisteredDecisionDefinition(

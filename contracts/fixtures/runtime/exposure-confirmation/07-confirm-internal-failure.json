@@ -1,0 +1,36 @@
+{
+  "name": "exposure-confirm-internal-failure",
+  "scenario": 12,
+  "invariant": "An unexpected exposure confirmation infrastructure failure returns 500 internal-error with correlation metadata and no SDK-local fallback eligibility.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/exposures/decision-123:confirm",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-exposure-internal-error"
+    },
+    "body": {
+      "confirmToken": "confirm-abc",
+      "appliedAt": "2026-07-30T18:30:00Z"
+    }
+  },
+  "expected": {
+    "status": 500,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-exposure-internal-error"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/internal-error",
+      "title": "Internal error",
+      "status": 500,
+      "code": "internal-error",
+      "instance": "/v1/exposures/decision-123:confirm",
+      "correlationId": "srv-exposure-internal-error",
+      "detail": "The data plane encountered an unexpected error."
+    }
+  }
+}

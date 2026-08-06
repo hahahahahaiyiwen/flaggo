@@ -57,18 +57,14 @@ public sealed class LocalFileEvidenceProvider(
     {
         try
         {
-            await using var stream = new FileStream(
-                _filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete,
-                4096,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var document =
-                await JsonSerializer.DeserializeAsync<PersistedEvidenceDocument>(
-                    stream,
-                    JsonOptions,
-                    cancellationToken);
+            await using var stream = OpenSnapshotRead(_filePath);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory, cancellationToken);
+            var json = memory.ToArray();
+            StrictJson.Validate(json);
+            var document = JsonSerializer.Deserialize<PersistedEvidenceDocument>(
+                json,
+                JsonOptions);
             if (document is null ||
                 document.Version != FormatVersion ||
                 document.EvidenceByStrategy is null)
@@ -129,6 +125,15 @@ public sealed class LocalFileEvidenceProvider(
                 error);
         }
     }
+
+    internal static FileStream OpenSnapshotRead(string filePath) =>
+        new(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            4096,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
 
     private static bool IsProbability(double value) =>
         double.IsFinite(value) && value is >= 0 and <= 1;

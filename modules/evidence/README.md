@@ -25,6 +25,20 @@ required-evidence and client-fallback policy; unrelated I/O failures are not
 reclassified as evidence failures. Persisted format version and
 `evidenceQuality` are required scalars; their presence is validated separately
 so omitted values are rejected without rejecting legitimate zero values.
+The complete file is structurally validated before typed deserialization:
+malformed or trailing data and case-sensitive duplicate members in the root,
+strategy map, snapshots, or nested details are rejected, while separate
+sibling snapshots may use the same member names.
+Each reload holds a read snapshot that shares reads and deletion but denies
+in-place writes, preventing cooperating writers from truncating or rewriting
+bytes while they are copied on Windows and Linux. Writers must create and
+fully flush a sibling temporary file, close it, then atomically replace the
+configured path; replacement remains allowed while an older snapshot is open,
+and the next decision observes the replacement. .NET writers can use
+`File.Replace` on the same volume after closing the replacement stream.
+Native Unix writers must
+follow this atomic-replacement protocol because file sharing is advisory
+outside cooperating runtimes.
 
 Update this document when signal ownership, aggregation, or quality semantics
 change.

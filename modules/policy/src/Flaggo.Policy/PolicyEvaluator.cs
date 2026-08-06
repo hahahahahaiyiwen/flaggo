@@ -90,10 +90,18 @@ public sealed class DefaultPolicyEvaluator(TimeProvider timeProvider) : IPolicyE
         if (policy?.CooldownSeconds is double cooldown)
         {
             applied.Add("cooldown");
-            if (request.LastChangedAt is DateTimeOffset changedAt &&
-                timeProvider.GetUtcNow() < changedAt.AddSeconds(cooldown))
+            if (!double.IsFinite(cooldown) || cooldown < 0)
             {
-                reasons.Add("cooldown_active");
+                reasons.Add("invalid_cooldown");
+            }
+            else if (request.LastChangedAt is DateTimeOffset changedAt)
+            {
+                var now = timeProvider.GetUtcNow();
+                if (changedAt > now ||
+                    (now - changedAt).TotalSeconds < cooldown)
+                {
+                    reasons.Add("cooldown_active");
+                }
             }
         }
 

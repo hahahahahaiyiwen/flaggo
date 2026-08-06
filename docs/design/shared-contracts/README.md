@@ -287,6 +287,8 @@ type CooldownConstraint = {
   seconds: number;
 };
 
+// seconds is finite and nonnegative.
+
 type EvidenceQualityConstraint = {
   kind: "min-evidence-quality";
   value: number;

@@ -107,6 +107,28 @@ public sealed class DefinitionLifecycleTests
     }
 
     [Fact]
+    public async Task ValidateAsync_AcceptsHugeFiniteCooldownFromFrozenV1()
+    {
+        var node = JsonNode.Parse(
+            FixtureBody(
+                "definition-bundle",
+                "10-validate-new-key-omitted-lineage.json").GetRawText())!.AsObject();
+        var constraints = node["definitions"]![0]!["policy"]!["constraints"]!
+            .AsArray();
+        constraints.Single(item => item!["kind"]!.GetValue<string>() == "cooldown")![
+            "seconds"] = double.MaxValue;
+        using var document = JsonDocument.Parse(node.ToJsonString());
+        var registry = new InMemoryDefinitionRegistry([]);
+
+        var result = await registry.ValidateAsync(document.RootElement);
+
+        Assert.Equal("valid", result.Status);
+        Assert.DoesNotContain(
+            result.Issues,
+            issue => issue.Code == "invalid-policy-constraint");
+    }
+
+    [Fact]
     public async Task ValidateAsync_ReportsUnknownSignalWithoutMutation()
     {
         var registry = CreateRegistry(ActiveRevision, ActiveDigest);

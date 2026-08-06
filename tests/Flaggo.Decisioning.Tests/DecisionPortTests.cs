@@ -188,6 +188,62 @@ public sealed class DecisionPortTests
     }
 
     [Fact]
+    public async Task PolicyEvaluator_AcceptsHugeFiniteCooldownWithoutOverflow()
+    {
+        var result = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MinValue,
+            double.MaxValue);
+
+        Assert.False(result.Approved);
+        Assert.Contains("cooldown_active", result.Result.Reasons);
+        Assert.DoesNotContain("invalid_cooldown", result.Result.Reasons);
+    }
+
+    [Fact]
+    public async Task PolicyEvaluator_HandlesMinimumAndMaximumTimestamps()
+    {
+        var atMaximum = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MaxValue,
+            1);
+        var elapsedFromMinimum = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MinValue,
+            1);
+
+        Assert.False(atMaximum.Approved);
+        Assert.Contains("cooldown_active", atMaximum.Result.Reasons);
+        Assert.True(elapsedFromMinimum.Approved);
+    }
+
+    [Fact]
+    public async Task PolicyEvaluator_BlocksHugeValidCooldown()
+    {
+        var result = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MinValue,
+            double.MaxValue);
+
+        Assert.False(result.Approved);
+        Assert.Contains("cooldown_active", result.Result.Reasons);
+    }
+
+    [Fact]
+    public async Task PolicyEvaluator_BlocksFutureTimestampWithZeroCooldown()
+    {
+        var now = new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await EvaluateCooldownAsync(
+            now,
+            now.AddTicks(1),
+            0);
+
+        Assert.False(result.Approved);
+        Assert.Contains("cooldown_active", result.Result.Reasons);
+    }
+
+    [Fact]
     public async Task TargetResolver_ProducesDeterministicFallbackPlan()
     {
         var resolver = new DefaultTargetResolver(
@@ -362,9 +418,26 @@ public sealed class DecisionPortTests
                 ["qualitySource"] = JsonSerializer.SerializeToElement("test")
             });
 
-    private sealed class FixedTimeProvider : TimeProvider
+    private static Task<PolicyDecision> EvaluateCooldownAsync(
+        DateTimeOffset now,
+        DateTimeOffset changedAt,
+        double cooldown) =>
+        new DefaultPolicyEvaluator(new FixedTimeProvider(now)).EvaluateAsync(
+            new PolicyEvaluationRequest(
+                JsonSerializer.SerializeToElement(800),
+                JsonSerializer.SerializeToElement(800),
+                null,
+                new DecisionPolicyContract(CooldownSeconds: cooldown),
+                null,
+                changedAt,
+                null),
+            CancellationToken.None);
+
+    private sealed class FixedTimeProvider(DateTimeOffset? utcNow = null) :
+        TimeProvider
     {
         public override DateTimeOffset GetUtcNow() =>
-            new(2026, 7, 31, 18, 0, 0, TimeSpan.Zero);
+            utcNow ??
+            new DateTimeOffset(2026, 7, 31, 18, 0, 0, TimeSpan.Zero);
     }
 }

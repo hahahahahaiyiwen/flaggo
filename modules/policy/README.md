@@ -15,6 +15,12 @@ ports.
 pause, bounds, step, maximum delta, cooldown, evidence quality, model
 uncertainty, expected outcome, and sample-size constraints. Reasoning receives
 the evaluator through constructor injection.
+Cooldown accepts every finite nonnegative value allowed by the frozen v1
+contract. Invalid negative or nonfinite values use the stable
+`invalid_cooldown` reason. Evaluation compares elapsed time instead of adding
+seconds to persisted timestamps, so huge finite cooldowns cannot overflow. A
+future `LastChangedAt` fails closed as `cooldown_active`, including when the
+configured cooldown is zero.
 
 Update this document when policy composition, constraints, or fallback
 authority changes.

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -29,16 +30,21 @@ public sealed partial class LocalFileStateStore(
         CancellationToken cancellationToken)
     {
         var states = await LoadAsync(cancellationToken);
-        return resolutionTargets
-            .Select(target => states.FirstOrDefault(item =>
-                string.Equals(item.DecisionKey, decisionKey, StringComparison.Ordinal) &&
-                string.Equals(
-                    item.State.DefinitionId,
-                    definitionId,
-                    StringComparison.Ordinal) &&
-                string.Equals(item.State.Revision, revision, StringComparison.Ordinal) &&
-                TargetsEqual(item.State.ControlTarget, target)).State)
-            .FirstOrDefault(candidate => candidate is not null);
+        foreach (var target in resolutionTargets)
+        {
+            if (states.TryGetValue(
+                    StateIdentity.Create(
+                        decisionKey,
+                        definitionId,
+                        revision,
+                        target),
+                    out var state))
+            {
+                return state;
+            }
+        }
+
+        return null;
     }
 
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
@@ -58,22 +64,19 @@ public sealed partial class LocalFileStateStore(
         }
     }
 
-    private async Task<IReadOnlyList<(string DecisionKey, GovernedDecisionState State)>>
+    private async Task<IReadOnlyDictionary<StateIdentity, GovernedDecisionState>>
         LoadAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await using var stream = new FileStream(
-                _filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete,
-                4096,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var document = await JsonSerializer.DeserializeAsync<PersistedStateDocument>(
-                stream,
-                JsonOptions,
-                cancellationToken);
+            await using var stream = OpenSnapshotRead(_filePath);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory, cancellationToken);
+            var json = memory.ToArray();
+            StrictJson.Validate(json);
+            var document = JsonSerializer.Deserialize<PersistedStateDocument>(
+                json,
+                JsonOptions);
             if (document is null)
             {
                 throw new InvalidDataException("The local governed-state file is empty.");
@@ -89,7 +92,16 @@ public sealed partial class LocalFileStateStore(
         }
     }
 
-    private static IReadOnlyList<(string DecisionKey, GovernedDecisionState State)>
+    internal static FileStream OpenSnapshotRead(string filePath) =>
+        new(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            4096,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+    private static IReadOnlyDictionary<StateIdentity, GovernedDecisionState>
         ValidateAndMap(PersistedStateDocument document)
     {
         if (document.Version != FormatVersion || document.States is null)
@@ -98,8 +110,7 @@ public sealed partial class LocalFileStateStore(
                 $"The local governed-state file must use version {FormatVersion}.");
         }
 
-        var states = new List<(string DecisionKey, GovernedDecisionState State)>();
-        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var states = new Dictionary<StateIdentity, GovernedDecisionState>();
         foreach (var persisted in document.States)
         {
             if (persisted is null ||
@@ -118,30 +129,27 @@ public sealed partial class LocalFileStateStore(
             var controlTarget = ValidateAndMapTarget(persisted.ControlTarget);
             var numericRule = ValidateAndMapNumericRule(persisted.NumericRule);
             ValidateMode(persisted, value, numericRule);
-            var targetIdentity = controlTarget is null
-                ? "global:null"
-                : $"{controlTarget.Type}:{controlTarget.Id}";
-            if (!keys.Add(
-                    $"{persisted.DecisionKey}\n{persisted.DefinitionId}\n" +
-                    $"{persisted.Revision}\n{targetIdentity}"))
+            var lastChangedAt = ParseLastChangedAt(persisted.LastChangedAt);
+            var identity = StateIdentity.Create(
+                persisted.DecisionKey,
+                persisted.DefinitionId,
+                persisted.Revision,
+                controlTarget);
+            var state = new GovernedDecisionState(
+                persisted.DefinitionId,
+                persisted.Revision,
+                persisted.ContractDigest!,
+                value.Clone(),
+                controlTarget,
+                persisted.Mode,
+                persisted.StrategyId,
+                numericRule,
+                lastChangedAt);
+            if (!states.TryAdd(identity, state))
             {
                 throw new InvalidDataException(
                     "The local governed-state file contains a duplicate state identity.");
             }
-
-            states.Add(
-                (
-                    persisted.DecisionKey,
-                    new GovernedDecisionState(
-                        persisted.DefinitionId,
-                        persisted.Revision,
-                        persisted.ContractDigest!,
-                        value.Clone(),
-                        controlTarget,
-                        persisted.Mode,
-                        persisted.StrategyId,
-                        numericRule,
-                        persisted.LastChangedAt)));
         }
 
         return states;
@@ -166,8 +174,7 @@ public sealed partial class LocalFileStateStore(
                 if (string.IsNullOrWhiteSpace(state.StrategyId) ||
                     numericRule is null ||
                     value.ValueKind != JsonValueKind.Number ||
-                    !value.TryGetDouble(out var currentValue) ||
-                    !double.IsFinite(currentValue))
+                    !CanonicalJson.IsIeee754CompatibleNumber(value))
                 {
                     throw new InvalidDataException(
                         "A strategy state requires a strategy id, numeric current value, and numeric rule.");
@@ -211,12 +218,9 @@ public sealed partial class LocalFileStateStore(
         }
 
         if (string.IsNullOrWhiteSpace(rule.InputSignalKey) ||
-            rule.Threshold is not double threshold ||
-            !double.IsFinite(threshold) ||
-            rule.ValueAtOrAbove is not double valueAtOrAbove ||
-            !double.IsFinite(valueAtOrAbove) ||
-            rule.ValueBelow is not double valueBelow ||
-            !double.IsFinite(valueBelow))
+            !TryGetCanonicalDouble(rule.Threshold, out var threshold) ||
+            !TryGetCanonicalDouble(rule.ValueAtOrAbove, out var valueAtOrAbove) ||
+            !TryGetCanonicalDouble(rule.ValueBelow, out var valueBelow))
         {
             throw new InvalidDataException(
                 "A local numeric rule contains invalid scalar configuration.");
@@ -240,13 +244,10 @@ public sealed partial class LocalFileStateStore(
             if (input is null ||
                 string.IsNullOrWhiteSpace(input.SignalKey) ||
                 !keys.Add(input.SignalKey) ||
-                input.Minimum is not double minimum ||
-                !double.IsFinite(minimum) ||
-                input.Maximum is not double maximum ||
-                !double.IsFinite(maximum) ||
+                !TryGetCanonicalDouble(input.Minimum, out var minimum) ||
+                !TryGetCanonicalDouble(input.Maximum, out var maximum) ||
                 maximum <= minimum ||
-                input.Weight is not double weight ||
-                !double.IsFinite(weight) ||
+                !TryGetCanonicalDouble(input.Weight, out var weight) ||
                 weight < 0)
             {
                 throw new InvalidDataException(
@@ -278,18 +279,108 @@ public sealed partial class LocalFileStateStore(
             JsonValueKind.False or
             JsonValueKind.String) ||
         value.ValueKind == JsonValueKind.Number &&
-        value.TryGetDouble(out var number) &&
-        double.IsFinite(number);
+        CanonicalJson.IsIeee754CompatibleNumber(value);
 
-    private static bool TargetsEqual(DecisionTargetRef? left, DecisionTargetRef? right) =>
-        left is null && right is null ||
-        left is not null &&
-        right is not null &&
-        string.Equals(left.Type, right.Type, StringComparison.Ordinal) &&
-        string.Equals(left.Id, right.Id, StringComparison.Ordinal);
+    private static bool TryGetCanonicalDouble(
+        JsonElement? value,
+        out double number)
+    {
+        if (value is JsonElement element &&
+            CanonicalJson.IsIeee754CompatibleNumber(element))
+        {
+            number = element.GetDouble();
+            return true;
+        }
 
-    [GeneratedRegex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant)]
+        number = default;
+        return false;
+    }
+
+    private static DateTimeOffset? ParseLastChangedAt(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (!Rfc3339TimestampPattern().IsMatch(value) ||
+            !DateTimeOffset.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var parsed) ||
+            parsed == default)
+        {
+            throw new InvalidDataException(
+                "A local governed-state lastChangedAt must be an RFC 3339 timestamp with an explicit offset.");
+        }
+
+        return parsed.ToUniversalTime();
+    }
+
+    [GeneratedRegex("\\Asha256:[0-9a-f]{64}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex Sha256DigestPattern();
+
+    [GeneratedRegex(
+        "\\A\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,7})?(?:Z|[+-]\\d{2}:\\d{2})\\z",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex Rfc3339TimestampPattern();
+
+    private readonly struct StateIdentity : IEquatable<StateIdentity>
+    {
+        private StateIdentity(
+            string decisionKey,
+            string definitionId,
+            string revision,
+            string? targetType,
+            string? targetId)
+        {
+            DecisionKey = decisionKey;
+            DefinitionId = definitionId;
+            Revision = revision;
+            TargetType = targetType;
+            TargetId = targetId;
+        }
+
+        private string DecisionKey { get; }
+        private string DefinitionId { get; }
+        private string Revision { get; }
+        private string? TargetType { get; }
+        private string? TargetId { get; }
+
+        public static StateIdentity Create(
+            string decisionKey,
+            string definitionId,
+            string revision,
+            DecisionTargetRef? target) =>
+            new(
+                decisionKey,
+                definitionId,
+                revision,
+                target?.Type,
+                target?.Id);
+
+        public bool Equals(StateIdentity other) =>
+            string.Equals(DecisionKey, other.DecisionKey, StringComparison.Ordinal) &&
+            string.Equals(DefinitionId, other.DefinitionId, StringComparison.Ordinal) &&
+            string.Equals(Revision, other.Revision, StringComparison.Ordinal) &&
+            string.Equals(TargetType, other.TargetType, StringComparison.Ordinal) &&
+            string.Equals(TargetId, other.TargetId, StringComparison.Ordinal);
+
+        public override bool Equals(object? obj) =>
+            obj is StateIdentity other && Equals(other);
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            hash.Add(DecisionKey, StringComparer.Ordinal);
+            hash.Add(DefinitionId, StringComparer.Ordinal);
+            hash.Add(Revision, StringComparer.Ordinal);
+            hash.Add(TargetType, StringComparer.Ordinal);
+            hash.Add(TargetId, StringComparer.Ordinal);
+            return hash.ToHashCode();
+        }
+    }
 
     private sealed record PersistedStateDocument(
         int? Version,
@@ -305,7 +396,7 @@ public sealed partial class LocalFileStateStore(
         string? Mode,
         string? StrategyId,
         PersistedNumericRule? NumericRule,
-        DateTimeOffset? LastChangedAt);
+        string? LastChangedAt);
 
     private sealed record PersistedDecisionTarget(
         string? Type,
@@ -313,14 +404,14 @@ public sealed partial class LocalFileStateStore(
 
     private sealed record PersistedNumericRule(
         string? InputSignalKey,
-        double? Threshold,
-        double? ValueAtOrAbove,
-        double? ValueBelow,
+        JsonElement? Threshold,
+        JsonElement? ValueAtOrAbove,
+        JsonElement? ValueBelow,
         IReadOnlyList<PersistedNumericRuleInput?>? WeightedInputs);
 
     private sealed record PersistedNumericRuleInput(
         string? SignalKey,
-        double? Minimum,
-        double? Maximum,
-        double? Weight);
+        JsonElement? Minimum,
+        JsonElement? Maximum,
+        JsonElement? Weight);
 }

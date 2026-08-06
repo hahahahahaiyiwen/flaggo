@@ -87,16 +87,20 @@ builder.Services.AddSingleton<IDefinitionRegistry>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IRegistryHealth>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
+var bootstrapGeneration =
+    BootstrapGenerationResolver.ResolveOptional(builder.Configuration);
 LocalRuntimeAdapterHosting.AddStateAdapter(
     builder.Services,
     builder.Configuration,
-    contractIdentity);
+    contractIdentity,
+    bootstrapGeneration);
 LocalRuntimeAdapterHosting.AddAuditAdapter(
     builder.Services,
     builder.Configuration);
 LocalRuntimeAdapterHosting.AddEvidenceAdapter(
     builder.Services,
-    builder.Configuration);
+    builder.Configuration,
+    bootstrapGeneration);
 builder.Services.AddSingleton<IRuntimeIdGenerator, GuidRuntimeIdGenerator>();
 builder.Services.AddSingleton<IDecideIdempotencyStore>(provider =>
     new InMemoryDecideIdempotencyStore(provider.GetRequiredService<TimeProvider>()));
@@ -140,8 +144,11 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     var exception = context.Features
         .Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()
         ?.Error;
+    var operation = DataPlaneOperationMetadata.Get(context);
     var availabilityFailure = exception is IOException or TimeoutException;
-    var clientFallbackEligible = exception is TimeoutException;
+    var clientFallbackEligible =
+        operation == DataPlaneOperation.Decide &&
+        exception is TimeoutException;
     var status = availabilityFailure ? 503 : 500;
     var code = availabilityFailure ? "service-unavailable" : "internal-error";
     var detail = availabilityFailure
@@ -163,13 +170,19 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
         clientFallback: availabilityFailure
             ? new ClientFallbackEligibility(
                 clientFallbackEligible,
-                clientFallbackEligible
+                exception is TimeoutException
                     ? "service-unavailable"
                     : "unclassified-io-failure")
             : null);
     await context.Response.WriteAsync(
         JsonSerializer.Serialize(problem, RuntimeHttp.JsonOptions));
 }));
+app.UseRouting();
+app.Use(async (context, next) =>
+{
+    DataPlaneOperationMetadata.Capture(context);
+    await next(context);
+});
 app.UseStatusCodePages(async statusContext =>
 {
     var context = statusContext.HttpContext;
@@ -269,8 +282,12 @@ app.MapPost(
                     RuntimeHttp.Fingerprint(parsed.Body, decisionKey),
                     token => EvaluateDecisionAsync(decisionKey, request, decisionService, token),
                     cancellationToken);
-                context.Response.Headers["Idempotency-Key-Expires-At"] =
-                    retained.ExpiresAt.UtcDateTime.ToString("O");
+                if (retained.ExpiresAt is { } expiresAt)
+                {
+                    context.Response.Headers["Idempotency-Key-Expires-At"] =
+                        expiresAt.UtcDateTime.ToString("O");
+                }
+
                 return RenderOutcome(context, retained.Outcome);
             }
             catch (IdempotencyConflictException)
@@ -306,7 +323,9 @@ app.MapPost(
                         "Numeric request values must be finite IEEE-754 values."));
             }
         })
-    .RequireAuthorization("Decide");
+    .RequireAuthorization("Decide")
+    .WithMetadata(
+        new DataPlaneOperationMetadata(DataPlaneOperation.Decide));
 
 app.MapPost(
         "/v1/exposures/{decisionId}:confirm",
@@ -369,7 +388,7 @@ app.MapPost(
                     var validTimestamp =
                         System.Text.RegularExpressions.Regex.IsMatch(
                             request.AppliedAt,
-                            "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$",
+                            "\\A\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z\\z",
                             System.Text.RegularExpressions.RegexOptions.CultureInvariant) &&
                         DateTimeOffset.TryParse(
                             request.AppliedAt,
@@ -420,7 +439,10 @@ app.MapPost(
                         "The decision was already confirmed with a different observation."));
             }
         })
-    .RequireAuthorization("ConfirmExposure");
+    .RequireAuthorization("ConfirmExposure")
+    .WithMetadata(
+        new DataPlaneOperationMetadata(
+            DataPlaneOperation.ExposureConfirmation));
 
 app.MapGet(
     "/health/live",
@@ -567,4 +589,31 @@ static IResult RenderOutcome(HttpContext context, DecideTerminalOutcome outcome)
 
 public partial class Program
 {
+}
+
+internal enum DataPlaneOperation
+{
+    Decide,
+    ExposureConfirmation
+}
+
+internal sealed record DataPlaneOperationMetadata(DataPlaneOperation Operation)
+{
+    private static readonly object ItemKey = new();
+
+    public static void Capture(HttpContext context)
+    {
+        var metadata = context.GetEndpoint()?
+            .Metadata.GetMetadata<DataPlaneOperationMetadata>();
+        if (metadata is not null)
+        {
+            context.Items[ItemKey] = metadata.Operation;
+        }
+    }
+
+    public static DataPlaneOperation? Get(HttpContext context) =>
+        context.Items.TryGetValue(ItemKey, out var value) &&
+        value is DataPlaneOperation operation
+            ? operation
+            : null;
 }

@@ -2,7 +2,7 @@
   "$schema-note": "Index of Phase 1 golden fixtures. Each case references a fixture file and the required scenario numbers it covers.",
   "version": "1",
   "generatedFor": "Phase 1 API contract freeze",
-  "totalCases": 69,
+  "totalCases": 71,
   "requiredScenarioCount": 43,
   "coveredScenarios": [
     1,
@@ -724,6 +724,38 @@
       "sdkLocal": false,
       "schemaNegative": false,
       "invariant": "Invalid appliedAt or clock skew beyond accepted bounds returns 422 invalid-applied-at."
+    },
+    {
+      "name": "exposure-confirm-audit-unavailable",
+      "scenarios": [
+        12
+      ],
+      "group": "runtime/exposure-confirmation",
+      "file": "fixtures/runtime/exposure-confirmation/06-confirm-audit-unavailable.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 503,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A durable exposure audit I/O failure returns retryable 503 service-unavailable with correlation and matching Retry-After metadata, does not commit confirmation, and is not client-fallback eligible."
+    },
+    {
+      "name": "exposure-confirm-internal-failure",
+      "scenarios": [
+        12
+      ],
+      "group": "runtime/exposure-confirmation",
+      "file": "fixtures/runtime/exposure-confirmation/07-confirm-internal-failure.json",
+      "method": "POST",
+      "httpPath": "/v1/exposures/decision-123:confirm",
+      "status": 500,
+      "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "responseSchema": "problem-details-v1.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "An unexpected exposure confirmation infrastructure failure returns 500 internal-error with correlation metadata and no SDK-local fallback eligibility."
     },
     {
       "name": "health-liveness",

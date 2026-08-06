@@ -1,4 +1,4 @@
-import { readFile, rename, rm, mkdir, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -6,6 +6,16 @@ import {
   RequiresApprovalError,
   createFlaggoClient,
 } from "../../packages/sdk-typescript/dist/index.js";
+import {
+  publishJsonGeneration,
+  writeJsonAtomic,
+} from "./durable-json.mjs";
+
+export {
+  publishJsonGeneration,
+  resolveJsonGeneration,
+  writeJsonAtomic,
+} from "./durable-json.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 export const canonicalBundlePath = resolve(
@@ -16,14 +26,22 @@ export const strategyActivationPath = resolve(
   exampleDirectory,
   "strategy-activation.json",
 );
+export const canonicalEvidencePath = resolve(
+  exampleDirectory,
+  "evidence.json",
+);
 
-export async function loadCanonicalBundle() {
-  return JSON.parse(await readFile(canonicalBundlePath, "utf8"));
+export async function loadCanonicalBundle(signal) {
+  return JSON.parse(await readFile(canonicalBundlePath, { encoding: "utf8", signal }));
 }
 
-export async function createActivatedState(receipt, now = new Date()) {
+export async function createActivatedState(
+  receipt,
+  now = new Date(),
+  signal,
+) {
   const activation = JSON.parse(
-    await readFile(strategyActivationPath, "utf8"),
+    await readFile(strategyActivationPath, { encoding: "utf8", signal }),
   );
   const accepted = receipt.acceptedDefinitions[activation.decisionKey];
   if (accepted === undefined) {
@@ -56,12 +74,19 @@ export async function createActivatedState(receipt, now = new Date()) {
 export async function bootstrapTetris({
   controlPlaneUrl,
   dataPlaneUrl = "http://127.0.0.1:0",
-  statePath,
-  receiptPath,
+  publicationPath,
   fetchImpl = globalThis.fetch,
   now = new Date(),
+  signal,
+  publishGeneration = publishJsonGeneration,
 }) {
-  const bundle = await loadCanonicalBundle();
+  signal?.throwIfAborted();
+  const bundle = await loadCanonicalBundle(signal);
+  const fetchWithAbort = (input, init = {}) =>
+    fetchImpl(
+      input,
+      signal === undefined ? init : { ...init, signal },
+    );
   const config = {
     appId: bundle.application.id,
     environment: bundle.application.environment,
@@ -73,7 +98,7 @@ export async function bootstrapTetris({
       credential: { mode: "local-development" },
     },
     dataPlaneCredential: { mode: "local-development" },
-    fetch: fetchImpl,
+    fetch: fetchWithAbort,
   };
   let approvalRequired = false;
   let approvalRequestId;
@@ -86,7 +111,7 @@ export async function bootstrapTetris({
     }
     approvalRequired = true;
     approvalRequestId = error.approvalRequestId;
-    const response = await fetchImpl(
+    const response = await fetchWithAbort(
       `${controlPlaneUrl.replace(/\/$/, "")}/v1/definition-bundle-approvals/${encodeURIComponent(error.approvalRequestId)}:approve`,
       {
         method: "POST",
@@ -110,30 +135,25 @@ export async function bootstrapTetris({
   }
 
   const receipt = client.definitions.getRegistrationReceipt();
-  const state = await createActivatedState(receipt, now);
-  await Promise.all([
-    writeJsonAtomic(receiptPath, receipt),
-    writeJsonAtomic(statePath, state),
-  ]);
+  signal?.throwIfAborted();
+  const state = await createActivatedState(receipt, now, signal);
+  const evidence = JSON.parse(
+    await readFile(canonicalEvidencePath, { encoding: "utf8", signal }),
+  );
+  const publication = await publishGeneration(
+    publicationPath,
+    { evidence, receipt, state },
+    signal,
+  );
+  signal?.throwIfAborted();
   return {
     approvalRequired,
     approvalRequestId,
     receipt,
     state,
+    evidence,
+    publication,
   };
-}
-
-export async function writeJsonAtomic(filePath, value) {
-  const absolutePath = resolve(filePath);
-  const directory = dirname(absolutePath);
-  const stagingPath = `${absolutePath}.${process.pid}.tmp`;
-  await mkdir(directory, { recursive: true });
-  try {
-    await writeFile(stagingPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await rename(stagingPath, absolutePath);
-  } finally {
-    await rm(stagingPath, { force: true });
-  }
 }
 
 function options(args) {
@@ -151,18 +171,16 @@ function options(args) {
 
 async function main() {
   const values = options(process.argv.slice(2));
-  const statePath = values.get("state");
-  const receiptPath = values.get("receipt");
-  if (statePath === undefined || receiptPath === undefined) {
+  const publicationPath = values.get("output");
+  if (publicationPath === undefined) {
     throw new Error(
-      "Usage: node bootstrap.mjs --control-plane URL --state PATH --receipt PATH [--data-plane URL]",
+      "Usage: node bootstrap.mjs --control-plane URL --output PATH [--data-plane URL]",
     );
   }
   const result = await bootstrapTetris({
     controlPlaneUrl: values.get("control-plane") ?? "http://127.0.0.1:5081",
     dataPlaneUrl: values.get("data-plane") ?? "http://127.0.0.1:5080",
-    statePath,
-    receiptPath,
+    publicationPath,
   });
   process.stdout.write(`${JSON.stringify({
     status: "ready",
@@ -171,8 +189,11 @@ async function main() {
     bundleDigest: result.receipt.bundleDigest,
     revision:
       result.receipt.acceptedDefinitions["tetris.dropInterval"].revision,
-    statePath: resolve(statePath),
-    receiptPath: resolve(receiptPath),
+    publicationPath: result.publication.rootPath,
+    generation: result.publication.generation,
+    statePath: result.publication.paths.state,
+    receiptPath: result.publication.paths.receipt,
+    evidencePath: result.publication.paths.evidence,
   }, null, 2)}\n`);
 }
 
