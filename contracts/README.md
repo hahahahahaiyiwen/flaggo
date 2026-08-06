@@ -30,7 +30,14 @@ python contracts\conformance\validate.py
 Validation checks all schemas, OpenAPI structure and local references, fixture
 manifest coverage, positive request/response bodies, negative schema cases,
 semantic value contracts, and normalized per-definition and bundle digests.
+It also validates the canonical Tetris definition artifact directly against
+the frozen Draft 2020-12 bundle schema and proves additional and unevaluated
+properties are rejected.
 It does not start network services or access remote schema registries.
+
+The `Contracts` GitHub Actions workflow runs the local Tetris host harness in a
+separate required `tetris-integration` job rather than folding it into the
+workspace `npm test` gate.
 
 ## Run the mock
 

@@ -36,11 +36,7 @@ const paths = {
 await mkdir(runDirectory, { recursive: true });
 const hosts = [];
 try {
-  const [controlPort, dataPort, unavailablePort] = await Promise.all([
-    availablePort(),
-    availablePort(),
-    availablePort(),
-  ]);
+  const [controlPort, dataPort, unavailablePort] = await availablePorts(3);
   const controlUrl = `http://127.0.0.1:${controlPort}`;
   const dataUrl = `http://127.0.0.1:${dataPort}`;
   const bundle = await loadCanonicalBundle();
@@ -413,20 +409,56 @@ function contractProjection(result) {
   };
 }
 
-async function availablePort() {
-  const server = createServer();
-  server.unref();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  const port = address.port;
-  server.close();
-  await once(server, "close");
-  return port;
+async function availablePorts(count) {
+  const servers = Array.from({ length: count }, () => createServer());
+  try {
+    for (const server of servers) {
+      server.unref();
+      server.listen(0, "127.0.0.1");
+    }
+    await Promise.all(servers.map((server) => once(server, "listening")));
+    const ports = servers.map((server) => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("Failed to reserve an integration host port.");
+      }
+      return address.port;
+    });
+    assert.equal(
+      new Set(ports).size,
+      count,
+      "integration host ports must be distinct",
+    );
+    return ports;
+  } finally {
+    await Promise.all(servers.map((server) =>
+      new Promise((resolvePromise, reject) => {
+        if (!server.listening) {
+          resolvePromise();
+          return;
+        }
+        server.close((error) => {
+          if (error === undefined) {
+            resolvePromise();
+          } else {
+            reject(error);
+          }
+        });
+      })
+    ));
+  }
 }
 
 function startHost(name, assembly, url, logPath, configuration) {
   const log = createWriteStream(logPath, { flags: "a" });
+  let logError;
+  const logClosed = new Promise((resolvePromise) => {
+    log.once("close", resolvePromise);
+    log.once("error", (error) => {
+      logError = error;
+      resolvePromise();
+    });
+  });
   const child = spawn("dotnet", [assembly], {
     cwd: repositoryRoot,
     env: {
@@ -439,28 +471,53 @@ function startHost(name, assembly, url, logPath, configuration) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  child.stdout.pipe(log);
-  child.stderr.pipe(log);
+  child.stdout.pipe(log, { end: false });
+  child.stderr.pipe(log, { end: false });
   let exited = false;
-  child.once("exit", () => {
-    exited = true;
-    log.end();
+  let closed = false;
+  let spawnError;
+  const childClosed = new Promise((resolvePromise) => {
+    child.once("error", (error) => {
+      spawnError = error;
+      exited = true;
+    });
+    child.once("exit", () => {
+      exited = true;
+    });
+    child.once("close", () => {
+      closed = true;
+      exited = true;
+      log.end();
+      resolvePromise();
+    });
   });
   return {
     name,
     get exited() {
       return exited;
     },
+    get error() {
+      return spawnError;
+    },
     async stop() {
-      if (exited) return;
-      child.kill();
-      await Promise.race([
-        once(child, "exit"),
-        new Promise((resolvePromise) => setTimeout(resolvePromise, 3000)),
-      ]);
-      if (!exited) {
-        child.kill("SIGKILL");
-        await once(child, "exit");
+      if (!closed) {
+        if (!exited) {
+          child.kill();
+        }
+        await Promise.race([
+          childClosed,
+          new Promise((resolvePromise) => setTimeout(resolvePromise, 3000)),
+        ]);
+        if (!closed && !exited) {
+          child.kill("SIGKILL");
+        }
+        if (!closed) {
+          await childClosed;
+        }
+      }
+      await logClosed;
+      if (logError !== undefined) {
+        throw logError;
       }
     },
   };
@@ -471,7 +528,11 @@ async function waitFor(probe, host) {
   let lastError;
   while (Date.now() < deadline) {
     if (host.exited) {
-      throw new Error(`${host.name} exited before becoming ready.`);
+      throw new Error(
+        `${host.name} exited before becoming ready${host.error === undefined
+          ? "."
+          : `: ${host.error.message}`}`,
+      );
     }
     try {
       if (await probe()) return;

@@ -141,6 +141,132 @@ public sealed class LocalFileAuditSinkTests
     }
 
     [Fact]
+    public async Task ConcurrentSeparateInstances_RecordSameExposureIdExactlyOnce()
+    {
+        using var file = new TestJsonFile("audit-concurrent-same");
+        var options = new LocalFileAuditSinkOptions(
+            file.Path,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMilliseconds(5));
+        using var first = new LocalFileAuditSink(options);
+        using var second = new LocalFileAuditSink(options);
+        var exposure = new ExposureAuditRecord(
+            "exposure-race",
+            "decision-race",
+            "tetris-demo",
+            "dev",
+            null,
+            "2026-08-06T00:00:02Z");
+        var start = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var tasks = Enumerable.Range(0, 32)
+            .Select(index => Task.Run(async () =>
+            {
+                await start.Task;
+                var sink = index % 2 == 0 ? first : second;
+                await sink.RecordExposureAsync(exposure, CancellationToken.None);
+            }))
+            .ToArray();
+
+        start.SetResult();
+        await Task.WhenAll(tasks);
+
+        var lines = await File.ReadAllLinesAsync(file.Path);
+        Assert.Single(lines);
+        Assert.Equal(["exposure-race"], ExposureIds(lines));
+    }
+
+    [Fact]
+    public async Task ConcurrentSeparateInstances_PreserveDistinctExposureIdsAndJsonLines()
+    {
+        using var file = new TestJsonFile("audit-concurrent-distinct");
+        var options = new LocalFileAuditSinkOptions(
+            file.Path,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMilliseconds(5));
+        using var first = new LocalFileAuditSink(options);
+        using var second = new LocalFileAuditSink(options);
+        var expectedIds = Enumerable.Range(0, 32)
+            .Select(index => $"exposure-race-{index:D2}")
+            .ToArray();
+        var start = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var tasks = expectedIds
+            .Select((exposureId, index) => Task.Run(async () =>
+            {
+                await start.Task;
+                var sink = index % 2 == 0 ? first : second;
+                await sink.RecordExposureAsync(
+                    new ExposureAuditRecord(
+                        exposureId,
+                        $"decision-race-{index:D2}",
+                        "tetris-demo",
+                        "dev",
+                        null,
+                        "2026-08-06T00:00:02Z"),
+                    CancellationToken.None);
+            }))
+            .ToArray();
+
+        start.SetResult();
+        await Task.WhenAll(tasks);
+
+        var lines = await File.ReadAllLinesAsync(file.Path);
+        Assert.Equal(expectedIds.Length, lines.Length);
+        Assert.Equal(
+            expectedIds,
+            ExposureIds(lines).Order(StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public async Task SidecarLeaseContention_TimesOutExplicitly()
+    {
+        using var file = new TestJsonFile("audit-lease-timeout");
+        await using var heldLease = new FileStream(
+            $"{file.Path}.lock",
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None);
+        using var sink = new LocalFileAuditSink(
+            new LocalFileAuditSinkOptions(
+                file.Path,
+                TimeSpan.FromMilliseconds(100),
+                TimeSpan.FromMilliseconds(10)));
+
+        var error = await Assert.ThrowsAsync<TimeoutException>(
+            () => sink.RecordDecisionAsync(
+                DecisionRecord(),
+                CancellationToken.None));
+
+        Assert.Contains($"{file.Path}.lock", error.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(file.Path));
+    }
+
+    [Fact]
+    public async Task SidecarLeaseContention_HonorsCancellation()
+    {
+        using var file = new TestJsonFile("audit-lease-cancellation");
+        await using var heldLease = new FileStream(
+            $"{file.Path}.lock",
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None);
+        using var sink = new LocalFileAuditSink(
+            new LocalFileAuditSinkOptions(
+                file.Path,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(10)));
+        using var cancellation = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sink.RecordDecisionAsync(
+                DecisionRecord(),
+                cancellation.Token));
+        Assert.False(File.Exists(file.Path));
+    }
+
+    [Fact]
     public async Task WriteFailure_IsSurfacedAndHealthIsUnavailable()
     {
         using var container = new TestJsonFile("audit-parent");
@@ -290,6 +416,19 @@ public sealed class LocalFileAuditSinkTests
         ["session:game-1", "cohort:new_players", "global"],
         new PolicyEvaluationResult("approved", [], []));
 
+    private static string[] ExposureIds(IEnumerable<string> lines) =>
+        lines.Select(line =>
+        {
+            using var document = JsonDocument.Parse(line);
+            Assert.Equal(
+                "exposure",
+                document.RootElement.GetProperty("kind").GetString());
+            return document.RootElement
+                .GetProperty("record")
+                .GetProperty("exposureId")
+                .GetString()!;
+        }).ToArray();
+
     private sealed class FixedTimeProvider : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() =>
@@ -322,6 +461,12 @@ internal sealed class TestJsonFile : IDisposable
         if (File.Exists(Path))
         {
             File.Delete(Path);
+        }
+
+        var lockPath = $"{Path}.lock";
+        if (File.Exists(lockPath))
+        {
+            File.Delete(lockPath);
         }
     }
 }

@@ -180,8 +180,7 @@
         "clientFallback": {
           "requiredEvidenceUnavailable": "forbid"
         }
-      },
-      "requestedApproval": "human"
+      }
     }
   ]
 }

@@ -108,6 +108,11 @@ docker compose up --build mock-api
 List available fixtures at `http://127.0.0.1:8080/_fixtures`. No cloud account
 is required.
 
+The `Contracts` GitHub Actions workflow keeps contract conformance, SDK, .NET,
+and the local Tetris integration harness as separately visible jobs. The
+`tetris-integration` job runs `npm run test:tetris-integration` with Node 20
+and .NET 10 and does not require cloud services or secrets.
+
 ## Repository layout
 
 ```text

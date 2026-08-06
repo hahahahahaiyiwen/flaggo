@@ -19,7 +19,9 @@ This example is the trusted, backend-only integration boundary for
 
 The generated state identity always comes from
 `receipt.acceptedDefinitions["tetris.dropInterval"]`; it is never duplicated in
-the activation fixture.
+the activation fixture. The canonical bundle contains no approval hint:
+bootstrap approval behavior is triggered only by the control plane's typed
+`requires-approval` response.
 
 ## Trusted bootstrap
 
@@ -60,3 +62,11 @@ separate control/data processes, and removes its generated files afterward.
 It also replaces the valid evidence document with one lacking the active
 strategy and verifies that the SDK receives fail-closed
 `required-evidence-unavailable` rather than a wire-invalid strategy result.
+Ports are reserved together to guarantee distinct control, data, and
+unavailable endpoints. Child hosts and log streams are closed and generated
+files are removed on both success and failure.
+
+The `Contracts` GitHub Actions workflow runs this command in a dedicated
+`tetris-integration` job with Node 20 and .NET 10. The job uses only local
+processes and files; it requires no cloud service or secret and is kept
+separate from `npm test`.

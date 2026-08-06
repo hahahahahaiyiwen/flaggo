@@ -46,3 +46,19 @@ jobs:
       - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
       - run: dotnet build Flaggo.slnx --configuration Release --no-restore
       - run: dotnet test Flaggo.slnx --configuration Release --no-build --no-restore
+
+  tetris-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: npm ci
+      - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
+      - run: npm run test:tetris-integration

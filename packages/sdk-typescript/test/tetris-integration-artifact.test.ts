@@ -26,6 +26,7 @@ describe("Phase 3 Tetris artifact", () => {
     const definition = normalized.definitions[0] as NumberDecisionDefinition;
 
     expect(definition.key).toBe("tetris.dropInterval");
+    expect(definition).not.toHaveProperty("requestedApproval");
     expect(definition.actionSpace).toEqual({
       type: "number",
       min: 200,

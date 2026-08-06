@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -5,10 +6,12 @@ using Flaggo.Shared.Contracts;
 
 namespace Flaggo.Audit;
 
-public sealed record LocalFileAuditSinkOptions(string FilePath);
+public sealed record LocalFileAuditSinkOptions(
+    string FilePath,
+    TimeSpan? LockTimeout = null,
+    TimeSpan? LockRetryDelay = null);
 
-public sealed class LocalFileAuditSink(
-    LocalFileAuditSinkOptions options) :
+public sealed class LocalFileAuditSink :
     IAuditSink,
     IExposureAuditSink,
     IAuditHealth,
@@ -29,10 +32,36 @@ public sealed class LocalFileAuditSink(
             UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
         };
 
-    private readonly string _filePath = Path.GetFullPath(options.FilePath);
+    private readonly string _filePath;
+    private readonly string _lockPath;
+    private readonly TimeSpan _lockTimeout;
+    private readonly TimeSpan _lockRetryDelay;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly HashSet<string> _recordedExposureIds =
         new(StringComparer.Ordinal);
+
+    public LocalFileAuditSink(LocalFileAuditSinkOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.FilePath);
+        _filePath = Path.GetFullPath(options.FilePath);
+        _lockPath = $"{_filePath}.lock";
+        _lockTimeout = options.LockTimeout ?? TimeSpan.FromSeconds(10);
+        _lockRetryDelay = options.LockRetryDelay ?? TimeSpan.FromMilliseconds(25);
+        if (_lockTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "The audit file lock timeout must be positive.");
+        }
+
+        if (_lockRetryDelay <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "The audit file lock retry delay must be positive.");
+        }
+    }
 
     public Task RecordDecisionAsync(
         DecisionAuditRecord record,
@@ -50,6 +79,7 @@ public sealed class LocalFileAuditSink(
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            await using var lease = await AcquireLeaseAsync(cancellationToken);
             await ValidateExistingRecordsAsync(cancellationToken);
             if (_recordedExposureIds.Contains(record.ExposureId))
             {
@@ -72,7 +102,7 @@ public sealed class LocalFileAuditSink(
             await _gate.WaitAsync(cancellationToken);
             try
             {
-                EnsureDirectory();
+                await using var lease = await AcquireLeaseAsync(cancellationToken);
                 await ValidateExistingRecordsAsync(cancellationToken);
                 await using var stream = new FileStream(
                     _filePath,
@@ -109,6 +139,7 @@ public sealed class LocalFileAuditSink(
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            await using var lease = await AcquireLeaseAsync(cancellationToken);
             await ValidateExistingRecordsAsync(cancellationToken);
             await AppendCoreAsync(kind, record, cancellationToken);
         }
@@ -137,6 +168,43 @@ public sealed class LocalFileAuditSink(
             FileOptions.Asynchronous | FileOptions.WriteThrough);
         await stream.WriteAsync(bytes, cancellationToken);
         await stream.FlushAsync(cancellationToken);
+        stream.Flush(true);
+    }
+
+    private async Task<FileStream> AcquireLeaseAsync(
+        CancellationToken cancellationToken)
+    {
+        EnsureDirectory();
+        var started = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(
+                    _lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    1,
+                    FileOptions.Asynchronous);
+            }
+            catch (IOException error)
+            {
+                var elapsed = Stopwatch.GetElapsedTime(started);
+                if (elapsed >= _lockTimeout)
+                {
+                    throw new TimeoutException(
+                        $"Timed out acquiring the local audit file lock '{_lockPath}'.",
+                        error);
+                }
+
+                var remaining = _lockTimeout - elapsed;
+                await Task.Delay(
+                    remaining < _lockRetryDelay ? remaining : _lockRetryDelay,
+                    cancellationToken);
+            }
+        }
     }
 
     private async Task ValidateExistingRecordsAsync(

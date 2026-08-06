@@ -26,12 +26,21 @@ Phase 3 adds a local JSON Lines adapter implementing separate decision and
 confirmed-exposure audit ports. Readiness and every append validate all
 existing lines with the same strict envelope/record parser and rebuild the
 exposure-ID deduplication set; malformed, torn, duplicate, or wire-invalid
-records make the sink unavailable. Every nonempty file must end in LF; CRLF
-records are accepted because they are LF-terminated, while a valid JSON record
-without its terminal newline is treated as torn and append is rejected. New
-records use a platform-independent LF separator. Exposure records are appended
-before the prepared confirmation is committed, so append failure cannot leave
-a newly confirmed exposure without its audit record. Retry reuses the prepared
+records make the sink unavailable. Instance-local synchronization is combined
+with an exclusive cross-process lease on `<audit-path>.lock`. The lease covers
+strict replay validation, exposure-ID deduplication, append, and the durable
+flush. Lock cancellation, timeout, permission, and IO failures surface to
+writers; health checks report them as unavailable while still propagating
+cancellation. The empty sidecar is intentionally retained after release so
+deleting and recreating a lock path cannot split concurrent writers across
+different files.
+
+Every nonempty file must end in LF; CRLF records are accepted because they are
+LF-terminated, while a valid JSON record without its terminal newline is
+treated as torn and append is rejected. New records use a
+platform-independent LF separator. Exposure records are appended before the
+prepared confirmation is committed, so append failure cannot leave a newly
+confirmed exposure without its audit record. Retry reuses the prepared
 exposure ID and never appends a duplicate. Unused decision receipts therefore
 create no exposure audit record. File inspection is an explicit local tool
 boundary; no production runtime endpoint exposes audit contents.
