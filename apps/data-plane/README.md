@@ -47,7 +47,10 @@ followers exceeding the one-second wait budget receive
 Readiness is derived from registry, state, audit, policy, and optional evidence
 health ports. Required dependency loss returns `503 not-ready`; optional
 evidence loss returns `200 degraded`. Unhandled infrastructure failures are
-mapped to stable Problem Details.
+mapped to stable Problem Details. Generic I/O failures remain explicitly
+client-fallback ineligible; only classified availability failures or
+definition-policy-approved required-evidence failures can authorize SDK-local
+fallback.
 
 Run locally:
 
@@ -66,3 +69,12 @@ do not fall back to the seed.
 Rate-limited decision failures carry matching `Retry-After` and
 `retryAfterSeconds` values. Global resolution fallback retains the originating
 cohort claim in target provenance while identifying the resolved global target.
+
+Phase 3 local integration selects file-backed state and audit adapters through
+`Flaggo__State__LocalFilePath`, `Flaggo__Evidence__LocalFilePath`, and
+`Flaggo__Audit__LocalFilePath`. The state file is activated by trusted
+bootstrap from an approved registration receipt; the composition root does not
+hardcode the Tetris strategy. Local evidence supplies compact strategy
+confidence. Exposure confirmation is composed through the constructor-injected
+confirmation service, which records the exposure audit before committing state.
+Local audit inspection is file/tool based and adds no runtime debug route.

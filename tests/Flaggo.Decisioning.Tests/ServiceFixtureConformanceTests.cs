@@ -273,7 +273,9 @@ public sealed class ServiceFixtureConformanceTests
                 : requestBody.TryGetProperty("appliedAt", out var value)
                     ? value.GetString()
                     : null;
-            await store.ConfirmAsync(
+            var confirmationService =
+                services.GetRequiredService<IExposureConfirmationService>();
+            await confirmationService.ConfirmAsync(
                 "decision-123",
                 new ExposureConfirmationRequest(confirmToken, appliedAt),
                 new HashSet<string>(StringComparer.Ordinal) { "tetris-demo" },
@@ -778,7 +780,7 @@ public sealed class ServiceFixtureConformanceTests
 
         if (plan.Setup == SetupKind.ServiceUnavailable)
         {
-            return new ThrowingRegistry(new IOException("Registry unavailable."));
+            return new ThrowingRegistry(new TimeoutException("Registry unavailable."));
         }
 
         if (plan.Setup == SetupKind.InternalFailure)

@@ -87,23 +87,16 @@ builder.Services.AddSingleton<IDefinitionRegistry>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IRegistryHealth>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
-builder.Services.AddSingleton<IStateStore>(
-    new InMemoryStateStore(
-    [
-        (
-            "tetris.dropInterval",
-            new GovernedDecisionState(
-                contractIdentity.DefinitionId,
-                contractIdentity.Revision,
-                contractIdentity.ContractDigest,
-                JsonSerializer.SerializeToElement(800),
-                new DecisionTargetRef("cohort", "new_players")))
-    ]));
-builder.Services.AddSingleton<IStateHealth>(
-    provider => (IStateHealth)provider.GetRequiredService<IStateStore>());
-builder.Services.AddSingleton<InMemoryAuditSink>();
-builder.Services.AddSingleton<IAuditSink>(provider => provider.GetRequiredService<InMemoryAuditSink>());
-builder.Services.AddSingleton<IAuditHealth>(provider => provider.GetRequiredService<InMemoryAuditSink>());
+LocalRuntimeAdapterHosting.AddStateAdapter(
+    builder.Services,
+    builder.Configuration,
+    contractIdentity);
+LocalRuntimeAdapterHosting.AddAuditAdapter(
+    builder.Services,
+    builder.Configuration);
+LocalRuntimeAdapterHosting.AddEvidenceAdapter(
+    builder.Services,
+    builder.Configuration);
 builder.Services.AddSingleton<IRuntimeIdGenerator, GuidRuntimeIdGenerator>();
 builder.Services.AddSingleton<IDecideIdempotencyStore>(provider =>
     new InMemoryDecideIdempotencyStore(provider.GetRequiredService<TimeProvider>()));
@@ -114,6 +107,9 @@ builder.Services.AddSingleton<IExposureStore>(provider =>
         provider.GetRequiredService<TimeProvider>(),
         ids.CreateExposureId);
 });
+builder.Services.AddSingleton<
+    IExposureConfirmationService,
+    ExposureConfirmationService>();
 builder.Services.AddSingleton<ITargetResolver>(
     new DefaultTargetResolver(
         new Dictionary<string, string>(StringComparer.Ordinal)
@@ -121,11 +117,6 @@ builder.Services.AddSingleton<ITargetResolver>(
             ["new_players"] = "new_players",
             ["whales"] = "new_players"
         }));
-builder.Services.AddSingleton<InMemoryEvidenceProvider>();
-builder.Services.AddSingleton<IEvidenceProvider>(
-    provider => provider.GetRequiredService<InMemoryEvidenceProvider>());
-builder.Services.AddSingleton<IEvidenceHealth>(
-    provider => provider.GetRequiredService<InMemoryEvidenceProvider>());
 builder.Services.AddSingleton<IStrategyExecutor, DeterministicStrategyExecutor>();
 builder.Services.AddSingleton<IPolicyEvaluator>(provider =>
     new DefaultPolicyEvaluator(provider.GetRequiredService<TimeProvider>()));
@@ -150,6 +141,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
         .Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()
         ?.Error;
     var availabilityFailure = exception is IOException or TimeoutException;
+    var clientFallbackEligible = exception is TimeoutException;
     var status = availabilityFailure ? 503 : 500;
     var code = availabilityFailure ? "service-unavailable" : "internal-error";
     var detail = availabilityFailure
@@ -169,7 +161,11 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
         detail,
         retryAfterSeconds: availabilityFailure ? 1 : null,
         clientFallback: availabilityFailure
-            ? new ClientFallbackEligibility(true, "service-unavailable")
+            ? new ClientFallbackEligibility(
+                clientFallbackEligible,
+                clientFallbackEligible
+                    ? "service-unavailable"
+                    : "unclassified-io-failure")
             : null);
     await context.Response.WriteAsync(
         JsonSerializer.Serialize(problem, RuntimeHttp.JsonOptions));
@@ -318,6 +314,7 @@ app.MapPost(
             string decisionId,
             HttpContext context,
             IExposureStore exposureStore,
+            IExposureConfirmationService exposureConfirmationService,
             TimeProvider timeProvider,
             CancellationToken cancellationToken) =>
         {
@@ -366,12 +363,7 @@ app.MapPost(
                     appIds,
                     environments,
                     cancellationToken);
-                if (replay is not null)
-                {
-                    return Results.Json(replay, RuntimeHttp.JsonOptions);
-                }
-
-                if (request.AppliedAt is not null)
+                if (replay is null && request.AppliedAt is not null)
                 {
                     var now = timeProvider.GetUtcNow();
                     var validTimestamp =
@@ -399,13 +391,13 @@ app.MapPost(
                     }
                 }
 
-                var result = await exposureStore.ConfirmAsync(
+                var outcome = await exposureConfirmationService.ConfirmAsync(
                     decisionId,
                     request,
                     appIds,
                     environments,
                     cancellationToken);
-                return Results.Json(result, RuntimeHttp.JsonOptions);
+                return Results.Json(outcome.Result, RuntimeHttp.JsonOptions);
             }
             catch (ExposureNotFoundException)
             {

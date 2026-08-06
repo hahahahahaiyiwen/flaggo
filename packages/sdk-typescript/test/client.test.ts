@@ -497,6 +497,76 @@ describe("runtime safety", () => {
     expect(result).not.toHaveProperty("auditId");
   });
 
+  it("requires SDK fallback configuration in addition to evidence-policy permission", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const unavailable = fixture<{
+      expected: { status: number; body: unknown };
+    }>("errors/fallback-04-required-evidence-unavailable-eligible.json");
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(unavailable.expected.status, unavailable.expected.body));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "disabled", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).rejects.toBeInstanceOf(FlaggoHttpError);
+  });
+
+  it("uses SDK fallback when evidence policy and SDK configuration both permit it", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const unavailable = fixture<{
+      expected: { status: number; body: unknown };
+    }>("errors/fallback-04-required-evidence-unavailable-eligible.json");
+    const fetch = vi.fn<FetchLike>()
+      .mockResolvedValueOnce(response(200, apply.expected.body))
+      .mockResolvedValueOnce(response(unavailable.expected.status, unavailable.expected.body));
+    const client = await createFlaggoClient({
+      dataPlaneUrl: "https://data.flaggo.test",
+      controlPlane: {
+        mode: "startup-register",
+        url: "https://control.flaggo.test",
+        bundle: apply.request.body,
+        credential: { mode: "local-development" },
+      },
+      appId: "tetris-demo",
+      environment: "dev",
+      availabilityFallback: { mode: "local-default", retries: 0 },
+      fetch,
+    });
+
+    await expect(
+      client.tune.number("tetris.dropInterval", {
+        definition: apply.request.body.definitions[0]!,
+        context: {},
+      }),
+    ).resolves.toMatchObject({
+      source: "client-fallback",
+      value: 800,
+      reason: "policy-permitted-required-evidence-unavailable",
+    });
+  });
+
   it("accepts eligible Problem Details when optional prose is omitted", async () => {
     const apply = fixture<{
       request: { body: DecisionDefinitionBundle };

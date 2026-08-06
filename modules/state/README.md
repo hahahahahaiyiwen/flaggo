@@ -25,15 +25,40 @@ The module also defines in-memory async ports for 24-hour decide idempotency
 and exposure confirmation. Concurrent requests with the same key and request
 fingerprint coalesce to one decision result; reusing a key for a different
 request conflicts. Exposure confirmation accepts the same observation
-repeatedly and conflicts if a later confirmation changes it.
+repeatedly and conflicts if a later confirmation changes it. Confirmation is
+a two-phase prepare/commit transition: preparation reserves a stable exposure
+identity, and reasoning commits it only after the exposure audit succeeds.
 
 Pending exposures retain the immutable decision-time attribution snapshot.
 The snapshot includes application/environment ownership, returned treatment
 value/type, fallback attribution, policy result, confidence, and full evidence;
 confirmation hides records from
 credentials outside that ownership scope.
-Accepted exposure confirmations are replayed before first-confirmation clock
-validation, preserving the original exposure identity across later retries.
+Accepted confirmations and identical prepared confirmations are recognized
+before first-confirmation clock validation, preserving retryability and the
+original exposure identity after an audit failure. A changed observation still
+conflicts while preparation is pending.
 Idempotency entries retain both successful decisions and deterministic
 rejections; infrastructure failures release the claim, and followers exceeding
 the bounded wait receive an explicit in-progress result.
+
+Phase 3 adds a JSON-file `IStateStore` adapter for local shared-host
+integration. It reloads immutable activated state for each lookup so trusted
+bootstrap or local governance tooling can replace the file atomically without
+restarting the data plane. The persisted identity must come from an approved
+registration receipt; malformed, missing, or incompatible files surface as
+dependency failures rather than silently selecting another state.
+
+The adapter accepts only the implemented `active-value` and `strategy` modes
+from the frozen decision-mode enum. Active values cannot carry strategy
+fields. Strategy state requires a nonempty strategy ID, a finite numeric
+current value, and the supported deterministic numeric-rule contract.
+`experiment`, `fallback`, unknown modes, incoherent combinations, invalid
+targets, nonprimitive values, and nonfinite rule parameters make state health
+unavailable.
+
+Numeric-rule state may declare normalized weighted inputs. Every declared
+input field is required and finite. Numeric-rule scalar fields are presence
+checked separately from their values, so omitted fields cannot silently become
+zero while legitimate zero values remain valid. Missing or invalid values make
+the state dependency unavailable instead of being guessed.

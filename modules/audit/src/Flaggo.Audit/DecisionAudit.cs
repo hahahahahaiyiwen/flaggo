@@ -23,7 +23,16 @@ public sealed record DecisionAuditRecord(
     PolicyEvaluationResult Policy,
     DateTimeOffset RecordedAt,
     DecisionEvidenceSnapshot? Evidence = null,
-    ConfidenceReport? Confidence = null);
+    ConfidenceReport? Confidence = null,
+    string? StrategyId = null);
+
+public sealed record ExposureAuditRecord(
+    string ExposureId,
+    string DecisionId,
+    string AppId,
+    string Environment,
+    string? AppliedAt,
+    string ConfirmedAt);
 
 public interface IAuditSink
 {
@@ -35,9 +44,20 @@ public interface IAuditHealth
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken);
 }
 
-public sealed class InMemoryAuditSink(bool available = true) : IAuditSink, IAuditHealth
+public interface IExposureAuditSink
+{
+    Task RecordExposureAsync(
+        ExposureAuditRecord record,
+        CancellationToken cancellationToken);
+}
+
+public sealed class InMemoryAuditSink(bool available = true) :
+    IAuditSink,
+    IExposureAuditSink,
+    IAuditHealth
 {
     private readonly List<DecisionAuditRecord> _records = [];
+    private readonly List<ExposureAuditRecord> _exposureRecords = [];
     private readonly object _gate = new();
 
     public IReadOnlyList<DecisionAuditRecord> Records
@@ -51,12 +71,43 @@ public sealed class InMemoryAuditSink(bool available = true) : IAuditSink, IAudi
         }
     }
 
+    public IReadOnlyList<ExposureAuditRecord> ExposureRecords
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _exposureRecords.ToArray();
+            }
+        }
+    }
+
     public Task RecordDecisionAsync(DecisionAuditRecord record, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
             _records.Add(record);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task RecordExposureAsync(
+        ExposureAuditRecord record,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (_exposureRecords.All(item =>
+                    !string.Equals(
+                        item.ExposureId,
+                        record.ExposureId,
+                        StringComparison.Ordinal)))
+            {
+                _exposureRecords.Add(record);
+            }
         }
 
         return Task.CompletedTask;

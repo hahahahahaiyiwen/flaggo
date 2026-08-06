@@ -100,6 +100,9 @@ only after retries are exhausted for DNS, refused/reset connection, or
 connection/read timeout failures; intermediary HTTP 502/504 responses; or a
 valid Flaggo 5xx Problem Details response with
 `clientFallback.eligible: true`, except HTTP 500, 501, and 505.
+For `required-evidence-unavailable`, both the definition's effective
+client-fallback policy and this SDK availability configuration must permit the
+local default; either side forbidding fallback surfaces `FlaggoHttpError`.
 Cancellation, TLS/certificate, proxy/authentication/configuration, malformed
 response, contract, and identity errors never fall back. A client fallback has
 no server decision, policy, audit, or exposure identity.
@@ -134,6 +137,13 @@ typed constraint array and optionally declare governed client fallback.
 Telemetry is emitted through the `TelemetrySink` interface. Use
 `createOpenTelemetrySink(logger)` with a structurally compatible OpenTelemetry
 logger, or provide a direct sink for local development and tests.
+
+The Phase 3 Tetris contract declares `tetris.outcomeObserved`. After applying a
+server decision and confirming its exposure, the frontend emits this event
+through a configured `TelemetrySink` with the confirmed `decisionId` and
+`exposureId`. This preserves explicit attribution without adding an
+incompatible runtime endpoint. Client-fallback results and unused receipts
+have no exposure identity and must not emit a linked outcome.
 
 ## Contract maintenance
 

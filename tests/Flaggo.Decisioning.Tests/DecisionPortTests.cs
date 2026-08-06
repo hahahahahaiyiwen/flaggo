@@ -39,6 +39,95 @@ public sealed class DecisionPortTests
         Assert.Equal(0.82, result.Confidence!.EvidenceQuality);
     }
 
+    [Theory]
+    [InlineData(0.9, 1600, 3, 8, 850)]
+    [InlineData(0.2, 400, 0, 10, 750)]
+    public async Task NumericRuleExecutor_UsesAllWeightedTetrisInputs(
+        double boardPressure,
+        double placementTime,
+        double recoveryFailures,
+        double currentLevel,
+        int expected)
+    {
+        var executor = new DeterministicStrategyExecutor();
+        var state = State() with
+        {
+            Mode = "strategy",
+            StrategyId = "strategy-tetris-balanced-v1",
+            NumericRule = TetrisRule()
+        };
+
+        var result = await executor.ExecuteAsync(
+            new StrategyExecutionRequest(
+                state,
+                [
+                    Input("tetris.boardPressure", boardPressure),
+                    Input("tetris.recentPlacementTimeMs", placementTime),
+                    Input("tetris.recoveryFailures", recoveryFailures),
+                    Input("tetris.currentLevel", currentLevel)
+                ],
+                Evidence(0.82)),
+            CancellationToken.None);
+
+        Assert.Equal(expected, result.Candidate!.Value.GetInt32());
+        Assert.Null(result.FailureReason);
+        Assert.NotNull(result.Confidence);
+    }
+
+    [Fact]
+    public async Task NumericRuleExecutor_FailsClosedWithoutConfidenceEvidence()
+    {
+        var executor = new DeterministicStrategyExecutor();
+        var state = State() with
+        {
+            Mode = "strategy",
+            StrategyId = "strategy-tetris-balanced-v1",
+            NumericRule = TetrisRule()
+        };
+
+        var result = await executor.ExecuteAsync(
+            new StrategyExecutionRequest(
+                state,
+                [
+                    Input("tetris.boardPressure", 0.9),
+                    Input("tetris.recentPlacementTimeMs", 1600),
+                    Input("tetris.recoveryFailures", 3),
+                    Input("tetris.currentLevel", 8)
+                ],
+                null),
+            CancellationToken.None);
+
+        Assert.Null(result.Candidate);
+        Assert.Null(result.Confidence);
+        Assert.Equal("strategy_confidence_unavailable", result.FailureReason);
+    }
+
+    [Fact]
+    public async Task NumericRuleExecutor_FailsClosedWhenWeightedInputIsMissing()
+    {
+        var executor = new DeterministicStrategyExecutor();
+        var state = State() with
+        {
+            Mode = "strategy",
+            StrategyId = "strategy-tetris-balanced-v1",
+            NumericRule = TetrisRule()
+        };
+
+        var result = await executor.ExecuteAsync(
+            new StrategyExecutionRequest(
+                state,
+                [
+                    Input("tetris.boardPressure", 0.9),
+                    Input("tetris.recentPlacementTimeMs", 1600),
+                    Input("tetris.recoveryFailures", 3)
+                ],
+                null),
+            CancellationToken.None);
+
+        Assert.Null(result.Candidate);
+        Assert.Equal("invalid_strategy_input", result.FailureReason);
+    }
+
     [Fact]
     public async Task PolicyEvaluator_ApprovesBoundedCandidate()
     {
@@ -245,6 +334,22 @@ public sealed class DecisionPortTests
             "rev-test",
             $"sha256:{new string('a', 64)}",
             JsonSerializer.SerializeToElement(800));
+
+    private static NumericRuleStrategy TetrisRule() => new(
+        "tetris.boardPressure",
+        0.55,
+        850,
+        750,
+        [
+            new NumericRuleInput("tetris.boardPressure", 0, 1, 0.45),
+            new NumericRuleInput("tetris.recentPlacementTimeMs", 0, 2000, 0.25),
+            new NumericRuleInput("tetris.recoveryFailures", 0, 5, 0.20),
+            new NumericRuleInput("tetris.currentLevel", 0, 20, 0.10)
+        ]);
+
+    private static SignalInput Input(string key, double value) => new(
+        new SignalRef(key),
+        JsonSerializer.SerializeToElement(value));
 
     private static DecisionEvidenceSnapshot Evidence(double quality) =>
         new(

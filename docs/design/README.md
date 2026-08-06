@@ -13,6 +13,7 @@ Top-level product framing remains in:
 - [Decision Intelligence](../DECISION_INTELLIGENCE.md)
 - [MVP Implementation Guide](../IMPLEMENTATION_GUIDE.md)
 - [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md)
+- [Phase 3 Tetris Integration](tetris-integration/README.md)
 - [Shared Contracts](shared-contracts/README.md)
 
 ## Component folders
@@ -36,3 +37,7 @@ Each component under [`DESIGN.md` / System components](../DESIGN.md#system-compo
 [shared-contracts](shared-contracts/README.md) contains provider-neutral interfaces shared by the nine components. It is a cross-cutting contract package, not an additional system component.
 
 The [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md) maps those domain contracts to the runtime, exposure, management, and health wire boundaries. Its accepted executable projection lives under [`contracts/`](../../contracts/README.md). Future wire changes follow the baseline's explicit compatibility and revision process.
+
+The [Phase 3 Tetris Integration](tetris-integration/README.md) composes these
+component boundaries into the cloud-free hero scenario without adding a new
+wire contract or moving trusted bootstrap behavior into the browser.

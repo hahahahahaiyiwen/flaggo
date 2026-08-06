@@ -176,22 +176,25 @@ public sealed class RuntimeStateTests
             "confirm-1",
             "2026-07-31T18:00:00Z");
 
-        var first = await store.ConfirmAsync(
+        var first = await ConfirmAsync(
+            store,
             "decision-1",
             request,
             new HashSet<string> { "app" },
             new HashSet<string> { "dev" },
             CancellationToken.None);
-        var replay = await store.ConfirmAsync(
+        var replay = await ConfirmAsync(
+            store,
             "decision-1",
             request,
             new HashSet<string> { "app" },
             new HashSet<string> { "dev" },
             CancellationToken.None);
 
-        Assert.Equal(first, replay);
+        Assert.Equal(first.Result, replay.Result);
         await Assert.ThrowsAsync<ExposureConfirmationConflictException>(
-            () => store.ConfirmAsync(
+            () => ConfirmAsync(
+                store,
                 "decision-1",
                 request with { AppliedAt = "2026-07-31T18:01:00Z" },
                 new HashSet<string> { "app" },
@@ -210,7 +213,8 @@ public sealed class RuntimeStateTests
             CancellationToken.None);
 
         await Assert.ThrowsAsync<ExposureNotFoundException>(
-            () => store.ConfirmAsync(
+            () => ConfirmAsync(
+                store,
                 "decision-1",
                 new ExposureConfirmationRequest("confirm-1"),
                 new HashSet<string> { "other-app" },
@@ -228,14 +232,15 @@ public sealed class RuntimeStateTests
             CreateSnapshot(),
             CancellationToken.None);
 
-        var result = await store.ConfirmAsync(
+        var result = await ConfirmAsync(
+            store,
             "decision-1",
             new ExposureConfirmationRequest("confirm-1"),
             new HashSet<string> { "other-app", "app" },
             new HashSet<string> { "prod", "dev" },
             CancellationToken.None);
 
-        Assert.Equal("confirmed", result.Status);
+        Assert.Equal("confirmed", result.Result.Status);
     }
 
     [Fact]
@@ -250,7 +255,8 @@ public sealed class RuntimeStateTests
         var request = new ExposureConfirmationRequest(
             "confirm-1",
             "2026-07-31T18:00:00Z");
-        var confirmed = await store.ConfirmAsync(
+        var confirmed = await ConfirmAsync(
+            store,
             "decision-1",
             request,
             new HashSet<string> { "app" },
@@ -264,7 +270,28 @@ public sealed class RuntimeStateTests
             new HashSet<string> { "dev" },
             CancellationToken.None);
 
-        Assert.Equal(confirmed, replay);
+        Assert.Equal(confirmed.Result, replay!.Result);
+    }
+
+    private static async Task<ExposureConfirmationOutcome> ConfirmAsync(
+        IExposureStore store,
+        string decisionId,
+        ExposureConfirmationRequest request,
+        IReadOnlySet<string> appIds,
+        IReadOnlySet<string> environments,
+        CancellationToken cancellationToken)
+    {
+        var preparation = await store.PrepareConfirmationAsync(
+            decisionId,
+            request,
+            appIds,
+            environments,
+            cancellationToken);
+        await store.CommitConfirmationAsync(
+            decisionId,
+            preparation.Outcome.Result.ExposureId,
+            cancellationToken);
+        return preparation.Outcome;
     }
 
     private static DecideTerminalOutcome CreateOutcome(string decisionId) =>

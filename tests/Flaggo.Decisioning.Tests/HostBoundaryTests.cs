@@ -3,10 +3,18 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Flaggo.Audit;
 using Flaggo.ControlPlane;
 using Flaggo.DataPlane;
+using Flaggo.Evidence;
+using Flaggo.Hosting;
+using Flaggo.Registry;
+using Flaggo.Shared.Contracts;
+using Flaggo.State;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Flaggo.Decisioning.Tests;
 
@@ -132,7 +140,256 @@ public sealed class HostBoundaryTests
                 .GetString());
     }
 
-    private sealed class LocalHostFactory<TEntryPoint>(string registryPath)
+    [Fact]
+    public async Task ExposureAudit_IsCreatedOnlyForConfirmedReceipt()
+    {
+        using var registryFile = new TestRegistryFile();
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(registryFile.Path);
+        using var client = factory.CreateClient();
+        var exposures = factory.Services.GetRequiredService<IExposureStore>();
+        var audit = factory.Services.GetRequiredService<InMemoryAuditSink>();
+        await exposures.CreatePendingAsync(
+            "decision-confirmed",
+            "confirm-confirmed",
+            Snapshot(),
+            CancellationToken.None);
+        await exposures.CreatePendingAsync(
+            "decision-unused",
+            "confirm-unused",
+            Snapshot(),
+            CancellationToken.None);
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/exposures/decision-confirmed:confirm",
+            new
+            {
+                confirmToken = "confirm-confirmed",
+                appliedAt = DateTimeOffset.UtcNow.UtcDateTime.ToString("O")
+            });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var record = Assert.Single(audit.ExposureRecords);
+        Assert.Equal("decision-confirmed", record.DecisionId);
+        Assert.DoesNotContain(
+            audit.ExposureRecords,
+            item => item.DecisionId == "decision-unused");
+    }
+
+    [Fact]
+    public async Task ExposureConfirmation_RetriesPreparedObservationAfterClockWindow()
+    {
+        using var registryFile = new TestRegistryFile();
+        var time = new MutableTimeProvider(
+            new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero));
+        var audit = new FailOnceExposureAuditSink();
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(
+                registryFile.Path,
+                services =>
+                {
+                    services.RemoveAll<TimeProvider>();
+                    services.AddSingleton<TimeProvider>(time);
+                    services.RemoveAll<IExposureAuditSink>();
+                    services.AddSingleton<IExposureAuditSink>(audit);
+                });
+        using var client = factory.CreateClient();
+        var exposures = factory.Services.GetRequiredService<IExposureStore>();
+        await exposures.CreatePendingAsync(
+            "decision-retry",
+            "confirm-retry",
+            Snapshot(),
+            CancellationToken.None);
+        var request = new
+        {
+            confirmToken = "confirm-retry",
+            appliedAt = "2026-08-06T00:00:00Z"
+        };
+
+        using var failed = await client.PostAsJsonAsync(
+            "/v1/exposures/decision-retry:confirm",
+            request);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+
+        time.Advance(TimeSpan.FromMinutes(6));
+        using var conflict = await client.PostAsJsonAsync(
+            "/v1/exposures/decision-retry:confirm",
+            new
+            {
+                confirmToken = "confirm-retry",
+                appliedAt = "2026-08-06T00:00:01Z"
+            });
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+
+        using var retried = await client.PostAsJsonAsync(
+            "/v1/exposures/decision-retry:confirm",
+            request);
+        Assert.Equal(HttpStatusCode.OK, retried.StatusCode);
+        Assert.Single(audit.Records);
+    }
+
+    [Theory]
+    [InlineData("allow", true)]
+    [InlineData("forbid", false)]
+    public async Task MalformedLocalEvidence_UsesRequiredEvidenceFallbackPolicy(
+        string requiredEvidenceUnavailable,
+        bool clientFallbackEligible)
+    {
+        using var registryFile = new TestRegistryFile();
+        using var evidenceFile = new TestJsonFile("evidence-omitted-quality");
+        await evidenceFile.WriteAsync(
+            """
+            {
+              "version": 1,
+              "evidenceByStrategy": {
+                "strategy-test": { "sampleSize": 20 }
+              }
+            }
+            """);
+        var definition = RequiredEvidenceDefinition(requiredEvidenceUnavailable);
+        var state = new GovernedDecisionState(
+            definition.Identity.DefinitionId,
+            definition.Identity.Revision,
+            definition.Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(800),
+            new DecisionTargetRef("cohort", "new_players"),
+            "strategy",
+            "strategy-test",
+            new NumericRuleStrategy("tetris.boardPressure", 0.5, 850, 750));
+        var registry = new InMemoryDefinitionRegistry([definition]);
+        var stateStore = new InMemoryStateStore(
+            [("tetris.dropInterval", state)]);
+        var evidence = new LocalFileEvidenceProvider(
+            new LocalFileEvidenceProviderOptions(evidenceFile.Path));
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(
+                registryFile.Path,
+                services =>
+                {
+                    services.RemoveAll<IDefinitionRegistry>();
+                    services.AddSingleton<IDefinitionRegistry>(registry);
+                    services.RemoveAll<IStateStore>();
+                    services.AddSingleton<IStateStore>(stateStore);
+                    services.RemoveAll<IEvidenceProvider>();
+                    services.AddSingleton<IEvidenceProvider>(evidence);
+                });
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/decisions/tetris.dropInterval:decide",
+            new
+            {
+                expectedContract = new
+                {
+                    definition.Identity.DefinitionId,
+                    definition.Identity.ContractDigest,
+                    definition.Identity.Revision
+                },
+                runtimeContext = new { },
+                runtimeTarget = new { type = "cohort", id = "new_players" },
+                inputs = new[]
+                {
+                    new
+                    {
+                        signal = new { key = "tetris.boardPressure" },
+                        value = 0.8
+                    }
+                },
+                client = new { appId = "tetris-demo", environment = "dev" }
+            });
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            "required-evidence-unavailable",
+            problem.GetProperty("code").GetString());
+        Assert.Equal(
+            clientFallbackEligible,
+            problem.GetProperty("clientFallback").GetProperty("eligible").GetBoolean());
+    }
+
+    [Fact]
+    public async Task DataPlane_DoesNotMarkGenericIoFailureClientFallbackEligible()
+    {
+        using var registryFile = new TestRegistryFile();
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(
+                registryFile.Path,
+                services =>
+                {
+                    services.RemoveAll<IAuditSink>();
+                    services.AddSingleton<IAuditSink, FailingAuditSink>();
+                });
+        using var client = factory.CreateClient();
+        var identity = LocalRegistryHosting.DefaultDefinitions()
+            .Single(definition => definition.LifecycleStatus == "active")
+            .Identity;
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/decisions/tetris.dropInterval:decide",
+            new
+            {
+                expectedContract = new
+                {
+                    identity.DefinitionId,
+                    identity.ContractDigest,
+                    identity.Revision
+                },
+                runtimeContext = new { },
+                runtimeTarget = new { type = "cohort", id = "new_players" },
+                client = new { appId = "tetris-demo", environment = "dev" }
+            });
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(
+            problem.GetProperty("clientFallback").GetProperty("eligible").GetBoolean());
+        Assert.Equal(
+            "unclassified-io-failure",
+            problem.GetProperty("clientFallback").GetProperty("reason").GetString());
+    }
+
+    private static DecisionSnapshot Snapshot() => new(
+        "tetris-demo",
+        "dev",
+        new RuntimeContractIdentity(
+            "definition",
+            $"sha256:{new string('a', 64)}",
+            "revision"),
+        JsonSerializer.SerializeToElement(800),
+        "number",
+        new ServerFallbackInfo("server", false, false, null),
+        new Dictionary<string, JsonElement>(),
+        [],
+        new DecisionTargetRef("session", "game-1"),
+        new DecisionTargetRef("cohort", "new_players"),
+        [],
+        ["session:game-1", "cohort:new_players", "global"],
+        new PolicyEvaluationResult("approved", [], []));
+
+    private static RegisteredDecisionDefinition RequiredEvidenceDefinition(
+        string requiredEvidenceUnavailable) =>
+        new(
+            "tetris-demo",
+            "dev",
+            "tetris.dropInterval",
+            new RuntimeContractIdentity(
+                "definition-evidence",
+                $"sha256:{new string('b', 64)}",
+                "revision-evidence"),
+            "number",
+            JsonSerializer.SerializeToElement(800),
+            "safe-default",
+            [new RegisteredSignalInput("tetris.boardPressure", "number", 0, 1)],
+            [],
+            NumberActionSpace: new NumberActionSpaceContract(700, 900),
+            Policy: new DecisionPolicyContract(
+                MinimumEvidenceQuality: 0.7,
+                RequiredEvidenceUnavailable: requiredEvidenceUnavailable));
+
+    private sealed class LocalHostFactory<TEntryPoint>(
+        string registryPath,
+        Action<IServiceCollection>? configureServices = null)
         : WebApplicationFactory<TEntryPoint>
         where TEntryPoint : class
     {
@@ -145,6 +402,49 @@ public sealed class HostBoundaryTests
             builder.UseSetting(
                 "Flaggo:Registry:LocalFilePath",
                 registryPath);
+            if (configureServices is not null)
+            {
+                builder.ConfigureServices(configureServices);
+            }
         }
+    }
+
+    private sealed class FailingAuditSink : IAuditSink
+    {
+        public Task RecordDecisionAsync(
+            DecisionAuditRecord record,
+            CancellationToken cancellationToken) =>
+            Task.FromException(new IOException("audit unavailable"));
+    }
+
+    private sealed class FailOnceExposureAuditSink : IExposureAuditSink
+    {
+        private bool _fail = true;
+
+        public List<ExposureAuditRecord> Records { get; } = [];
+
+        public Task RecordExposureAsync(
+            ExposureAuditRecord record,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_fail)
+            {
+                _fail = false;
+                throw new IOException("audit unavailable");
+            }
+
+            Records.Add(record);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan duration) => _utcNow += duration;
     }
 }

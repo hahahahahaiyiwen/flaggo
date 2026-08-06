@@ -8,6 +8,7 @@
     "build": "npm run build --workspaces",
     "check:openapi": "npm run check:openapi --workspace @flaggo/sdk",
     "test": "npm run test --workspaces",
+    "test:tetris-integration": "npm run build --workspace @flaggo/sdk && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/tetris-integration/run.mjs",
     "typecheck": "npm run typecheck --workspaces"
   }
 }

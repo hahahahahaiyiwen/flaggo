@@ -404,13 +404,81 @@ public sealed class DecisionServiceTests
         Assert.Equal(clientFallbackEligible, error.ClientFallback!.Eligible);
     }
 
+    [Theory]
+    [InlineData("forbid", false)]
+    [InlineData("allow", true)]
+    public async Task DecideAsync_MapsEvidenceProviderFailureThroughDefinitionPolicy(
+        string requiredEvidenceUnavailable,
+        bool clientFallbackEligible)
+    {
+        var state = new GovernedDecisionState(
+            Identity.DefinitionId,
+            Identity.Revision,
+            Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(750),
+            Mode: "strategy",
+            StrategyId: "strategy-test",
+            NumericRule: new NumericRuleStrategy(
+                "tetris.boardPressure",
+                0.5,
+                700,
+                800));
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            state,
+            evidenceProvider: new ThrowingEvidenceProvider(),
+            policy: new DecisionPolicyContract(
+                MinimumEvidenceQuality: 0.7,
+                RequiredEvidenceUnavailable: requiredEvidenceUnavailable));
+
+        var error = await Assert.ThrowsAsync<DecisionContractException>(
+            () => service.DecideAsync(
+                "tetris.dropInterval",
+                CreateRequest()));
+
+        Assert.Equal(503, error.Status);
+        Assert.Equal("required-evidence-unavailable", error.Code);
+        Assert.Equal(clientFallbackEligible, error.ClientFallback!.Eligible);
+    }
+
+    [Fact]
+    public async Task DecideAsync_FallsBackWhenStrategyExecutorOmitsRequiredConfidence()
+    {
+        var state = new GovernedDecisionState(
+            Identity.DefinitionId,
+            Identity.Revision,
+            Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(750),
+            Mode: "strategy",
+            StrategyId: "strategy-test",
+            NumericRule: new NumericRuleStrategy(
+                "tetris.boardPressure",
+                0.5,
+                700,
+                800));
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            state,
+            strategyExecutor: new InvalidConfidenceStrategyExecutor());
+
+        var result = await service.DecideAsync(
+            "tetris.dropInterval",
+            CreateRequest());
+
+        Assert.Equal("fallback", result.DecisionMode);
+        Assert.Null(result.Confidence);
+        Assert.Null(result.StrategyId);
+        Assert.Contains("strategy_confidence_unavailable", result.Policy.Reasons);
+    }
+
     private static DecisionService CreateService(
         IAuditSink auditSink,
         GovernedDecisionState? state = null,
         IExposureStore? exposureStore = null,
         IEvidenceProvider? evidenceProvider = null,
         NumberActionSpaceContract? numberActionSpace = null,
-        DecisionPolicyContract? policy = null)
+        DecisionPolicyContract? policy = null,
+        IStrategyExecutor? strategyExecutor = null)
     {
         var definition = new RegisteredDecisionDefinition(
             "tetris-demo",
@@ -448,7 +516,7 @@ public sealed class DecisionServiceTests
                     ["new_players"] = "new_players"
                 }),
             evidenceProvider ?? new InMemoryEvidenceProvider(),
-            new DeterministicStrategyExecutor(),
+            strategyExecutor ?? new DeterministicStrategyExecutor(),
             new DefaultPolicyEvaluator(new FixedTimeProvider()),
             NullLogger<DecisionService>.Instance);
     }
@@ -482,5 +550,30 @@ public sealed class DecisionServiceTests
             DecisionAuditRecord record,
             CancellationToken cancellationToken) =>
             Task.FromException(new IOException("audit unavailable"));
+    }
+
+    private sealed class ThrowingEvidenceProvider : IEvidenceProvider
+    {
+        public Task<DecisionEvidenceSnapshot?> GetEvidenceAsync(
+            DecisionEvidenceRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<DecisionEvidenceSnapshot?>(
+                new EvidenceUnavailableException(
+                    "Evidence unavailable.",
+                    new IOException("evidence file unavailable")));
+    }
+
+    private sealed class InvalidConfidenceStrategyExecutor : IStrategyExecutor
+    {
+        public Task<StrategyExecutionResult> ExecuteAsync(
+            StrategyExecutionRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(
+                new StrategyExecutionResult(
+                    JsonSerializer.SerializeToElement(700),
+                    "strategy",
+                    "strategy-test",
+                    null,
+                    "Invalid test strategy result."));
     }
 }

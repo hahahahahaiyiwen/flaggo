@@ -117,30 +117,29 @@ public sealed class DecisionService(
         }
         else
         {
-            evidence = await evidenceProvider.GetEvidenceAsync(
-                new DecisionEvidenceRequest(
-                    definition,
-                    state,
-                    request.RuntimeContext,
-                    request.Inputs ?? []),
-                cancellationToken);
+            try
+            {
+                evidence = await evidenceProvider.GetEvidenceAsync(
+                    new DecisionEvidenceRequest(
+                        definition,
+                        state,
+                        request.RuntimeContext,
+                        request.Inputs ?? []),
+                    cancellationToken);
+            }
+            catch (EvidenceUnavailableException error)
+            {
+                logger.LogWarning(
+                    error,
+                    "Evidence is unavailable for decision {DecisionKey} and strategy {StrategyId}",
+                    decisionKey,
+                    state.StrategyId);
+                evidence = null;
+            }
+
             if (evidence is null && definition.Policy?.RequiresEvidence == true)
             {
-                var eligible = string.Equals(
-                    definition.Policy.RequiredEvidenceUnavailable,
-                    "allow",
-                    StringComparison.Ordinal);
-                throw new DecisionContractException(
-                    503,
-                    "required-evidence-unavailable",
-                    eligible
-                        ? "Required evidence is unavailable; policy permits client fallback."
-                        : "Required evidence is unavailable and policy forbids governed fallback.",
-                    clientFallback: new ClientFallbackEligibility(
-                        eligible,
-                        eligible
-                            ? "policy-permitted-required-evidence-unavailable"
-                            : "policy-forbids-required-evidence-unavailable"));
+                throw RequiredEvidenceUnavailable(definition.Policy);
             }
 
             execution = await strategyExecutor.ExecuteAsync(
@@ -149,6 +148,18 @@ public sealed class DecisionService(
                     request.Inputs ?? [],
                     evidence),
                 cancellationToken);
+            if (execution.Candidate is not null &&
+                execution.Mode is "strategy" or "experiment" &&
+                execution.Confidence is null)
+            {
+                execution = execution with
+                {
+                    Candidate = null,
+                    Reason = "The strategy result omitted required confidence.",
+                    FailureReason = "strategy_confidence_unavailable"
+                };
+            }
+
             policyDecision = await policyEvaluator.EvaluateAsync(
                 new PolicyEvaluationRequest(
                     execution.Candidate,
@@ -246,7 +257,8 @@ public sealed class DecisionService(
                     policy,
                     timeProvider.GetUtcNow(),
                     evidence,
-                    confidence),
+                    confidence,
+                    execution?.StrategyId),
                 cancellationToken);
         }
         catch
@@ -303,6 +315,26 @@ public sealed class DecisionService(
             request.RuntimeTarget,
             controlTarget,
             usesFallback ? null : execution!.StrategyId);
+    }
+
+    private static DecisionContractException RequiredEvidenceUnavailable(
+        DecisionPolicyContract policy)
+    {
+        var eligible = string.Equals(
+            policy.RequiredEvidenceUnavailable,
+            "allow",
+            StringComparison.Ordinal);
+        return new DecisionContractException(
+            503,
+            "required-evidence-unavailable",
+            eligible
+                ? "Required evidence is unavailable; policy permits client fallback."
+                : "Required evidence is unavailable and policy forbids governed fallback.",
+            clientFallback: new ClientFallbackEligibility(
+                eligible,
+                eligible
+                    ? "policy-permitted-required-evidence-unavailable"
+                    : "policy-forbids-required-evidence-unavailable"));
     }
 
     private static void VerifyInputs(

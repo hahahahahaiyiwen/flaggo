@@ -18,6 +18,10 @@ public interface IEvidenceProvider
         CancellationToken cancellationToken);
 }
 
+public sealed class EvidenceUnavailableException(
+    string message,
+    Exception innerException) : Exception(message, innerException);
+
 public interface IEvidenceHealth
 {
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken);

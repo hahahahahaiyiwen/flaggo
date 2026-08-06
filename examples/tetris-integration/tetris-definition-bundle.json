@@ -1,0 +1,187 @@
+{
+  "format": "flaggo.decision-definition-bundle/v1",
+  "application": {
+    "id": "tetris-demo",
+    "environment": "dev"
+  },
+  "build": {
+    "buildId": "tetris-phase3-local",
+    "version": "0.3.0"
+  },
+  "source": {
+    "repository": "github.com/hahahahahaiyiwen/flaggo",
+    "path": "examples/tetris-integration/tetris-definition-bundle.json"
+  },
+  "signals": [
+    {
+      "kind": "metric",
+      "key": "tetris.boardPressure",
+      "type": "number",
+      "source": "app-emitted",
+      "range": [
+        0,
+        1
+      ]
+    },
+    {
+      "kind": "metric",
+      "key": "tetris.recentPlacementTimeMs",
+      "type": "number",
+      "source": "app-emitted",
+      "unit": "ms",
+      "range": [
+        0,
+        2000
+      ]
+    },
+    {
+      "kind": "metric",
+      "key": "tetris.recoveryFailures",
+      "type": "number",
+      "source": "app-emitted",
+      "range": [
+        0,
+        5
+      ]
+    },
+    {
+      "kind": "metric",
+      "key": "tetris.currentLevel",
+      "type": "number",
+      "source": "app-emitted",
+      "range": [
+        0,
+        20
+      ]
+    },
+    {
+      "kind": "event",
+      "key": "tetris.outcomeObserved",
+      "fields": {
+        "decisionId": "string",
+        "exposureId": "string",
+        "outcome": "string",
+        "dropIntervalMs": "number"
+      },
+      "units": {
+        "dropIntervalMs": "ms"
+      }
+    }
+  ],
+  "definitions": [
+    {
+      "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+      "key": "tetris.dropInterval",
+      "valueType": "number",
+      "actionSpace": {
+        "type": "number",
+        "min": 200,
+        "max": 1500,
+        "step": 50,
+        "default": 800
+      },
+      "fallback": {
+        "value": 800,
+        "reason": "safe_default_drop_interval"
+      },
+      "runtimeContextSchema": {
+        "userId": {
+          "type": "string",
+          "target": "user"
+        },
+        "sessionId": {
+          "type": "string",
+          "target": "session"
+        },
+        "cohort": {
+          "type": "string",
+          "target": "cohort"
+        },
+        "deviceType": {
+          "type": "string"
+        }
+      },
+      "targetHierarchy": [
+        "session",
+        "user",
+        "cohort",
+        "global"
+      ],
+      "signals": {
+        "allowed": [
+          {
+            "key": "tetris.boardPressure"
+          },
+          {
+            "key": "tetris.currentLevel"
+          },
+          {
+            "key": "tetris.outcomeObserved"
+          },
+          {
+            "key": "tetris.recentPlacementTimeMs"
+          },
+          {
+            "key": "tetris.recoveryFailures"
+          }
+        ]
+      },
+      "inference": {
+        "target": "session",
+        "inputs": [
+          {
+            "key": "tetris.boardPressure"
+          },
+          {
+            "key": "tetris.currentLevel"
+          },
+          {
+            "key": "tetris.recentPlacementTimeMs"
+          },
+          {
+            "key": "tetris.recoveryFailures"
+          }
+        ],
+        "fallbackOrder": [
+          "cohort",
+          "global"
+        ]
+      },
+      "onlineStrategy": {
+        "mode": "approved-strategy",
+        "liveInputs": [
+          "boardPressure",
+          "currentLevel",
+          "recentPlacementTimeMs",
+          "recoveryFailures"
+        ]
+      },
+      "policy": {
+        "kind": "inline",
+        "constraints": [
+          {
+            "kind": "cooldown",
+            "seconds": 20
+          },
+          {
+            "kind": "max-delta",
+            "value": 50
+          },
+          {
+            "kind": "number-bounds",
+            "min": 200,
+            "max": 1500
+          },
+          {
+            "kind": "min-evidence-quality",
+            "value": 0.7
+          }
+        ],
+        "clientFallback": {
+          "requiredEvidenceUnavailable": "forbid"
+        }
+      },
+      "requestedApproval": "human"
+    }
+  ]
+}

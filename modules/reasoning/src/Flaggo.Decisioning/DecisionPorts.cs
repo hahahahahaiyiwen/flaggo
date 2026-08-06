@@ -274,6 +274,42 @@ public sealed class DeterministicStrategyExecutor : IStrategyExecutor
                     "Returned the active governed value."));
         }
 
+        if (request.State.NumericRule.WeightedInputs is { Count: > 0 } weightedInputs)
+        {
+            var score = 0d;
+            foreach (var ruleInput in weightedInputs)
+            {
+                var matching = request.Inputs.Where(value =>
+                        string.Equals(
+                            value.Signal.Key,
+                            ruleInput.SignalKey,
+                            StringComparison.Ordinal))
+                    .ToArray();
+                if (matching.Length != 1 ||
+                    matching[0].Value.ValueKind != JsonValueKind.Number ||
+                    !matching[0].Value.TryGetDouble(out var weightedInputValue) ||
+                    !double.IsFinite(weightedInputValue))
+                {
+                    return Task.FromResult(InvalidNumericRuleResult(request.State));
+                }
+
+                var normalized = Math.Clamp(
+                    (weightedInputValue - ruleInput.Minimum) /
+                    (ruleInput.Maximum - ruleInput.Minimum),
+                    0,
+                    1);
+                score += normalized * ruleInput.Weight;
+            }
+
+            return Task.FromResult(
+                NumericRuleResult(
+                    request,
+                    score >= request.State.NumericRule.Threshold
+                        ? request.State.NumericRule.ValueAtOrAbove
+                        : request.State.NumericRule.ValueBelow,
+                    "Applied the active weighted numeric rule strategy."));
+        }
+
         var input = request.Inputs.FirstOrDefault(value =>
             string.Equals(
                 value.Signal.Key,
@@ -284,31 +320,54 @@ public sealed class DeterministicStrategyExecutor : IStrategyExecutor
             !input.Value.TryGetDouble(out var inputValue) ||
             !double.IsFinite(inputValue))
         {
-            return Task.FromResult(
-                new StrategyExecutionResult(
-                    null,
-                    "strategy",
-                    request.State.StrategyId,
-                    null,
-                    "The numeric rule did not receive a valid input.",
-                    "invalid_strategy_input"));
+            return Task.FromResult(InvalidNumericRuleResult(request.State));
         }
 
         var candidate = inputValue >= request.State.NumericRule.Threshold
             ? request.State.NumericRule.ValueAtOrAbove
             : request.State.NumericRule.ValueBelow;
-        var confidence = request.Evidence is null
-            ? null
-            : new ConfidenceReport(
-                request.Evidence.EvidenceQuality,
-                request.Evidence.ModelUncertainty,
-                request.Evidence.ExpectedOutcome);
         return Task.FromResult(
-            new StrategyExecutionResult(
-                JsonSerializer.SerializeToElement(candidate),
-                "strategy",
-                request.State.StrategyId,
-                confidence,
+            NumericRuleResult(
+                request,
+                candidate,
                 "Applied the active numeric rule strategy."));
     }
+
+    private static StrategyExecutionResult NumericRuleResult(
+        StrategyExecutionRequest request,
+        double candidate,
+        string reason)
+    {
+        if (request.Evidence is null)
+        {
+            return new StrategyExecutionResult(
+                null,
+                "strategy",
+                request.State.StrategyId,
+                null,
+                "The strategy cannot return a result without confidence evidence.",
+                "strategy_confidence_unavailable");
+        }
+
+        var confidence = new ConfidenceReport(
+            request.Evidence.EvidenceQuality,
+            request.Evidence.ModelUncertainty,
+            request.Evidence.ExpectedOutcome);
+        return new StrategyExecutionResult(
+            JsonSerializer.SerializeToElement(candidate),
+            "strategy",
+            request.State.StrategyId,
+            confidence,
+            reason);
+    }
+
+    private static StrategyExecutionResult InvalidNumericRuleResult(
+        GovernedDecisionState state) =>
+        new(
+            null,
+            "strategy",
+            state.StrategyId,
+            null,
+            "The numeric rule did not receive every required valid input.",
+            "invalid_strategy_input");
 }
