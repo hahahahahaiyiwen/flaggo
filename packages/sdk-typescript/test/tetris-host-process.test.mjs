@@ -60,7 +60,12 @@ describe("Tetris integration host discovery", () => {
       const url = new URL(endpoint.url);
       expect(url.hostname).toBe("127.0.0.1");
       expect(Number(url.port)).toBeGreaterThan(0);
-      await expect(fetch(endpoint.url)).rejects.toThrow();
+      const response = await fetch(endpoint.url);
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "service-unavailable",
+        clientFallback: { eligible: true },
+      });
       expect(endpoint.exited).toBe(false);
     } finally {
       await endpoint.stop();
@@ -455,6 +460,54 @@ describe("Tetris integration readiness deadlines", () => {
     await lifecycle.cleanup();
     expect(endpoint.exited).toBe(true);
     expect(endpoint.connectionCount).toBe(0);
+  });
+
+  it("retains a dependency diagnostic when the final probe times out", async () => {
+    const lifecycle = createHostLifecycle({
+      removeRunDirectory: async () => {},
+    });
+    let attempts = 0;
+    const started = Date.now();
+    let readinessError;
+
+    try {
+      await waitForReady(
+        async (signal) => {
+          attempts++;
+          if (attempts === 1) {
+            throw new Error(
+              'HTTP 503: {"status":"not-ready","dependencies":{"audit":"unavailable"}}',
+            );
+          }
+
+          await new Promise((_resolvePromise, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => reject(signal.reason),
+              { once: true },
+            );
+          });
+        },
+        host("data-plane"),
+        lifecycle.signal,
+        {
+          timeoutMilliseconds: 80,
+          retryDelayMilliseconds: 5,
+        },
+      );
+    } catch (error) {
+      readinessError = error;
+    }
+
+    expect(readinessError).toBeInstanceOf(Error);
+    expect(readinessError.message).toContain('"audit":"unavailable"');
+    expect(readinessError.message).toContain(
+      "readiness probe exceeded its remaining deadline",
+    );
+    expect(readinessError.message).toContain("within 80ms");
+    expect(attempts).toBe(2);
+    expect(Date.now() - started).toBeLessThan(1000);
+    await lifecycle.cleanup();
   });
 });
 

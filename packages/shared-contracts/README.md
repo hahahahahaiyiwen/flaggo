@@ -23,7 +23,8 @@ change mathematical value when converted to the RFC 8785 IEEE-754 domain are
 rejected, preventing distinct inputs from collapsing to one digest.
 
 The package also owns the strict JSON structural validator shared by HTTP and
-local persistence adapters. It rejects malformed or trailing data and
+local persistence adapters. It requires exactly one complete root value,
+permits only JSON whitespace after that value, rejects malformed trailing data, and
 case-sensitive duplicate member names independently within every object before
 typed deserialization.
 

@@ -52,6 +52,18 @@ same exposure identity and remains valid after the initial clock-validation
 window; a different observation conflicts. The audit sink deduplicates the
 record. Accepted matching replay returns the stored confirmation without
 calling audit again, while a changed observation still conflicts.
+Request cancellation remains authoritative through preparation and durable
+audit. Once that audit succeeds, the consistency transition no longer uses the
+request-abort token: an injected post-audit policy gives commit a finite
+five-second deadline linked to application shutdown. A request that disconnects
+after audit therefore cannot strand an otherwise completable confirmation,
+while a hung or shutting-down store leaves the prepared state retryable. The
+store receives that internal bounded token, but the caller also enforces the
+deadline and shutdown independently so a non-cooperative adapter cannot hold
+the request open. The durable audit already exists when such a wait ends.
+Retry reconciles either the still-prepared state or a possibly late successful
+commit with the same decision/exposure identity; late failures are observed
+and logged rather than becoming unobserved task exceptions.
 
 Owns candidate selection and proposal generation across deterministic rules,
 experiments, statistical methods, and approved AI-assisted strategies.

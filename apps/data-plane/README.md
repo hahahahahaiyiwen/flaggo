@@ -21,7 +21,9 @@ exposure confirmation is idempotent for the same observation.
 Confirmation commits only after durable exposure audit succeeds. Audit I/O
 failure returns retryable `503 service-unavailable` with correlation and
 `Retry-After` metadata but remains client-fallback ineligible; exposure
-confirmation timeouts are also explicitly ineligible. Unexpected
+confirmation commits use a five-second timeout linked to application shutdown
+after audit and ignore request abort at that consistency boundary. Those
+timeouts are also explicitly ineligible. Unexpected
 infrastructure failure returns `500 internal-error`. Endpoint operation
 metadata is captured before execution so the single global exception boundary
 can preserve decide timeout eligibility while denying exposure fallback.
@@ -83,7 +85,10 @@ Phase 3 local integration selects file-backed state and audit adapters through
 bootstrap from an approved registration receipt; the composition root does not
 hardcode the Tetris strategy. Local evidence supplies compact strategy
 confidence. Exposure confirmation is composed through the constructor-injected
-confirmation service, which records the exposure audit before committing state.
+confirmation service and bounded post-audit commit policy, which records the
+exposure audit before committing state. Its independent timeout/shutdown wait
+also bounds non-cooperative state adapters; retry reconciles the durable audit
+with prepared or possibly late-committed state by stable exposure identity.
 Local audit inspection is file/tool based and adds no runtime debug route.
 
 The Tetris harness instead sets `Flaggo__Bootstrap__LocalGenerationPath`.

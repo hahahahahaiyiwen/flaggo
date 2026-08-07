@@ -1428,7 +1428,15 @@ public sealed class LocalFileAuditSinkTests
         var store = new InMemoryExposureStore(
             new FixedTimeProvider(),
             () => "exposure-atomic");
-        var service = new ExposureConfirmationService(store, sink);
+        var service = new ExposureConfirmationService(
+            store,
+            sink,
+            new BoundedPostAuditExposureCommitPolicy(
+                TimeSpan.FromSeconds(5),
+                TimeProvider.System,
+                CancellationToken.None,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<
+                    BoundedPostAuditExposureCommitPolicy>.Instance));
         var request = new ExposureConfirmationRequest(
             "confirm-atomic",
             "2026-08-06T00:00:01Z");

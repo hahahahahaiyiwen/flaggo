@@ -75,6 +75,24 @@ describe("Tetris durable atomic JSON writes", () => {
     expect(events.at(-1)).toBe("remove-staging");
   });
 
+  it.each(["EACCES", "EPERM"])(
+    "surfaces a directory sync permission failure: %s",
+    async (code) => {
+      const events = [];
+      const permissionError = Object.assign(new Error("permission denied"), {
+        code,
+      });
+      const operations = fakeOperations(events, {
+        directoryOpenError: permissionError,
+      });
+
+      await expect(
+        writeJsonAtomic("state.json", { version: 1 }, undefined, operations),
+      ).rejects.toBe(permissionError);
+      expect(permissionError.atomicRenameCompleted).toBe(true);
+    },
+  );
+
   it("publishes receipt, state, and evidence as one durable generation", async () => {
     const root = artifactPath("bootstrap-generation");
     try {
@@ -387,6 +405,7 @@ function fakeOperations(
   events,
   {
     stagingSyncError,
+    directoryOpenError,
     directorySyncError,
   } = {},
 ) {
@@ -411,6 +430,7 @@ function fakeOperations(
         };
       }
       events.push("open-directory");
+      if (directoryOpenError !== undefined) throw directoryOpenError;
       return {
         async sync() {
           events.push("sync-directory");

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
-import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 
 const dynamicLoopbackUrl = "http://127.0.0.1:0";
 const signalExitCodes = new Map([
@@ -609,7 +610,8 @@ export async function waitForReady(
   } = {},
 ) {
   const deadline = Date.now() + timeoutMilliseconds;
-  let lastError;
+  let latestMeaningfulDiagnostic;
+  let latestTransportError;
   while (Date.now() < deadline) {
     signal.throwIfAborted();
     if (host.exited) {
@@ -636,7 +638,13 @@ export async function waitForReady(
       if (await probe(probeSignal)) return;
     } catch (error) {
       signal.throwIfAborted();
-      lastError = error;
+      if (timeout.signal.aborted) {
+        latestTransportError = timeout.signal.reason ?? error;
+      } else if (isTransientProbeError(error)) {
+        latestTransportError = error;
+      } else {
+        latestMeaningfulDiagnostic = error;
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -646,9 +654,36 @@ export async function waitForReady(
       await abortableDelay(delay, signal);
     }
   }
+  const details = [];
+  if (latestMeaningfulDiagnostic !== undefined) {
+    details.push(errorMessage(latestMeaningfulDiagnostic));
+  }
+  if (latestTransportError !== undefined) {
+    details.push(
+      `latest transport/probe error: ${errorMessage(latestTransportError)}`,
+    );
+  }
   throw new Error(
-    `${host.name} did not become ready: ${lastError?.message ?? "timeout"}`,
+    `${host.name} did not become ready within ${timeoutMilliseconds}ms: ${details.length === 0
+      ? "timeout"
+      : details.join("; ")}`,
   );
+}
+
+function isTransientProbeError(error) {
+  if (error instanceof TypeError ||
+      error?.name === "AbortError" ||
+      error?.name === "TimeoutError") {
+    return true;
+  }
+
+  const code = error?.code ?? error?.cause?.code;
+  return typeof code === "string" &&
+    /^(?:EAI_|ECONN|EHOST|ENET|ETIMEDOUT|UND_ERR_)/u.test(code);
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function abortableDelay(milliseconds, signal) {
@@ -668,10 +703,26 @@ function abortableDelay(milliseconds, signal) {
 
 export async function startUnavailableEndpoint() {
   const sockets = new Set();
-  const server = createServer((socket) => {
+  const server = createHttpServer((request, response) => {
+    request.resume();
+    response.writeHead(503, {
+      "Content-Type": "application/problem+json",
+      Connection: "close",
+    });
+    response.end(JSON.stringify({
+      type: "about:blank",
+      status: 503,
+      code: "service-unavailable",
+      detail: "The deterministic unavailable endpoint is not ready.",
+      clientFallback: {
+        eligible: true,
+        reason: "service-unavailable",
+      },
+    }));
+  });
+  server.on("connection", (socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
-    socket.destroy();
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -715,7 +766,7 @@ export async function startUnavailableEndpoint() {
 
 export async function startHungEndpoint() {
   const sockets = new Set();
-  const server = createServer((socket) => {
+  const server = createNetServer((socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
   });

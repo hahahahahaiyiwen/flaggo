@@ -73,7 +73,13 @@ async function runIntegration(lifecycle) {
             signal: probeSignal,
           },
         );
-        return response.ok;
+        const body = await response.text();
+        if (!response.ok) {
+          throw new Error(
+            `control-plane readiness returned HTTP ${response.status}: ${body}`,
+          );
+        }
+        return true;
       }, control, signal),
     bootstrap: (controlUrl, signal) => bootstrapTetris({
       controlPlaneUrl: controlUrl,
@@ -102,8 +108,19 @@ async function runIntegration(lifecycle) {
           `${dataUrl}/health/ready`,
           { signal: probeSignal },
         );
-        if (!response.ok) return false;
-        return (await response.json()).status === "ready";
+        const body = await response.text();
+        if (!response.ok) {
+          throw new Error(
+            `data-plane readiness returned HTTP ${response.status}: ${body}`,
+          );
+        }
+        const readiness = JSON.parse(body);
+        if (readiness.status !== "ready") {
+          throw new Error(
+            `data-plane readiness reported '${readiness.status}': ${body}`,
+          );
+        }
+        return true;
       }, data, signal),
   });
   const {

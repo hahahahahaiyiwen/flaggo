@@ -321,11 +321,11 @@ internal sealed class SegmentedAuditStore
                 manifest,
                 FileMode.CreateNew,
                 cancellationToken);
-            FlushDirectory(stagingSegments);
-            FlushDirectory(stagingMarkers);
-            FlushDirectory(stagingPath);
+            DurableDirectory.Flush(stagingSegments);
+            DurableDirectory.Flush(stagingMarkers);
+            DurableDirectory.Flush(stagingPath);
             Directory.Move(stagingPath, _auditDirectoryPath);
-            FlushDirectory(Path.GetDirectoryName(_auditDirectoryPath)!);
+            DurableDirectory.Flush(Path.GetDirectoryName(_auditDirectoryPath)!);
         }
         finally
         {
@@ -357,7 +357,7 @@ internal sealed class SegmentedAuditStore
             nextBytes,
             FileMode.CreateNew,
             cancellationToken);
-        FlushDirectory(_segmentsDirectoryPath);
+        DurableDirectory.Flush(_segmentsDirectoryPath);
         AfterNewSegmentDurablyFlushed?.Invoke();
 
         var updatedSegments = manifest.Segments
@@ -681,7 +681,7 @@ internal sealed class SegmentedAuditStore
                 FileMode.CreateNew,
                 cancellationToken);
             File.Move(stagingPath, finalPath, overwrite: false);
-            FlushDirectory(_markersDirectoryPath);
+            DurableDirectory.Flush(_markersDirectoryPath);
         }
         finally
         {
@@ -702,7 +702,7 @@ internal sealed class SegmentedAuditStore
                 FileMode.CreateNew,
                 cancellationToken);
             File.Move(stagingPath, _manifestPath, overwrite: true);
-            FlushDirectory(_auditDirectoryPath);
+            DurableDirectory.Flush(_auditDirectoryPath);
         }
         finally
         {
@@ -924,20 +924,6 @@ internal sealed class SegmentedAuditStore
 
     private static string Hash(byte[] value) =>
         $"sha256:{Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant()}";
-
-    private static void FlushDirectory(string path)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-        using var handle = File.OpenHandle(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
-        RandomAccess.FlushToDisk(handle);
-    }
 
     private sealed record AuditManifest(
         int Version,

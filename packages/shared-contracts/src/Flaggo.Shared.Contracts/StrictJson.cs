@@ -13,6 +13,7 @@ public static class StrictJson
         }
 
         var objectProperties = new Stack<HashSet<string>>();
+        var rootComplete = false;
         do
         {
             switch (reader.TokenType)
@@ -33,7 +34,37 @@ public static class StrictJson
 
                     break;
             }
+
+            rootComplete =
+                reader.CurrentDepth == 0 &&
+                reader.TokenType is
+                    JsonTokenType.EndObject or
+                    JsonTokenType.EndArray or
+                    JsonTokenType.String or
+                    JsonTokenType.Number or
+                    JsonTokenType.True or
+                    JsonTokenType.False or
+                    JsonTokenType.Null;
+            if (rootComplete)
+            {
+                break;
+            }
         }
         while (reader.Read());
+
+        if (!rootComplete)
+        {
+            throw new JsonException("JSON data must contain one complete value.");
+        }
+
+        var trailing = json[(int)reader.BytesConsumed..];
+        foreach (var value in trailing)
+        {
+            if (value is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'))
+            {
+                throw new JsonException(
+                    "JSON data must contain exactly one complete value.");
+            }
+        }
     }
 }

@@ -111,6 +111,14 @@ builder.Services.AddSingleton<IExposureStore>(provider =>
         provider.GetRequiredService<TimeProvider>(),
         ids.CreateExposureId);
 });
+builder.Services.AddSingleton<IPostAuditExposureCommitPolicy>(provider =>
+    new BoundedPostAuditExposureCommitPolicy(
+        TimeSpan.FromSeconds(5),
+        provider.GetRequiredService<TimeProvider>(),
+        provider.GetRequiredService<IHostApplicationLifetime>()
+            .ApplicationStopping,
+        provider.GetRequiredService<
+            ILogger<BoundedPostAuditExposureCommitPolicy>>()));
 builder.Services.AddSingleton<
     IExposureConfirmationService,
     ExposureConfirmationService>();

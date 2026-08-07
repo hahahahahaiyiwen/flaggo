@@ -209,9 +209,14 @@ export async function syncDirectory(directory, operations = atomicFileOperations
   let directoryHandle;
   try {
     directoryHandle = await operations.open(directory, "r");
+  } catch (error) {
+    if (!isUnsupportedDirectoryOpen(error)) throw error;
+    return;
+  }
+  try {
     await directoryHandle.sync();
   } catch (error) {
-    if (!isUnsupportedDirectorySync(error)) throw error;
+    if (!isUnsupportedDirectoryFlush(error)) throw error;
   } finally {
     if (directoryHandle !== undefined) {
       await directoryHandle.close();
@@ -219,7 +224,7 @@ export async function syncDirectory(directory, operations = atomicFileOperations
   }
 }
 
-function isUnsupportedDirectorySync(error) {
+function isUnsupportedDirectoryOpen(error) {
   if (
     error?.code === "ENOTSUP"
     || error?.code === "EOPNOTSUPP"
@@ -227,5 +232,16 @@ function isUnsupportedDirectorySync(error) {
     return true;
   }
   return process.platform === "win32"
-    && ["EACCES", "EBADF", "EINVAL", "EISDIR", "EPERM"].includes(error?.code);
+    && error?.code === "EISDIR";
+}
+
+function isUnsupportedDirectoryFlush(error) {
+  if (
+    error?.code === "ENOTSUP"
+    || error?.code === "EOPNOTSUPP"
+  ) {
+    return true;
+  }
+  return process.platform === "win32"
+    && ["EBADF", "EINVAL", "EPERM"].includes(error?.code);
 }

@@ -68,11 +68,16 @@ Each ASP.NET host binds directly to loopback port `0`; the harness enables
 structured JSON console logs and discovers the assigned listening URL before
 making requests. This removes the allocate-close-bind race, including the
 data-plane process started after bootstrap. The SDK fallback check uses a
-dedicated loopback reset server that also binds port `0` and remains bound
-until the check completes, so it cannot race another process for its endpoint.
+dedicated loopback server that returns a deterministic fallback-eligible `503`,
+binds port `0`, and remains bound until the check completes, so it cannot race
+another process for its endpoint.
 Every readiness fetch receives a per-probe abort signal bounded by the
 remaining overall readiness deadline and combined with lifecycle cancellation;
 an accepted connection that never responds therefore cannot extend startup.
+Readiness timeout errors retain the latest HTTP status and response body so
+dependency states such as unavailable audit storage are visible without
+reconstructing them from host logs. A later transport failure or probe deadline
+is reported alongside that meaningful diagnostic instead of replacing it.
 Both `ASPNETCORE_ENVIRONMENT` and `DOTNET_ENVIRONMENT` are forced to
 `Development`, regardless of parent-process values. `SIGHUP`, `SIGINT`, and
 `SIGTERM` abort the active bootstrap/workflow before another host can start.
@@ -89,6 +94,9 @@ Bootstrap writes receipt, state, and evidence through explicit handles into a
 unique `generations/<id>` directory. All sibling writes are settled, every file
 and the generation directory are flushed, and only then is `current.json`
 atomically replaced and its parent directory synced where supported.
+Directory-open permission failures are surfaced. Platform-specific directory
+flush results that mean the runtime/filesystem does not support directory sync
+remain explicit best effort.
 Pre-switch failures remove the unpublished generation; old generations remain
 available to readers that already resolved them. The data-plane composition
 root resolves the pointer once and obtains state and evidence from that same

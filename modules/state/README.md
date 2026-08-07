@@ -28,6 +28,14 @@ request conflicts. Exposure confirmation accepts the same observation
 repeatedly and conflicts if a later confirmation changes it. Confirmation is
 a two-phase prepare/commit transition: preparation reserves a stable exposure
 identity, and reasoning commits it only after the exposure audit succeeds.
+Preparation and audit honor request cancellation. After audit is durable,
+reasoning commits with a separate bounded token linked to application shutdown,
+so request abort cannot interrupt the audit-first transition and commit timeout
+or shutdown leaves the prepared confirmation available for an idempotent retry.
+`CommitConfirmationAsync` is idempotent for the same decision/exposure identity.
+This lets retry reconcile a prepared transition even when an earlier
+non-cooperative call succeeds after its caller's bounded wait has ended; a
+different exposure identity still conflicts.
 
 Pending exposures retain the immutable decision-time attribution snapshot.
 The snapshot includes application/environment ownership, returned treatment
@@ -91,9 +99,8 @@ colons and newlines, cannot merge distinct states.
 Persisted `lastChangedAt` is read as a string and parsed explicitly as RFC 3339
 with `Z` or a numeric offset; offsetless and host-local interpretations are
 forbidden. Accepted values are normalized to UTC before state is exposed.
-The adapter uses the shared runtime policy ceiling of `int.MaxValue` seconds and
-rejects timestamps later than `DateTimeOffset.MaxValue` minus that duration,
-as an adapter-level defense. Policy evaluation independently uses elapsed-time
-comparison and remains overflow-safe for timestamps supplied by any
-`IStateStore`. Digest and timestamp lexical checks are absolute and reject
+Frozen v1 cooldown remains any finite nonnegative number; the local adapter
+does not impose an `int.MaxValue`-seconds ceiling. Policy evaluation uses
+elapsed-time comparison and remains overflow-safe for timestamps supplied by
+any `IStateStore`. Digest and timestamp lexical checks are absolute and reject
 encoded leading or trailing whitespace and control characters.

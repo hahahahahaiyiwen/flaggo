@@ -210,7 +210,7 @@ public sealed class LocalFileAuditSink :
             if (File.Exists(_filePath))
             {
                 File.Delete(_filePath);
-                FlushDirectory(Path.GetDirectoryName(_filePath)!);
+                DurableDirectory.Flush(Path.GetDirectoryName(_filePath)!);
             }
             return;
         }
@@ -230,15 +230,15 @@ public sealed class LocalFileAuditSink :
                 stagingMarkers,
                 legacyRecords,
                 cancellationToken);
-            FlushDirectory(stagingSegments);
-            FlushDirectory(stagingMarkers);
-            FlushDirectory(stagingPath);
+            DurableDirectory.Flush(stagingSegments);
+            DurableDirectory.Flush(stagingMarkers);
+            DurableDirectory.Flush(stagingPath);
             Directory.Move(stagingPath, _auditDirectoryPath);
-            FlushDirectory(Path.GetDirectoryName(_auditDirectoryPath)!);
+            DurableDirectory.Flush(Path.GetDirectoryName(_auditDirectoryPath)!);
             if (File.Exists(_filePath))
             {
                 File.Delete(_filePath);
-                FlushDirectory(Path.GetDirectoryName(_filePath)!);
+                DurableDirectory.Flush(Path.GetDirectoryName(_filePath)!);
             }
         }
         finally
@@ -389,7 +389,7 @@ public sealed class LocalFileAuditSink :
             _segmentsDirectoryPath,
             ClosedSegmentFileName(current.Header.Sequence, content));
         File.Move(currentPath, closedPath);
-        FlushDirectory(_segmentsDirectoryPath);
+        DurableDirectory.Flush(_segmentsDirectoryPath);
         var nextHeader = NewHeader(checked(current.Header.Sequence + 1));
         await WriteSegmentAsync(currentPath, nextHeader, [], cancellationToken);
         return new SegmentState(
@@ -739,7 +739,7 @@ public sealed class LocalFileAuditSink :
                 FileMode.CreateNew,
                 cancellationToken);
             File.Move(stagingPath, finalPath, overwrite);
-            FlushDirectory(directory);
+            DurableDirectory.Flush(directory);
         }
         finally
         {
@@ -1002,20 +1002,6 @@ public sealed class LocalFileAuditSink :
         {
             File.Delete(path);
         }
-    }
-
-    private static void FlushDirectory(string path)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-        using var handle = File.OpenHandle(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
-        RandomAccess.FlushToDisk(handle);
     }
 
     private static ValidatedRecord ValidateRecord(byte[] rawRecord)
