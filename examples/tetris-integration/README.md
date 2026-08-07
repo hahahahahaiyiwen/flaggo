@@ -59,11 +59,12 @@ npm run test:tetris-integration
 
 The harness uses repository-local `.flaggo/integration-*` paths, starts
 separate control/data processes, and removes its generated files afterward.
-It also replaces the valid evidence document with one lacking the active
-strategy and verifies that the SDK receives fail-closed
+It also atomically publishes a complete generation whose evidence lacks the
+active strategy and verifies that the SDK receives fail-closed
 `required-evidence-unavailable` rather than a wire-invalid strategy result.
 That `503` uses an idempotency key; after evidence is restored, the harness
-retries the same key and verifies a fresh successful governed decision.
+publishes another complete generation, retries the same key, and verifies a
+fresh successful governed decision.
 Each ASP.NET host binds directly to loopback port `0`; the harness enables
 structured JSON console logs and discovers the assigned listening URL before
 making requests. This removes the allocate-close-bind race, including the
@@ -91,17 +92,42 @@ exit before its requested stop, including exit code zero, is checked at startup
 boundaries and again during cleanup and fails an otherwise passing run.
 
 Bootstrap writes receipt, state, and evidence through explicit handles into a
-unique `generations/<id>` directory. All sibling writes are settled, every file
-and the generation directory are flushed, and only then is `current.json`
-atomically replaced and its parent directory synced where supported.
+unique `generations/<id>` directory. The exact bytes, byte length, and sha256
+of every immutable artifact are recorded in the strict
+`flaggo.committed-generation` manifest. All sibling writes are settled, every
+file and the generation directory are flushed, then the immediate
+`generations` parent directory and publication root are synced before
+`current.json` can be published. The root barrier makes a first-run
+`generations/` entry durable. Only after that ordering barrier is
+`current.json` atomically replaced and the root synced again where supported.
+For a wholly missing publication path, the durable JSON helper starts at the
+nearest existing ancestor and creates components downward. Every `mkdir` is
+followed by an immediate-parent sync and then a sync of the new directory
+before it is used. Before descendant creation, the helper syncs the nearest
+existing ancestor's immediate parent and then the ancestor itself, making an
+intermediate entry durable even when a concurrent creator paused before its
+parent barrier. Every successful ensure then syncs the requested directory's
+immediate parent and the directory itself. Filesystem and volume roots safely
+sync only themselves. Existing trees avoid creation work but retain this final
+boundary barrier, concurrent creators accept `EEXIST` only when the path is
+now a directory, and a failed creation or final barrier leaves no published
+descriptor or generation pointer.
 Directory-open permission failures are surfaced. Platform-specific directory
 flush results that mean the runtime/filesystem does not support directory sync
 remain explicit best effort.
 Pre-switch failures remove the unpublished generation; old generations remain
-available to readers that already resolved them. The data-plane composition
-root resolves the pointer once and obtains state and evidence from that same
-generation, while the receipt remains a bootstrap/SDK output rather than a
-runtime adapter input. Audit inspection follows the durable audit manifest.
+available to readers that already resolved them. The data-plane request-scoped
+resolver validates the manifest and exact artifact digests, so later harness
+changes publish a complete new receipt/state/evidence generation rather than
+mutating an existing artifact in place. A pointer switch between state and
+evidence cannot produce an old/new mix because each request pins one
+generation. The next request observes the new pointer. The receipt remains a
+bootstrap/SDK output rather than a runtime adapter input.
+`publishJsonArtifact` provides the same
+immutable-artifact/descriptor flow for trusted direct local tooling and rejects
+any generated artifact filename outside the reader's 128-character safe
+sibling protocol before publication. Audit
+inspection follows the durable audit manifest.
 
 The `Contracts` GitHub Actions workflow runs this command in a dedicated
 `tetris-integration` job with Node 20 and .NET 10. The job uses only local

@@ -46,9 +46,9 @@ flushes a complete empty store before publishing its directory. Incomplete
 published layouts, corrupt manifests, unlisted segments, and legacy single
 JSONL files fail closed; there is no automatic manifest reconstruction or
 production migration policy.
-Directory metadata synchronization is centralized in a native cross-platform
-helper: Unix opens and `fsync`s the directory, while Windows opens it with
-backup directory semantics and calls `FlushFileBuffers`. Only documented
+Directory metadata synchronization is centralized in the shared-contracts
+`DurableDirectory` helper: Unix opens and `fsync`s the directory, while
+Windows opens it with backup directory semantics and calls `FlushFileBuffers`. Only documented
 unsupported-operation results are treated as explicit best effort; permission,
 open, and other I/O failures continue to surface.
 Lock cancellation, timeout, permission, and IO failures surface to writers;

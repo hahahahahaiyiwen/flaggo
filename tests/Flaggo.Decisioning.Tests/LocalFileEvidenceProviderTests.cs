@@ -299,7 +299,7 @@ public sealed class LocalFileEvidenceProviderTests
                 Request("strategy"),
                 CancellationToken.None));
 
-        Assert.IsType<FileNotFoundException>(error.InnerException);
+        Assert.IsAssignableFrom<IOException>(error.InnerException);
         Assert.False(await provider.IsAvailableAsync(CancellationToken.None));
     }
 
@@ -326,53 +326,68 @@ public sealed class LocalFileEvidenceProviderTests
     }
 
     [Fact]
-    public async Task SnapshotLease_BlocksInPlaceRewriteAndAllowsAtomicReplacement()
+    public async Task PublishedReplacement_IsObservedOnNextRead()
     {
-        using var file = new TestJsonFile("evidence-snapshot");
-        using var replacement = new TestJsonFile("evidence-snapshot-replacement");
+        using var file = new TestJsonFile("evidence-replacement");
         await file.WriteAsync(EvidenceDocument(0.8));
-        await replacement.WriteAsync(EvidenceDocument(0.9));
         var provider = new LocalFileEvidenceProvider(
             new LocalFileEvidenceProviderOptions(file.Path));
 
-        await using var snapshot =
-            LocalFileEvidenceProvider.OpenSnapshotRead(file.Path);
-        Assert.Throws<IOException>(
-            () =>
-            {
-                using var writer = new FileStream(
-                    file.Path,
-                    FileMode.Truncate,
-                    FileAccess.Write,
-                    FileShare.ReadWrite | FileShare.Delete);
-            });
-
-        File.Replace(replacement.Path, file.Path, destinationBackupFileName: null);
-        using var memory = new MemoryStream();
-        await snapshot.CopyToAsync(memory);
-        using var original = JsonDocument.Parse(memory.ToArray());
-        Assert.Equal(
-            0.8,
-            original.RootElement
-                .GetProperty("evidenceByStrategy")
-                .GetProperty("strategy")
-                .GetProperty("evidenceQuality")
-                .GetDouble());
-
-        var current = await provider.GetEvidenceAsync(
+        var oldEvidence = await provider.GetEvidenceAsync(
             Request("strategy"),
             CancellationToken.None);
-        Assert.Equal(0.9, current!.EvidenceQuality);
+        await file.WriteAsync(EvidenceDocument(0.9));
+        var newEvidence = await provider.GetEvidenceAsync(
+            Request("strategy"),
+            CancellationToken.None);
+
+        Assert.Equal(0.8, oldEvidence!.EvidenceQuality);
+        Assert.Equal(0.9, newEvidence!.EvidenceQuality);
     }
 
-    private static string EvidenceDocument(double evidenceQuality) =>
+    [Fact]
+    public async Task DirectRawFileWithoutCommitDescriptor_FailsClosed()
+    {
+        var path = Path.Combine(
+            TestPaths.RepositoryRoot,
+            ".flaggo",
+            "test-artifacts",
+            $"evidence-raw-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(path, EvidenceDocument(0.8));
+            var provider = new LocalFileEvidenceProvider(
+                new LocalFileEvidenceProviderOptions(path));
+
+            await Assert.ThrowsAsync<EvidenceUnavailableException>(
+                () => provider.GetEvidenceAsync(
+                    Request("strategy"),
+                    CancellationToken.None));
+            Assert.False(
+                await provider.IsAvailableAsync(CancellationToken.None));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static string EvidenceDocument(
+        double evidenceQuality,
+        string? generation = null) =>
         JsonSerializer.Serialize(
             new
             {
                 version = 1,
                 evidenceByStrategy = new Dictionary<string, object>
                 {
-                    ["strategy"] = new { evidenceQuality }
+                    ["strategy"] = new
+                    {
+                        evidenceQuality,
+                        details = generation is null
+                            ? null
+                            : new { generation }
+                    }
                 }
             });
 
@@ -398,4 +413,35 @@ public sealed class LocalFileEvidenceProviderTests
             StrategyId: strategyId),
         new Dictionary<string, System.Text.Json.JsonElement>(),
         []);
+
+    private sealed class TestJsonFile : IDisposable
+    {
+        private readonly string _directory;
+
+        public TestJsonFile(string prefix)
+        {
+            _directory = System.IO.Path.Combine(
+                TestPaths.RepositoryRoot,
+                ".flaggo",
+                "test-artifacts",
+                $"{prefix}-{Guid.NewGuid():N}");
+            Path = System.IO.Path.Combine(_directory, "current.commit.json");
+        }
+
+        public string Path { get; }
+
+        public async Task WriteAsync(string content) =>
+            await CommittedFileSnapshotWriter.PublishAsync(
+                Path,
+                System.Text.Encoding.UTF8.GetBytes(content),
+                artifactStem: "snapshot");
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_directory))
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+        }
+    }
 }

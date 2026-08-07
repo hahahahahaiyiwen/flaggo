@@ -2,9 +2,9 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace Flaggo.Audit;
+namespace Flaggo.Shared.Contracts;
 
-internal static class DurableDirectory
+public static class DurableDirectory
 {
     private const uint GenericWrite = 0x40000000;
     private const uint FileShareRead = 0x00000001;
@@ -12,6 +12,12 @@ internal static class DurableDirectory
     private const uint FileShareDelete = 0x00000004;
     private const uint OpenExisting = 3;
     private const uint FileFlagBackupSemantics = 0x02000000;
+
+    public static void Create(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        Create(Path.GetFullPath(path), FileSystemDirectoryOperations.Instance);
+    }
 
     public static void Flush(string path)
     {
@@ -30,6 +36,68 @@ internal static class DurableDirectory
 
     internal static bool IsUnsupportedWindowsError(int error) =>
         error is 1 or 50 or 87;
+
+    internal static void Create(
+        string path,
+        IDurableDirectoryOperations operations)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(operations);
+
+        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var missing = new Stack<string>();
+        var cursor = fullPath;
+        while (!operations.Exists(cursor))
+        {
+            var parent = Path.GetDirectoryName(cursor);
+            if (string.IsNullOrEmpty(parent) || parent == cursor)
+            {
+                throw new DirectoryNotFoundException(
+                    $"No existing ancestor was found for '{fullPath}'.");
+            }
+
+            missing.Push(cursor);
+            cursor = parent;
+        }
+
+        if (missing.Count > 0)
+        {
+            FlushBoundary(cursor, operations);
+        }
+
+        var durableParent = cursor;
+        while (missing.TryPop(out var directory))
+        {
+            try
+            {
+                operations.Create(directory);
+            }
+            catch (IOException) when (operations.Exists(directory))
+            {
+                // A concurrent creator won the race.
+            }
+
+            operations.Flush(durableParent);
+            operations.Flush(directory);
+            durableParent = directory;
+        }
+
+        FlushBoundary(fullPath, operations);
+    }
+
+    private static void FlushBoundary(
+        string path,
+        IDurableDirectoryOperations operations)
+    {
+        var immediateParent = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(immediateParent) &&
+            !string.Equals(immediateParent, path, StringComparison.Ordinal))
+        {
+            operations.Flush(immediateParent);
+        }
+
+        operations.Flush(path);
+    }
 
     private static void FlushUnix(string path)
     {
@@ -128,4 +196,25 @@ internal static class DurableDirectory
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool FlushFileBuffers(SafeFileHandle handle);
+
+    private sealed class FileSystemDirectoryOperations :
+        IDurableDirectoryOperations
+    {
+        public static FileSystemDirectoryOperations Instance { get; } = new();
+
+        public bool Exists(string path) => Directory.Exists(path);
+
+        public void Create(string path) => Directory.CreateDirectory(path);
+
+        public void Flush(string path) => DurableDirectory.Flush(path);
+    }
+}
+
+internal interface IDurableDirectoryOperations
+{
+    bool Exists(string path);
+
+    void Create(string path);
+
+    void Flush(string path);
 }

@@ -1,14 +1,19 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   open,
   readFile,
   rename,
   rm,
+  stat,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
-const atomicFileOperations = { mkdir, open, readFile, rename, rm };
+const atomicFileOperations = { mkdir, open, readFile, rename, rm, stat };
+const artifactDescriptorFormat = "flaggo.committed-artifact";
+const generationManifestFormat = "flaggo.committed-generation";
+const safeArtifactNamePattern =
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 export async function writeJsonAtomic(
   filePath,
@@ -21,7 +26,7 @@ export async function writeJsonAtomic(
   const stagingPath = `${absolutePath}.${process.pid}.${randomUUID()}.tmp`;
   let stagingHandle;
   signal?.throwIfAborted();
-  await operations.mkdir(directory, { recursive: true });
+  await createDirectoryDurable(directory, signal, operations);
   try {
     stagingHandle = await operations.open(stagingPath, "wx");
     await stagingHandle.writeFile(
@@ -69,10 +74,9 @@ export async function publishJsonGeneration(
   }
 
   signal?.throwIfAborted();
-  await operations.mkdir(generationsPath, { recursive: true });
   let pointerRenamed = false;
   try {
-    await operations.mkdir(generationPath, { recursive: false });
+    await createDirectoryDurable(generationPath, signal, operations);
     const writes = await Promise.allSettled(
       entries.map(([name, value]) =>
         writeJsonDurable(
@@ -95,12 +99,17 @@ export async function publishJsonGeneration(
     signal?.throwIfAborted();
     await syncDirectory(generationPath, operations);
     signal?.throwIfAborted();
+    await syncDirectory(generationsPath, operations);
+    signal?.throwIfAborted();
+    await syncDirectory(absoluteRoot, operations);
+    signal?.throwIfAborted();
 
     const manifest = {
+      format: generationManifestFormat,
       version: 1,
       generation,
       files: Object.fromEntries(
-        entries.map(([name]) => [name, `${name}.json`]),
+        entries.map(([name], index) => [name, writes[index].value]),
       ),
     };
     try {
@@ -135,6 +144,68 @@ export async function publishJsonGeneration(
   }
 }
 
+export async function publishJsonArtifact(
+  commitDescriptorPath,
+  value,
+  signal,
+  operations = atomicFileOperations,
+  artifactStem,
+) {
+  const descriptorPath = resolve(commitDescriptorPath);
+  const directory = dirname(descriptorPath);
+  const descriptorName = artifactStem ?? basename(
+    descriptorPath,
+    extname(descriptorPath),
+  ).replace(/\.commit$/u, "");
+  const artifact = `${descriptorName}-${randomUUID().replaceAll("-", "")}.json`;
+  if (!isSafeArtifactName(artifact)) {
+    throw new TypeError(
+      "Commit descriptor generates an unsafe artifact filename.",
+    );
+  }
+
+  signal?.throwIfAborted();
+  await createDirectoryDurable(directory, signal, operations);
+  const artifactPath = join(directory, artifact);
+  let descriptorPublished = false;
+  try {
+    const entry = await writeJsonDurable(
+      artifactPath,
+      value,
+      signal,
+      operations,
+    );
+    signal?.throwIfAborted();
+    await syncDirectory(directory, operations);
+    signal?.throwIfAborted();
+    try {
+      await writeJsonAtomic(
+        descriptorPath,
+        {
+          format: artifactDescriptorFormat,
+          version: 1,
+          ...entry,
+        },
+        signal,
+        operations,
+      );
+      descriptorPublished = true;
+    } catch (error) {
+      descriptorPublished = error?.atomicRenameCompleted === true;
+      throw error;
+    }
+    return {
+      commitDescriptorPath: descriptorPath,
+      artifactPath,
+      ...entry,
+    };
+  } finally {
+    if (!descriptorPublished) {
+      await operations.rm(artifactPath, { force: true }).catch(() => {});
+    }
+  }
+}
+
 export async function resolveJsonGeneration(
   rootPath,
   requiredNames,
@@ -148,7 +219,8 @@ export async function resolveJsonGeneration(
     ),
   );
   if (
-    manifest?.version !== 1
+    manifest?.format !== generationManifestFormat
+    || manifest?.version !== 1
     || typeof manifest.generation !== "string"
     || !/^[0-9]+-[0-9]+-[0-9a-f-]+$/u.test(manifest.generation)
     || manifest.files === null
@@ -163,18 +235,37 @@ export async function resolveJsonGeneration(
     manifest.generation,
   );
   const paths = {};
+  const artifacts = {};
   for (const name of requiredNames) {
-    const fileName = manifest.files[name];
+    const entry = manifest.files[name];
     if (
-      typeof fileName !== "string"
-      || fileName !== `${name}.json`
-      || !/^[a-z][a-z0-9-]*\.json$/u.test(fileName)
+      entry === null
+      || typeof entry !== "object"
+      || Array.isArray(entry)
+      || !isSafeArtifactName(entry.artifact)
+      || entry.artifact !== `${name}.json`
+      || !Number.isSafeInteger(entry.byteLength)
+      || entry.byteLength < 0
+      || typeof entry.sha256 !== "string"
+      || !/^[0-9a-f]{64}$/u.test(entry.sha256)
     ) {
       throw new Error(
         `Bootstrap generation manifest is missing '${name}'.`,
       );
     }
-    paths[name] = join(generationPath, fileName);
+    const artifactPath = join(generationPath, entry.artifact);
+    const bytes = await operations.readFile(artifactPath);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (
+      bytes.byteLength !== entry.byteLength
+      || digest !== entry.sha256
+    ) {
+      throw new Error(
+        `Bootstrap generation artifact '${name}' does not match its manifest.`,
+      );
+    }
+    paths[name] = artifactPath;
+    artifacts[name] = entry;
   }
   return {
     rootPath: absoluteRoot,
@@ -182,6 +273,7 @@ export async function resolveJsonGeneration(
     generationPath,
     manifestPath: join(absoluteRoot, "current.json"),
     paths,
+    artifacts,
   };
 }
 
@@ -191,18 +283,25 @@ async function writeJsonDurable(
   signal,
   operations,
 ) {
+  const artifact = basename(filePath);
+  const bytes = Buffer.from(
+    `${JSON.stringify(value, null, 2)}\n`,
+    "utf8",
+  );
   let handle;
   try {
     handle = await operations.open(filePath, "wx");
-    await handle.writeFile(
-      `${JSON.stringify(value, null, 2)}\n`,
-      { encoding: "utf8", signal },
-    );
+    await handle.writeFile(bytes, { signal });
     signal?.throwIfAborted();
     await handle.sync();
   } finally {
     if (handle !== undefined) await handle.close();
   }
+  return {
+    artifact,
+    byteLength: bytes.byteLength,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 export async function syncDirectory(directory, operations = atomicFileOperations) {
@@ -221,6 +320,67 @@ export async function syncDirectory(directory, operations = atomicFileOperations
     if (directoryHandle !== undefined) {
       await directoryHandle.close();
     }
+  }
+}
+
+export async function createDirectoryDurable(
+  directory,
+  signal,
+  operations = atomicFileOperations,
+) {
+  const absolutePath = resolve(directory);
+  const missing = [];
+  let cursor = absolutePath;
+  while (!(await isDirectory(cursor, operations))) {
+    const parent = dirname(cursor);
+    if (parent === cursor) {
+      throw new Error(
+        `No existing ancestor was found for '${absolutePath}'.`,
+      );
+    }
+    missing.push(cursor);
+    cursor = parent;
+  }
+
+  if (missing.length > 0) {
+    await syncDirectoryBoundary(cursor, operations);
+  }
+
+  let durableParent = cursor;
+  for (const path of missing.reverse()) {
+    signal?.throwIfAborted();
+    try {
+      await operations.mkdir(path, { recursive: false });
+    } catch (error) {
+      if (
+        error?.code !== "EEXIST"
+        || !(await isDirectory(path, operations))
+      ) {
+        throw error;
+      }
+    }
+    await syncDirectory(durableParent, operations);
+    await syncDirectory(path, operations);
+    durableParent = path;
+  }
+
+  await syncDirectoryBoundary(absolutePath, operations);
+}
+
+async function syncDirectoryBoundary(directory, operations) {
+  const immediateParent = dirname(directory);
+  if (immediateParent !== directory) {
+    await syncDirectory(immediateParent, operations);
+  }
+  await syncDirectory(directory, operations);
+}
+
+async function isDirectory(path, operations) {
+  try {
+    return (await operations.stat(path)).isDirectory();
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
   }
 }
 
@@ -244,4 +404,9 @@ function isUnsupportedDirectoryFlush(error) {
   }
   return process.platform === "win32"
     && ["EBADF", "EINVAL", "EPERM"].includes(error?.code);
+}
+
+function isSafeArtifactName(artifactName) {
+  return typeof artifactName === "string"
+    && safeArtifactNamePattern.test(artifactName);
 }

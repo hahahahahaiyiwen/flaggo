@@ -1,7 +1,6 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using Flaggo.Shared.Contracts;
+using Flaggo.Evidence;
+using Flaggo.State;
 
 namespace Flaggo.DataPlane;
 
@@ -10,98 +9,133 @@ public sealed record BootstrapGenerationPaths(
     string Generation,
     string ReceiptPath,
     string StatePath,
-    string EvidencePath);
+    string EvidencePath,
+    CommittedArtifactReference ReceiptSnapshot,
+    CommittedArtifactReference StateSnapshot,
+    CommittedArtifactReference EvidenceSnapshot);
 
-public static partial class BootstrapGenerationResolver
+public sealed class BootstrapGenerationResolver :
+    IStateSnapshotProvider,
+    IEvidenceSnapshotProvider
 {
-    private static readonly JsonSerializerOptions JsonOptions =
-        new(JsonSerializerDefaults.Web)
+    private static readonly IReadOnlyDictionary<string, string>
+        RequiredArtifacts = new Dictionary<string, string>(
+            StringComparer.Ordinal)
         {
-            PropertyNameCaseInsensitive = false,
-            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+            ["receipt"] = "receipt.json",
+            ["state"] = "state.json",
+            ["evidence"] = "evidence.json"
         };
 
-    public static BootstrapGenerationPaths? ResolveOptional(
-        IConfiguration configuration)
+    private readonly string _rootPath;
+    private readonly string _manifestPath;
+    private readonly Lazy<Task<BootstrapGenerationPaths>> _snapshot;
+
+    public BootstrapGenerationResolver(string rootPath)
     {
-        var rootPath = configuration["Flaggo:Bootstrap:LocalGenerationPath"];
-        return string.IsNullOrWhiteSpace(rootPath) ? null : Resolve(rootPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+        _rootPath = Path.GetFullPath(rootPath);
+        _manifestPath = Path.Combine(_rootPath, "current.json");
+        _snapshot = new Lazy<Task<BootstrapGenerationPaths>>(
+            LoadAsync,
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public static BootstrapGenerationPaths Resolve(string rootPath)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
-        var root = Path.GetFullPath(rootPath);
-        var manifestPath = Path.Combine(root, "current.json");
-        try
-        {
-            var bytes = File.ReadAllBytes(manifestPath);
-            StrictJson.Validate(bytes);
-            var manifest = JsonSerializer.Deserialize<BootstrapManifest>(
-                bytes,
-                JsonOptions);
-            if (manifest?.Version != 1 ||
-                string.IsNullOrWhiteSpace(manifest.Generation) ||
-                !GenerationPattern().IsMatch(manifest.Generation) ||
-                manifest.Files is null)
-            {
-                throw new InvalidDataException(
-                    "The bootstrap generation manifest is invalid.");
-            }
+        => new BootstrapGenerationResolver(rootPath)
+            .ResolveAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
 
-            var generationPath = Path.Combine(
-                root,
-                "generations",
-                manifest.Generation);
-            var receipt = ResolveFile(manifest.Files, generationPath, "receipt");
-            var state = ResolveFile(manifest.Files, generationPath, "state");
-            var evidence = ResolveFile(manifest.Files, generationPath, "evidence");
-            return new BootstrapGenerationPaths(
-                root,
-                manifest.Generation,
-                receipt,
-                state,
-                evidence);
-        }
-        catch (JsonException error)
+    public async Task<BootstrapGenerationPaths> ResolveAsync(
+        CancellationToken cancellationToken) =>
+        await _snapshot.Value.WaitAsync(cancellationToken);
+
+    public async Task<CommittedArtifactReference> ResolveStateSnapshotAsync(
+        CancellationToken cancellationToken) =>
+        (await ResolveAsync(cancellationToken)).StateSnapshot;
+
+    public async Task<CommittedArtifactReference> ResolveEvidenceSnapshotAsync(
+        CancellationToken cancellationToken) =>
+        (await ResolveAsync(cancellationToken)).EvidenceSnapshot;
+
+    private async Task<BootstrapGenerationPaths> LoadAsync()
+    {
+        var generation =
+            await CommittedFileSnapshot.ResolveGenerationManifestAsync(
+                _manifestPath,
+                RequiredArtifacts,
+                CancellationToken.None);
+        foreach (var artifact in generation.Artifacts.Values)
         {
-            throw new InvalidDataException(
-                "The bootstrap generation manifest is invalid.",
-                error);
+            await CommittedFileSnapshot.ReadPinnedAsync(
+                    artifact,
+                    options: null,
+                    CancellationToken.None);
         }
+
+        return new BootstrapGenerationPaths(
+            _rootPath,
+            generation.Generation,
+            generation.Artifacts["receipt"].ArtifactPath,
+            generation.Artifacts["state"].ArtifactPath,
+            generation.Artifacts["evidence"].ArtifactPath,
+            generation.Artifacts["receipt"],
+            generation.Artifacts["state"],
+            generation.Artifacts["evidence"]);
+    }
+}
+
+internal sealed class DirectCommittedSnapshotResolver :
+    IStateSnapshotProvider,
+    IEvidenceSnapshotProvider
+{
+    private readonly Lazy<Task<CommittedArtifactReference>>? _state;
+    private readonly Lazy<Task<CommittedArtifactReference>>? _evidence;
+
+    public DirectCommittedSnapshotResolver(
+        string? stateDescriptorPath,
+        string? evidenceDescriptorPath)
+    {
+        _state = CreateSnapshot(stateDescriptorPath);
+        _evidence = CreateSnapshot(evidenceDescriptorPath);
     }
 
-    private static string ResolveFile(
-        IReadOnlyDictionary<string, string> files,
-        string generationPath,
-        string logicalName)
+    public async Task<CommittedArtifactReference> ResolveStateSnapshotAsync(
+        CancellationToken cancellationToken) =>
+        await ResolveAsync(
+            _state,
+            "A local state commit descriptor is not configured.",
+            cancellationToken);
+
+    public async Task<CommittedArtifactReference> ResolveEvidenceSnapshotAsync(
+        CancellationToken cancellationToken) =>
+        await ResolveAsync(
+            _evidence,
+            "A local evidence commit descriptor is not configured.",
+            cancellationToken);
+
+    private static Lazy<Task<CommittedArtifactReference>>? CreateSnapshot(
+        string? descriptorPath) =>
+        string.IsNullOrWhiteSpace(descriptorPath)
+            ? null
+            : new Lazy<Task<CommittedArtifactReference>>(
+                () => CommittedFileSnapshot.ResolveAsync(
+                    CommittedFileSnapshotSource.FromDescriptor(descriptorPath),
+                    options: null,
+                    CancellationToken.None),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private static async Task<CommittedArtifactReference> ResolveAsync(
+        Lazy<Task<CommittedArtifactReference>>? snapshot,
+        string missingMessage,
+        CancellationToken cancellationToken)
     {
-        var expectedName = $"{logicalName}.json";
-        if (!files.TryGetValue(logicalName, out var fileName) ||
-            !string.Equals(fileName, expectedName, StringComparison.Ordinal))
+        if (snapshot is null)
         {
-            throw new InvalidDataException(
-                $"The bootstrap generation manifest is missing '{logicalName}'.");
+            throw new InvalidOperationException(missingMessage);
         }
 
-        var path = Path.GetFullPath(Path.Combine(generationPath, fileName));
-        var expected = Path.GetFullPath(Path.Combine(generationPath, expectedName));
-        if (!string.Equals(path, expected, StringComparison.Ordinal) ||
-            !File.Exists(path))
-        {
-            throw new InvalidDataException(
-                $"The bootstrap generation file '{logicalName}' is missing.");
-        }
-        return path;
+        return await snapshot.Value.WaitAsync(cancellationToken);
     }
-
-    [GeneratedRegex(
-        "\\A\\d+-\\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z",
-        RegexOptions.CultureInvariant)]
-    private static partial Regex GenerationPattern();
-
-    private sealed record BootstrapManifest(
-        int? Version,
-        string? Generation,
-        IReadOnlyDictionary<string, string>? Files);
 }

@@ -12,6 +12,7 @@ import {
 } from "./durable-json.mjs";
 
 export {
+  publishJsonArtifact,
   publishJsonGeneration,
   resolveJsonGeneration,
   writeJsonAtomic,

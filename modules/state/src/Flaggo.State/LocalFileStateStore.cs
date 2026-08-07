@@ -6,10 +6,29 @@ using Flaggo.Shared.Contracts;
 
 namespace Flaggo.State;
 
-public sealed record LocalFileStateStoreOptions(string FilePath);
+public interface IStateSnapshotProvider
+{
+    Task<CommittedArtifactReference> ResolveStateSnapshotAsync(
+        CancellationToken cancellationToken);
+}
 
-public sealed partial class LocalFileStateStore(
-    LocalFileStateStoreOptions options) : IStateStore, IStateHealth
+public sealed record LocalFileStateStoreOptions
+{
+    public LocalFileStateStoreOptions(string commitDescriptorPath)
+        : this(CommittedFileSnapshotSource.FromDescriptor(commitDescriptorPath))
+    {
+    }
+
+    public LocalFileStateStoreOptions(CommittedFileSnapshotSource snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        Snapshot = snapshot;
+    }
+
+    public CommittedFileSnapshotSource Snapshot { get; }
+}
+
+public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 {
     private const int FormatVersion = 1;
 
@@ -20,7 +39,30 @@ public sealed partial class LocalFileStateStore(
             UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
         };
 
-    private readonly string _filePath = Path.GetFullPath(options.FilePath);
+    private readonly IStateSnapshotProvider _snapshotProvider;
+    private readonly CommittedFileSnapshotOptions _snapshotOptions;
+
+    public LocalFileStateStore(LocalFileStateStoreOptions options)
+        : this(
+            new SourceStateSnapshotProvider(options.Snapshot),
+            new CommittedFileSnapshotOptions())
+    {
+    }
+
+    public LocalFileStateStore(IStateSnapshotProvider snapshotProvider)
+        : this(snapshotProvider, new CommittedFileSnapshotOptions())
+    {
+    }
+
+    internal LocalFileStateStore(
+        IStateSnapshotProvider snapshotProvider,
+        CommittedFileSnapshotOptions snapshotOptions)
+    {
+        ArgumentNullException.ThrowIfNull(snapshotProvider);
+        ArgumentNullException.ThrowIfNull(snapshotOptions);
+        _snapshotProvider = snapshotProvider;
+        _snapshotOptions = snapshotOptions;
+    }
 
     public async Task<GovernedDecisionState?> GetActiveAsync(
         string decisionKey,
@@ -69,10 +111,12 @@ public sealed partial class LocalFileStateStore(
     {
         try
         {
-            await using var stream = OpenSnapshotRead(_filePath);
-            using var memory = new MemoryStream();
-            await stream.CopyToAsync(memory, cancellationToken);
-            var json = memory.ToArray();
+            var snapshot = await _snapshotProvider.ResolveStateSnapshotAsync(
+                cancellationToken);
+            var json = await CommittedFileSnapshot.ReadPinnedAsync(
+                snapshot,
+                _snapshotOptions,
+                cancellationToken);
             StrictJson.Validate(json);
             var document = JsonSerializer.Deserialize<PersistedStateDocument>(
                 json,
@@ -91,15 +135,6 @@ public sealed partial class LocalFileStateStore(
                 error);
         }
     }
-
-    internal static FileStream OpenSnapshotRead(string filePath) =>
-        new(
-            filePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read | FileShare.Delete,
-            4096,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
 
     private static IReadOnlyDictionary<StateIdentity, GovernedDecisionState>
         ValidateAndMap(PersistedStateDocument document)
@@ -414,4 +449,15 @@ public sealed partial class LocalFileStateStore(
         JsonElement? Minimum,
         JsonElement? Maximum,
         JsonElement? Weight);
+
+    private sealed class SourceStateSnapshotProvider(
+        CommittedFileSnapshotSource source) : IStateSnapshotProvider
+    {
+        public Task<CommittedArtifactReference> ResolveStateSnapshotAsync(
+            CancellationToken cancellationToken) =>
+            CommittedFileSnapshot.ResolveAsync(
+                source,
+                options: null,
+                cancellationToken);
+    }
 }

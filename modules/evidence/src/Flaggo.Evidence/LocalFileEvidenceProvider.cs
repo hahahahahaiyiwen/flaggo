@@ -4,12 +4,29 @@ using Flaggo.Shared.Contracts;
 
 namespace Flaggo.Evidence;
 
-public sealed record LocalFileEvidenceProviderOptions(string FilePath);
+public interface IEvidenceSnapshotProvider
+{
+    Task<CommittedArtifactReference> ResolveEvidenceSnapshotAsync(
+        CancellationToken cancellationToken);
+}
 
-public sealed class LocalFileEvidenceProvider(
-    LocalFileEvidenceProviderOptions options) :
-    IEvidenceProvider,
-    IEvidenceHealth
+public sealed record LocalFileEvidenceProviderOptions
+{
+    public LocalFileEvidenceProviderOptions(string commitDescriptorPath)
+        : this(CommittedFileSnapshotSource.FromDescriptor(commitDescriptorPath))
+    {
+    }
+
+    public LocalFileEvidenceProviderOptions(CommittedFileSnapshotSource snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        Snapshot = snapshot;
+    }
+
+    public CommittedFileSnapshotSource Snapshot { get; }
+}
+
+public sealed class LocalFileEvidenceProvider : IEvidenceProvider, IEvidenceHealth
 {
     private const int FormatVersion = 1;
 
@@ -20,7 +37,31 @@ public sealed class LocalFileEvidenceProvider(
             UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
         };
 
-    private readonly string _filePath = Path.GetFullPath(options.FilePath);
+    private readonly IEvidenceSnapshotProvider _snapshotProvider;
+    private readonly CommittedFileSnapshotOptions _snapshotOptions;
+
+    public LocalFileEvidenceProvider(LocalFileEvidenceProviderOptions options)
+        : this(
+            new SourceEvidenceSnapshotProvider(options.Snapshot),
+            new CommittedFileSnapshotOptions())
+    {
+    }
+
+    public LocalFileEvidenceProvider(
+        IEvidenceSnapshotProvider snapshotProvider)
+        : this(snapshotProvider, new CommittedFileSnapshotOptions())
+    {
+    }
+
+    internal LocalFileEvidenceProvider(
+        IEvidenceSnapshotProvider snapshotProvider,
+        CommittedFileSnapshotOptions snapshotOptions)
+    {
+        ArgumentNullException.ThrowIfNull(snapshotProvider);
+        ArgumentNullException.ThrowIfNull(snapshotOptions);
+        _snapshotProvider = snapshotProvider;
+        _snapshotOptions = snapshotOptions;
+    }
 
     public async Task<DecisionEvidenceSnapshot?> GetEvidenceAsync(
         DecisionEvidenceRequest request,
@@ -57,10 +98,13 @@ public sealed class LocalFileEvidenceProvider(
     {
         try
         {
-            await using var stream = OpenSnapshotRead(_filePath);
-            using var memory = new MemoryStream();
-            await stream.CopyToAsync(memory, cancellationToken);
-            var json = memory.ToArray();
+            var snapshot =
+                await _snapshotProvider.ResolveEvidenceSnapshotAsync(
+                    cancellationToken);
+            var json = await CommittedFileSnapshot.ReadPinnedAsync(
+                snapshot,
+                _snapshotOptions,
+                cancellationToken);
             StrictJson.Validate(json);
             var document = JsonSerializer.Deserialize<PersistedEvidenceDocument>(
                 json,
@@ -126,15 +170,6 @@ public sealed class LocalFileEvidenceProvider(
         }
     }
 
-    internal static FileStream OpenSnapshotRead(string filePath) =>
-        new(
-            filePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read | FileShare.Delete,
-            4096,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-
     private static bool IsProbability(double value) =>
         double.IsFinite(value) && value is >= 0 and <= 1;
 
@@ -148,4 +183,15 @@ public sealed class LocalFileEvidenceProvider(
         double? ExpectedOutcome = null,
         double? SampleSize = null,
         IReadOnlyDictionary<string, JsonElement>? Details = null);
+
+    private sealed class SourceEvidenceSnapshotProvider(
+        CommittedFileSnapshotSource source) : IEvidenceSnapshotProvider
+    {
+        public Task<CommittedArtifactReference> ResolveEvidenceSnapshotAsync(
+            CancellationToken cancellationToken) =>
+            CommittedFileSnapshot.ResolveAsync(
+                source,
+                options: null,
+                cancellationToken);
+    }
 }

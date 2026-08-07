@@ -21,6 +21,36 @@ namespace Flaggo.Decisioning.Tests;
 public sealed class HostBoundaryTests
 {
     [Fact]
+    public async Task DataPlane_DecisionAndReadinessCompositionIsRequestScoped()
+    {
+        using var registryFile = new TestRegistryFile();
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(registryFile.Path);
+        using var firstScope = factory.Services.CreateScope();
+        using var secondScope = factory.Services.CreateScope();
+
+        var firstDecision = firstScope.ServiceProvider
+            .GetRequiredService<DecisionService>();
+        var firstReadiness = firstScope.ServiceProvider
+            .GetRequiredService<IRuntimeReadinessProbe>();
+
+        Assert.Same(
+            firstDecision,
+            firstScope.ServiceProvider.GetRequiredService<DecisionService>());
+        Assert.Same(
+            firstReadiness,
+            firstScope.ServiceProvider
+                .GetRequiredService<IRuntimeReadinessProbe>());
+        Assert.NotSame(
+            firstDecision,
+            secondScope.ServiceProvider.GetRequiredService<DecisionService>());
+        Assert.NotSame(
+            firstReadiness,
+            secondScope.ServiceProvider
+                .GetRequiredService<IRuntimeReadinessProbe>());
+    }
+
+    [Fact]
     public async Task DataPlane_DoesNotHostManagementEndpoints()
     {
         using var registryFile = new TestRegistryFile();
@@ -236,7 +266,8 @@ public sealed class HostBoundaryTests
         bool clientFallbackEligible)
     {
         using var registryFile = new TestRegistryFile();
-        using var evidenceFile = new TestJsonFile("evidence-omitted-quality");
+        using var evidenceFile =
+            new CommittedTestJsonFile("evidence-omitted-quality");
         await evidenceFile.WriteAsync(
             """
             {
@@ -312,7 +343,8 @@ public sealed class HostBoundaryTests
     public async Task RequiredEvidenceUnavailable_ReleasesIdempotencyClaimForRecovery()
     {
         using var registryFile = new TestRegistryFile();
-        using var evidenceFile = new TestJsonFile("evidence-idempotency-recovery");
+        using var evidenceFile =
+            new CommittedTestJsonFile("evidence-idempotency-recovery");
         await evidenceFile.WriteAsync(
             """
             {

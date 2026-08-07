@@ -87,20 +87,19 @@ builder.Services.AddSingleton<IDefinitionRegistry>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IRegistryHealth>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
-var bootstrapGeneration =
-    BootstrapGenerationResolver.ResolveOptional(builder.Configuration);
+LocalRuntimeAdapterHosting.AddDecisionSnapshotScope(
+    builder.Services,
+    builder.Configuration);
 LocalRuntimeAdapterHosting.AddStateAdapter(
     builder.Services,
     builder.Configuration,
-    contractIdentity,
-    bootstrapGeneration);
+    contractIdentity);
 LocalRuntimeAdapterHosting.AddAuditAdapter(
     builder.Services,
     builder.Configuration);
 LocalRuntimeAdapterHosting.AddEvidenceAdapter(
     builder.Services,
-    builder.Configuration,
-    bootstrapGeneration);
+    builder.Configuration);
 builder.Services.AddSingleton<IRuntimeIdGenerator, GuidRuntimeIdGenerator>();
 builder.Services.AddSingleton<IDecideIdempotencyStore>(provider =>
     new InMemoryDecideIdempotencyStore(provider.GetRequiredService<TimeProvider>()));
@@ -132,8 +131,8 @@ builder.Services.AddSingleton<ITargetResolver>(
 builder.Services.AddSingleton<IStrategyExecutor, DeterministicStrategyExecutor>();
 builder.Services.AddSingleton<IPolicyEvaluator>(provider =>
     new DefaultPolicyEvaluator(provider.GetRequiredService<TimeProvider>()));
-builder.Services.AddSingleton<DecisionService>();
-builder.Services.AddSingleton<IRuntimeReadinessProbe, RuntimeReadinessProbe>();
+builder.Services.AddScoped<DecisionService>();
+builder.Services.AddScoped<IRuntimeReadinessProbe, RuntimeReadinessProbe>();
 
 var app = builder.Build();
 

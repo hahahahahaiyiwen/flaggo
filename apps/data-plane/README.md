@@ -81,7 +81,8 @@ cohort claim in target provenance while identifying the resolved global target.
 
 Phase 3 local integration selects file-backed state and audit adapters through
 `Flaggo__State__LocalFilePath`, `Flaggo__Evidence__LocalFilePath`, and
-`Flaggo__Audit__LocalFilePath`. The state file is activated by trusted
+`Flaggo__Audit__LocalFilePath`. State and evidence paths name atomically
+published commit descriptors; unpinned raw JSON is rejected. The state file is activated by trusted
 bootstrap from an approved registration receipt; the composition root does not
 hardcode the Tetris strategy. Local evidence supplies compact strategy
 confidence. Exposure confirmation is composed through the constructor-injected
@@ -92,8 +93,23 @@ with prepared or possibly late-committed state by stable exposure identity.
 Local audit inspection is file/tool based and adds no runtime debug route.
 
 The Tetris harness instead sets `Flaggo__Bootstrap__LocalGenerationPath`.
-Startup strictly resolves its atomic `current.json` pointer once and takes both
-state and evidence from the same immutable generation directory, preventing a
-mixed receipt/state/evidence publication from being observed. The receipt is
-published in that generation for bootstrap and SDK consumers but is not a
-data-plane runtime adapter input.
+The ASP.NET composition root registers a request-scoped
+`BootstrapGenerationResolver`, `LocalFileStateStore`,
+`LocalFileEvidenceProvider`, `DecisionService`, and readiness probe. The
+resolver lazily reads and validates `current.json` once for the request,
+validates every pinned receipt/state/evidence artifact, and gives state and
+evidence the references from that same generation. A pointer switch between
+the state and evidence phases therefore cannot mix generations; the next
+request scope observes the newly published generation. No ambient context or
+process-global generation cache is used. Registry, audit, clocks, identifiers,
+strategy, policy, idempotency, and exposure services remain singleton where
+their implementations are thread-safe and do not capture scoped adapters.
+
+Direct state/evidence descriptor configuration uses the same scoped hosting
+boundary and pins the configured descriptors for the request. Independent
+descriptors do not form a cross-file transaction; callers that require
+state/evidence atomicity use the generation manifest. Directly constructed
+module adapters and in-memory ports remain available for unit/domain
+composition. The receipt is published and digest-validated in a bootstrap
+generation for bootstrap and SDK consumers but is not a data-plane runtime
+adapter input.

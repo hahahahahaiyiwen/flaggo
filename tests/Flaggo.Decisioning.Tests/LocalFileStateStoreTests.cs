@@ -41,40 +41,27 @@ public sealed class LocalFileStateStoreTests
     }
 
     [Fact]
-    public async Task SnapshotLease_BlocksInPlaceRewriteAndAllowsAtomicReplacement()
+    public async Task DirectRawFileWithoutCommitDescriptor_FailsClosed()
     {
-        using var file = new TestJsonFile("state-snapshot");
-        using var replacement = new TestJsonFile("state-snapshot-replacement");
-        await file.WriteAsync(StateDocument(850, "2026-08-05T23:00:00Z"));
-        await replacement.WriteAsync(
-            StateDocument(800, "2026-08-06T00:00:00Z"));
-        var store = new LocalFileStateStore(
-            new LocalFileStateStoreOptions(file.Path));
+        var path = Path.Combine(
+            TestPaths.RepositoryRoot,
+            ".flaggo",
+            "test-artifacts",
+            $"state-raw-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(path, StateDocument(800, null));
+            var store = new LocalFileStateStore(
+                new LocalFileStateStoreOptions(path));
 
-        await using var snapshot = LocalFileStateStore.OpenSnapshotRead(file.Path);
-        Assert.Throws<IOException>(
-            () =>
-            {
-                using var writer = new FileStream(
-                    file.Path,
-                    FileMode.Truncate,
-                    FileAccess.Write,
-                    FileShare.ReadWrite | FileShare.Delete);
-            });
-
-        File.Replace(replacement.Path, file.Path, destinationBackupFileName: null);
-        using var memory = new MemoryStream();
-        await snapshot.CopyToAsync(memory);
-        using var original = JsonDocument.Parse(memory.ToArray());
-        Assert.Equal(
-            850,
-            original.RootElement
-                .GetProperty("states")[0]
-                .GetProperty("value")
-                .GetInt32());
-
-        var current = await LoadStateAsync(store);
-        Assert.Equal(800, current.Value.GetInt32());
+            await Assert.ThrowsAsync<InvalidDataException>(
+                () => LoadStateAsync(store));
+            Assert.False(await store.IsAvailableAsync(CancellationToken.None));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
@@ -689,5 +676,36 @@ public sealed class LocalFileStateStoreTests
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private sealed class TestJsonFile : IDisposable
+    {
+        private readonly string _directory;
+
+        public TestJsonFile(string prefix)
+        {
+            _directory = System.IO.Path.Combine(
+                TestPaths.RepositoryRoot,
+                ".flaggo",
+                "test-artifacts",
+                $"{prefix}-{Guid.NewGuid():N}");
+            Path = System.IO.Path.Combine(_directory, "current.commit.json");
+        }
+
+        public string Path { get; }
+
+        public async Task WriteAsync(string content) =>
+            await CommittedFileSnapshotWriter.PublishAsync(
+                Path,
+                System.Text.Encoding.UTF8.GetBytes(content),
+                artifactStem: "snapshot");
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_directory))
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+        }
     }
 }

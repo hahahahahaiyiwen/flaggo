@@ -55,18 +55,32 @@ retry recovered dependencies. Followers exceeding the bounded wait receive an
 explicit in-progress result.
 
 Phase 3 adds a JSON-file `IStateStore` adapter for local shared-host
-integration. It reloads immutable activated state for each lookup so trusted
-bootstrap or local governance tooling can replace the file atomically without
-restarting the data plane. The persisted identity must come from an approved
-registration receipt; malformed, missing, or incompatible files surface as
-dependency failures rather than silently selecting another state.
+integration. Direct `Flaggo__State__LocalFilePath` configuration names a
+strict commit descriptor, not a raw state file. The descriptor pins one
+immutable sibling artifact by exact byte length and lowercase sha256.
+Bootstrap composition instead supplies the shared `current.json` generation
+manifest, which pins receipt, state, and evidence without redundant sidecars.
+The persisted identity must come from an approved registration receipt;
+missing descriptors, unpinned raw files, malformed commits, digest mismatch,
+or incompatible state surface as dependency failures.
 
-Each lookup holds a snapshot read handle that permits readers and
-delete/rename sharing but denies write sharing. An in-place truncate or rewrite
-therefore cannot race the copy and produce a torn state document. Trusted
-writers must write and flush a complete sibling file and atomically replace the
-configured path; the current lookup finishes against the old file identity and
-the next lookup observes the replacement.
+`IStateSnapshotProvider` is the module-owned local-persistence seam. A directly
+constructed adapter resolves its configured commit source for each lookup.
+The ASP.NET host instead injects a request-scoped provider: direct descriptors
+are pinned for that request, while generation mode returns the state artifact
+reference from the request's single shared state/evidence generation. The
+store opens only that safe immutable sibling, reads bounded bytes, and verifies
+length plus sha256 before strict JSON and typed state validation. An in-place
+rewrite, including a valid parseable intermediate document paused
+indefinitely, fails digest validation. Stable reads have no mandatory delay.
+
+Trusted direct writers use `CommittedFileSnapshotWriter`: create and fsync a
+new immutable artifact, fsync its parent directory, create and fsync the
+descriptor temporary, atomically rename the descriptor last, and fsync the
+directory again. Bootstrap/governance tooling publishes all
+receipt/state/evidence artifacts in a new generation and atomically switches
+its digest-pinned manifest last. Raw-file fallback is
+intentionally unsupported.
 
 The adapter accepts only the implemented `active-value` and `strategy` modes
 from the frozen decision-mode enum. Active values cannot carry strategy

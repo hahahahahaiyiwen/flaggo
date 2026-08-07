@@ -8,7 +8,11 @@ import {
   createFlaggoClient,
   createSignalHandle,
 } from "../../packages/sdk-typescript/dist/index.js";
-import { bootstrapTetris, loadCanonicalBundle, writeJsonAtomic } from "./bootstrap.mjs";
+import {
+  bootstrapTetris,
+  loadCanonicalBundle,
+  publishJsonGeneration,
+} from "./bootstrap.mjs";
 import {
   createHostLifecycle,
   installSignalHandlers,
@@ -267,11 +271,15 @@ async function runIntegration(lifecycle) {
   assert.equal(recovery.value, 750);
   assert.equal(recovery.policy.result, "approved");
 
-  await writeJsonAtomic(
-    bootstrap.publication.paths.evidence,
+  await publishJsonGeneration(
+    bootstrap.publication.rootPath,
     {
-      version: 1,
-      evidenceByStrategy: {},
+      receipt: bootstrap.receipt,
+      state: bootstrap.state,
+      evidence: {
+        version: 1,
+        evidenceByStrategy: {},
+      },
     },
     lifecycle.signal,
   );
@@ -295,9 +303,14 @@ async function runIntegration(lifecycle) {
       },
     );
   } finally {
-    await writeJsonAtomic(
-      bootstrap.publication.paths.evidence,
-      bootstrap.evidence,
+    await publishJsonGeneration(
+      bootstrap.publication.rootPath,
+      {
+        receipt: bootstrap.receipt,
+        state: bootstrap.state,
+        evidence: bootstrap.evidence,
+      },
+      lifecycle.signal,
     );
   }
   const evidenceRecovered = await client.tune.numberDetailed(
@@ -315,9 +328,13 @@ async function runIntegration(lifecycle) {
 
   const coolingState = structuredClone(bootstrap.state);
   coolingState.states[0].lastChangedAt = new Date().toISOString();
-  await writeJsonAtomic(
-    bootstrap.publication.paths.state,
-    coolingState,
+  await publishJsonGeneration(
+    bootstrap.publication.rootPath,
+    {
+      receipt: bootstrap.receipt,
+      state: coolingState,
+      evidence: bootstrap.evidence,
+    },
     lifecycle.signal,
   );
   const cooldown = await client.tune.numberDetailed(

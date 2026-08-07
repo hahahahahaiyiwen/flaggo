@@ -9,22 +9,71 @@ namespace Flaggo.DataPlane;
 
 public static class LocalRuntimeAdapterHosting
 {
+    public static void AddDecisionSnapshotScope(
+        IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var generationPath =
+            configuration["Flaggo:Bootstrap:LocalGenerationPath"];
+        if (!string.IsNullOrWhiteSpace(generationPath))
+        {
+            services.AddScoped(
+                _ => new BootstrapGenerationResolver(generationPath));
+            services.AddScoped<IStateSnapshotProvider>(
+                provider => provider.GetRequiredService<
+                    BootstrapGenerationResolver>());
+            services.AddScoped<IEvidenceSnapshotProvider>(
+                provider => provider.GetRequiredService<
+                    BootstrapGenerationResolver>());
+            return;
+        }
+
+        var stateDescriptorPath =
+            configuration["Flaggo:State:LocalFilePath"];
+        var evidenceDescriptorPath =
+            configuration["Flaggo:Evidence:LocalFilePath"];
+        if (string.IsNullOrWhiteSpace(stateDescriptorPath) &&
+            string.IsNullOrWhiteSpace(evidenceDescriptorPath))
+        {
+            return;
+        }
+
+        services.AddScoped(
+            _ => new DirectCommittedSnapshotResolver(
+                stateDescriptorPath,
+                evidenceDescriptorPath));
+        if (!string.IsNullOrWhiteSpace(stateDescriptorPath))
+        {
+            services.AddScoped<IStateSnapshotProvider>(
+                provider => provider.GetRequiredService<
+                    DirectCommittedSnapshotResolver>());
+        }
+
+        if (!string.IsNullOrWhiteSpace(evidenceDescriptorPath))
+        {
+            services.AddScoped<IEvidenceSnapshotProvider>(
+                provider => provider.GetRequiredService<
+                    DirectCommittedSnapshotResolver>());
+        }
+    }
+
     public static void AddStateAdapter(
         IServiceCollection services,
         IConfiguration configuration,
-        RuntimeContractIdentity defaultIdentity,
-        BootstrapGenerationPaths? bootstrapGeneration = null)
+        RuntimeContractIdentity defaultIdentity)
     {
-        var statePath = bootstrapGeneration?.StatePath ??
-            configuration["Flaggo:State:LocalFilePath"];
-        if (!string.IsNullOrWhiteSpace(statePath))
+        var directCommitPath = configuration["Flaggo:State:LocalFilePath"];
+        var generationPath =
+            configuration["Flaggo:Bootstrap:LocalGenerationPath"];
+        if (!string.IsNullOrWhiteSpace(generationPath) ||
+            !string.IsNullOrWhiteSpace(directCommitPath))
         {
-            services.AddSingleton(
-                new LocalFileStateStore(
-                    new LocalFileStateStoreOptions(statePath)));
-            services.AddSingleton<IStateStore>(
+            services.AddScoped<LocalFileStateStore>(
+                provider => new LocalFileStateStore(
+                    provider.GetRequiredService<IStateSnapshotProvider>()));
+            services.AddScoped<IStateStore>(
                 provider => provider.GetRequiredService<LocalFileStateStore>());
-            services.AddSingleton<IStateHealth>(
+            services.AddScoped<IStateHealth>(
                 provider => provider.GetRequiredService<LocalFileStateStore>());
             return;
         }
@@ -75,19 +124,21 @@ public static class LocalRuntimeAdapterHosting
 
     public static void AddEvidenceAdapter(
         IServiceCollection services,
-        IConfiguration configuration,
-        BootstrapGenerationPaths? bootstrapGeneration = null)
+        IConfiguration configuration)
     {
-        var evidencePath = bootstrapGeneration?.EvidencePath ??
+        var directCommitPath =
             configuration["Flaggo:Evidence:LocalFilePath"];
-        if (!string.IsNullOrWhiteSpace(evidencePath))
+        var generationPath =
+            configuration["Flaggo:Bootstrap:LocalGenerationPath"];
+        if (!string.IsNullOrWhiteSpace(generationPath) ||
+            !string.IsNullOrWhiteSpace(directCommitPath))
         {
-            services.AddSingleton(
-                new LocalFileEvidenceProvider(
-                    new LocalFileEvidenceProviderOptions(evidencePath)));
-            services.AddSingleton<IEvidenceProvider>(
+            services.AddScoped<LocalFileEvidenceProvider>(
+                provider => new LocalFileEvidenceProvider(
+                    provider.GetRequiredService<IEvidenceSnapshotProvider>()));
+            services.AddScoped<IEvidenceProvider>(
                 provider => provider.GetRequiredService<LocalFileEvidenceProvider>());
-            services.AddSingleton<IEvidenceHealth>(
+            services.AddScoped<IEvidenceHealth>(
                 provider => provider.GetRequiredService<LocalFileEvidenceProvider>());
             return;
         }
