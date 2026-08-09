@@ -51,6 +51,15 @@ or trusted registration behavior in browser code.
 - SDK and direct REST serialization produce contract-equivalent decisions.
 - High pressure plus slow placement selects `850ms`, exactly one allowed
   `50ms` delta above the `800ms` governed baseline.
+- The real host computes all four normalizations and weights. A `0.9`
+  board-pressure vector with the other inputs at minimum scores `0.405` and
+  selects `750ms`; a `0.4` board-pressure vector with the other inputs at
+  maximum scores `0.73` and selects `850ms`. Both oppose the
+  board-pressure-only threshold result.
+- With board pressure fixed at `0.5`, paired vectors independently move
+  placement time, recovery failures, and current level across the `0.55`
+  aggregate threshold. The harness asserts response value, strategy ID,
+  reason, and persisted audit inputs for every vector.
 - Recovery selects `750ms`, exactly one allowed delta below the baseline.
 - A recent state transition activates cooldown, blocks the candidate, and
   returns the server-policy fallback of `800ms`.
@@ -69,6 +78,10 @@ or trusted registration behavior in browser code.
   receipt unconfirmed, while replay after recovery reuses one exposure record.
 - Failed bootstrap sibling writes are drained and cleaned before publication;
   readers see either the complete old generation or the complete new one.
+- Bootstrap publication rejects root/component links, artifact links, pointer
+  links, junctions, reparse points, and a parent swap before file content is
+  written. A focused Windows CI job exercises direct snapshots, durable JSON,
+  the native directory helper, and the real publication harness.
 - Any control/data host exit before requested shutdown fails the harness even
   when the remaining workflow assertions would otherwise pass.
 - No browser-facing code receives management credentials, and no production

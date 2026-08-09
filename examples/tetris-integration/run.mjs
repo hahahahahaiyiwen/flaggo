@@ -182,6 +182,169 @@ async function runIntegration(lifecycle) {
   assert.equal(high.policy.result, "approved");
   assert.equal(high.fallback.decisionFallbackUsed, false);
   assert.equal(high.exposure.confirmationRequired, true);
+  const weightedRule = bootstrap.state.states.find(
+    ({ decisionKey }) => decisionKey === "tetris.dropInterval",
+  )?.numericRule;
+  assert.ok(weightedRule?.weightedInputs?.length === 4);
+  const weightedProofs = [];
+  const proveWeightedDecision = async ({
+    name,
+    values,
+    expectedScore,
+    expectedValue,
+    oppositeBoardOnly = false,
+  }) => {
+    const score = weightedScore(weightedRule, values);
+    assert.ok(
+      Math.abs(score - expectedScore) < 1e-12,
+      `${name} weighted score ${score} did not equal ${expectedScore}`,
+    );
+    const aggregateAtOrAbove = score >= weightedRule.threshold;
+    assert.equal(
+      aggregateAtOrAbove,
+      expectedValue === weightedRule.valueAtOrAbove,
+    );
+    if (oppositeBoardOnly) {
+      assert.notEqual(
+        values["tetris.boardPressure"] >= weightedRule.threshold,
+        aggregateAtOrAbove,
+        `${name} must oppose the board-pressure-only threshold result`,
+      );
+    }
+    const result = await client.tune.numberDetailed(
+      "tetris.dropInterval",
+      {
+        runtimeTarget: { type: "session", id: "game-phase3" },
+        context,
+        inputs: Object.entries(values).map(([key, value]) =>
+          input(key, value)
+        ),
+      },
+    );
+    assert.equal(result.source, "server");
+    assert.equal(result.value, expectedValue);
+    assert.equal(result.strategyId, "strategy-tetris-balanced-v1");
+    assert.equal(
+      result.reason,
+      "Applied the active weighted numeric rule strategy.",
+    );
+    weightedProofs.push({
+      name,
+      values,
+      score,
+      expectedValue,
+      decisionId: result.decisionId,
+    });
+    return result;
+  };
+
+  await proveWeightedDecision({
+    name: "board-high-aggregate-low",
+    values: {
+      "tetris.boardPressure": 0.9,
+      "tetris.recentPlacementTimeMs": 0,
+      "tetris.recoveryFailures": 0,
+      "tetris.currentLevel": 0,
+    },
+    expectedScore: 0.405,
+    expectedValue: 750,
+    oppositeBoardOnly: true,
+  });
+  await proveWeightedDecision({
+    name: "board-low-aggregate-high",
+    values: {
+      "tetris.boardPressure": 0.4,
+      "tetris.recentPlacementTimeMs": 2000,
+      "tetris.recoveryFailures": 5,
+      "tetris.currentLevel": 20,
+    },
+    expectedScore: 0.73,
+    expectedValue: 850,
+    oppositeBoardOnly: true,
+  });
+
+  const sensitivityPairs = [
+    [
+      {
+        name: "placement-time-below",
+        values: {
+          "tetris.boardPressure": 0.5,
+          "tetris.recentPlacementTimeMs": 1200,
+          "tetris.recoveryFailures": 3,
+          "tetris.currentLevel": 10,
+        },
+        expectedScore: 0.545,
+        expectedValue: 750,
+      },
+      {
+        name: "placement-time-above",
+        values: {
+          "tetris.boardPressure": 0.5,
+          "tetris.recentPlacementTimeMs": 1240,
+          "tetris.recoveryFailures": 3,
+          "tetris.currentLevel": 10,
+        },
+        expectedScore: 0.55,
+        expectedValue: 850,
+      },
+    ],
+    [
+      {
+        name: "recovery-failures-below",
+        values: {
+          "tetris.boardPressure": 0.5,
+          "tetris.recentPlacementTimeMs": 1000,
+          "tetris.recoveryFailures": 3,
+          "tetris.currentLevel": 10,
+        },
+        expectedScore: 0.52,
+        expectedValue: 750,
+      },
+      {
+        name: "recovery-failures-above",
+        values: {
+          "tetris.boardPressure": 0.5,
+          "tetris.recentPlacementTimeMs": 1000,
+          "tetris.recoveryFailures": 4,
+          "tetris.currentLevel": 10,
+        },
+        expectedScore: 0.56,
+        expectedValue: 850,
+      },
+    ],
+    [
+      {
+        name: "current-level-below",
+        values: {
+          "tetris.boardPressure": 0.5,
+          "tetris.recentPlacementTimeMs": 1200,
+          "tetris.recoveryFailures": 4,
+          "tetris.currentLevel": 2,
+        },
+        expectedScore: 0.545,
+        expectedValue: 750,
+      },
+      {
+        name: "current-level-above",
+        values: {
+          "tetris.boardPressure": 0.5,
+          "tetris.recentPlacementTimeMs": 1200,
+          "tetris.recoveryFailures": 4,
+          "tetris.currentLevel": 3,
+        },
+        expectedScore: 0.55,
+        expectedValue: 850,
+      },
+    ],
+  ];
+  for (const [below, above] of sensitivityPairs) {
+    assert.equal(
+      below.values["tetris.boardPressure"],
+      above.values["tetris.boardPressure"],
+    );
+    await proveWeightedDecision(below);
+    await proveWeightedDecision(above);
+  }
 
   const sdkPackage = JSON.parse(
     await readFile(
@@ -414,6 +577,17 @@ async function runIntegration(lifecycle) {
   );
   assert.equal(auditedCooldown?.result, "blocked");
   assert.equal(auditedCooldown?.fallbackSource, "server");
+  for (const proof of weightedProofs) {
+    const detail = inspection.decisionDetails.find(
+      ({ decisionId }) => decisionId === proof.decisionId,
+    );
+    assert.deepEqual(detail?.inputs, proof.values);
+    assert.equal(detail?.strategyId, "strategy-tetris-balanced-v1");
+    assert.equal(
+      detail?.reason,
+      "Applied the active weighted numeric rule strategy.",
+    );
+  }
   lifecycle.assertHealthy();
 
   process.stdout.write(`${JSON.stringify({
@@ -428,6 +602,11 @@ async function runIntegration(lifecycle) {
     clientFallbackSource: clientFallback.fallback.source,
     missingEvidenceFailClosed: true,
     evidenceRecoveryMs: evidenceRecovered.value,
+    weightedProofs: weightedProofs.map(({ name, score, expectedValue }) => ({
+      name,
+      score,
+      expectedValue,
+    })),
     exposureCount: inspection.exposureCount,
     linkedOutcomeCount: inspection.linkedOutcomeCount,
     unusedReceiptDecisionId: direct.decisionId,
@@ -469,6 +648,22 @@ function contractProjection(result) {
     definitionStatus: result.definitionStatus,
     reason: result.reason,
   };
+}
+
+function weightedScore(rule, values) {
+  return rule.weightedInputs.reduce((score, weightedInput) => {
+    const value = values[weightedInput.signalKey];
+    assert.equal(typeof value, "number");
+    const normalized = Math.min(
+      1,
+      Math.max(
+        0,
+        (value - weightedInput.minimum) /
+        (weightedInput.maximum - weightedInput.minimum),
+      ),
+    );
+    return score + normalized * weightedInput.weight;
+  }, 0);
 }
 
 async function main() {

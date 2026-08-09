@@ -56,12 +56,21 @@ public sealed class LocalFileAuditSink :
     private readonly TimeSpan _lockRetryDelay;
     private readonly int _maximumSegmentRecords;
     private readonly long _maximumSegmentBytes;
+    private readonly IDurableDirectoryOperations _directoryOperations;
     private readonly SegmentedAuditStore _segmentedStore;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public LocalFileAuditSink(LocalFileAuditSinkOptions options)
+    public LocalFileAuditSink(LocalFileAuditSinkOptions options) :
+        this(options, FileSystemAuditDirectoryOperations.Instance)
+    {
+    }
+
+    internal LocalFileAuditSink(
+        LocalFileAuditSinkOptions options,
+        IDurableDirectoryOperations directoryOperations)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(directoryOperations);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.FilePath);
         _filePath = Path.GetFullPath(options.FilePath);
         _lockPath = $"{_filePath}.lock";
@@ -72,6 +81,7 @@ public sealed class LocalFileAuditSink :
         _lockRetryDelay = options.LockRetryDelay ?? TimeSpan.FromMilliseconds(25);
         _maximumSegmentRecords = options.MaximumSegmentRecords;
         _maximumSegmentBytes = options.MaximumSegmentBytes;
+        _directoryOperations = directoryOperations;
         if (_lockTimeout <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
@@ -103,7 +113,8 @@ public sealed class LocalFileAuditSink :
             _markersDirectoryPath,
             _maximumSegmentRecords,
             _maximumSegmentBytes,
-            bytes => ValidateRecord(bytes).ExposureId);
+            ValidateRecord,
+            directoryOperations);
     }
 
     internal int FullValidationCount { get; private set; }
@@ -179,7 +190,7 @@ public sealed class LocalFileAuditSink :
         CancellationToken cancellationToken)
     {
         var bytes = SerializeRecord(kind, record);
-        ValidateRecord(bytes);
+        var validated = ValidateRecord(bytes);
         await _gate.WaitAsync(cancellationToken);
         try
         {
@@ -188,6 +199,7 @@ public sealed class LocalFileAuditSink :
             await _segmentedStore.AppendAsync(
                 bytes,
                 exposureId,
+                validated.ExposureHash,
                 AfterRecordDurablyFlushed,
                 cancellationToken);
             LastAppendValidatedRecordCount =
@@ -205,12 +217,16 @@ public sealed class LocalFileAuditSink :
         DeleteAbandonedStagingDirectories();
         if (Directory.Exists(_auditDirectoryPath))
         {
-            Directory.CreateDirectory(_segmentsDirectoryPath);
-            Directory.CreateDirectory(_markersDirectoryPath);
+            DurableDirectory.Create(
+                _segmentsDirectoryPath,
+                _directoryOperations);
+            DurableDirectory.Create(
+                _markersDirectoryPath,
+                _directoryOperations);
             if (File.Exists(_filePath))
             {
                 File.Delete(_filePath);
-                DurableDirectory.Flush(Path.GetDirectoryName(_filePath)!);
+                _directoryOperations.Flush(Path.GetDirectoryName(_filePath)!);
             }
             return;
         }
@@ -223,22 +239,23 @@ public sealed class LocalFileAuditSink :
         {
             var stagingSegments = Path.Combine(stagingPath, "segments");
             var stagingMarkers = Path.Combine(stagingPath, "exposures");
-            Directory.CreateDirectory(stagingSegments);
-            Directory.CreateDirectory(stagingMarkers);
+            DurableDirectory.Create(stagingSegments, _directoryOperations);
+            DurableDirectory.Create(stagingMarkers, _directoryOperations);
             await WriteMigratedSegmentsAsync(
                 stagingSegments,
                 stagingMarkers,
                 legacyRecords,
                 cancellationToken);
-            DurableDirectory.Flush(stagingSegments);
-            DurableDirectory.Flush(stagingMarkers);
-            DurableDirectory.Flush(stagingPath);
+            _directoryOperations.Flush(stagingSegments);
+            _directoryOperations.Flush(stagingMarkers);
+            _directoryOperations.Flush(stagingPath);
             Directory.Move(stagingPath, _auditDirectoryPath);
-            DurableDirectory.Flush(Path.GetDirectoryName(_auditDirectoryPath)!);
+            _directoryOperations.Flush(
+                Path.GetDirectoryName(_auditDirectoryPath)!);
             if (File.Exists(_filePath))
             {
                 File.Delete(_filePath);
-                DurableDirectory.Flush(Path.GetDirectoryName(_filePath)!);
+                _directoryOperations.Flush(Path.GetDirectoryName(_filePath)!);
             }
         }
         finally
@@ -389,7 +406,7 @@ public sealed class LocalFileAuditSink :
             _segmentsDirectoryPath,
             ClosedSegmentFileName(current.Header.Sequence, content));
         File.Move(currentPath, closedPath);
-        DurableDirectory.Flush(_segmentsDirectoryPath);
+        _directoryOperations.Flush(_segmentsDirectoryPath);
         var nextHeader = NewHeader(checked(current.Header.Sequence + 1));
         await WriteSegmentAsync(currentPath, nextHeader, [], cancellationToken);
         return new SegmentState(
@@ -720,13 +737,13 @@ public sealed class LocalFileAuditSink :
             cancellationToken);
     }
 
-    private static async Task WriteMarkerAtomicAsync(
+    private async Task WriteMarkerAtomicAsync(
         string directory,
         ExposureMarker marker,
         bool overwrite,
         CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(directory);
+        DurableDirectory.Create(directory, _directoryOperations);
         var finalPath = Path.Combine(directory, MarkerFileName(marker.ExposureId));
         var stagingPath = $"{finalPath}.tmp-{Guid.NewGuid():N}";
         var bytes = Encoding.UTF8.GetBytes(
@@ -739,7 +756,7 @@ public sealed class LocalFileAuditSink :
                 FileMode.CreateNew,
                 cancellationToken);
             File.Move(stagingPath, finalPath, overwrite);
-            DurableDirectory.Flush(directory);
+            _directoryOperations.Flush(directory);
         }
         finally
         {
@@ -977,7 +994,7 @@ public sealed class LocalFileAuditSink :
     {
         var directory = Path.GetDirectoryName(_filePath)
             ?? throw new IOException("The local audit path has no parent directory.");
-        Directory.CreateDirectory(directory);
+        DurableDirectory.Create(directory, _directoryOperations);
     }
 
     private void DeleteAbandonedStagingDirectories()
@@ -1004,7 +1021,7 @@ public sealed class LocalFileAuditSink :
         }
     }
 
-    private static ValidatedRecord ValidateRecord(byte[] rawRecord)
+    private static ValidatedAuditRecord ValidateRecord(byte[] rawRecord)
     {
         var line = TrimLineEnding(rawRecord);
         if (line.IsEmpty ||
@@ -1038,12 +1055,14 @@ public sealed class LocalFileAuditSink :
                     ValidateDecisionRecord(
                         record.Deserialize<DecisionAuditRecord>(
                             StrictJsonOptions));
-                    return new ValidatedRecord(null);
+                    return new ValidatedAuditRecord(null, null);
                 case "exposure":
                     var exposure = record.Deserialize<ExposureAuditRecord>(
                         StrictJsonOptions);
                     ValidateExposureRecord(exposure);
-                    return new ValidatedRecord(exposure!.ExposureId);
+                    return new ValidatedAuditRecord(
+                        exposure!.ExposureId,
+                        ExposureAuditIdentity.Hash(exposure));
                 default:
                     throw new InvalidDataException(
                         "The local audit file contains an unknown record kind.");
@@ -1429,5 +1448,4 @@ public sealed class LocalFileAuditSink :
 
     private sealed record LegacyRecord(byte[] Bytes, string? ExposureId);
 
-    private sealed record ValidatedRecord(string? ExposureId);
 }

@@ -172,6 +172,312 @@ public sealed class CommittedFileSnapshotTests
             () => ReadAsync(file.Path));
     }
 
+    [SymlinkFact]
+    public async Task CommitDescriptorSymbolicLink_IsRejected()
+    {
+        using var file = new CommittedTestJsonFile("committed-link-descriptor");
+        await file.WriteAsync("""{"version":1}""");
+        var target = $"{file.Path}.target";
+        File.Move(file.Path, target);
+        CreateFileSymbolicLinkOrSkip(file.Path, target);
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(
+            () => ReadAsync(file.Path));
+
+        Assert.Contains(
+            "symbolic link or reparse point",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [SymlinkFact]
+    public async Task ArtifactSymbolicLink_IsRejected()
+    {
+        using var file = new CommittedTestJsonFile("committed-link-artifact");
+        var bytes = Encoding.UTF8.GetBytes("""{"version":1}""");
+        await file.WriteAsync(bytes);
+        var target = $"{file.ArtifactPath}.target";
+        File.Move(file.ArtifactPath, target);
+        CreateFileSymbolicLinkOrSkip(file.ArtifactPath, target);
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(
+            () => ReadAsync(file.Path));
+
+        Assert.Contains(
+            "symbolic link or reparse point",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [SymlinkFact]
+    public async Task ParentDirectorySymbolicLink_IsRejected()
+    {
+        using var file = new CommittedTestJsonFile("committed-link-directory");
+        await file.WriteAsync("""{"version":1}""");
+        var sourceDirectory = Path.GetDirectoryName(file.Path)!;
+        var linkedDirectory = $"{sourceDirectory}-link";
+        CreateDirectorySymbolicLinkOrSkip(linkedDirectory, sourceDirectory);
+        try
+        {
+            var linkedDescriptor = Path.Combine(
+                linkedDirectory,
+                Path.GetFileName(file.Path));
+            var error = await Assert.ThrowsAsync<InvalidDataException>(
+                () => ReadAsync(linkedDescriptor));
+
+            Assert.Contains(
+                "symbolic link or reparse point",
+                error.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(linkedDirectory))
+            {
+                Directory.Delete(linkedDirectory);
+            }
+        }
+    }
+
+    [SymlinkFact]
+    public async Task ArtifactReplacedBySymbolicLinkAfterCommitRead_IsRejected()
+    {
+        using var file = new CommittedTestJsonFile("committed-link-swap");
+        var bytes = Encoding.UTF8.GetBytes("""{"version":1}""");
+        await file.WriteAsync(bytes);
+        var target = $"{file.ArtifactPath}.target";
+        await File.WriteAllBytesAsync(target, bytes);
+        var observer = new ArtifactLinkSwapObserver(() =>
+        {
+            File.Delete(file.ArtifactPath);
+            CreateFileSymbolicLinkOrSkip(file.ArtifactPath, target);
+        });
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(
+            () => CommittedFileSnapshot.ReadAsync(
+                CommittedFileSnapshotSource.FromDescriptor(file.Path),
+                new CommittedFileSnapshotOptions { Observer = observer },
+                CancellationToken.None));
+
+        Assert.Contains(
+            "symbolic link or reparse point",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Windows_AncestorJunctionToOutside_IsRejectedWithoutPrivilege()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = WindowsJunctionTestPath("ancestor");
+        var outside = WindowsJunctionTestPath("ancestor-outside");
+        var junction = Path.Combine(root, "nested");
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(outside);
+            File.WriteAllText(Path.Combine(outside, "state.json"), "outside");
+            CreateWindowsJunction(junction, outside);
+
+            var error = Assert.Throws<InvalidDataException>(
+                () => NoFollowFile.OpenRead(
+                    Path.Combine(junction, "state.json")));
+
+            Assert.Contains(
+                "symbolic link or reparse point",
+                error.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteWindowsJunction(junction);
+            DeleteDirectoryIfExists(root);
+            DeleteDirectoryIfExists(outside);
+        }
+    }
+
+    [Fact]
+    public void Windows_RepeatedRejectedAncestorJunctions_DoNotLeakHandles()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = WindowsJunctionTestPath("ancestor-handle-leak");
+        var outside = WindowsJunctionTestPath(
+            "ancestor-handle-leak-outside");
+        var junction = Path.Combine(root, "nested");
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(outside);
+            File.WriteAllText(Path.Combine(outside, "state.json"), "outside");
+            CreateWindowsJunction(junction, outside);
+            var path = Path.Combine(junction, "state.json");
+            for (var index = 0; index < 10; index++)
+            {
+                Assert.Throws<InvalidDataException>(
+                    () => NoFollowFile.OpenRead(path));
+            }
+
+            using var process = Process.GetCurrentProcess();
+            var baseline = process.HandleCount;
+            for (var index = 0; index < 1_000; index++)
+            {
+                Assert.Throws<InvalidDataException>(
+                    () => NoFollowFile.OpenRead(path));
+            }
+
+            Assert.InRange(
+                process.HandleCount,
+                0,
+                baseline + 16);
+        }
+        finally
+        {
+            DeleteWindowsJunction(junction);
+            DeleteDirectoryIfExists(root);
+            DeleteDirectoryIfExists(outside);
+        }
+    }
+
+    [Fact]
+    public void Windows_JunctionRestoredAfterComponentOpen_IsStillRejected()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = WindowsJunctionTestPath("swap-back");
+        var outside = WindowsJunctionTestPath("swap-back-outside");
+        var component = Path.Combine(root, "nested");
+        var parked = $"{component}-parked";
+        var restored = false;
+        try
+        {
+            Directory.CreateDirectory(component);
+            Directory.CreateDirectory(outside);
+            File.WriteAllText(Path.Combine(component, "state.json"), "inside");
+            File.WriteAllText(Path.Combine(outside, "state.json"), "outside");
+            Directory.Move(component, parked);
+            CreateWindowsJunction(component, outside);
+
+            var error = Assert.Throws<InvalidDataException>(
+                () => NoFollowFile.OpenRead(
+                    Path.Combine(component, "state.json"),
+                    observation =>
+                    {
+                        if (observation.Kind !=
+                                WindowsPathOpenKind.Directory ||
+                            !PathEquals(
+                                observation.ExpectedPath,
+                                component))
+                        {
+                            return;
+                        }
+
+                        DeleteWindowsJunction(component);
+                        Directory.Move(parked, component);
+                        restored = true;
+                    }));
+
+            Assert.True(restored);
+            Assert.Contains(
+                "symbolic link or reparse point",
+                error.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteWindowsJunction(component);
+            if (Directory.Exists(parked) && !Directory.Exists(component))
+            {
+                Directory.Move(parked, component);
+            }
+            DeleteDirectoryIfExists(root);
+            DeleteDirectoryIfExists(outside);
+        }
+    }
+
+    [Fact]
+    public void Windows_AncestorHandlesBlockReplacementUntilReadCompletes()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = WindowsJunctionTestPath("final-open-swap");
+        var component = Path.Combine(root, "nested");
+        var parked = $"{component}-parked";
+        var path = Path.Combine(component, "state.json");
+        try
+        {
+            Directory.CreateDirectory(component);
+            File.WriteAllText(path, "inside");
+            using (var opened = NoFollowFile.OpenRead(path))
+            {
+                Assert.ThrowsAny<IOException>(
+                    () => Directory.Move(component, parked));
+                var bytes = new byte[checked((int)RandomAccess.GetLength(
+                    opened.Handle))];
+                RandomAccess.Read(opened.Handle, bytes, 0);
+                Assert.Equal("inside", Encoding.UTF8.GetString(bytes));
+            }
+
+            Directory.Move(component, parked);
+            Directory.Move(parked, component);
+        }
+        finally
+        {
+            DeleteWindowsJunction(component);
+            if (Directory.Exists(parked) && !Directory.Exists(component))
+            {
+                Directory.Move(parked, component);
+            }
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public void Windows_FinalJunctionReparse_IsRejectedWithoutPrivilege()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = WindowsJunctionTestPath("final-junction");
+        var outside = WindowsJunctionTestPath("final-junction-outside");
+        var path = Path.Combine(root, "state.json");
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(outside);
+            CreateWindowsJunction(path, outside);
+
+            var error = Assert.Throws<InvalidDataException>(
+                () => NoFollowFile.OpenRead(path));
+
+            Assert.Contains(
+                "symbolic link or reparse point",
+                error.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteWindowsJunction(path);
+            DeleteDirectoryIfExists(root);
+            DeleteDirectoryIfExists(outside);
+        }
+    }
+
     [Fact]
     public async Task StableRead_HasNoRetryTimerDelay()
     {
@@ -372,6 +678,95 @@ public sealed class CommittedFileSnapshotTests
             options: null,
             CancellationToken.None);
 
+    private static string WindowsJunctionTestPath(string name) =>
+        Path.Combine(
+            TestPaths.RepositoryRoot,
+            ".flaggo",
+            "test-artifacts",
+            $"windows-{name}-{Guid.NewGuid():N}");
+
+    private static void CreateWindowsJunction(string path, string target)
+    {
+        var startInfo = new ProcessStartInfo(
+            Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("/d");
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add("mklink");
+        startInfo.ArgumentList.Add("/J");
+        startInfo.ArgumentList.Add(path);
+        startInfo.ArgumentList.Add(target);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start mklink.");
+        var standardOutput = process.StandardOutput.ReadToEnd();
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(
+            process.ExitCode == 0,
+            $"mklink /J failed ({process.ExitCode}): " +
+            $"{standardOutput}{standardError}");
+    }
+
+    private static void DeleteWindowsJunction(string path)
+    {
+        if (!Directory.Exists(path) ||
+            (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
+        {
+            return;
+        }
+
+        var startInfo = new ProcessStartInfo(
+            Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("/d");
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add("rmdir");
+        startInfo.ArgumentList.Add(path);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start rmdir.");
+        var standardOutput = process.StandardOutput.ReadToEnd();
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(
+            process.ExitCode == 0,
+            $"rmdir junction failed ({process.ExitCode}): " +
+            $"{standardOutput}{standardError}");
+    }
+
+    private static void DeleteDirectoryIfExists(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, recursive: true);
+        }
+    }
+
+    private static bool PathEquals(string left, string right) =>
+        string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            StringComparison.OrdinalIgnoreCase);
+
+    private static void CreateFileSymbolicLinkOrSkip(
+        string path,
+        string target) =>
+        File.CreateSymbolicLink(path, target);
+
+    private static void CreateDirectorySymbolicLinkOrSkip(
+        string path,
+        string target) =>
+        Directory.CreateSymbolicLink(path, target);
+
     private sealed class DescriptorSwitchObserver(Func<Task> switchDescriptor) :
         ICommittedFileSnapshotObserver
     {
@@ -450,6 +845,25 @@ public sealed class CommittedFileSnapshotTests
         }
     }
 
+    private sealed class ArtifactLinkSwapObserver(Action swap) :
+        ICommittedFileSnapshotObserver
+    {
+        public ValueTask AfterCommitReadAsync(
+            int attempt,
+            CommittedArtifactReference artifact,
+            CancellationToken cancellationToken)
+        {
+            swap();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask AfterArtifactReadAsync(
+            int attempt,
+            CommittedArtifactReference artifact,
+            CancellationToken cancellationToken) =>
+            ValueTask.CompletedTask;
+    }
+
     private sealed class FailingPublicationObserver(
         CommittedFileSnapshotPublicationStage failureStage) :
         ICommittedFileSnapshotWriterObserver
@@ -467,6 +881,54 @@ public sealed class CommittedFileSnapshotTests
             }
 
             return ValueTask.CompletedTask;
+        }
+    }
+
+    internal sealed class SymlinkFactAttribute : FactAttribute
+    {
+        private static readonly Lazy<bool> IsSupported = new(CheckSupported);
+
+        public SymlinkFactAttribute()
+        {
+            if (!IsSupported.Value)
+            {
+                Skip = "The current Windows identity lacks symbolic-link privilege.";
+            }
+        }
+
+        private static bool CheckSupported()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
+            var directory = Path.Combine(
+                TestPaths.RepositoryRoot,
+                ".flaggo",
+                "test-artifacts",
+                $"symlink-probe-{Guid.NewGuid():N}");
+            var target = Path.Combine(directory, "target");
+            var link = Path.Combine(directory, "link");
+            try
+            {
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(target, "probe");
+                File.CreateSymbolicLink(link, target);
+                return File.Exists(link);
+            }
+            catch (Exception error) when (
+                error is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+            finally
+            {
+                if (Directory.Exists(directory))
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+            }
         }
     }
 

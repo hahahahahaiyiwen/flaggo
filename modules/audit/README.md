@@ -60,9 +60,18 @@ treated as torn and append is rejected. New records use a
 platform-independent LF separator. Exposure records are appended before the
 prepared confirmation is committed, so append failure cannot leave a newly
 confirmed exposure without its audit record. Retry reuses the prepared
-exposure ID and never appends a duplicate. Unused decision receipts therefore
-create no exposure audit record. File inspection is an explicit local tool
+exposure ID and never appends a duplicate. Exact exposure-record replay is a
+no-op; reuse with a different decision, application, environment, applied
+timestamp, or confirmed timestamp throws `ExposureAuditConflictException`.
+The in-memory adapter enforces the same canonical identity under its lock, and
+the confirmation endpoint maps the theoretical conflict to the frozen 409
+response. Unused decision receipts therefore create no exposure audit record. File inspection is an explicit local tool
 boundary; no production runtime endpoint exposes audit contents.
+
+Before lease creation or layout staging, every missing audit parent component
+is created through `DurableDirectory` and receives ordered parent and child
+barriers. Concurrent creators converge; a failed barrier prevents lease or
+layout publication.
 
 Persisted decision records require an explicitly present, non-default
 `recordedAt` timestamp with either `Z` or a numeric UTC offset. Confirmed and
@@ -93,3 +102,5 @@ the same strict duplicate-property scan, deserialization, shape validation,
 and semantic validation used by replay. Embedded `JsonElement` values,
 including evidence details, therefore cannot introduce duplicate nested
 properties or any value that a restart would later reject.
+Decision records also persist the returned reason so inspection can correlate
+weighted inputs, strategy identity, and reasoning.

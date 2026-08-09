@@ -40,7 +40,8 @@ internal sealed class SegmentedAuditStore
     private readonly string _manifestPath;
     private readonly int _maximumSegmentRecords;
     private readonly long _maximumSegmentBytes;
-    private readonly Func<byte[], string?> _validateRecord;
+    private readonly Func<byte[], ValidatedAuditRecord> _validateRecord;
+    private readonly IDurableDirectoryOperations _directoryOperations;
 
     public SegmentedAuditStore(
         string legacyFilePath,
@@ -49,7 +50,8 @@ internal sealed class SegmentedAuditStore
         string markersDirectoryPath,
         int maximumSegmentRecords,
         long maximumSegmentBytes,
-        Func<byte[], string?> validateRecord)
+        Func<byte[], ValidatedAuditRecord> validateRecord,
+        IDurableDirectoryOperations directoryOperations)
     {
         _legacyFilePath = legacyFilePath;
         _auditDirectoryPath = auditDirectoryPath;
@@ -59,6 +61,7 @@ internal sealed class SegmentedAuditStore
         _maximumSegmentRecords = maximumSegmentRecords;
         _maximumSegmentBytes = maximumSegmentBytes;
         _validateRecord = validateRecord;
+        _directoryOperations = directoryOperations;
     }
 
     public int LastAppendValidatedRecordCount { get; private set; }
@@ -96,6 +99,7 @@ internal sealed class SegmentedAuditStore
     public async Task AppendAsync(
         byte[] recordBytes,
         string? exposureId,
+        string? exposureHash,
         Action? afterRecordCommitted,
         CancellationToken cancellationToken)
     {
@@ -112,10 +116,18 @@ internal sealed class SegmentedAuditStore
                 string.Equals(item.ExposureId, exposureId, StringComparison.Ordinal));
             if (existing is not null)
             {
-                await VerifyExposureReferenceAsync(
+                var persisted = await VerifyExposureReferenceAsync(
                     manifest,
                     existing,
                     cancellationToken);
+                if (exposureHash is null ||
+                    persisted.ExposureHash is null ||
+                    !ExposureAuditIdentity.HashEquals(
+                        persisted.ExposureHash,
+                        exposureHash))
+                {
+                    throw new ExposureAuditConflictException(exposureId);
+                }
                 await EnsureMarkerAsync(
                     MarkerFor(existing),
                     allowMissing: true,
@@ -290,8 +302,8 @@ internal sealed class SegmentedAuditStore
         {
             var stagingSegments = Path.Combine(stagingPath, "segments");
             var stagingMarkers = Path.Combine(stagingPath, "exposures");
-            Directory.CreateDirectory(stagingSegments);
-            Directory.CreateDirectory(stagingMarkers);
+            DurableDirectory.Create(stagingSegments, _directoryOperations);
+            DurableDirectory.Create(stagingMarkers, _directoryOperations);
 
             var header = NewHeader(1);
             var bytes = HeaderBytes(header);
@@ -321,11 +333,12 @@ internal sealed class SegmentedAuditStore
                 manifest,
                 FileMode.CreateNew,
                 cancellationToken);
-            DurableDirectory.Flush(stagingSegments);
-            DurableDirectory.Flush(stagingMarkers);
-            DurableDirectory.Flush(stagingPath);
+            _directoryOperations.Flush(stagingSegments);
+            _directoryOperations.Flush(stagingMarkers);
+            _directoryOperations.Flush(stagingPath);
             Directory.Move(stagingPath, _auditDirectoryPath);
-            DurableDirectory.Flush(Path.GetDirectoryName(_auditDirectoryPath)!);
+            _directoryOperations.Flush(
+                Path.GetDirectoryName(_auditDirectoryPath)!);
         }
         finally
         {
@@ -357,7 +370,7 @@ internal sealed class SegmentedAuditStore
             nextBytes,
             FileMode.CreateNew,
             cancellationToken);
-        DurableDirectory.Flush(_segmentsDirectoryPath);
+        _directoryOperations.Flush(_segmentsDirectoryPath);
         AfterNewSegmentDurablyFlushed?.Invoke();
 
         var updatedSegments = manifest.Segments
@@ -540,16 +553,18 @@ internal sealed class SegmentedAuditStore
         var records = new List<SegmentRecord>(catalog.RecordCount);
         for (var index = 1; index < lines.Count; index++)
         {
+            var validated = _validateRecord(lines[index]);
             records.Add(
                 new SegmentRecord(
                     index - 1,
-                    _validateRecord(lines[index]),
+                    validated.ExposureId,
+                    validated.ExposureHash,
                     Hash(lines[index])));
         }
         return new SegmentState(header, bytes, records);
     }
 
-    private async Task VerifyExposureReferenceAsync(
+    private async Task<SegmentRecord> VerifyExposureReferenceAsync(
         AuditManifest manifest,
         ExposureCatalogEntry exposure,
         CancellationToken cancellationToken)
@@ -557,10 +572,10 @@ internal sealed class SegmentedAuditStore
         var catalog = manifest.Segments.Single(segment =>
             segment.Sequence == exposure.SegmentSequence);
         var segment = await ValidateSegmentAsync(catalog, cancellationToken);
-        VerifyExposureRecord(exposure, segment);
+        return VerifyExposureRecord(exposure, segment);
     }
 
-    private static void VerifyExposureRecord(
+    private static SegmentRecord VerifyExposureRecord(
         ExposureCatalogEntry exposure,
         SegmentState segment)
     {
@@ -579,6 +594,7 @@ internal sealed class SegmentedAuditStore
             throw new InvalidDataException(
                 "The local audit exposure reference does not match its audit record.");
         }
+        return record;
     }
 
     private static void VerifyMarkerAgainstValidatedSegments(
@@ -594,7 +610,7 @@ internal sealed class SegmentedAuditStore
             throw new InvalidDataException(
                 "The local audit exposure marker references a missing segment.");
         }
-        VerifyExposureRecord(
+        _ = VerifyExposureRecord(
             new ExposureCatalogEntry(
                 marker.ExposureId,
                 marker.SegmentSequence,
@@ -681,7 +697,7 @@ internal sealed class SegmentedAuditStore
                 FileMode.CreateNew,
                 cancellationToken);
             File.Move(stagingPath, finalPath, overwrite: false);
-            DurableDirectory.Flush(_markersDirectoryPath);
+            _directoryOperations.Flush(_markersDirectoryPath);
         }
         finally
         {
@@ -702,7 +718,7 @@ internal sealed class SegmentedAuditStore
                 FileMode.CreateNew,
                 cancellationToken);
             File.Move(stagingPath, _manifestPath, overwrite: true);
-            DurableDirectory.Flush(_auditDirectoryPath);
+            _directoryOperations.Flush(_auditDirectoryPath);
         }
         finally
         {
@@ -766,7 +782,7 @@ internal sealed class SegmentedAuditStore
     {
         var parent = Path.GetDirectoryName(_legacyFilePath)
             ?? throw new IOException("The local audit path has no parent directory.");
-        Directory.CreateDirectory(parent);
+        DurableDirectory.Create(parent, _directoryOperations);
     }
 
     private void DeleteAbandonedInitializationDirectories()
@@ -965,5 +981,9 @@ internal sealed class SegmentedAuditStore
         byte[] Bytes,
         IReadOnlyList<SegmentRecord> Records);
 
-    private sealed record SegmentRecord(int Index, string? ExposureId, string Hash);
+    private sealed record SegmentRecord(
+        int Index,
+        string? ExposureId,
+        string? ExposureHash,
+        string Hash);
 }

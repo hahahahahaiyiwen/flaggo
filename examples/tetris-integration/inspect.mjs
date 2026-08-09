@@ -30,6 +30,19 @@ export async function inspectIntegration(auditPath, telemetryPath) {
       decisionId,
       signalKeys: inputs.map(({ signal }) => signal.key),
     })),
+    decisionDetails: decisions.map(({
+      decisionId,
+      inputs,
+      strategyId,
+      reason,
+    }) => ({
+      decisionId,
+      strategyId,
+      reason,
+      inputs: Object.fromEntries(
+        inputs.map(({ signal, value }) => [signal.key, value]),
+      ),
+    })),
     policyResults: decisions.map(({ decisionId, policy, fallback }) => ({
       decisionId,
       result: policy.result,

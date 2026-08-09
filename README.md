@@ -111,7 +111,10 @@ is required.
 The `Contracts` GitHub Actions workflow keeps contract conformance, SDK, .NET,
 and the local Tetris integration harness as separately visible jobs. The
 `tetris-integration` job runs `npm run test:tetris-integration` with Node 20
-and .NET 10 and does not require cloud services or secrets.
+and .NET 10 and does not require cloud services or secrets. A focused
+`windows-durability` job builds the checked-in directory-flush helper and
+exercises committed snapshots, durable JSON, audit persistence, and the
+integration publication path on Windows without duplicating the full suite.
 
 ## Repository layout
 

@@ -11,7 +11,9 @@ contracts to the hosting application.
 execution. It rejects
 unknown or conflicting contract identities, returns the configured governed
 fallback when no state exists, verifies value types, and records audit state
-before returning a server result. Constructor-injected `ITargetResolver` and
+before returning a server result. The persisted audit includes the exact
+returned reason so inspection does not reconstruct strategy reasoning.
+Constructor-injected `ITargetResolver` and
 `IStrategyExecutor` ports plus evidence-module
 `IEvidenceProvider` and policy-module `IPolicyEvaluator` ports isolate all
 cross-module collaboration. Numeric candidates are checked against action

@@ -62,3 +62,39 @@ jobs:
       - run: npm ci
       - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
       - run: npm run test:tetris-integration
+
+  windows-durability:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: npm ci
+      - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
+      - run: dotnet build Flaggo.slnx --configuration Debug --no-restore
+      - run: >-
+          dotnet test tests/Flaggo.Decisioning.Tests/Flaggo.Decisioning.Tests.csproj
+          --configuration Debug
+          --no-build
+          --no-restore
+          --filter "FullyQualifiedName~CommittedFileSnapshotTests|FullyQualifiedName~DurableDirectoryTests|FullyQualifiedName~LocalFileAuditSinkTests"
+      - name: Repeat unskippable Windows handle races
+        shell: pwsh
+        run: |
+          1..3 | ForEach-Object {
+            dotnet test tests/Flaggo.Decisioning.Tests/Flaggo.Decisioning.Tests.csproj `
+              --configuration Debug `
+              --no-build `
+              --no-restore `
+              --filter "FullyQualifiedName~CommittedFileSnapshotTests.Windows_"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Test native Windows publication helper
+        run: npm test --workspace @flaggo/sdk -- test/tetris-bootstrap-atomic.test.mjs
+      - run: npm run test:tetris-integration

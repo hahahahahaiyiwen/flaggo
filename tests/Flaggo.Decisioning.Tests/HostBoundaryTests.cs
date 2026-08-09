@@ -207,6 +207,47 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
+    public async Task ConflictingExposureAuditIdentity_ReturnsFrozenConflict()
+    {
+        using var registryFile = new TestRegistryFile();
+        await using var factory =
+            new LocalHostFactory<DataPlaneAssemblyMarker>(
+                registryFile.Path,
+                services =>
+                {
+                    services.RemoveAll<IExposureAuditSink>();
+                    services.AddSingleton<IExposureAuditSink>(
+                        new ThrowingExposureAuditSink(
+                            new ExposureAuditConflictException("exposure-1")));
+                });
+        using var client = factory.CreateClient();
+        var exposures = factory.Services.GetRequiredService<IExposureStore>();
+        await exposures.CreatePendingAsync(
+            "decision-conflict",
+            "confirm-conflict",
+            Snapshot(),
+            CancellationToken.None);
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/exposures/decision-conflict:confirm",
+            new
+            {
+                confirmToken = "confirm-conflict",
+                appliedAt = DateTimeOffset.UtcNow.UtcDateTime.ToString("O")
+            });
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(
+            "exposure-confirmation-conflict",
+            problem.GetProperty("code").GetString());
+        Assert.Null(
+            Assert.IsType<InMemoryExposureStore>(exposures)
+                .Find("decision-conflict")!
+                .Confirmation);
+    }
+
+    [Fact]
     public async Task ExposureConfirmation_RetriesPreparedObservationAfterClockWindow()
     {
         using var registryFile = new TestRegistryFile();

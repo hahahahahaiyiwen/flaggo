@@ -129,6 +129,29 @@ any generated artifact filename outside the reader's 128-character safe
 sibling protocol before publication. Audit
 inspection follows the durable audit manifest.
 
+On Windows, directory barriers use the checked-in
+`Flaggo.DirectoryFlush` helper. Windows committed writes, generation
+publication, and generation resolution run entirely inside that native helper:
+components are opened relative to pinned handles, exact opened final paths and
+volume/file identities are checked, reparse points are rejected, file and
+directory flushes are ordered before the handle-relative pointer rename, and
+staging files are cleaned on pre-commit failure. Successful native rename is
+recorded before post-rename validation and root flushing, so a later failure
+leaves the committed pointer and generation recoverable instead of deleting
+them as unpublished. Node callers share one helper-start promise and one owned
+server process; failed startup is reaped and retryable, while idle, signal,
+exit, and test-reset paths shut down the owned child. `EISDIR` and failed
+`FlushFileBuffers` calls are not accepted as success. Linux retains the
+`O_NOFOLLOW` path and performs directory creation, file open, rename, cleanup,
+and committed reads relative to pinned `/proc/self/fd` directory handles;
+other Unix platforms fail closed until an equivalent native traversal exists.
+
+The harness computes all four weighted normalizations explicitly. Opposing
+board-only/aggregate vectors and paired placement-time, recovery-failure, and
+current-level perturbations prove that every non-board input can cross the
+threshold while board pressure remains fixed. Responses and persisted audit
+details must retain the expected value, strategy ID, inputs, and reason.
+
 The `Contracts` GitHub Actions workflow runs this command in a dedicated
 `tetris-integration` job with Node 20 and .NET 10. The job uses only local
 processes and files; it requires no cloud service or secret and is kept

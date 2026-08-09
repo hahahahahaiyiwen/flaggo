@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Win32.SafeHandles;
 
 namespace Flaggo.Shared.Contracts;
 
@@ -231,6 +232,7 @@ public static partial class CommittedFileSnapshot
                 $"{options.MaximumArtifactBytes}-byte limit.");
         }
 
+        ValidateArtifactReference(artifact);
         return artifact;
     }
 
@@ -248,10 +250,12 @@ public static partial class CommittedFileSnapshot
 
         var fullManifestPath = Path.GetFullPath(manifestPath);
         var bytes = ReadBoundedFile(fullManifestPath, maximumCommitBytes);
-        return ParseGenerationManifest(
+        var snapshot = ParseGenerationManifest(
             fullManifestPath,
             bytes,
             requiredArtifacts);
+        ValidateGenerationReferences(snapshot);
+        return snapshot;
     }
 
     public static async Task<CommittedGenerationSnapshot>
@@ -273,10 +277,12 @@ public static partial class CommittedFileSnapshot
             fullManifestPath,
             maximumCommitBytes,
             cancellationToken);
-        return ParseGenerationManifest(
+        var snapshot = ParseGenerationManifest(
             fullManifestPath,
             bytes,
             requiredArtifacts);
+        ValidateGenerationReferences(snapshot);
+        return snapshot;
     }
 
     internal static void VerifyArtifact(
@@ -431,7 +437,6 @@ public static partial class CommittedFileSnapshot
                 "A committed artifact path escapes its allowed directory.");
         }
 
-        EnsureRegularFilePath(root, artifactPath);
         return new CommittedArtifactReference(
             artifactPath,
             byteLength.Value,
@@ -456,8 +461,8 @@ public static partial class CommittedFileSnapshot
 
     private static byte[] ReadBoundedFile(string path, int maximumBytes)
     {
-        using var stream = OpenRead(path);
-        return ReadBoundedFile(stream, path, maximumBytes);
+        using var openedFile = NoFollowFile.OpenRead(path);
+        return ReadBoundedFile(openedFile.Handle, path, maximumBytes);
     }
 
     private static async Task<byte[]> ReadBoundedFileAsync(
@@ -465,8 +470,9 @@ public static partial class CommittedFileSnapshot
         int maximumBytes,
         CancellationToken cancellationToken)
     {
-        await using var stream = OpenRead(path);
-        var length = stream.Length;
+        using var openedFile = NoFollowFile.OpenRead(path);
+        var handle = openedFile.Handle;
+        var length = RandomAccess.GetLength(handle);
         if (length < 0 || length > maximumBytes)
         {
             throw new InvalidDataException(
@@ -474,8 +480,8 @@ public static partial class CommittedFileSnapshot
         }
 
         var bytes = GC.AllocateUninitializedArray<byte>((int)length);
-        await stream.ReadExactlyAsync(bytes, cancellationToken);
-        if (stream.ReadByte() != -1)
+        await ReadExactlyAsync(handle, bytes, cancellationToken);
+        if (RandomAccess.GetLength(handle) != length)
         {
             throw new IOException(
                 $"Commit file '{path}' changed while it was read.");
@@ -485,11 +491,11 @@ public static partial class CommittedFileSnapshot
     }
 
     private static byte[] ReadBoundedFile(
-        FileStream stream,
+        SafeFileHandle handle,
         string path,
         int maximumBytes)
     {
-        var length = stream.Length;
+        var length = RandomAccess.GetLength(handle);
         if (length < 0 || length > maximumBytes)
         {
             throw new InvalidDataException(
@@ -497,8 +503,8 @@ public static partial class CommittedFileSnapshot
         }
 
         var bytes = GC.AllocateUninitializedArray<byte>((int)length);
-        stream.ReadExactly(bytes);
-        if (stream.ReadByte() != -1)
+        ReadExactly(handle, bytes);
+        if (RandomAccess.GetLength(handle) != length)
         {
             throw new IOException(
                 $"Commit file '{path}' changed while it was read.");
@@ -511,18 +517,20 @@ public static partial class CommittedFileSnapshot
         CommittedArtifactReference artifact,
         CancellationToken cancellationToken)
     {
-        await using var stream = OpenRead(artifact.ArtifactPath);
-        if (stream.Length != artifact.ByteLength)
+        using var openedFile = NoFollowFile.OpenRead(artifact.ArtifactPath);
+        var handle = openedFile.Handle;
+        var length = RandomAccess.GetLength(handle);
+        if (length != artifact.ByteLength)
         {
             throw new InvalidDataException(
                 $"Committed artifact '{artifact.ArtifactPath}' has length " +
-                $"{stream.Length}, expected {artifact.ByteLength}.");
+                $"{length}, expected {artifact.ByteLength}.");
         }
 
         var bytes = GC.AllocateUninitializedArray<byte>(
             checked((int)artifact.ByteLength));
-        await stream.ReadExactlyAsync(bytes, cancellationToken);
-        if (stream.ReadByte() != -1)
+        await ReadExactlyAsync(handle, bytes, cancellationToken);
+        if (RandomAccess.GetLength(handle) != length)
         {
             throw new InvalidDataException(
                 $"Committed artifact '{artifact.ArtifactPath}' changed length " +
@@ -532,14 +540,65 @@ public static partial class CommittedFileSnapshot
         return bytes;
     }
 
-    private static FileStream OpenRead(string path) =>
-        new(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete,
-            4096,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
+    private static void ValidateGenerationReferences(
+        CommittedGenerationSnapshot snapshot)
+    {
+        foreach (var artifact in snapshot.Artifacts.Values)
+        {
+            ValidateArtifactReference(artifact);
+        }
+    }
+
+    private static void ValidateArtifactReference(
+        CommittedArtifactReference artifact)
+    {
+        using var openedFile = NoFollowFile.OpenRead(artifact.ArtifactPath);
+        var handle = openedFile.Handle;
+        var length = RandomAccess.GetLength(handle);
+        if (length != artifact.ByteLength)
+        {
+            throw new InvalidDataException(
+                $"Committed artifact '{artifact.ArtifactPath}' has length " +
+                $"{length}, expected {artifact.ByteLength}.");
+        }
+    }
+
+    private static async Task ReadExactlyAsync(
+        SafeFileHandle handle,
+        Memory<byte> bytes,
+        CancellationToken cancellationToken)
+    {
+        var offset = 0;
+        while (offset < bytes.Length)
+        {
+            var read = await RandomAccess.ReadAsync(
+                handle,
+                bytes[offset..],
+                offset,
+                cancellationToken);
+            if (read == 0)
+            {
+                throw new EndOfStreamException();
+            }
+            offset += read;
+        }
+    }
+
+    private static void ReadExactly(
+        SafeFileHandle handle,
+        Span<byte> bytes)
+    {
+        var offset = 0;
+        while (offset < bytes.Length)
+        {
+            var read = RandomAccess.Read(handle, bytes[offset..], offset);
+            if (read == 0)
+            {
+                throw new EndOfStreamException();
+            }
+            offset += read;
+        }
+    }
 
     private static void EnsureDirectoryPath(
         string root,
@@ -558,42 +617,6 @@ public static partial class CommittedFileSnapshot
                 "The committed generation path escapes its allowed root.");
         }
 
-        RejectReparsePoint(fullRoot);
-        var current = fullRoot;
-        foreach (var component in relative.Split(
-                     Path.DirectorySeparatorChar,
-                     StringSplitOptions.RemoveEmptyEntries))
-        {
-            current = Path.Combine(current, component);
-            RejectReparsePoint(current);
-        }
-    }
-
-    private static void EnsureRegularFilePath(
-        string root,
-        string artifactPath)
-    {
-        EnsureDirectoryPath(root, Path.GetDirectoryName(artifactPath)!);
-        RejectReparsePoint(artifactPath);
-    }
-
-    private static void RejectReparsePoint(string path)
-    {
-        try
-        {
-            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            {
-                throw new InvalidDataException(
-                    $"Committed path '{path}' cannot be a symbolic link or " +
-                    "reparse point.");
-            }
-        }
-        catch (FileNotFoundException)
-        {
-        }
-        catch (DirectoryNotFoundException)
-        {
-        }
     }
 
     private static bool PathEquals(string left, string right) =>

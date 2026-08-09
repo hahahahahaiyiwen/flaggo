@@ -445,6 +445,16 @@ app.MapPost(
                         "exposure-confirmation-conflict",
                         "The decision was already confirmed with a different observation."));
             }
+            catch (ExposureAuditConflictException)
+            {
+                return RuntimeHttp.ProblemResult(
+                    context,
+                    RuntimeHttp.Problem(
+                        context,
+                        409,
+                        "exposure-confirmation-conflict",
+                        "The decision was already confirmed with a different observation."));
+            }
         })
     .RequireAuthorization("ConfirmExposure")
     .WithMetadata(

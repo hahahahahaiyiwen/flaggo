@@ -11,6 +11,23 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class LocalFileAuditSinkTests
 {
+    public static TheoryData<string, ExposureAuditRecord>
+        ConflictingExposureRecords()
+    {
+        var record = CanonicalExposureRecord();
+        return new TheoryData<string, ExposureAuditRecord>
+        {
+            { "decisionId", record with { DecisionId = "decision-2" } },
+            { "appId", record with { AppId = "other-app" } },
+            { "environment", record with { Environment = "prod" } },
+            { "appliedAt", record with { AppliedAt = null } },
+            {
+                "confirmedAt",
+                record with { ConfirmedAt = "2026-08-06T00:00:03Z" }
+            }
+        };
+    }
+
     [Fact]
     public async Task RecordsInspectableDecisionAndIdempotentExposureLines()
     {
@@ -375,6 +392,177 @@ public sealed class LocalFileAuditSinkTests
         var lines = await ReadAuditLinesAsync(file.Path);
         Assert.Single(lines);
         Assert.Equal(["exposure-race"], ExposureIds(lines));
+    }
+
+    [Theory]
+    [MemberData(nameof(ConflictingExposureRecords))]
+    public async Task ExistingExposureIdentity_ConflictingFieldFailsClosed(
+        string field,
+        ExposureAuditRecord conflict)
+    {
+        _ = field;
+        using var file = new TestJsonFile("audit-exposure-conflict");
+        using var sink = new LocalFileAuditSink(
+            new LocalFileAuditSinkOptions(file.Path));
+        await sink.RecordExposureAsync(
+            CanonicalExposureRecord(),
+            CancellationToken.None);
+
+        var error = await Assert.ThrowsAsync<ExposureAuditConflictException>(
+            () => sink.RecordExposureAsync(conflict, CancellationToken.None));
+
+        Assert.Equal("exposure-1", error.ExposureId);
+        Assert.Single(await ReadAuditLinesAsync(file.Path));
+    }
+
+    [Fact]
+    public async Task ConcurrentConflictingExposureIdentity_HasOneWinner()
+    {
+        using var file = new TestJsonFile("audit-exposure-conflict-race");
+        var options = new LocalFileAuditSinkOptions(
+            file.Path,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMilliseconds(5));
+        using var firstSink = new LocalFileAuditSink(options);
+        using var secondSink = new LocalFileAuditSink(options);
+        var first = CanonicalExposureRecord();
+        var second = first with { DecisionId = "decision-2" };
+        var start = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = new[]
+        {
+            (Sink: firstSink, Record: first),
+            (Sink: secondSink, Record: second)
+        }.Select(item => Task.Run(async () =>
+        {
+            await start.Task;
+            return await Record.ExceptionAsync(
+                () => item.Sink.RecordExposureAsync(
+                    item.Record,
+                    CancellationToken.None));
+        })).ToArray();
+
+        start.SetResult();
+        var errors = await Task.WhenAll(attempts);
+
+        Assert.Single(errors, error => error is null);
+        Assert.Single(
+            errors,
+            error => error is ExposureAuditConflictException);
+        Assert.Single(await ReadAuditLinesAsync(file.Path));
+    }
+
+    [Fact]
+    public async Task NestedMissingAuditParent_IsDurableBeforeLeaseAndLayout()
+    {
+        var root = Path.Combine(
+            TestPaths.RepositoryRoot,
+            ".flaggo",
+            "test-artifacts",
+            $"audit-nested-parent-{Guid.NewGuid():N}");
+        var auditPath = Path.Combine(root, "one", "two", "audit.jsonl");
+        var operations = new RecordingAuditDirectoryOperations();
+        using var sink = new LocalFileAuditSink(
+            new LocalFileAuditSinkOptions(auditPath),
+            operations);
+        try
+        {
+            await sink.RecordExposureAsync(
+                CanonicalExposureRecord(),
+                CancellationToken.None);
+
+            var firstMissing = Path.Combine(root, "one");
+            var durableParent = Path.GetDirectoryName(firstMissing)!;
+            Assert.True(
+                operations.Events.IndexOf($"mkdir:{firstMissing}") <
+                operations.Events.LastIndexOf($"sync:{durableParent}"));
+            Assert.True(File.Exists($"{auditPath}.lock"));
+            Assert.True(Directory.Exists($"{auditPath}.d"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task NestedMissingAuditParentSyncFailure_PreventsLeaseAndLayout()
+    {
+        var root = Path.Combine(
+            TestPaths.RepositoryRoot,
+            ".flaggo",
+            "test-artifacts",
+            $"audit-nested-failure-{Guid.NewGuid():N}");
+        var auditPath = Path.Combine(root, "one", "two", "audit.jsonl");
+        var operations = new RecordingAuditDirectoryOperations
+        {
+            FailAfterFirstCreate = true
+        };
+        using var sink = new LocalFileAuditSink(
+            new LocalFileAuditSinkOptions(auditPath),
+            operations);
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(
+                () => sink.RecordExposureAsync(
+                    CanonicalExposureRecord(),
+                    CancellationToken.None));
+
+            Assert.False(File.Exists($"{auditPath}.lock"));
+            Assert.False(Directory.Exists($"{auditPath}.d"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentCreators_DurablyCreateNestedAuditParent()
+    {
+        var root = Path.Combine(
+            TestPaths.RepositoryRoot,
+            ".flaggo",
+            "test-artifacts",
+            $"audit-nested-race-{Guid.NewGuid():N}");
+        var auditPath = Path.Combine(root, "one", "two", "audit.jsonl");
+        var operations = new RecordingAuditDirectoryOperations();
+        var options = new LocalFileAuditSinkOptions(
+            auditPath,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMilliseconds(5));
+        using var first = new LocalFileAuditSink(options, operations);
+        using var second = new LocalFileAuditSink(options, operations);
+        try
+        {
+            await Task.WhenAll(
+                first.RecordExposureAsync(
+                    CanonicalExposureRecord(),
+                    CancellationToken.None),
+                second.RecordExposureAsync(
+                    CanonicalExposureRecord() with
+                    {
+                        ExposureId = "exposure-2",
+                        DecisionId = "decision-2"
+                    },
+                    CancellationToken.None));
+
+            Assert.Equal(2, (await ReadAuditLinesAsync(auditPath)).Length);
+            Assert.True(Directory.Exists(Path.GetDirectoryName(auditPath)));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -1538,6 +1726,15 @@ public sealed class LocalFileAuditSinkTests
             null,
             "2026-08-06T00:00:02Z");
 
+    private static ExposureAuditRecord CanonicalExposureRecord() =>
+        new(
+            "exposure-1",
+            "decision-1",
+            "tetris-demo",
+            "dev",
+            "2026-08-06T00:00:01Z",
+            "2026-08-06T00:00:02Z");
+
     private static string DecisionEnvelope(Action<JsonObject> mutate)
     {
         var envelope = JsonSerializer.SerializeToNode(
@@ -1770,6 +1967,44 @@ internal sealed class TestJsonFile : IDisposable
             {
                 Directory.Delete(stagingDirectory, recursive: true);
             }
+        }
+
+    }
+}
+
+internal sealed class RecordingAuditDirectoryOperations :
+    IDurableDirectoryOperations
+{
+    private readonly object _gate = new();
+    private bool _created;
+    private bool _failed;
+
+    public List<string> Events { get; } = [];
+
+    public bool FailAfterFirstCreate { get; init; }
+
+    public bool Exists(string path) => Directory.Exists(path);
+
+    public void Create(string path)
+    {
+        lock (_gate)
+        {
+            Events.Add($"mkdir:{path}");
+        }
+        Directory.CreateDirectory(path);
+        _created = true;
+    }
+
+    public void Flush(string path)
+    {
+        lock (_gate)
+        {
+            Events.Add($"sync:{path}");
+        }
+        if (FailAfterFirstCreate && _created && !_failed)
+        {
+            _failed = true;
+            throw new IOException("Injected durable parent sync failure.");
         }
     }
 }

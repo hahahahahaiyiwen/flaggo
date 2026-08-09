@@ -27,6 +27,9 @@ timeouts are also explicitly ineligible. Unexpected
 infrastructure failure returns `500 internal-error`. Endpoint operation
 metadata is captured before execution so the single global exception boundary
 can preserve decide timeout eligibility while denying exposure fallback.
+If a reused exposure identity conflicts with its durable audit record, the
+endpoint fails closed through the existing
+`409 exposure-confirmation-conflict` wire response.
 
 Protected runtime endpoints require OAuth bearer authentication and
 operation-specific

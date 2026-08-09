@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Flaggo.Shared.Contracts;
 
@@ -24,7 +25,8 @@ public sealed record DecisionAuditRecord(
     DateTimeOffset RecordedAt,
     DecisionEvidenceSnapshot? Evidence = null,
     ConfidenceReport? Confidence = null,
-    string? StrategyId = null);
+    string? StrategyId = null,
+    string? Reason = null);
 
 public sealed record ExposureAuditRecord(
     string ExposureId,
@@ -51,6 +53,14 @@ public interface IExposureAuditSink
         CancellationToken cancellationToken);
 }
 
+public sealed class ExposureAuditConflictException(string exposureId) :
+    InvalidOperationException(
+        $"Exposure audit identity '{exposureId}' is already bound to a " +
+        "different record.")
+{
+    public string ExposureId { get; } = exposureId;
+}
+
 public sealed class InMemoryAuditSink(bool available = true) :
     IAuditSink,
     IExposureAuditSink,
@@ -58,6 +68,8 @@ public sealed class InMemoryAuditSink(bool available = true) :
 {
     private readonly List<DecisionAuditRecord> _records = [];
     private readonly List<ExposureAuditRecord> _exposureRecords = [];
+    private readonly Dictionary<string, string> _exposureHashes =
+        new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
     public IReadOnlyList<DecisionAuditRecord> Records
@@ -98,16 +110,20 @@ public sealed class InMemoryAuditSink(bool available = true) :
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var hash = ExposureAuditIdentity.Hash(record);
         lock (_gate)
         {
-            if (_exposureRecords.All(item =>
-                    !string.Equals(
-                        item.ExposureId,
-                        record.ExposureId,
-                        StringComparison.Ordinal)))
+            if (_exposureHashes.TryGetValue(record.ExposureId, out var existing))
             {
-                _exposureRecords.Add(record);
+                if (!ExposureAuditIdentity.HashEquals(existing, hash))
+                {
+                    throw new ExposureAuditConflictException(record.ExposureId);
+                }
+                return Task.CompletedTask;
             }
+
+            _exposureHashes.Add(record.ExposureId, hash);
+            _exposureRecords.Add(record);
         }
 
         return Task.CompletedTask;
@@ -119,3 +135,26 @@ public sealed class InMemoryAuditSink(bool available = true) :
         return Task.FromResult(available);
     }
 }
+
+internal static class ExposureAuditIdentity
+{
+    public static string Hash(ExposureAuditRecord record)
+    {
+        var element = JsonSerializer.SerializeToElement(
+            record,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return Convert.ToHexString(
+                SHA256.HashData(CanonicalJson.Canonicalize(element)))
+            .ToLowerInvariant();
+    }
+
+    public static bool HashEquals(string left, string right) =>
+        left.Length == right.Length &&
+        CryptographicOperations.FixedTimeEquals(
+            Convert.FromHexString(left),
+            Convert.FromHexString(right));
+}
+
+internal readonly record struct ValidatedAuditRecord(
+    string? ExposureId,
+    string? ExposureHash);

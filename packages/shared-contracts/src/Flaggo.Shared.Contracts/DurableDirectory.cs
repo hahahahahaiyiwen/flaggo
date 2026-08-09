@@ -37,7 +37,7 @@ public static class DurableDirectory
     internal static bool IsUnsupportedWindowsError(int error) =>
         error is 1 or 50 or 87;
 
-    internal static void Create(
+    public static void Create(
         string path,
         IDurableDirectoryOperations operations)
     {
@@ -210,7 +210,7 @@ public static class DurableDirectory
     }
 }
 
-internal interface IDurableDirectoryOperations
+public interface IDurableDirectoryOperations
 {
     bool Exists(string path);
 

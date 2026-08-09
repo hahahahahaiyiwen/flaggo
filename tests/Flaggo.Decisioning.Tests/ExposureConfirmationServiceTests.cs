@@ -102,6 +102,44 @@ public sealed class ExposureConfirmationServiceTests
     }
 
     [Fact]
+    public async Task ConflictingAuditIdentity_PropagatesAndDoesNotCommit()
+    {
+        var store = new InMemoryExposureStore(
+            new FixedTimeProvider(),
+            () => "exposure-1");
+        var audit = new InMemoryAuditSink();
+        await audit.RecordExposureAsync(
+            new ExposureAuditRecord(
+                "exposure-1",
+                "other-decision",
+                "tetris-demo",
+                "dev",
+                "2026-08-06T00:00:01Z",
+                "2026-08-06T00:00:02Z"),
+            CancellationToken.None);
+        var service = CreateService(store, audit);
+        var request = new ExposureConfirmationRequest(
+            "confirm-1",
+            "2026-08-06T00:00:01Z");
+        await store.CreatePendingAsync(
+            "decision-1",
+            request.ConfirmToken,
+            Snapshot(),
+            CancellationToken.None);
+
+        await Assert.ThrowsAsync<ExposureAuditConflictException>(
+            () => service.ConfirmAsync(
+                "decision-1",
+                request,
+                AppIds,
+                Environments,
+                CancellationToken.None));
+
+        Assert.Null(store.Find("decision-1")!.Confirmation);
+        Assert.NotNull(store.Find("decision-1")!.PreparedConfirmation);
+    }
+
+    [Fact]
     public async Task RequestCanceledAfterAudit_StillCommitsPreparedConfirmation()
     {
         using var requestCancellation = new CancellationTokenSource();

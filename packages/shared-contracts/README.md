@@ -36,7 +36,20 @@ byte length, and a whole-string lowercase sha256 digest. A generation manifest
 uses `flaggo.committed-generation` and pins every required artifact with the
 same length/digest tuple. Paths are constrained to the descriptor sibling or
 the exact immutable generation directory; traversal, sibling redirects,
-symbolic links, and reparse points fail closed.
+symbolic links, and reparse points fail closed. Linux readers traverse from a
+directory handle with `openat` plus `O_NOFOLLOW` and validate opened inode
+types. Windows readers open every component with
+handle-relative `NtCreateFile`, reject reparse attributes, and validate every
+opened handle's exact `GetFinalPathNameByHandle` result plus volume/file
+identity against the pinned volume-root path. All ancestor handles remain
+alive until descriptor or artifact reading completes, preventing path-entry
+replacement where Windows sharing semantics protect it. Descriptor and
+artifact bytes are read from those same validated handles. Each native handle
+transfers into the pinned set only after successful capture; rejected roots or
+components are disposed immediately so repeated fail-closed traversal remains
+handle-bounded. Platforms without Linux `openat`/`O_NOFOLLOW` or the Windows
+handle-relative implementation fail closed rather than using a pathname
+check/open/check sequence that could follow a raced link.
 
 Readers load the commit document, read the referenced artifact with a 16 MiB
 default bound and permissive sharing, re-read the commit document, then verify
@@ -79,6 +92,8 @@ ancestor rather than walking to and unnecessarily synchronizing the filesystem
 root while still applying the final requested parent-and-directory boundary
 barrier on every call. Native unsupported-directory-sync classifications
 remain unchanged on Windows and Unix.
+The injectable `IDurableDirectoryOperations` boundary lets persistence modules
+reuse the parent-chain algorithm while testing barrier order and failure.
 
 The frozen v1 cooldown contract remains any finite nonnegative number.
 Overflow safety belongs to elapsed-time policy evaluation rather than a new

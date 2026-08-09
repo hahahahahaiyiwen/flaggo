@@ -208,6 +208,11 @@ public sealed class DecisionService(
                 : targetResolution.ResolutionFallbackUsed
                     ? "resolution_fallback_broader_target"
                     : null);
+        var reason = usesFallback
+            ? state is null
+                ? "No governed state exists; returned the configured fallback value."
+                : "No safe adaptive candidate; returned the configured fallback value."
+            : execution!.Reason;
         var snapshot = new DecisionSnapshot(
             definition.AppId,
             definition.Environment,
@@ -258,7 +263,8 @@ public sealed class DecisionService(
                     timeProvider.GetUtcNow(),
                     evidence,
                     confidence,
-                    execution?.StrategyId),
+                    execution?.StrategyId,
+                    reason),
                 cancellationToken);
         }
         catch
@@ -306,11 +312,7 @@ public sealed class DecisionService(
                 request.ExpectedContract.DeploymentId,
                 "identical"),
             new ExposureDirective(confirmToken is not null, confirmToken),
-            usesFallback
-                ? state is null
-                    ? "No governed state exists; returned the configured fallback value."
-                    : "No safe adaptive candidate; returned the configured fallback value."
-                : execution!.Reason,
+            reason,
             auditId,
             request.RuntimeTarget,
             controlTarget,
