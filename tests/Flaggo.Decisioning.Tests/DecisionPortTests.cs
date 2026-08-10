@@ -39,6 +39,95 @@ public sealed class DecisionPortTests
         Assert.Equal(0.82, result.Confidence!.EvidenceQuality);
     }
 
+    [Theory]
+    [InlineData(0.9, 1600, 3, 8, 850)]
+    [InlineData(0.2, 400, 0, 10, 750)]
+    public async Task NumericRuleExecutor_UsesAllWeightedTetrisInputs(
+        double boardPressure,
+        double placementTime,
+        double recoveryFailures,
+        double currentLevel,
+        int expected)
+    {
+        var executor = new DeterministicStrategyExecutor();
+        var state = State() with
+        {
+            Mode = "strategy",
+            StrategyId = "strategy-tetris-balanced-v1",
+            NumericRule = TetrisRule()
+        };
+
+        var result = await executor.ExecuteAsync(
+            new StrategyExecutionRequest(
+                state,
+                [
+                    Input("tetris.boardPressure", boardPressure),
+                    Input("tetris.recentPlacementTimeMs", placementTime),
+                    Input("tetris.recoveryFailures", recoveryFailures),
+                    Input("tetris.currentLevel", currentLevel)
+                ],
+                Evidence(0.82)),
+            CancellationToken.None);
+
+        Assert.Equal(expected, result.Candidate!.Value.GetInt32());
+        Assert.Null(result.FailureReason);
+        Assert.NotNull(result.Confidence);
+    }
+
+    [Fact]
+    public async Task NumericRuleExecutor_FailsClosedWithoutConfidenceEvidence()
+    {
+        var executor = new DeterministicStrategyExecutor();
+        var state = State() with
+        {
+            Mode = "strategy",
+            StrategyId = "strategy-tetris-balanced-v1",
+            NumericRule = TetrisRule()
+        };
+
+        var result = await executor.ExecuteAsync(
+            new StrategyExecutionRequest(
+                state,
+                [
+                    Input("tetris.boardPressure", 0.9),
+                    Input("tetris.recentPlacementTimeMs", 1600),
+                    Input("tetris.recoveryFailures", 3),
+                    Input("tetris.currentLevel", 8)
+                ],
+                null),
+            CancellationToken.None);
+
+        Assert.Null(result.Candidate);
+        Assert.Null(result.Confidence);
+        Assert.Equal("strategy_confidence_unavailable", result.FailureReason);
+    }
+
+    [Fact]
+    public async Task NumericRuleExecutor_FailsClosedWhenWeightedInputIsMissing()
+    {
+        var executor = new DeterministicStrategyExecutor();
+        var state = State() with
+        {
+            Mode = "strategy",
+            StrategyId = "strategy-tetris-balanced-v1",
+            NumericRule = TetrisRule()
+        };
+
+        var result = await executor.ExecuteAsync(
+            new StrategyExecutionRequest(
+                state,
+                [
+                    Input("tetris.boardPressure", 0.9),
+                    Input("tetris.recentPlacementTimeMs", 1600),
+                    Input("tetris.recoveryFailures", 3)
+                ],
+                null),
+            CancellationToken.None);
+
+        Assert.Null(result.Candidate);
+        Assert.Equal("invalid_strategy_input", result.FailureReason);
+    }
+
     [Fact]
     public async Task PolicyEvaluator_ApprovesBoundedCandidate()
     {
@@ -96,6 +185,62 @@ public sealed class DecisionPortTests
         Assert.Contains("max_delta_exceeded", result.Result.Reasons);
         Assert.Contains("insufficient_evidence_quality", result.Result.Reasons);
         Assert.Contains("decision_paused", result.Result.Reasons);
+    }
+
+    [Fact]
+    public async Task PolicyEvaluator_AcceptsHugeFiniteCooldownWithoutOverflow()
+    {
+        var result = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MinValue,
+            double.MaxValue);
+
+        Assert.False(result.Approved);
+        Assert.Contains("cooldown_active", result.Result.Reasons);
+        Assert.DoesNotContain("invalid_cooldown", result.Result.Reasons);
+    }
+
+    [Fact]
+    public async Task PolicyEvaluator_HandlesMinimumAndMaximumTimestamps()
+    {
+        var atMaximum = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MaxValue,
+            1);
+        var elapsedFromMinimum = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MinValue,
+            1);
+
+        Assert.False(atMaximum.Approved);
+        Assert.Contains("cooldown_active", atMaximum.Result.Reasons);
+        Assert.True(elapsedFromMinimum.Approved);
+    }
+
+    [Fact]
+    public async Task PolicyEvaluator_BlocksHugeValidCooldown()
+    {
+        var result = await EvaluateCooldownAsync(
+            DateTimeOffset.MaxValue,
+            DateTimeOffset.MinValue,
+            double.MaxValue);
+
+        Assert.False(result.Approved);
+        Assert.Contains("cooldown_active", result.Result.Reasons);
+    }
+
+    [Fact]
+    public async Task PolicyEvaluator_BlocksFutureTimestampWithZeroCooldown()
+    {
+        var now = new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await EvaluateCooldownAsync(
+            now,
+            now.AddTicks(1),
+            0);
+
+        Assert.False(result.Approved);
+        Assert.Contains("cooldown_active", result.Result.Reasons);
     }
 
     [Fact]
@@ -246,6 +391,22 @@ public sealed class DecisionPortTests
             $"sha256:{new string('a', 64)}",
             JsonSerializer.SerializeToElement(800));
 
+    private static NumericRuleStrategy TetrisRule() => new(
+        "tetris.boardPressure",
+        0.55,
+        850,
+        750,
+        [
+            new NumericRuleInput("tetris.boardPressure", 0, 1, 0.45),
+            new NumericRuleInput("tetris.recentPlacementTimeMs", 0, 2000, 0.25),
+            new NumericRuleInput("tetris.recoveryFailures", 0, 5, 0.20),
+            new NumericRuleInput("tetris.currentLevel", 0, 20, 0.10)
+        ]);
+
+    private static SignalInput Input(string key, double value) => new(
+        new SignalRef(key),
+        JsonSerializer.SerializeToElement(value));
+
     private static DecisionEvidenceSnapshot Evidence(double quality) =>
         new(
             quality,
@@ -257,9 +418,26 @@ public sealed class DecisionPortTests
                 ["qualitySource"] = JsonSerializer.SerializeToElement("test")
             });
 
-    private sealed class FixedTimeProvider : TimeProvider
+    private static Task<PolicyDecision> EvaluateCooldownAsync(
+        DateTimeOffset now,
+        DateTimeOffset changedAt,
+        double cooldown) =>
+        new DefaultPolicyEvaluator(new FixedTimeProvider(now)).EvaluateAsync(
+            new PolicyEvaluationRequest(
+                JsonSerializer.SerializeToElement(800),
+                JsonSerializer.SerializeToElement(800),
+                null,
+                new DecisionPolicyContract(CooldownSeconds: cooldown),
+                null,
+                changedAt,
+                null),
+            CancellationToken.None);
+
+    private sealed class FixedTimeProvider(DateTimeOffset? utcNow = null) :
+        TimeProvider
     {
         public override DateTimeOffset GetUtcNow() =>
-            new(2026, 7, 31, 18, 0, 0, TimeSpan.Zero);
+            utcNow ??
+            new DateTimeOffset(2026, 7, 31, 18, 0, 0, TimeSpan.Zero);
     }
 }

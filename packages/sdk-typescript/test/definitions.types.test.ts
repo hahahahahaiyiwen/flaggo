@@ -1,4 +1,4 @@
-import { describe, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import type {
   BooleanDecisionDefinition,
@@ -54,5 +54,34 @@ describe("definition contract unions", () => {
       policy: { kind: "inline", constraints: [] },
     };
     expectTypeOf(definition).toMatchTypeOf<DecisionDefinition>();
+  });
+
+  it("keeps cooldown values unbounded within finite JavaScript numbers", () => {
+    const definition: NumberDecisionDefinition = {
+      key: "tetris.dropInterval",
+      valueType: "number",
+      actionSpace: {
+        type: "number",
+        min: 200,
+        max: 1500,
+        default: 800,
+      },
+      fallback: { value: 800 },
+      policy: {
+        kind: "inline",
+        constraints: [
+          {
+            kind: "cooldown",
+            seconds: Number.MAX_VALUE,
+          },
+        ],
+      },
+    };
+
+    expect(definition.policy).toMatchObject({
+      constraints: [
+        { kind: "cooldown", seconds: Number.MAX_VALUE },
+      ],
+    });
   });
 });

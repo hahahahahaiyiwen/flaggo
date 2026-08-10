@@ -1,0 +1,42 @@
+{
+  "name": "exposure-confirm-audit-unavailable",
+  "scenario": 12,
+  "invariant": "A durable exposure audit I/O failure returns retryable 503 service-unavailable with correlation and matching Retry-After metadata, does not commit confirmation, and is not client-fallback eligible.",
+  "requestSchema": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+  "responseSchema": "problem-details-v1.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v1/exposures/decision-123:confirm",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-exposure-audit-unavailable"
+    },
+    "body": {
+      "confirmToken": "confirm-abc",
+      "appliedAt": "2026-07-30T18:30:00Z"
+    }
+  },
+  "expected": {
+    "status": 503,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-exposure-audit-unavailable",
+      "Retry-After": "1"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/service-unavailable",
+      "title": "Service unavailable",
+      "status": 503,
+      "code": "service-unavailable",
+      "instance": "/v1/exposures/decision-123:confirm",
+      "correlationId": "srv-exposure-audit-unavailable",
+      "detail": "The data plane is temporarily unavailable.",
+      "retryAfterSeconds": 1,
+      "clientFallback": {
+        "eligible": false,
+        "reason": "unclassified-io-failure"
+      }
+    }
+  }
+}

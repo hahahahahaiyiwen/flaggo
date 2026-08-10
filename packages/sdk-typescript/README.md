@@ -41,6 +41,8 @@ Registration receipts and `requires-approval` responses are validated as
 strict wire contracts before their identity or metadata is trusted. An
 approved receipt must contain exactly one accepted binding for every submitted
 definition, with matching canonical contract digests.
+Digest and RFC 3339 validators require exact whole-string matches; encoded
+trailing line breaks or other boundary characters are not accepted.
 
 At startup, the client normalizes the supplied bundle and caches each numeric
 definition and contract digest. Runtime calls use that static binding and
@@ -78,6 +80,9 @@ definitions, non-literal definition references, conditional or loop-dependent
 decision calls, and schema-invalid definitions. Identical definitions for one
 key deduplicate in the bundle; different canonical digests for one key fail
 with `contract-conflict`.
+Authored cooldown constraints may use any finite nonnegative number, preserving
+the frozen v1 contract. Static extraction rejects negative and nonfinite values
+before emitting an artifact.
 Runtime expressions remain in `context`, `runtimeTarget`, and `inputs`; they
 are never evaluated by extraction or included in definition identity.
 
@@ -100,6 +105,9 @@ only after retries are exhausted for DNS, refused/reset connection, or
 connection/read timeout failures; intermediary HTTP 502/504 responses; or a
 valid Flaggo 5xx Problem Details response with
 `clientFallback.eligible: true`, except HTTP 500, 501, and 505.
+For `required-evidence-unavailable`, both the definition's effective
+client-fallback policy and this SDK availability configuration must permit the
+local default; either side forbidding fallback surfaces `FlaggoHttpError`.
 Cancellation, TLS/certificate, proxy/authentication/configuration, malformed
 response, contract, and identity errors never fall back. A client fallback has
 no server decision, policy, audit, or exposure identity.
@@ -134,6 +142,13 @@ typed constraint array and optionally declare governed client fallback.
 Telemetry is emitted through the `TelemetrySink` interface. Use
 `createOpenTelemetrySink(logger)` with a structurally compatible OpenTelemetry
 logger, or provide a direct sink for local development and tests.
+
+The Phase 3 Tetris contract declares `tetris.outcomeObserved`. After applying a
+server decision and confirming its exposure, the frontend emits this event
+through a configured `TelemetrySink` with the confirmed `decisionId` and
+`exposureId`. This preserves explicit attribution without adding an
+incompatible runtime endpoint. Client-fallback results and unused receipts
+have no exposure identity and must not emit a linked outcome.
 
 ## Contract maintenance
 

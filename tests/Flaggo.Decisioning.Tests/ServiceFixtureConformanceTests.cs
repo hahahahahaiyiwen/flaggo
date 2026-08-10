@@ -141,6 +141,15 @@ public sealed class ServiceFixtureConformanceTests
         using var response = await client.SendAsync(request);
         await AssertResponseAsync(fixture, response);
 
+        if (plan.Setup is SetupKind.ExposureAuditUnavailable or
+            SetupKind.ExposureInternalFailure)
+        {
+            var store = Assert.IsType<InMemoryExposureStore>(
+                factory.Services.GetRequiredService<IExposureStore>());
+            Assert.Null(store.Find("decision-123")!.Confirmation);
+            Assert.NotNull(store.Find("decision-123")!.PreparedConfirmation);
+        }
+
         if (plan.Request == RequestExecution.Replay)
         {
             var replay = await ReadJsonAsync(response);
@@ -249,7 +258,9 @@ public sealed class ServiceFixtureConformanceTests
                 SetupKind.ExposurePending or
                 SetupKind.ExposureReplay or
                 SetupKind.ExposureConflict or
-                SetupKind.ExposureInvalidAppliedAt))
+                SetupKind.ExposureInvalidAppliedAt or
+                SetupKind.ExposureAuditUnavailable or
+                SetupKind.ExposureInternalFailure))
         {
             return;
         }
@@ -273,7 +284,9 @@ public sealed class ServiceFixtureConformanceTests
                 : requestBody.TryGetProperty("appliedAt", out var value)
                     ? value.GetString()
                     : null;
-            await store.ConfirmAsync(
+            var confirmationService =
+                services.GetRequiredService<IExposureConfirmationService>();
+            await confirmationService.ConfirmAsync(
                 "decision-123",
                 new ExposureConfirmationRequest(confirmToken, appliedAt),
                 new HashSet<string>(StringComparer.Ordinal) { "tetris-demo" },
@@ -778,7 +791,7 @@ public sealed class ServiceFixtureConformanceTests
 
         if (plan.Setup == SetupKind.ServiceUnavailable)
         {
-            return new ThrowingRegistry(new IOException("Registry unavailable."));
+            return new ThrowingRegistry(new TimeoutException("Registry unavailable."));
         }
 
         if (plan.Setup == SetupKind.InternalFailure)
@@ -1172,6 +1185,8 @@ public sealed class ServiceFixtureConformanceTests
             ["exposure-confirm-invalid-token"] = Data(SetupKind.ExposurePending),
             ["exposure-confirm-conflict"] = Data(SetupKind.ExposureConflict),
             ["exposure-confirm-invalid-applied-at"] = Data(SetupKind.ExposureInvalidAppliedAt),
+            ["exposure-confirm-audit-unavailable"] = Data(SetupKind.ExposureAuditUnavailable),
+            ["exposure-confirm-internal-failure"] = Data(SetupKind.ExposureInternalFailure),
             ["health-liveness"] = Data(SetupKind.Health),
             ["health-readiness-ready"] = Data(SetupKind.Health),
             ["health-readiness-degraded"] = Data(SetupKind.Health),
@@ -1262,6 +1277,18 @@ public sealed class ServiceFixtureConformanceTests
                     services.RemoveAll<IDecideIdempotencyStore>();
                     services.AddSingleton<IDecideIdempotencyStore>(
                         new InProgressIdempotencyStore());
+                }
+
+                if (plan.Setup is SetupKind.ExposureAuditUnavailable or
+                    SetupKind.ExposureInternalFailure)
+                {
+                    services.RemoveAll<IExposureAuditSink>();
+                    services.AddSingleton<IExposureAuditSink>(
+                        new ThrowingExposureAuditSink(
+                            plan.Setup == SetupKind.ExposureAuditUnavailable
+                                ? new IOException("Exposure audit unavailable.")
+                                : new InvalidOperationException(
+                                    "Unexpected exposure audit failure.")));
                 }
 
                 if (plan.Setup == SetupKind.Health &&
@@ -1405,6 +1432,8 @@ public sealed class ServiceFixtureConformanceTests
         ExposureReplay,
         ExposureConflict,
         ExposureInvalidAppliedAt,
+        ExposureAuditUnavailable,
+        ExposureInternalFailure,
         Health,
         IdenticalDefinition,
         PreviousDefinition,
@@ -1596,6 +1625,15 @@ public sealed class ServiceFixtureConformanceTests
             string revision,
             CancellationToken cancellationToken) =>
             Task.FromException<DefinitionLookup>(exception);
+    }
+
+    private sealed class ThrowingExposureAuditSink(Exception exception) :
+        IExposureAuditSink
+    {
+        public Task RecordExposureAsync(
+            ExposureAuditRecord record,
+            CancellationToken cancellationToken) =>
+            Task.FromException(exception);
     }
 
     private sealed class AvailableRegistryHealth : IRegistryHealth

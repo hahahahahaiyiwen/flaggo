@@ -346,7 +346,9 @@ function stringArray(value: unknown): value is string[] {
 }
 
 function isDigest(value: unknown): value is `sha256:${string}` {
-  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+  return typeof value === "string"
+    && value.length === 71
+    && /^sha256:[0-9a-f]{64}$/.test(value);
 }
 
 function isAcceptedDefinition(value: unknown): value is AcceptedDefinition {
@@ -783,7 +785,7 @@ function isRfc3339Utc(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/
     .exec(value);
-  if (match === null) return false;
+  if (match === null || match[0].length !== value.length) return false;
   const [, yearText, monthText, dayText, hourText, minuteText, secondText] =
     match;
   const year = Number(yearText);

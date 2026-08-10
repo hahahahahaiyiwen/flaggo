@@ -33,6 +33,9 @@ until a policy-resolution adapter is available rather than being activated
 without enforcement.
 Runtime lookup continues to require the complete application, environment,
 decision key, definition ID, and revision tuple.
+Inline cooldown constraints accept every finite nonnegative value preserved by
+the frozen v1 schema. Runtime evaluation remains overflow-safe without adding
+a compatibility-breaking maximum.
 
 `InMemoryDefinitionRegistry` remains the deterministic unit-test adapter.
 `LocalFileDefinitionRegistry` is the portable local shared adapter used by both

@@ -11,6 +11,8 @@ Validates, with no network access:
   5. All 43 required golden scenarios are covered by at least one fixture.
   6. Fixture request/response bodies validate against their referenced schemas;
      schema-negative fixtures are rejected as intended.
+  7. Canonical example artifacts validate directly against their frozen schemas,
+     including additional and unevaluated property enforcement.
 
 Exit code 0 on success, 1 on any failure.
 
@@ -44,6 +46,12 @@ MANIFEST = CONTRACTS / "conformance" / "fixture-manifest-v1.json"
 CANONICALIZATION_VECTORS = CONTRACTS / "conformance" / "canonicalization-vectors-v1.json"
 SEMANTIC_DIGEST_VECTORS = CONTRACTS / "conformance" / "semantic-digest-vectors-v1.json"
 STRICT_JSON_VECTORS = CONTRACTS / "conformance" / "strict-json-vectors-v1.json"
+TETRIS_DEFINITION_BUNDLE = (
+    CONTRACTS.parent
+    / "examples"
+    / "tetris-integration"
+    / "tetris-definition-bundle.json"
+)
 
 SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 REQUIRED_SCENARIO_COUNT = 43
@@ -157,6 +165,42 @@ def expect_rejected(body, schema_ref: str, registry: Registry, rep: Report, ctx:
         rep.fail(f"{ctx}: body was expected to be REJECTED by {schema_ref} but validated")
     else:
         rep.check(True, "")
+
+
+def validate_canonical_example_artifacts(registry: Registry, rep: Report) -> None:
+    try:
+        bundle = load_json(TETRIS_DEFINITION_BUNDLE)
+    except Exception as exc:  # noqa: BLE001
+        rep.fail(f"canonical Tetris definition bundle does not parse: {exc}")
+        return
+
+    validate_body(
+        bundle,
+        "decision-definition-bundle-v1.schema.json",
+        registry,
+        rep,
+        "canonical Tetris definition bundle",
+    )
+
+    unexpected_root_property = deepcopy(bundle)
+    unexpected_root_property["unsupportedProperty"] = True
+    expect_rejected(
+        unexpected_root_property,
+        "decision-definition-bundle-v1.schema.json",
+        registry,
+        rep,
+        "canonical Tetris bundle with an additional root property",
+    )
+
+    unexpected_definition_property = deepcopy(bundle)
+    unexpected_definition_property["definitions"][0]["requestedApproval"] = "human"
+    expect_rejected(
+        unexpected_definition_property,
+        "decision-definition-bundle-v1.schema.json",
+        registry,
+        rep,
+        "canonical Tetris bundle with an unevaluated definition property",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1060,7 +1104,13 @@ def main() -> int:
         list(SCHEMAS_DIR.glob("*.json"))
         + list(OPENAPI_DIR.glob("*.yaml"))
         + list(FIXTURES_DIR.rglob("*.json"))
-        + [MANIFEST, CANONICALIZATION_VECTORS, SEMANTIC_DIGEST_VECTORS, STRICT_JSON_VECTORS]
+        + [
+            MANIFEST,
+            CANONICALIZATION_VECTORS,
+            SEMANTIC_DIGEST_VECTORS,
+            STRICT_JSON_VECTORS,
+            TETRIS_DEFINITION_BUNDLE,
+        ]
     )
     for p in doc_paths:
         try:
@@ -1074,6 +1124,7 @@ def main() -> int:
     validate_canonicalization_vectors(rep)
     validate_strict_json_vectors(rep)
     validate_semantic_digest_vectors(rep)
+    validate_canonical_example_artifacts(registry, rep)
 
     # 4. OpenAPI documents
     for name in ["flaggo-runtime-v1.yaml", "flaggo-management-v1.yaml"]:
@@ -1173,6 +1224,7 @@ def main() -> int:
         "manifest_cases": len(cases),
         "scenarios_covered": len(covered & required),
         "stateful_scenarios": stateful_scenarios,
+        "canonical_examples": 1,
     })
     return 1 if rep.errors else 0
 

@@ -34,3 +34,10 @@ Apply idempotency, pending snapshots, approval baselines, expiry, and terminal
 decisions survive host restart and are committed under a cross-process lock.
 Storage errors are surfaced; the host never substitutes a separate in-memory
 registry.
+
+For the Phase 3 Tetris flow, trusted registration remains an external startup
+operation under `examples/tetris-integration`. The command consumes the
+canonical bundle, handles typed approval, and retries registration. The
+control-plane host remains a generic management composition root and never
+embeds Tetris bootstrap behavior or exposes management credentials to browser
+code.

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Flaggo.Shared.Contracts;
 
@@ -23,7 +24,17 @@ public sealed record DecisionAuditRecord(
     PolicyEvaluationResult Policy,
     DateTimeOffset RecordedAt,
     DecisionEvidenceSnapshot? Evidence = null,
-    ConfidenceReport? Confidence = null);
+    ConfidenceReport? Confidence = null,
+    string? StrategyId = null,
+    string? Reason = null);
+
+public sealed record ExposureAuditRecord(
+    string ExposureId,
+    string DecisionId,
+    string AppId,
+    string Environment,
+    string? AppliedAt,
+    string ConfirmedAt);
 
 public interface IAuditSink
 {
@@ -35,9 +46,30 @@ public interface IAuditHealth
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken);
 }
 
-public sealed class InMemoryAuditSink(bool available = true) : IAuditSink, IAuditHealth
+public interface IExposureAuditSink
+{
+    Task RecordExposureAsync(
+        ExposureAuditRecord record,
+        CancellationToken cancellationToken);
+}
+
+public sealed class ExposureAuditConflictException(string exposureId) :
+    InvalidOperationException(
+        $"Exposure audit identity '{exposureId}' is already bound to a " +
+        "different record.")
+{
+    public string ExposureId { get; } = exposureId;
+}
+
+public sealed class InMemoryAuditSink(bool available = true) :
+    IAuditSink,
+    IExposureAuditSink,
+    IAuditHealth
 {
     private readonly List<DecisionAuditRecord> _records = [];
+    private readonly List<ExposureAuditRecord> _exposureRecords = [];
+    private readonly Dictionary<string, string> _exposureHashes =
+        new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
     public IReadOnlyList<DecisionAuditRecord> Records
@@ -47,6 +79,17 @@ public sealed class InMemoryAuditSink(bool available = true) : IAuditSink, IAudi
             lock (_gate)
             {
                 return _records.ToArray();
+            }
+        }
+    }
+
+    public IReadOnlyList<ExposureAuditRecord> ExposureRecords
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _exposureRecords.ToArray();
             }
         }
     }
@@ -62,9 +105,56 @@ public sealed class InMemoryAuditSink(bool available = true) : IAuditSink, IAudi
         return Task.CompletedTask;
     }
 
+    public Task RecordExposureAsync(
+        ExposureAuditRecord record,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var hash = ExposureAuditIdentity.Hash(record);
+        lock (_gate)
+        {
+            if (_exposureHashes.TryGetValue(record.ExposureId, out var existing))
+            {
+                if (!ExposureAuditIdentity.HashEquals(existing, hash))
+                {
+                    throw new ExposureAuditConflictException(record.ExposureId);
+                }
+                return Task.CompletedTask;
+            }
+
+            _exposureHashes.Add(record.ExposureId, hash);
+            _exposureRecords.Add(record);
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(available);
     }
 }
+
+internal static class ExposureAuditIdentity
+{
+    public static string Hash(ExposureAuditRecord record)
+    {
+        var element = JsonSerializer.SerializeToElement(
+            record,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return Convert.ToHexString(
+                SHA256.HashData(CanonicalJson.Canonicalize(element)))
+            .ToLowerInvariant();
+    }
+
+    public static bool HashEquals(string left, string right) =>
+        left.Length == right.Length &&
+        CryptographicOperations.FixedTimeEquals(
+            Convert.FromHexString(left),
+            Convert.FromHexString(right));
+}
+
+internal readonly record struct ValidatedAuditRecord(
+    string? ExposureId,
+    string? ExposureHash);

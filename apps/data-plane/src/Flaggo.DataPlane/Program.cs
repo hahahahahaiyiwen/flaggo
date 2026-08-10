@@ -87,23 +87,19 @@ builder.Services.AddSingleton<IDefinitionRegistry>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IRegistryHealth>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
-builder.Services.AddSingleton<IStateStore>(
-    new InMemoryStateStore(
-    [
-        (
-            "tetris.dropInterval",
-            new GovernedDecisionState(
-                contractIdentity.DefinitionId,
-                contractIdentity.Revision,
-                contractIdentity.ContractDigest,
-                JsonSerializer.SerializeToElement(800),
-                new DecisionTargetRef("cohort", "new_players")))
-    ]));
-builder.Services.AddSingleton<IStateHealth>(
-    provider => (IStateHealth)provider.GetRequiredService<IStateStore>());
-builder.Services.AddSingleton<InMemoryAuditSink>();
-builder.Services.AddSingleton<IAuditSink>(provider => provider.GetRequiredService<InMemoryAuditSink>());
-builder.Services.AddSingleton<IAuditHealth>(provider => provider.GetRequiredService<InMemoryAuditSink>());
+LocalRuntimeAdapterHosting.AddDecisionSnapshotScope(
+    builder.Services,
+    builder.Configuration);
+LocalRuntimeAdapterHosting.AddStateAdapter(
+    builder.Services,
+    builder.Configuration,
+    contractIdentity);
+LocalRuntimeAdapterHosting.AddAuditAdapter(
+    builder.Services,
+    builder.Configuration);
+LocalRuntimeAdapterHosting.AddEvidenceAdapter(
+    builder.Services,
+    builder.Configuration);
 builder.Services.AddSingleton<IRuntimeIdGenerator, GuidRuntimeIdGenerator>();
 builder.Services.AddSingleton<IDecideIdempotencyStore>(provider =>
     new InMemoryDecideIdempotencyStore(provider.GetRequiredService<TimeProvider>()));
@@ -114,6 +110,17 @@ builder.Services.AddSingleton<IExposureStore>(provider =>
         provider.GetRequiredService<TimeProvider>(),
         ids.CreateExposureId);
 });
+builder.Services.AddSingleton<IPostAuditExposureCommitPolicy>(provider =>
+    new BoundedPostAuditExposureCommitPolicy(
+        TimeSpan.FromSeconds(5),
+        provider.GetRequiredService<TimeProvider>(),
+        provider.GetRequiredService<IHostApplicationLifetime>()
+            .ApplicationStopping,
+        provider.GetRequiredService<
+            ILogger<BoundedPostAuditExposureCommitPolicy>>()));
+builder.Services.AddSingleton<
+    IExposureConfirmationService,
+    ExposureConfirmationService>();
 builder.Services.AddSingleton<ITargetResolver>(
     new DefaultTargetResolver(
         new Dictionary<string, string>(StringComparer.Ordinal)
@@ -121,16 +128,11 @@ builder.Services.AddSingleton<ITargetResolver>(
             ["new_players"] = "new_players",
             ["whales"] = "new_players"
         }));
-builder.Services.AddSingleton<InMemoryEvidenceProvider>();
-builder.Services.AddSingleton<IEvidenceProvider>(
-    provider => provider.GetRequiredService<InMemoryEvidenceProvider>());
-builder.Services.AddSingleton<IEvidenceHealth>(
-    provider => provider.GetRequiredService<InMemoryEvidenceProvider>());
 builder.Services.AddSingleton<IStrategyExecutor, DeterministicStrategyExecutor>();
 builder.Services.AddSingleton<IPolicyEvaluator>(provider =>
     new DefaultPolicyEvaluator(provider.GetRequiredService<TimeProvider>()));
-builder.Services.AddSingleton<DecisionService>();
-builder.Services.AddSingleton<IRuntimeReadinessProbe, RuntimeReadinessProbe>();
+builder.Services.AddScoped<DecisionService>();
+builder.Services.AddScoped<IRuntimeReadinessProbe, RuntimeReadinessProbe>();
 
 var app = builder.Build();
 
@@ -149,7 +151,11 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     var exception = context.Features
         .Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()
         ?.Error;
+    var operation = DataPlaneOperationMetadata.Get(context);
     var availabilityFailure = exception is IOException or TimeoutException;
+    var clientFallbackEligible =
+        operation == DataPlaneOperation.Decide &&
+        exception is TimeoutException;
     var status = availabilityFailure ? 503 : 500;
     var code = availabilityFailure ? "service-unavailable" : "internal-error";
     var detail = availabilityFailure
@@ -169,11 +175,21 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
         detail,
         retryAfterSeconds: availabilityFailure ? 1 : null,
         clientFallback: availabilityFailure
-            ? new ClientFallbackEligibility(true, "service-unavailable")
+            ? new ClientFallbackEligibility(
+                clientFallbackEligible,
+                exception is TimeoutException
+                    ? "service-unavailable"
+                    : "unclassified-io-failure")
             : null);
     await context.Response.WriteAsync(
         JsonSerializer.Serialize(problem, RuntimeHttp.JsonOptions));
 }));
+app.UseRouting();
+app.Use(async (context, next) =>
+{
+    DataPlaneOperationMetadata.Capture(context);
+    await next(context);
+});
 app.UseStatusCodePages(async statusContext =>
 {
     var context = statusContext.HttpContext;
@@ -273,8 +289,12 @@ app.MapPost(
                     RuntimeHttp.Fingerprint(parsed.Body, decisionKey),
                     token => EvaluateDecisionAsync(decisionKey, request, decisionService, token),
                     cancellationToken);
-                context.Response.Headers["Idempotency-Key-Expires-At"] =
-                    retained.ExpiresAt.UtcDateTime.ToString("O");
+                if (retained.ExpiresAt is { } expiresAt)
+                {
+                    context.Response.Headers["Idempotency-Key-Expires-At"] =
+                        expiresAt.UtcDateTime.ToString("O");
+                }
+
                 return RenderOutcome(context, retained.Outcome);
             }
             catch (IdempotencyConflictException)
@@ -310,7 +330,9 @@ app.MapPost(
                         "Numeric request values must be finite IEEE-754 values."));
             }
         })
-    .RequireAuthorization("Decide");
+    .RequireAuthorization("Decide")
+    .WithMetadata(
+        new DataPlaneOperationMetadata(DataPlaneOperation.Decide));
 
 app.MapPost(
         "/v1/exposures/{decisionId}:confirm",
@@ -318,6 +340,7 @@ app.MapPost(
             string decisionId,
             HttpContext context,
             IExposureStore exposureStore,
+            IExposureConfirmationService exposureConfirmationService,
             TimeProvider timeProvider,
             CancellationToken cancellationToken) =>
         {
@@ -366,18 +389,13 @@ app.MapPost(
                     appIds,
                     environments,
                     cancellationToken);
-                if (replay is not null)
-                {
-                    return Results.Json(replay, RuntimeHttp.JsonOptions);
-                }
-
-                if (request.AppliedAt is not null)
+                if (replay is null && request.AppliedAt is not null)
                 {
                     var now = timeProvider.GetUtcNow();
                     var validTimestamp =
                         System.Text.RegularExpressions.Regex.IsMatch(
                             request.AppliedAt,
-                            "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$",
+                            "\\A\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z\\z",
                             System.Text.RegularExpressions.RegexOptions.CultureInvariant) &&
                         DateTimeOffset.TryParse(
                             request.AppliedAt,
@@ -399,13 +417,13 @@ app.MapPost(
                     }
                 }
 
-                var result = await exposureStore.ConfirmAsync(
+                var outcome = await exposureConfirmationService.ConfirmAsync(
                     decisionId,
                     request,
                     appIds,
                     environments,
                     cancellationToken);
-                return Results.Json(result, RuntimeHttp.JsonOptions);
+                return Results.Json(outcome.Result, RuntimeHttp.JsonOptions);
             }
             catch (ExposureNotFoundException)
             {
@@ -427,8 +445,21 @@ app.MapPost(
                         "exposure-confirmation-conflict",
                         "The decision was already confirmed with a different observation."));
             }
+            catch (ExposureAuditConflictException)
+            {
+                return RuntimeHttp.ProblemResult(
+                    context,
+                    RuntimeHttp.Problem(
+                        context,
+                        409,
+                        "exposure-confirmation-conflict",
+                        "The decision was already confirmed with a different observation."));
+            }
         })
-    .RequireAuthorization("ConfirmExposure");
+    .RequireAuthorization("ConfirmExposure")
+    .WithMetadata(
+        new DataPlaneOperationMetadata(
+            DataPlaneOperation.ExposureConfirmation));
 
 app.MapGet(
     "/health/live",
@@ -575,4 +606,31 @@ static IResult RenderOutcome(HttpContext context, DecideTerminalOutcome outcome)
 
 public partial class Program
 {
+}
+
+internal enum DataPlaneOperation
+{
+    Decide,
+    ExposureConfirmation
+}
+
+internal sealed record DataPlaneOperationMetadata(DataPlaneOperation Operation)
+{
+    private static readonly object ItemKey = new();
+
+    public static void Capture(HttpContext context)
+    {
+        var metadata = context.GetEndpoint()?
+            .Metadata.GetMetadata<DataPlaneOperationMetadata>();
+        if (metadata is not null)
+        {
+            context.Items[ItemKey] = metadata.Operation;
+        }
+    }
+
+    public static DataPlaneOperation? Get(HttpContext context) =>
+        context.Items.TryGetValue(ItemKey, out var value) &&
+        value is DataPlaneOperation operation
+            ? operation
+            : null;
 }

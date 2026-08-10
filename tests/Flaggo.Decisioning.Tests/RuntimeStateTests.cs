@@ -139,6 +139,136 @@ public sealed class RuntimeStateTests
     }
 
     [Fact]
+    public async Task IdempotencyStore_ReleasesRetryableFailureAfterFollowersConverge()
+    {
+        var calls = 0;
+        var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new InMemoryDecideIdempotencyStore(new FixedTimeProvider());
+        var owner = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                calls++;
+                return ownerCompletion.Task;
+            },
+            CancellationToken.None);
+        var follower = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                calls++;
+                return Task.FromResult(CreateOutcome("unexpected"));
+            },
+            CancellationToken.None);
+        var unavailable = DecideTerminalOutcome.Rejected(
+            new DecisionFailure(
+                503,
+                "required-evidence-unavailable",
+                "Required evidence is unavailable."));
+
+        ownerCompletion.SetResult(unavailable);
+        var attempts = await Task.WhenAll(owner, follower);
+
+        Assert.All(
+            attempts,
+            attempt =>
+            {
+                Assert.Equal(503, attempt.Outcome.Failure!.Status);
+                Assert.Null(attempt.ExpiresAt);
+            });
+        Assert.Equal(1, calls);
+
+        var recovered = await store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                calls++;
+                return Task.FromResult(CreateOutcome("decision-recovered"));
+            },
+            CancellationToken.None);
+
+        Assert.Equal("decision-recovered", recovered.Outcome.Result!.DecisionId);
+        Assert.NotNull(recovered.ExpiresAt);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task IdempotencyStore_PublishesRetryableCompletionBeforeReleasingClaim()
+    {
+        using var completionPublished = new ManualResetEventSlim();
+        using var releaseClaim = new ManualResetEventSlim();
+        var calls = 0;
+        var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>();
+        var store = new InMemoryDecideIdempotencyStore(
+            new FixedTimeProvider(),
+            followerWaitBudget: TimeSpan.FromSeconds(5),
+            retryableCompletionPublished: () =>
+            {
+                completionPublished.Set();
+                releaseClaim.Wait();
+            });
+        var owner = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                Interlocked.Increment(ref calls);
+                return ownerCompletion.Task;
+            },
+            CancellationToken.None);
+        var follower = store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ => Task.FromResult(CreateOutcome("unexpected")),
+            CancellationToken.None);
+        var unavailable = DecideTerminalOutcome.Rejected(
+            new DecisionFailure(503, "unavailable", "retry"));
+
+        var publishRetryable = Task.Factory.StartNew(
+            () => ownerCompletion.SetResult(unavailable),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            Assert.True(completionPublished.Wait(TimeSpan.FromSeconds(5)));
+            var followerResult = await follower.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(503, followerResult.Outcome.Failure!.Status);
+            Assert.Equal(1, Volatile.Read(ref calls));
+        }
+        finally
+        {
+            releaseClaim.Set();
+        }
+
+        await publishRetryable.WaitAsync(TimeSpan.FromSeconds(5));
+        var ownerResult = await owner;
+        var recovered = await store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(CreateOutcome("decision-recovered"));
+            },
+            CancellationToken.None);
+
+        Assert.Equal(503, ownerResult.Outcome.Failure!.Status);
+        Assert.Equal("decision-recovered", recovered.Outcome.Result!.DecisionId);
+        Assert.Equal(2, Volatile.Read(ref calls));
+    }
+
+    [Fact]
     public async Task IdempotencyStore_ReturnsInProgressAfterFollowerBudget()
     {
         var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>();
@@ -176,22 +306,25 @@ public sealed class RuntimeStateTests
             "confirm-1",
             "2026-07-31T18:00:00Z");
 
-        var first = await store.ConfirmAsync(
+        var first = await ConfirmAsync(
+            store,
             "decision-1",
             request,
             new HashSet<string> { "app" },
             new HashSet<string> { "dev" },
             CancellationToken.None);
-        var replay = await store.ConfirmAsync(
+        var replay = await ConfirmAsync(
+            store,
             "decision-1",
             request,
             new HashSet<string> { "app" },
             new HashSet<string> { "dev" },
             CancellationToken.None);
 
-        Assert.Equal(first, replay);
+        Assert.Equal(first.Result, replay.Result);
         await Assert.ThrowsAsync<ExposureConfirmationConflictException>(
-            () => store.ConfirmAsync(
+            () => ConfirmAsync(
+                store,
                 "decision-1",
                 request with { AppliedAt = "2026-07-31T18:01:00Z" },
                 new HashSet<string> { "app" },
@@ -210,7 +343,8 @@ public sealed class RuntimeStateTests
             CancellationToken.None);
 
         await Assert.ThrowsAsync<ExposureNotFoundException>(
-            () => store.ConfirmAsync(
+            () => ConfirmAsync(
+                store,
                 "decision-1",
                 new ExposureConfirmationRequest("confirm-1"),
                 new HashSet<string> { "other-app" },
@@ -228,14 +362,15 @@ public sealed class RuntimeStateTests
             CreateSnapshot(),
             CancellationToken.None);
 
-        var result = await store.ConfirmAsync(
+        var result = await ConfirmAsync(
+            store,
             "decision-1",
             new ExposureConfirmationRequest("confirm-1"),
             new HashSet<string> { "other-app", "app" },
             new HashSet<string> { "prod", "dev" },
             CancellationToken.None);
 
-        Assert.Equal("confirmed", result.Status);
+        Assert.Equal("confirmed", result.Result.Status);
     }
 
     [Fact]
@@ -250,7 +385,8 @@ public sealed class RuntimeStateTests
         var request = new ExposureConfirmationRequest(
             "confirm-1",
             "2026-07-31T18:00:00Z");
-        var confirmed = await store.ConfirmAsync(
+        var confirmed = await ConfirmAsync(
+            store,
             "decision-1",
             request,
             new HashSet<string> { "app" },
@@ -264,7 +400,28 @@ public sealed class RuntimeStateTests
             new HashSet<string> { "dev" },
             CancellationToken.None);
 
-        Assert.Equal(confirmed, replay);
+        Assert.Equal(confirmed.Result, replay!.Result);
+    }
+
+    private static async Task<ExposureConfirmationOutcome> ConfirmAsync(
+        IExposureStore store,
+        string decisionId,
+        ExposureConfirmationRequest request,
+        IReadOnlySet<string> appIds,
+        IReadOnlySet<string> environments,
+        CancellationToken cancellationToken)
+    {
+        var preparation = await store.PrepareConfirmationAsync(
+            decisionId,
+            request,
+            appIds,
+            environments,
+            cancellationToken);
+        await store.CommitConfirmationAsync(
+            decisionId,
+            preparation.Outcome.Result.ExposureId,
+            cancellationToken);
+        return preparation.Outcome;
     }
 
     private static DecideTerminalOutcome CreateOutcome(string decisionId) =>

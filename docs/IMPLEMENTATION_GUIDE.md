@@ -463,7 +463,33 @@ Validation:
 - after recovery, interval stabilizes or speeds up within bounds,
 - cooldown prevents chaotic changes,
 - fallback remains `800ms`,
+- missing active-strategy evidence fails closed under the canonical policy,
+- invalid state or malformed/torn audit persistence fails readiness,
+- exposure audit failure cannot commit a new confirmation,
 - unused decision receipts do not create exposure records.
+
+Concrete Phase 3A implementation decision:
+
+- `examples/tetris-integration` is the canonical local integration boundary:
+  it owns one bundle artifact consumed by both the SDK and trusted bootstrap,
+  an activation template bound to the approved receipt, and a deterministic
+  real-host harness.
+- Governed state and audit visibility use module-owned local file adapters
+  selected by explicit data-plane configuration. A module-owned local evidence
+  adapter supplies deterministic confidence for the activated strategy. No
+  production debug endpoint is added.
+- The active numeric rule computes a weighted score from all four declared
+  inputs and proposes only `750ms` or `850ms` around the `800ms` baseline;
+  policy still independently enforces bounds, `50ms` max delta, cooldown, and
+  minimum evidence quality. Missing active-strategy evidence is a fail-closed
+  `required-evidence-unavailable` result.
+- Local state accepts only coherent implemented decision modes and numeric
+  strategy state. Local audit readiness strictly parses existing JSON Lines,
+  and exposure confirmation records audit before committing prepared state.
+- Confirmed outcome linkage uses the existing SDK telemetry seam:
+  `tetris.outcomeObserved` carries the confirmed `decisionId` and `exposureId`
+  to a configured telemetry sink. This phase does not change frozen runtime
+  wire semantics.
 
 ### Phase 4: Minimal async intelligence and governance loop
 

@@ -21,3 +21,10 @@ override they resolve the same repository-local
 working directories or when tests/deployments require isolated state. The
 directory is created on first access; invalid or inaccessible state is an
 explicit startup/runtime failure, never a silent in-memory fallback.
+
+Data-plane direct state/evidence overrides use
+`Flaggo__State__LocalFilePath` and `Flaggo__Evidence__LocalFilePath` as commit
+descriptor paths. They never consume mutable raw JSON. Deployments that switch
+receipt, state, and evidence together should configure
+`Flaggo__Bootstrap__LocalGenerationPath` and publish the single digest-pinned
+generation manifest last.

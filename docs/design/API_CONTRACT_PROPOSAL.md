@@ -9,6 +9,17 @@ revision with aligned schemas, OpenAPI, fixtures, and compatibility notes.
 
 It does not introduce a second domain model. Canonical domain types remain owned by [Shared Contracts](shared-contracts/README.md); this document defines how those types cross HTTP and build/release boundaries.
 
+Compatibility note (2026-08-06): exposure confirmation now explicitly
+documents the already implemented `500 internal-error` and retryable
+`503 service-unavailable` outcomes for durable audit/infrastructure failure.
+This is an additive OpenAPI response declaration. It does not make confirmation
+audit failures eligible for SDK-local fallback: `500` has no eligibility
+extension, while the generic I/O `503` is explicitly ineligible and carries
+matching `Retry-After`/`retryAfterSeconds` metadata.
+The frozen v1 cooldown shape remains compatible with every finite nonnegative
+value. Runtime evaluation avoids timestamp addition so huge cooldowns remain
+overflow-safe without a new schema or persistence bound.
+
 ## Goals
 
 - Let TypeScript client and Decision API teams implement in parallel from one contract revision.
@@ -716,6 +727,8 @@ The key distinction is whether the server completed an audited evaluation of a v
 | Invalid or mismatched confirmation capability | `404 exposure-not-found` to avoid a token-validity oracle |
 | Conflicting exposure confirmation | `409 exposure-confirmation-conflict` |
 | Invalid `appliedAt` or clock skew | `422 invalid-applied-at` |
+| Durable exposure audit unavailable | `503 service-unavailable` with `Retry-After`; `clientFallback.eligible` is `false` |
+| Unexpected exposure confirmation infrastructure failure | `500 internal-error`; no client fallback eligibility |
 
 Validation returns `200` with `status: "invalid"` when a well-formed bundle can be analyzed. Apply returns `422 invalid-bundle` for the same invalid content because no write can occur. Phase 1 `ContractIssue.code` values include:
 

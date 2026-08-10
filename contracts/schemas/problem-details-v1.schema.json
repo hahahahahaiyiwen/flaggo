@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://flaggo.dev/contracts/schemas/problem-details-v1.schema.json",
   "title": "Flaggo Problem Details (RFC 9457) with Phase 1 extensions",
-  "description": "RFC 9457 application/problem+json body plus Flaggo-stable extension members. Programs branch on `code`, HTTP `status`, and structured issue fields, never on `title`, `detail`, or messages. Additional members are permitted per RFC 9457 forward compatibility.",
+  "description": "RFC 9457 application/problem+json body plus Flaggo-stable extension members. Programs branch on `code`, HTTP `status`, and structured issue fields, never on `title`, `detail`, or messages. Retry-After metadata never implies SDK-local fallback eligibility; `clientFallback.eligible: true` must be explicit. Additional members are permitted per RFC 9457 forward compatibility.",
   "type": "object",
   "required": ["type", "status", "code"],
   "properties": {

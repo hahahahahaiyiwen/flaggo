@@ -3,11 +3,18 @@ using Flaggo.Shared.Contracts;
 
 namespace Flaggo.State;
 
+public sealed record NumericRuleInput(
+    string SignalKey,
+    double Minimum,
+    double Maximum,
+    double Weight);
+
 public sealed record NumericRuleStrategy(
     string InputSignalKey,
     double Threshold,
     double ValueAtOrAbove,
-    double ValueBelow);
+    double ValueBelow,
+    IReadOnlyList<NumericRuleInput>? WeightedInputs = null);
 
 public sealed record GovernedDecisionState(
     string DefinitionId,
@@ -37,7 +44,28 @@ public interface IStateHealth
 
 public sealed record IdempotentDecisionResult(
     DecideTerminalOutcome Outcome,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset? ExpiresAt);
+
+public enum DecideIdempotencyRetention
+{
+    Release,
+    Retain
+}
+
+public static class DecideIdempotencyRetentionPolicy
+{
+    public static DecideIdempotencyRetention Classify(DecideTerminalOutcome outcome)
+    {
+        if (outcome.Result is not null)
+        {
+            return DecideIdempotencyRetention.Retain;
+        }
+
+        return outcome.Failure?.Status is >= 400 and < 500
+            ? DecideIdempotencyRetention.Retain
+            : DecideIdempotencyRetention.Release;
+    }
+}
 
 public sealed class IdempotencyConflictException : Exception;
 
@@ -53,19 +81,34 @@ public interface IDecideIdempotencyStore
         CancellationToken cancellationToken);
 }
 
-public sealed class InMemoryDecideIdempotencyStore(
-    TimeProvider timeProvider,
-    TimeSpan? followerWaitBudget = null) : IDecideIdempotencyStore
+public sealed class InMemoryDecideIdempotencyStore : IDecideIdempotencyStore
 {
-    private readonly TimeSpan _followerWaitBudget =
-        followerWaitBudget ?? TimeSpan.FromSeconds(1);
-
     private sealed record Entry(
         string Fingerprint,
         Task<IdempotentDecisionResult> Completion);
 
     private readonly Dictionary<(string Namespace, string Key), Entry> _entries = [];
     private readonly object _gate = new();
+    private readonly TimeProvider _timeProvider;
+    private readonly TimeSpan _followerWaitBudget;
+    private readonly Action? _retryableCompletionPublished;
+
+    public InMemoryDecideIdempotencyStore(
+        TimeProvider timeProvider,
+        TimeSpan? followerWaitBudget = null)
+        : this(timeProvider, followerWaitBudget, retryableCompletionPublished: null)
+    {
+    }
+
+    internal InMemoryDecideIdempotencyStore(
+        TimeProvider timeProvider,
+        TimeSpan? followerWaitBudget,
+        Action? retryableCompletionPublished)
+    {
+        _timeProvider = timeProvider;
+        _followerWaitBudget = followerWaitBudget ?? TimeSpan.FromSeconds(1);
+        _retryableCompletionPublished = retryableCompletionPublished;
+    }
 
     public Task<IdempotentDecisionResult> ExecuteAsync(
         string idempotencyNamespace,
@@ -79,11 +122,12 @@ public sealed class InMemoryDecideIdempotencyStore(
 
         lock (_gate)
         {
-            var now = timeProvider.GetUtcNow();
+            var now = _timeProvider.GetUtcNow();
             foreach (var expiredKey in _entries
                          .Where(item =>
                              item.Value.Completion.IsCompletedSuccessfully &&
-                             item.Value.Completion.Result.ExpiresAt <= now)
+                             item.Value.Completion.Result.ExpiresAt is { } expiresAt &&
+                             expiresAt <= now)
                          .Select(item => item.Key)
                          .ToArray())
             {
@@ -94,7 +138,8 @@ public sealed class InMemoryDecideIdempotencyStore(
             if (_entries.TryGetValue(entryKey, out var existing))
             {
                 if (existing.Completion.IsCompletedSuccessfully &&
-                    existing.Completion.Result.ExpiresAt <= timeProvider.GetUtcNow())
+                    existing.Completion.Result.ExpiresAt is { } expiresAt &&
+                    expiresAt <= _timeProvider.GetUtcNow())
                 {
                     _entries.Remove(entryKey);
                     existing = null;
@@ -153,20 +198,34 @@ public sealed class InMemoryDecideIdempotencyStore(
         try
         {
             var result = await operation(cancellationToken);
-            var retained = new IdempotentDecisionResult(
+            var retention = DecideIdempotencyRetentionPolicy.Classify(result);
+            var completed = new IdempotentDecisionResult(
                 result,
-                timeProvider.GetUtcNow().AddHours(24));
-            owner.TrySetResult(retained);
-            return retained;
+                retention == DecideIdempotencyRetention.Retain
+                    ? _timeProvider.GetUtcNow().AddHours(24)
+                    : null);
+            if (retention == DecideIdempotencyRetention.Release)
+            {
+                lock (_gate)
+                {
+                    owner.TrySetResult(completed);
+                    _retryableCompletionPublished?.Invoke();
+                    _entries.Remove((idempotencyNamespace, key));
+                }
+            }
+            else
+            {
+                owner.TrySetResult(completed);
+            }
+            return completed;
         }
         catch (Exception error)
         {
             lock (_gate)
             {
+                owner.TrySetException(error);
                 _entries.Remove((idempotencyNamespace, key));
             }
-
-            owner.TrySetException(error);
             throw;
         }
     }
@@ -177,7 +236,18 @@ public sealed record PendingExposure(
     string ConfirmToken,
     DecisionSnapshot Snapshot,
     string? AppliedAt,
-    ExposureConfirmationResult? Confirmation);
+    ExposureConfirmationResult? Confirmation,
+    string? PreparedAppliedAt = null,
+    ExposureConfirmationResult? PreparedConfirmation = null);
+
+public sealed record ExposureConfirmationOutcome(
+    ExposureConfirmationResult Result,
+    DecisionSnapshot Snapshot,
+    string? AppliedAt);
+
+public sealed record ExposureConfirmationPreparation(
+    ExposureConfirmationOutcome Outcome,
+    bool AlreadyConfirmed);
 
 public sealed record DecisionSnapshot(
     string AppId,
@@ -212,18 +282,23 @@ public interface IExposureStore
         string decisionId,
         CancellationToken cancellationToken);
 
-    Task<ExposureConfirmationResult?> FindReplayAsync(
+    Task<ExposureConfirmationOutcome?> FindReplayAsync(
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
         IReadOnlySet<string> environments,
         CancellationToken cancellationToken);
 
-    Task<ExposureConfirmationResult> ConfirmAsync(
+    Task<ExposureConfirmationPreparation> PrepareConfirmationAsync(
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
         IReadOnlySet<string> environments,
+        CancellationToken cancellationToken);
+
+    Task CommitConfirmationAsync(
+        string decisionId,
+        string exposureId,
         CancellationToken cancellationToken);
 }
 
@@ -272,7 +347,7 @@ public sealed class InMemoryExposureStore(
         return Task.CompletedTask;
     }
 
-    public Task<ExposureConfirmationResult> ConfirmAsync(
+    public Task<ExposureConfirmationPreparation> PrepareConfirmationAsync(
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -297,7 +372,32 @@ public sealed class InMemoryExposureStore(
                     throw new ExposureConfirmationConflictException();
                 }
 
-                return Task.FromResult(exposure.Confirmation);
+                return Task.FromResult(
+                    new ExposureConfirmationPreparation(
+                        new ExposureConfirmationOutcome(
+                            exposure.Confirmation,
+                            exposure.Snapshot,
+                            exposure.AppliedAt),
+                        true));
+            }
+
+            if (exposure.PreparedConfirmation is not null)
+            {
+                if (!string.Equals(
+                        exposure.PreparedAppliedAt,
+                        request.AppliedAt,
+                        StringComparison.Ordinal))
+                {
+                    throw new ExposureConfirmationConflictException();
+                }
+
+                return Task.FromResult(
+                    new ExposureConfirmationPreparation(
+                        new ExposureConfirmationOutcome(
+                            exposure.PreparedConfirmation,
+                            exposure.Snapshot,
+                            exposure.PreparedAppliedAt),
+                        false));
             }
 
             var result = new ExposureConfirmationResult(
@@ -307,14 +407,66 @@ public sealed class InMemoryExposureStore(
                 timeProvider.GetUtcNow().UtcDateTime.ToString("O"));
             _exposures[decisionId] = exposure with
             {
-                AppliedAt = request.AppliedAt,
-                Confirmation = result
+                PreparedAppliedAt = request.AppliedAt,
+                PreparedConfirmation = result
             };
-            return Task.FromResult(result);
+            return Task.FromResult(
+                new ExposureConfirmationPreparation(
+                    new ExposureConfirmationOutcome(
+                        result,
+                        exposure.Snapshot,
+                        request.AppliedAt),
+                    false));
         }
     }
 
-    public Task<ExposureConfirmationResult?> FindReplayAsync(
+    public Task CommitConfirmationAsync(
+        string decisionId,
+        string exposureId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (!_exposures.TryGetValue(decisionId, out var exposure))
+            {
+                throw new ExposureNotFoundException();
+            }
+
+            if (exposure.Confirmation is not null)
+            {
+                if (!string.Equals(
+                        exposure.Confirmation.ExposureId,
+                        exposureId,
+                        StringComparison.Ordinal))
+                {
+                    throw new ExposureConfirmationConflictException();
+                }
+
+                return Task.CompletedTask;
+            }
+
+            if (exposure.PreparedConfirmation is null ||
+                !string.Equals(
+                    exposure.PreparedConfirmation.ExposureId,
+                    exposureId,
+                    StringComparison.Ordinal))
+            {
+                throw new ExposureConfirmationConflictException();
+            }
+
+            _exposures[decisionId] = exposure with
+            {
+                AppliedAt = exposure.PreparedAppliedAt,
+                Confirmation = exposure.PreparedConfirmation,
+                PreparedAppliedAt = null,
+                PreparedConfirmation = null
+            };
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task<ExposureConfirmationOutcome?> FindReplayAsync(
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -332,17 +484,27 @@ public sealed class InMemoryExposureStore(
                 throw new ExposureNotFoundException();
             }
 
-            if (exposure.Confirmation is null)
+            if (exposure.Confirmation is null &&
+                exposure.PreparedConfirmation is null)
             {
-                return Task.FromResult<ExposureConfirmationResult?>(null);
+                return Task.FromResult<ExposureConfirmationOutcome?>(null);
             }
 
-            if (!string.Equals(exposure.AppliedAt, request.AppliedAt, StringComparison.Ordinal))
+            var appliedAt = exposure.Confirmation is not null
+                ? exposure.AppliedAt
+                : exposure.PreparedAppliedAt;
+            var confirmation = exposure.Confirmation ??
+                exposure.PreparedConfirmation!;
+            if (!string.Equals(appliedAt, request.AppliedAt, StringComparison.Ordinal))
             {
                 throw new ExposureConfirmationConflictException();
             }
 
-            return Task.FromResult<ExposureConfirmationResult?>(exposure.Confirmation);
+            return Task.FromResult<ExposureConfirmationOutcome?>(
+                new ExposureConfirmationOutcome(
+                    confirmation,
+                    exposure.Snapshot,
+                    appliedAt));
         }
     }
 }
