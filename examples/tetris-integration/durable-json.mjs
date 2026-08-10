@@ -961,6 +961,7 @@ async function writeLinuxAtomicFile(
     await stagingHandle.close();
     stagingHandle = undefined;
     signal?.throwIfAborted();
+    await assertLinuxDestinationNotLink(directoryHandle, destinationName);
     await rename(
       stagingPath,
       linuxChildPath(directoryHandle, destinationName),
@@ -1025,6 +1026,9 @@ async function openLinuxChildDirectory(
   try {
     return await open(path, linuxDirectoryFlags());
   } catch (error) {
+    if (["ELOOP", "ENOTDIR"].includes(error?.code)) {
+      throw linuxLinkError(path, error);
+    }
     if (!create || error?.code !== "ENOENT") throw error;
   }
   try {
@@ -1036,6 +1040,27 @@ async function openLinuxChildDirectory(
   await syncLinuxHandle(parentHandle);
   await syncLinuxHandle(childHandle);
   return childHandle;
+}
+
+async function assertLinuxDestinationNotLink(directoryHandle, name) {
+  const path = linuxChildPath(directoryHandle, name);
+  try {
+    if ((await lstat(path)).isSymbolicLink()) {
+      throw linuxLinkError(path);
+    }
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+}
+
+function linuxLinkError(path, cause) {
+  const error = new Error(
+    `Linux path '${path}' contains a symbolic link or non-directory component.`,
+    cause === undefined ? undefined : { cause },
+  );
+  error.code = "symbolic_link";
+  return error;
 }
 
 async function syncLinuxDirectoryBoundary(path) {

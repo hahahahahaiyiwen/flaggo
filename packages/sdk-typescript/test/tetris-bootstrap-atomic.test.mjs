@@ -2176,6 +2176,9 @@ async function invokeActualHelperWithPause(
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
+  const exit = new Promise((resolvePromise) => {
+    child.once("exit", resolvePromise);
+  });
   const response = new Promise((resolvePromise, rejectPromise) => {
     child.stdout.setEncoding("utf8");
     let output = "";
@@ -2204,9 +2207,15 @@ async function invokeActualHelperWithPause(
     await waitForPath(signalPath);
     await onPause();
     await writeFile(releasePath, "release");
-    return await response;
-  } finally {
+    const result = await response;
     child.stdin.end();
+    await exit;
+    return result;
+  } finally {
+    if (!child.stdin.destroyed) {
+      child.stdin.end();
+      await exit;
+    }
   }
 }
 

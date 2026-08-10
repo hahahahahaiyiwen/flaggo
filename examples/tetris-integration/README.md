@@ -143,7 +143,10 @@ server process; failed startup is reaped and retryable, while idle, signal,
 exit, and test-reset paths shut down the owned child. `EISDIR` and failed
 `FlushFileBuffers` calls are not accepted as success. Linux retains the
 `O_NOFOLLOW` path and performs directory creation, file open, rename, cleanup,
-and committed reads relative to pinned `/proc/self/fd` directory handles;
+and committed reads relative to pinned `/proc/self/fd` directory handles.
+Directory-component links are reported as explicit symbolic-link rejections,
+and a pre-existing symbolic-link publication pointer is rejected before the
+atomic rename rather than silently replaced;
 other Unix platforms fail closed until an equivalent native traversal exists.
 
 The harness computes all four weighted normalizations explicitly. Opposing

@@ -209,8 +209,7 @@ public sealed class RuntimeStateTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var recoveryStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
+        var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>();
         var store = new InMemoryDecideIdempotencyStore(
             new FixedTimeProvider(),
             followerWaitBudget: TimeSpan.FromSeconds(5),
@@ -238,38 +237,56 @@ public sealed class RuntimeStateTests
         var unavailable = DecideTerminalOutcome.Rejected(
             new DecisionFailure(503, "unavailable", "retry"));
 
-        ownerCompletion.SetResult(unavailable);
-        Assert.True(completionPublished.Wait(TimeSpan.FromSeconds(5)));
-        var followerResult = await follower.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(503, followerResult.Outcome.Failure!.Status);
-
-        var recovery = Task.Run(() =>
+        var publishRetryable = Task.Factory.StartNew(
+            () => ownerCompletion.SetResult(unavailable),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
         {
-            recoveryAttempted.SetResult();
-            return store.ExecuteAsync(
-                "tenant/app/dev",
-                "key",
-                "fingerprint",
-                _ =>
+            Assert.True(completionPublished.Wait(TimeSpan.FromSeconds(5)));
+            var followerResult = await follower.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(503, followerResult.Outcome.Failure!.Status);
+            var recovery = Task.Factory.StartNew(
+                () =>
                 {
-                    Interlocked.Increment(ref calls);
-                    recoveryStarted.SetResult();
-                    return Task.FromResult(CreateOutcome("decision-recovered"));
+                    recoveryAttempted.SetResult();
+                    return store.ExecuteAsync(
+                        "tenant/app/dev",
+                        "key",
+                        "fingerprint",
+                        _ =>
+                        {
+                            Interlocked.Increment(ref calls);
+                            recoveryStarted.SetResult();
+                            return Task.FromResult(
+                                CreateOutcome("decision-recovered"));
+                        },
+                        CancellationToken.None);
                 },
-                CancellationToken.None);
-        });
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default).Unwrap();
 
-        await recoveryAttempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.False(recoveryStarted.Task.IsCompleted);
-        Assert.Equal(1, Volatile.Read(ref calls));
+            await recoveryAttempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(recoveryStarted.Task.IsCompleted);
+            Assert.Equal(1, Volatile.Read(ref calls));
 
-        releaseClaim.Set();
-        var ownerResult = await owner;
-        var recovered = await recovery.WaitAsync(TimeSpan.FromSeconds(5));
+            releaseClaim.Set();
+            await publishRetryable.WaitAsync(TimeSpan.FromSeconds(5));
+            var ownerResult = await owner;
+            var recovered = await recovery.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.Equal(503, ownerResult.Outcome.Failure!.Status);
-        Assert.Equal("decision-recovered", recovered.Outcome.Result!.DecisionId);
-        Assert.Equal(2, calls);
+            Assert.Equal(503, ownerResult.Outcome.Failure!.Status);
+            Assert.Equal(
+                "decision-recovered",
+                recovered.Outcome.Result!.DecisionId);
+            Assert.Equal(2, Volatile.Read(ref calls));
+        }
+        finally
+        {
+            releaseClaim.Set();
+        }
     }
 
     [Fact]
