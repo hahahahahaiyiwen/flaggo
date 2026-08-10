@@ -2176,8 +2176,12 @@ async function invokeActualHelperWithPause(
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
+  let exited = false;
   const exit = new Promise((resolvePromise) => {
-    child.once("exit", resolvePromise);
+    child.once("exit", (code) => {
+      exited = true;
+      resolvePromise(code);
+    });
   });
   const response = new Promise((resolvePromise, rejectPromise) => {
     child.stdout.setEncoding("utf8");
@@ -2208,15 +2212,29 @@ async function invokeActualHelperWithPause(
     await onPause();
     await writeFile(releasePath, "release");
     const result = await response;
-    child.stdin.end();
-    await exit;
+    await stopActualHelper(child, exit, () => exited);
     return result;
   } finally {
-    if (!child.stdin.destroyed) {
-      child.stdin.end();
-      await exit;
-    }
+    await stopActualHelper(child, exit, () => exited);
   }
+}
+
+async function stopActualHelper(child, exit, hasExited) {
+  if (hasExited()) return;
+  if (!child.stdin.destroyed) child.stdin.end();
+  await Promise.race([
+    exit,
+    new Promise((resolvePromise) => setTimeout(resolvePromise, 250)),
+  ]);
+  if (
+    !hasExited()
+    && child.pid !== undefined
+    && child.exitCode === null
+    && child.signalCode === null
+  ) {
+    child.kill();
+  }
+  await exit;
 }
 
 async function findBuiltHelper() {
