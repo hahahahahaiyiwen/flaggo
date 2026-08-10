@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Policy is the deterministic safety gate for Flaggo runtime decisions. Decision intelligence and strategy execution can propose candidate values, but policy decides whether a candidate can be returned as governed.
+Policy is the deterministic safety gate used by both decision lifecycles and runtime decision execution. Decision intelligence proposes bounded behavior; lifecycle policy determines whether it may become authority, while runtime policy determines whether approved authority may be safely applied to a request.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 

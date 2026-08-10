@@ -2,12 +2,14 @@
 
 ## Purpose
 
-Decision evidence is what Flaggo knows from runtime facts, observations, telemetry, evidence views, quality signals, and provenance. It is one of Flaggo's three top-level mental-model components:
+Decision evidence is what Flaggo knows from runtime facts, observations, telemetry, evidence views, quality signals, and provenance. It participates in Flaggo's top-level mental model:
 
 ```text
 Decision Definition
 Decision Evidence
 Decision Intelligence
+Decision Lifecycles
+Runtime Decision Execution
 ```
 
 Evidence informs decisions, but it does not create authority by itself. Authority comes from governance and governed state.
@@ -40,7 +42,7 @@ signal: tetris.recentPlacementTimeMs
 | Raw observations | Events, metrics, traces, logs, spans, or domain records. |
 | Signal definitions | Immutable keyed schemas for observed measures. |
 | Evidence views | Signal key + target + window + filters + freshness/quality. |
-| Inference inputs | Typed signal values used for online inference. Code-first SDKs may bind them inside `inference.inputs`; the wire request carries them separately from runtime context. |
+| Inference inputs | Typed signal values used for runtime strategy evaluation. Code-first SDKs may bind them inside `inference.inputs`; the wire request carries them separately from runtime context. |
 | Decision records | Returned value plus inference input values, target, definition revision, and audit/correlation ID. |
 | Exposure records | Client-confirmed application/rendering of a returned value, linked to a decision record. |
 | Evidence quality | Freshness, sample size, confidence, missingness, conflict, drift. |
@@ -89,7 +91,7 @@ They should be declared as immutable keyed metrics first, then optionally select
 | Concept | Meaning | Best for |
 | --- | --- | --- |
 | Declared metric | App-computed or pre-materialized signal with stable semantics. | Async learning, validation, evidence views. |
-| Inference input | Declared metric supplied with the decision request. | Fast online inference without service-side hot-path aggregation. |
+| Inference input | Declared metric supplied with the decision request. | Fast runtime strategy evaluation without service-side hot-path aggregation. |
 | Decision-record input | Inference input value captured when Flaggo returns a decision. | Auditing what Flaggo recommended under the exact request context. |
 | Exposure-captured input | Inference input value copied when the client confirms the value was applied or rendered. | Learning what happened under the exact context of a rendered decision. |
 
@@ -146,7 +148,7 @@ The service copies decision-time inference inputs into the exposure record. Conf
 
 Design rule:
 
-> If online inference needs a value, it must be a declared metric selected as an inference input. A code-first SDK may bind the current pre-aggregated value directly inside `inference.inputs`; it must still serialize that value into the wire request's separate `inputs` array. The service should not aggregate it on the hot path.
+> If runtime strategy evaluation needs a value, it must be a declared metric selected as an inference input. A code-first SDK may bind the current pre-aggregated value directly inside `inference.inputs`; it must still serialize that value into the wire request's separate `inputs` array. The service should not aggregate it on the hot path.
 
 ## Evidence views
 
@@ -168,12 +170,12 @@ EvidenceView
   filters: {}
 ```
 
-The same immutable signal key can serve async learning and online inference through different views:
+The same immutable signal key can serve async learning and runtime strategy evaluation through different views:
 
 | Path | Typical evidence view |
 | --- | --- |
 | Async learning | Cohort/global views over hours, days, or weeks. |
-| Online inference | Session/user/request views over seconds or minutes. |
+| Runtime strategy evaluation | Session/user/request views over seconds or minutes. |
 | Audit/explanation | Immutable snapshot references used by the proposal or decision. |
 
 ## Runtime context

@@ -41,6 +41,14 @@ Modern feature-flag and experimentation platforms already do much more than simp
 
 The sharper distinction is the closed loop. Feature-flag systems are strongest at delivering configured values and managing exposure. Flaggo should focus on connecting declared signals, outcomes, objectives, uncertainty, policy, and governed state so the system can learn from evidence and propose bounded changes.
 
+That closed loop can support several parallel workflows:
+
+- adaptive optimization improves behavior from accumulated evidence,
+- experimentation creates controlled variation to generate comparative evidence,
+- progressive rollout safely delivers a change that has already been selected.
+
+These workflows share definitions, evidence, governance, attribution, and runtime delivery, but they serve different purposes. Experimentation is not another name for optimization, and rollout is not another name for experimentation.
+
 The motivating question is not only:
 
 > Is flag X enabled? What configured value should I deliver?
@@ -51,11 +59,11 @@ AI-native runtime decisioning asks a broader question:
 
 The distinction matters. A flag system externalizes and governs a variable. A decisioning system adds explicit closed-loop evidence learning, constrained strategy generation, governed state compatibility, and uncertainty-aware explanations around that variable.
 
-Flaggo is motivated by the belief that the next abstraction is not a smarter flag. It is a runtime decision layer for software systems.
+Flaggo is motivated by the belief that the next abstraction is not a smarter flag. It is a policy-first decisioning control plane with a runtime decision provider.
 
 ## The vision
 
-Flaggo imagines a future where programs can call a decisioning layer as naturally as they call a database or service API.
+Flaggo imagines a future where programs can call a runtime decision provider as naturally as they call a database or service API, while a governed control plane manages how those decisions are defined, optimized, experimented with, rolled out, and changed.
 
 In that future, selected runtime choices are not buried in static branches or scattered across dashboards, scripts, and manual processes. They are explicit, observable, policy-controlled decision interfaces.
 
@@ -103,10 +111,13 @@ The long-term ambition is for AI-native runtime decisioning to become a normal s
 
 ```text
 definition + evidence + outcomes + objectives
+  -> optimization, experiment, or rollout lifecycle
   -> proposal -> governance -> governed state
 
 definition + runtime context + compatible governed state + policy
-  -> runtime decision result, possibly containing fallback
+  -> fixed resolution, strategy evaluation, variant assignment,
+     rollout routing, override, or fallback
+  -> runtime decision result
 ```
 
 Not every branch should become a decision call. Not every decision needs AI. Not every system should adapt automatically.

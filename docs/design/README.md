@@ -11,6 +11,8 @@ Top-level product framing remains in:
 - [Decision Definition](../DECISION_DEFINITION.md)
 - [Decision Evidence](../DECISION_EVIDENCE.md)
 - [Decision Intelligence](../DECISION_INTELLIGENCE.md)
+- [Decision Lifecycles](../DECISION_LIFECYCLES.md)
+- [Runtime Decision Execution](../RUNTIME_DECISION_EXECUTION.md)
 - [MVP Implementation Guide](../IMPLEMENTATION_GUIDE.md)
 - [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md)
 - [Phase 3 Tetris Integration](tetris-integration/README.md)

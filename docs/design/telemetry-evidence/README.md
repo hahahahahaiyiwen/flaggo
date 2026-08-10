@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The telemetry/evidence component turns runtime observations into decision evidence. It is the bridge between application behavior and Flaggo's online runtime and async intelligence paths.
+The telemetry/evidence component turns runtime observations into decision evidence. It supplies request-time inputs to runtime decision execution and historical evidence to decision intelligence and decision lifecycles.
 
 For the MVP, evidence can be simple and local. The design should still preserve a clean `IEvidenceProvider` seam so later implementations can use OpenTelemetry pipelines, metrics stores, or cloud data services.
 
@@ -104,7 +104,7 @@ Design rule:
 
 ## Declared metrics and inference inputs
 
-Values used by online inference should be declared metrics first, then selected as inference inputs when the decision definition needs them on the hot path.
+Values used by runtime strategy evaluation should be declared metrics first, then selected as inference inputs when the decision definition needs them on the hot path.
 
 | Concept | Meaning | Example |
 | --- | --- | --- |
@@ -119,7 +119,7 @@ The Decision API stores decision-time inputs and copies them into the exposure r
 
 Design rule:
 
-> If a value should influence online inference, declare it as a metric and select it as an inference input. The application should send the pre-aggregated current value; the service should not aggregate it on the hot path.
+> If a value should influence runtime strategy evaluation, declare it as a metric and select it as an inference input. The application should send the pre-aggregated current value; the service should not aggregate it on the hot path.
 
 Phase 1 does not define a Flaggo-specific telemetry HTTP API. SDK telemetry should use OTLP; any direct/demo ingestion path is non-blocking and must not alter decision or exposure contracts.
 

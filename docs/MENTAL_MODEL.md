@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Flaggo needs clear boundaries between the contract for a decision, the evidence used to reason about that decision, and the intelligence that turns evidence into governed behavior.
+Flaggo is a policy-first decisioning control plane with a runtime decision provider. It needs clear boundaries between the contract for a decision, the evidence used to reason about that decision, the control-plane lifecycles that govern change, and the runtime mechanisms that execute approved behavior.
 
 Detailed concept docs:
 
@@ -11,6 +11,8 @@ Detailed concept docs:
 | Decision Definition | [DECISION_DEFINITION.md](DECISION_DEFINITION.md) |
 | Decision Evidence | [DECISION_EVIDENCE.md](DECISION_EVIDENCE.md) |
 | Decision Intelligence | [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md) |
+| Decision Lifecycles | [DECISION_LIFECYCLES.md](DECISION_LIFECYCLES.md) |
+| Runtime Decision Execution | [RUNTIME_DECISION_EXECUTION.md](RUNTIME_DECISION_EXECUTION.md) |
 
 The top-level model is:
 
@@ -22,14 +24,21 @@ Decision Evidence
   provides runtime facts, declared signals, evidence views, quality, and provenance
 
 Decision Intelligence
-  learns asynchronously and infers online within the definition and evidence
+  analyzes evidence and proposes bounded changes
 
-Decision Intelligence Output
-  async: DecisionProposal -> governance -> GovernedDecisionState
-  online: RuntimeDecisionResult, possibly containing fallback
+Control-plane decision lifecycles
+  optimization, experimentation, and rollout
+  -> DecisionProposal -> governance -> GovernedDecisionState
+
+Runtime decision execution
+  fixed resolution, strategy evaluation, variant assignment,
+  rollout routing, override, or fallback
+  -> RuntimeDecisionResult
 ```
 
-`GovernedDecisionState` is not part of a decision definition. It is produced by async intelligence after governance approval and consumed by online inference. A runtime decision result is also not part of the definition; it is the output of online inference.
+`GovernedDecisionState` is not part of a decision definition. It is produced by an approved control-plane lifecycle and consumed by runtime decision execution. A runtime decision result is also not part of the definition; it is the per-request output of the runtime decision provider.
+
+Control-plane lifecycles and runtime execution operate at different timescales. A lifecycle decides whether an optimization, experiment, or rollout should exist and how it progresses. Runtime execution applies the resulting approved state consistently for each request.
 
 ## Core concepts by layer
 
@@ -38,8 +47,10 @@ Decision Intelligence Output
 | Decision key | What decision family does the application delegate? | Stable developer-facing name such as `tetris.dropInterval`. | Revision semantics, evidence history, active strategy. |
 | Decision definition | What may be decided and how should the system resolve it? | Versioned contract: decision key, signals, intent, inference, output contract/action space, and safety constraints. | Raw telemetry history, application/build provenance, governed state, concrete runtime result. |
 | Decision evidence | What is known now or historically? | Runtime facts, target identifiers, emitted events/metrics, evidence views, exposure records, evidence quality, uncertainty, provenance such as app/build identity. | Policy authority or active strategy state. |
-| Decision intelligence | How should Flaggo learn or infer from the definition and evidence? | Async learning, online inference, proposal generation, strategy execution, reasoning mode selection. | Final authority without governance. |
+| Decision intelligence | What bounded behavior should Flaggo recommend from the definition and evidence? | Async analysis, proposal generation, and reasoning mode selection. | Lifecycle authority, governance approval, or per-request execution. |
+| Decision lifecycle | How does a proposed optimization, experiment, or rollout become and remain active? | Validation, approval, activation, observation, conclusion, promotion, supersession, and rollback. | Per-request value selection. |
 | Governed decision state | What behavior has been approved for future/runtime use? | Active value, strategy, experiment, rollout, cooldown, override, lifecycle, previous safe value. | Decision definition semantics or raw evidence history. |
+| Runtime decision execution | How is approved behavior applied to this request? | Fixed-value resolution, strategy evaluation, deterministic variant assignment, rollout routing, override, and fallback. | Proposing or approving future behavior. |
 | Runtime decision result | What did this request receive? | Returned value, fallback status, explanation, audit ID, confidence, policy result. | Future authority unless persisted as governed state. |
 
 ## Decision definition
@@ -99,11 +110,13 @@ Notes:
 
 - The decision key is a sub-concept of the decision definition: it identifies the decision family.
 - The definition owns the output **contract** or action space, not the actual runtime result.
+- A definition must explicitly permit experimentation before governed state can activate an experiment. It owns the experiment safety envelope, such as eligible assignment target kinds, allowed values, traffic limits, exposure requirements, and applicable approval constraints.
+- Active experiment identifiers, variants, allocation weights, assignment salt/version, lifecycle status, and promotion or rollback state belong to `GovernedDecisionState`, not the definition.
 - Signal definitions are owned outside individual decisions, usually near the producer. A signal key such as `tetris.boardPressure` is the immutable semantic identity for its schema, type, units, range, and meaning.
 - A decision definition does not redefine signal schemas. It explicitly allows the signal handles it may use and assigns them roles as objectives, inference inputs, evidence, or guardrails.
 - `targetHierarchy` defines meaningful target levels for signal aggregation, evidence views, learning, inference, governance, and fallback.
 - Derived signals must be declared separately from decisions and must state how they are derived from available signals. Their aggregation and fixed window are part of the immutable signal meaning, so a change from `24h` to `7d` requires a new key.
-- `inference.target` describes the desired online inference target kind, not a concrete target instance.
+- `inference.target` describes the desired runtime execution target kind, not a concrete target instance.
 - `inference.inputs` identifies allowed app-emitted metrics and supplies their current pre-aggregated values. Code-first SDKs may express both through bound handles such as `boardPressureSignal.input(boardPressure)`; extracted definitions retain only the signal references, while runtime requests carry the values.
 - `inference.fallbackOrder` makes broader fallback levels explicit.
 - Intent is typed. Natural-language intent captures product direction; metric-objective intent binds optimization to declared signals.
@@ -125,7 +138,7 @@ Runtime context:
   recentPlacementTimeMs = 1420
   currentLevel = 3
 
-Inference inputs used by online inference:
+Inference inputs used by runtime strategy evaluation:
   boardPressure <- declared metric boardPressure
   recentPlacementTimeMs <- declared metric recentPlacementTimeMs
 
@@ -149,27 +162,49 @@ A value used online should be a declared signal, usually an app-emitted metric w
 | --- | --- |
 | Decision definition | Declares signals and names which app-emitted metrics are inference inputs. |
 | Decision evidence | Carries emitted metric values, request-time inference input values, exposure records, and historical evidence views. |
-| Decision intelligence | Uses inference inputs for fast online inference and historical metric/event evidence for async learning. |
+| Decision intelligence | Uses historical metric/event evidence and exposure-captured inference inputs for async learning and proposal generation. |
+| Runtime decision execution | Uses current declared inference inputs for bounded request-time strategy evaluation. |
 
-This keeps the top-level model small while avoiding arbitrary context fields. Context may carry values, but only declared inference inputs are meaningful to online inference.
+This keeps the top-level model small while avoiding arbitrary context fields. Context may carry values, but only declared inference inputs are meaningful to runtime strategy evaluation.
 
-## Decision intelligence
+## Decision intelligence and decision lifecycles
 
-Decision intelligence has two explicit loops over the same definition and evidence model:
+Decision intelligence performs control-plane analysis and proposal generation, but it does not own governance authority. Control-plane lifecycles coordinate how proposed behavior becomes approved state:
 
 ```text
-Async learning loop:
+Adaptive optimization lifecycle:
   DecisionDefinition + DecisionEvidence + outcomes + typed intent/objectives
   -> DecisionProposal
   -> governance
   -> GovernedDecisionState
 
-Online inference loop:
-  DecisionDefinition + runtime context + compatible GovernedDecisionState + policy
-  -> RuntimeDecisionResult, possibly containing fallback
+Experiment lifecycle:
+  declared experiment permission + hypothesis + candidate variants
+  -> policy validation and approval
+  -> active experiment state
+  -> attributed exposures and outcomes
+  -> continue, promote, stop, or roll back
+
+Progressive rollout lifecycle:
+  selected value or strategy
+  -> policy validation and approval
+  -> staged allocation
+  -> observe guardrails
+  -> advance, pause, complete, or roll back
 ```
 
-Async learning may operate at broader targets than online inference. For example, it may learn from `cohort:new_players` or `global` evidence and produce governed state at `cohort:new_players`. Online inference can then apply that governed state to `session:game-456`.
+Proposals may be produced by decision intelligence, operators, or other authorized automation. Governance, rather than the proposal source, grants authority.
+
+Runtime decision execution consumes the approved state:
+
+```text
+DecisionDefinition + runtime context + compatible GovernedDecisionState + policy
+  -> fixed resolution, strategy evaluation, deterministic variant assignment,
+     rollout routing, override, or fallback
+  -> RuntimeDecisionResult
+```
+
+Async learning may operate at broader targets than runtime execution. For example, it may learn from `cohort:new_players` or `global` evidence and produce governed state at `cohort:new_players`. Runtime execution can then apply that governed state to `session:game-456`.
 
 ## Scope vocabulary
 
@@ -221,8 +256,8 @@ Polari separates definition management from runtime evaluation:
 
 | Plane | Owns |
 | --- | --- |
-| Control plane | Definition bundles, immutable revisions, policies, strategies, lifecycle, and registration receipts. |
-| Data plane | Runtime decision evaluation and exposure confirmation for exact registered identities. |
+| Control plane | Definition bundles, immutable revisions, policies, optimization/experiment/rollout lifecycles, governed state, and registration receipts. |
+| Data plane | Fixed resolution, strategy evaluation, deterministic variant assignment, rollout routing, override/fallback execution, and exposure confirmation for exact registered identities. |
 
 Application deployment is a third, developer-owned lifecycle. Code-first declarations generate control-plane artifacts. For MVP, trusted application/bootstrap startup validates/applies those artifacts and initializes the runtime binding before data-plane use. A runtime call must carry `definitionId + revision + contractDigest`.
 
@@ -245,9 +280,24 @@ Use explicit names:
 
 | Name | Meaning |
 | --- | --- |
-| `DecisionProposal` | Candidate value, strategy, experiment, hold, rollback, or fallback recommendation produced by intelligence. |
-| `GovernedDecisionState` | Approved durable authority that online inference may consume. |
+| `DecisionProposal` | Candidate value, strategy, experiment, hold, rollback, or fallback recommendation produced by intelligence, an operator, or authorized automation. |
+| `GovernedDecisionState` | Approved durable authority that runtime decision execution may consume. |
 | `RuntimeDecisionResult` | Per-request response returned to application code. |
+
+For experimentation, keep lifecycle and execution terminology distinct:
+
+| Name | Plane | Meaning |
+| --- | --- | --- |
+| Experiment permission | Definition | Explicit opt-in and safety envelope within which experiments may be approved. |
+| Experiment lifecycle | Control plane | Proposal, validation, approval, activation, observation, conclusion, promotion, and rollback. |
+| Active experiment state | Governed state | Experiment ID, variants, weights, assignment unit, allocation version, salt, status, and lifecycle timestamps. |
+| Variant assignment | Data plane | Deterministic selection of an approved variant for a stable assignment target. |
+
+Assignment must be deterministic for the same declared assignment target across service replicas. Long-lived experiments should normally use a stable semantic target such as user, session, or tenant rather than the running application instance. Request-level assignment is valid only when reassignment between requests is intentional. A typical assignment input is:
+
+```text
+experimentId + allocationVersion + assignmentTargetKind + assignmentTargetId + salt
+```
 
 `DecisionProposal` and `GovernedDecisionState` have separate lifecycles:
 
@@ -269,12 +319,16 @@ Validation checks schema compatibility, output bounds, typed safety constraints,
 
 Effective policy is the intersection of definition constraints, environment policy, and operator controls. Less-trusted or narrower layers may restrict behavior but never widen it; an application-authored definition cannot override environment approval requirements, relax mandatory evidence-quality floors, or bypass an operator pause.
 
-Active `GovernedDecisionState` is then consumed by online inference:
+Active `GovernedDecisionState` is then consumed by runtime decision execution:
 
 ```text
 runtime target + runtime context
   -> resolve applicable governed state
-  -> execute active value, strategy, experiment, or fallback
+  -> return an active fixed value
+     or evaluate an active strategy
+     or assign an active experiment variant
+     or route an active rollout
+     or apply an override or fallback
   -> RuntimeDecisionResult
 ```
 
@@ -291,6 +345,16 @@ confidence:
 policy:
   result: approved
 auditId: audit-789
+```
+
+When variant assignment is used, the result must also identify the assignment:
+
+```text
+decisionMode: experiment
+experimentId: batch-size-01
+variantId: treatment
+allocationVersion: 1
+assignmentUnit: user
 ```
 
 Avoid treating confidence as one universal number. Operators need to know whether a score describes evidence quality, model uncertainty, or expected outcome. Policy has its own result and should not be duplicated inside confidence:
@@ -316,7 +380,7 @@ RuntimeDecisionResult
   -> future DecisionProposal
 ```
 
-Decision records should capture definition revision/hash, runtime target, resolved control target, governed state ID, returned value, fallback status, inference input values, policy result, audit ID, and timestamp. Exposure records should link to decision records and capture the fact that the application actually applied or rendered the value. Outcome events should declare attribution windows so unused responses, delayed outcomes, censoring, confounding, and selection bias can be handled explicitly rather than silently training the wrong lesson.
+Decision records should capture definition revision/hash, runtime target, resolved control target, governed state ID, returned value, decision mode, fallback status, inference input values, policy result, audit ID, and timestamp. Experiment decisions must additionally capture experiment ID, variant ID, allocation version, and assignment unit. Exposure records should link to decision records and capture the fact that the application actually applied or rendered the value. Outcome events should declare attribution windows so unused responses, delayed outcomes, censoring, confounding, and selection bias can be handled explicitly rather than silently training the wrong lesson.
 
 ## Reuse rule
 
@@ -329,4 +393,4 @@ Different decision definitions should not automatically share active decision au
 | GovernedDecisionState | Isolated by decision definition revision/hash and control target unless explicitly declared compatible. |
 | RuntimeDecisionResult, decision records, and confirmed exposures | Bound to the exact definition revision/hash used by the request. |
 
-Runtime requests should bind to an expected decision definition revision or contract hash. `GovernedDecisionState` should declare which revisions or contract hashes it is compatible with. New definitions can start partially warm only through semantic compatibility: unchanged signals and evidence may be reused, while new or changed signals warm up before policy allows them to influence proposals or online inference.
+Runtime requests should bind to an expected decision definition revision or contract hash. `GovernedDecisionState` should declare which revisions or contract hashes it is compatible with. New definitions can start partially warm only through semantic compatibility: unchanged signals and evidence may be reused, while new or changed signals warm up before policy allows them to influence proposals or runtime execution.

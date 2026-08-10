@@ -22,6 +22,7 @@ The runtime API should also verify compact definition identity when the client o
 MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
+Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXECUTION.md).
 
 ## Runtime responsibility
 
@@ -40,9 +41,9 @@ request(decision key, runtime context, signal inputs)
   -> fetch telemetry evidence
   -> fetch governed state
   -> assess uncertainty
-  -> load active governed value, strategy, experiment, override, or fallback
-  -> execute active strategy when present
-  -> apply governance stage
+  -> load active fixed value, strategy, experiment, rollout, override, or fallback
+  -> execute the matching approved runtime mechanism
+  -> apply deterministic runtime policy checks
   -> record audit/explanation
   -> return RuntimeDecisionResult, possibly containing fallback
 ```

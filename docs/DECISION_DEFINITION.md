@@ -4,12 +4,14 @@
 
 A decision definition is the versioned contract for a Flaggo decision. It declares what may be decided, which target levels matter, which evidence may be used, what "better" means, and which safety/fallback rules constrain the system.
 
-It is one of Flaggo's three top-level mental-model components:
+It participates in Flaggo's top-level mental model:
 
 ```text
 Decision Definition
 Decision Evidence
 Decision Intelligence
+Decision Lifecycles
+Runtime Decision Execution
 ```
 
 ## Definition
@@ -36,7 +38,7 @@ The key identifies the developer-facing decision family. `definitionId` is an op
 | --- | --- | --- |
 | Decision key | Stable application-facing decision family. | `tetris.dropInterval` |
 | Revision | Opaque registry-issued runtime revision; not semantic versioning or a metadata revision. | `rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3` |
-| Signal references | Role references to externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and online inference. | `boardPressureSignal`, `earlyLossRateSignal` |
+| Signal references | Role references to externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and runtime strategy evaluation. | `boardPressureSignal`, `earlyLossRateSignal` |
 | Intent | Typed objective: natural-language product direction or metric-driven optimization over declared signals. | natural-language: challenging but playable; metric-objective: minimize early loss |
 | Inference | Runtime inference target, app-emitted metric inputs, and fallback order. | target `session`, inputs `boardPressure`, fallback `cohort -> global` |
 | Output contract | Result type, bounds, allowed values, step, default. | number, `200..1500`, step `50`, default `800` |
@@ -52,11 +54,12 @@ A decision definition does not own:
 - evidence snapshots,
 - app/build provenance,
 - active strategy or governed state,
+- active experiment variants or allocation,
 - rollout state,
 - concrete runtime decision results,
 - audit records.
 
-Those belong to [Decision Evidence](DECISION_EVIDENCE.md), [Decision Intelligence](DECISION_INTELLIGENCE.md), governed state, and audit/explanation components.
+Those belong to [Decision Evidence](DECISION_EVIDENCE.md), [Decision Intelligence](DECISION_INTELLIGENCE.md), [Decision Lifecycles](DECISION_LIFECYCLES.md), [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md), governed state, and audit/explanation components.
 
 ## Signal ownership
 
@@ -212,13 +215,13 @@ Signal handles are the single declaration surface for facts Flaggo may understan
 | Concept | Source | Used by | Example |
 | --- | --- | --- | --- |
 | Declared event | Domain event emitted through a typed signal handle. | Async learning, evidence views, validation, audit. | `piecePlacedEvent` |
-| App-emitted metric | Application-computed metric with stable semantics. | Async learning and, if selected, online inference. | `boardPressureSignal` |
+| App-emitted metric | Application-computed metric with stable semantics. | Async learning and, if selected, runtime strategy evaluation. | `boardPressureSignal` |
 | Derived signal | Metric declared from other signal handles and an aggregation expression. | Async learning, evidence views, validation, policy. | `earlyLossRateSignal` |
-| Inference input | App-emitted metric bound to its current value inside the inference declaration. | Online inference and strategy execution. | `boardPressureSignal.input(boardPressure)` |
+| Inference input | App-emitted metric bound to its current value inside the inference declaration. | Runtime strategy evaluation. | `boardPressureSignal.input(boardPressure)` |
 | Decision-record input | Inference input value captured when a value is returned. | Auditing what Flaggo decided for the request. | `decision.boardPressure` when `850ms` was returned |
 | Exposure-captured input | Inference input value copied to an exposure only after the client confirms the value was applied or rendered. | Later learning and outcome correlation. | `exposure.boardPressure` after `confirmExposure(decisionId)` |
 
-If online inference should branch on a value, it must be declared once as an app-emitted metric handle and selected as `inference.inputs`. The application should provide the pre-aggregated value with the request through that handle; the online service should not aggregate it on the hot path. Aggregated metrics must be declared as derived signal handles with their source signals and aggregation expression. Evidence views can be derived internally from the definition revision, referenced signal definitions, target hierarchy, and requested windows. Decision records capture returned values; exposure capture is still useful because it records the exact input values present when the application actually applied or rendered a decision.
+If runtime strategy evaluation should branch on a value, it must be declared once as an app-emitted metric handle and selected as `inference.inputs`. The application should provide the pre-aggregated value with the request through that handle; the runtime service should not aggregate it on the hot path. Aggregated metrics must be declared as derived signal handles with their source signals and aggregation expression. Evidence views can be derived internally from the definition revision, referenced signal definitions, target hierarchy, and requested windows. Decision records capture returned values; exposure capture is still useful because it records the exact input values present when the application actually applied or rendered a decision.
 
 Intent is typed so Flaggo can distinguish product guidance from measurable objectives:
 
@@ -245,7 +248,7 @@ Natural-language intent is useful for early product design and human review. Met
 
 ## Target hierarchy
 
-The target hierarchy is the abstraction that prevents separate hard-coded models for async learning, governed state, online inference, evidence, policy, and fallback.
+The target hierarchy is the abstraction that prevents separate hard-coded models for async learning, governed state, runtime execution, evidence, policy, and fallback.
 
 ```text
 session -> user -> cohort -> global
@@ -255,7 +258,7 @@ Each path resolves a target role from the same hierarchy:
 
 | Target role | Chosen by | Meaning |
 | --- | --- | --- |
-| Runtime target | Online inference | Concrete entity receiving the decision now. |
+| Runtime target | Runtime decision execution | Concrete entity receiving the decision now. |
 | Learning target | Async intelligence | Population or slice with enough evidence for analysis. |
 | Control target | Governance | Boundary where approved state is stored. |
 | Evidence target | Evidence layer | Aggregation boundary for an evidence view. |

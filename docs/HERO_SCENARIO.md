@@ -19,9 +19,9 @@ A Tetris frontend emits gameplay telemetry. Instead of hard-coding one global dr
 
 At runtime, the game asks Flaggo for the current `dropInterval` decision for a runtime target such as the current session. Flaggo uses the versioned decision definition, runtime context, evidence views, approved governed state, goals, policy constraints, and uncertainty to return a governed value. The game applies the value, emits outcomes, and Flaggo learns from subsequent behavior.
 
-The key product behavior is real-time adaptation, not just choosing a better initial default. Async intelligence can learn and propose a bounded strategy for how drop speed should adapt. The online runtime path can then execute that approved strategy quickly during gameplay.
+The key product behavior is real-time adaptation, not just choosing a better initial default. Async intelligence can learn and propose a bounded strategy, the decision lifecycle can govern it, and runtime decision execution can apply it quickly during gameplay.
 
-The scenario uses the three-part mental model from [Mental Model](MENTAL_MODEL.md), [Decision Definition](DECISION_DEFINITION.md), [Decision Evidence](DECISION_EVIDENCE.md), and [Decision Intelligence](DECISION_INTELLIGENCE.md):
+The scenario uses the concepts from [Mental Model](MENTAL_MODEL.md), [Decision Definition](DECISION_DEFINITION.md), [Decision Evidence](DECISION_EVIDENCE.md), [Decision Intelligence](DECISION_INTELLIGENCE.md), [Decision Lifecycles](DECISION_LIFECYCLES.md), and [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md):
 
 | Category | Tetris example |
 |---|---|

@@ -12,7 +12,7 @@ Flaggo gives running software a governed way to ask:
 
 > Given this decision definition, available decision evidence, and approved governed state when it exists, what should happen now?
 
-The application still owns execution. Flaggo owns the decisioning control plane around selected runtime choices.
+The application still owns the resulting action. Flaggo owns the decisioning control plane and runtime decision provider around selected runtime choices.
 
 The refined mental model is documented in [MENTAL_MODEL.md](MENTAL_MODEL.md). In short, the top-level concepts are:
 
@@ -24,18 +24,26 @@ Decision Evidence
   provides runtime facts, observations, evidence views, quality, and provenance
 
 Decision Intelligence
-  learns asynchronously and infers online within the definition and evidence
+  analyzes evidence and produces bounded proposals
+
+Decision Lifecycles
+  validate, approve, activate, observe, and transition governed state
+
+Runtime Decision Execution
+  applies compatible governed state to one application request
 ```
 
 Canonical loops:
 
 ```text
 DecisionDefinition + DecisionEvidence + outcomes + objectives
+  -> Decision Intelligence
   -> DecisionProposal
-  -> governance
+  -> Decision Lifecycle
   -> GovernedDecisionState
 
 DecisionDefinition + runtime context + compatible GovernedDecisionState + policy
+  -> Runtime Decision Execution
   -> RuntimeDecisionResult, possibly containing fallback
 ```
 
@@ -70,22 +78,36 @@ The decision definition declares a target hierarchy, and resolvers choose path-s
 
 | Target role | Chosen by | Example |
 | --- | --- | --- |
-| Runtime target | Online inference | `session:game-456` |
+| Runtime target | Runtime decision execution | `session:game-456` |
 | Learning target | Async intelligence | `cohort:new_players` |
 | Control target | Governance | `cohort:new_players` |
 | Fallback target | Runtime/governance | `global` |
 
 ### Decision intelligence
 
-Decision intelligence is the AI-native reasoning layer that turns decision definitions and decision evidence into `DecisionProposal` objects. For real-time adaptive decisions, async intelligence usually proposes a bounded strategy, while online inference consumes compatible `GovernedDecisionState` to return one concrete `RuntimeDecisionResult`.
+Decision intelligence is the AI-native reasoning layer that turns decision definitions and decision evidence into `DecisionProposal` objects. For real-time adaptive decisions, it usually proposes a bounded strategy that can later be governed and executed against live context.
 
 It answers: **how should Flaggo reason about what to do next before governance decides whether it is safe to apply?**
 
 This is the layer that makes Flaggo more than a dynamic configuration or feature flag service. It can behave like an embedded data scientist or operator assistant: observe telemetry, compare outcomes, choose an analysis strategy, propose experiments, value changes, or bounded adaptation strategies, explain uncertainty, and recommend whether to hold, change, test, roll back, or fall back.
 
-Decision intelligence should produce a **DecisionProposal**, not an automatically final runtime decision. A proposal can be a single value, an experiment, or a bounded strategy that online runtime executes quickly against live context. The proposal is then checked by policy, target authority, lifecycle state, cooldowns, evidence quality, model uncertainty limits, approval requirements, and fallback rules before becoming `GovernedDecisionState`.
+Decision intelligence should produce a **DecisionProposal**, not an automatically final runtime decision. A proposal can be a single value, an experiment, a rollout, or a bounded strategy.
 
 Detailed concept design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md).
+
+![alt text](image.png)
+
+### Decision lifecycles
+
+Decision lifecycles validate proposals, apply policy and approval, activate `GovernedDecisionState`, and manage optimization, experiment, and rollout transitions through completion or rollback.
+
+Detailed concept design: [DECISION_LIFECYCLES.md](DECISION_LIFECYCLES.md).
+
+### Runtime decision execution
+
+Runtime decision execution resolves compatible governed state and applies fixed resolution, strategy evaluation, deterministic variant assignment, rollout routing, override, or fallback for one application request.
+
+Detailed concept design: [RUNTIME_DECISION_EXECUTION.md](RUNTIME_DECISION_EXECUTION.md).
 
 ### Runtime decision result
 
@@ -106,8 +128,8 @@ At a high level:
 
 ```text
 DecisionDefinition + runtime context + compatible GovernedDecisionState
-  -> decision intelligence or approved strategy execution
-  -> candidate value, experiment, or strategy result
+  -> fixed resolution, strategy evaluation, variant assignment,
+     rollout routing, override, or fallback
   -> policy, target, and safety checks
   -> RuntimeDecisionResult, possibly containing fallback
 ```
@@ -136,8 +158,8 @@ This scenario should prove the smallest useful version of Flaggo:
 2. The app can emit observations and ask for a decision for a runtime target.
 3. Flaggo can resolve evidence views, governed state, goals, policy, and uncertainty.
 4. Async intelligence can produce a proposal for a decision definition and control target.
-5. Governance can approve, limit, hold, roll back, fall back, or activate the strategy.
-6. The online runtime path can execute governed state against live game context.
+5. The decision lifecycle can approve, limit, hold, roll back, fall back, or activate the strategy.
+6. Runtime decision execution can apply governed state against live game context.
 7. The app can safely apply a value or fallback.
 8. An operator can inspect why the decision happened.
 
@@ -324,11 +346,11 @@ If startup registration is skipped or fails, the application may continue withou
 
 Detailed SDK/tooling UX: [Control Plane and Data Plane UX](design/client-library/CONTROL_DATA_PLANE_UX.md).
 
-## High-level runtime and intelligence flow
+## High-level intelligence, lifecycle, and runtime flow
 
-Flaggo has two primary execution paths plus a downstream governance stage.
+Flaggo separates proposal generation, lifecycle authority, and per-request execution.
 
-The **online runtime path** serves application requests:
+The **runtime decision execution path** serves application requests:
 
 ```text
 Application code
@@ -340,8 +362,9 @@ Decision API
   -> resolves runtime target, control target, evidence views, policy, and fallback
   -> fetches evidence snapshots
   -> fetches compatible GovernedDecisionState
-  -> uses active governed value, approved strategy, approved experiment, or fallback
-  -> applies deterministic online policy checks
+  -> executes fixed value, approved strategy, variant assignment,
+     rollout routing, override, or fallback
+  -> applies deterministic runtime policy checks
   -> records audit/explanation
   -> returns RuntimeDecisionResult, possibly containing fallback
 
@@ -350,7 +373,7 @@ Application code
   -> emits outcome telemetry
 ```
 
-The **async intelligence path** analyzes evidence outside the application's request/response path:
+The **decision intelligence path** analyzes evidence outside the application's request/response path:
 
 ```text
 Telemetry changes, schedule, operator request, definition activation, rollout review, or drift
@@ -361,35 +384,43 @@ Telemetry changes, schedule, operator request, definition activation, rollout re
   -> choose analysis mode
   -> generate and evaluate candidate values or strategies
   -> produce DecisionProposal
-  -> governance stage
-  -> GovernedDecisionState: active value, active strategy, experiment, hold, or fallback-only state
 ```
 
-The **governance stage** is downstream of async proposals. It applies policy, target authority, lifecycle state, cooldowns, approval requirements, overrides, and fallback rules before a `DecisionProposal` becomes `GovernedDecisionState`. Online inference should normally execute deterministic, bounded, policy-gated state and return a `RuntimeDecisionResult`.
+The **decision lifecycle path** turns proposals into authority:
+
+```text
+DecisionProposal
+  -> validate contract, workflow permission, target authority, and policy
+  -> approve, limit, hold, reject, or await approval
+  -> activate and transition GovernedDecisionState
+  -> observe optimization, experiment, or rollout progress
+  -> complete, supersede, expire, or roll back
+```
+
+Runtime decision execution then applies deterministic, bounded, policy-gated state and returns a `RuntimeDecisionResult`.
 
 Rollback is not a kind of governed-state payload. A rollback proposal transitions authority by activating a replacement or previous known-safe state and marking the replaced state `rolled-back`.
 
 Governed state lifecycle:
 
 ```text
-DecisionProposal: proposed -> validated -> approved | rejected
-GovernedDecisionState: pending -> active -> superseded | expired | rolled-back
+DecisionProposal: proposed -> validated -> pending-approval | approved | rejected
+GovernedDecisionState: pending -> active -> superseded | expired | completed | rolled-back
 ```
 
 Approval can be automatic for low-risk changes within typed constraints and sufficient evidence only when deployment or environment policy grants that authority. Human approval is required for high-impact strategies, policy exceptions, insufficient evidence quality, excessive model uncertainty, weak expected outcome, overlapping target conflicts, or regulated/business-critical decisions.
 
-Supporting lifecycle flows keep the system declared, evidenced, operated, audited, and improved over time:
+Cross-cutting flows keep the system declared, evidenced, audited, and improved over time:
 
 | Flow | Purpose |
 | --- | --- |
 | Contract sync | Validates and registers versioned decision definitions, supported targets, policies, signal declarations, inference configuration, and fallbacks from code/deploy bundles. |
 | Telemetry ingestion | Turns application and OpenTelemetry signals into evidence views and snapshots. |
-| Operator intervention | Lets humans pause, resume, override, approve, reject, or roll back `GovernedDecisionState`. |
-| Experiment lifecycle | Manages controlled exposure, outcome measurement, analysis, promotion, stop, or rollback. |
 | Audit and explanation | Records decision requests, proposals, policy outcomes, evidence references, fallbacks, and explanations. |
 | Feedback and learning | Feeds runtime outcomes back into evidence, future proposals, models, heuristics, and experiment design. |
 
-Detailed lifecycle design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md#supporting-lifecycle-flows).
+Detailed lifecycle design: [DECISION_LIFECYCLES.md](DECISION_LIFECYCLES.md).
+Detailed runtime design: [RUNTIME_DECISION_EXECUTION.md](RUNTIME_DECISION_EXECUTION.md).
 
 ## Target and resolution model
 
@@ -425,7 +456,7 @@ The first design should stay narrow:
 - one client library: TypeScript,
 - one default Decision API,
 - one telemetry/evidence path,
-- one deterministic policy evaluator and governance stage,
+- one deterministic policy evaluator and lifecycle governance stage,
 - one approved numeric rule strategy executor,
 - one audit trail,
 - one basic operator view.

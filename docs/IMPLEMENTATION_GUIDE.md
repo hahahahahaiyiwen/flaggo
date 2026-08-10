@@ -255,7 +255,7 @@ Port DTOs such as evidence, state, strategy execution, policy evaluation, and au
 
 ## Async intelligence interfaces
 
-The MVP can keep async intelligence simple, but it must consume and produce the canonical proposal, confidence, strategy, lifecycle, and governed-state contracts from [Shared Contracts](design/shared-contracts/README.md) and [Decision Intelligence](DECISION_INTELLIGENCE.md).
+The MVP can keep async intelligence simple, but it must consume and produce the canonical proposal, confidence, strategy, lifecycle, and governed-state contracts from [Shared Contracts](design/shared-contracts/README.md), [Decision Intelligence](DECISION_INTELLIGENCE.md), and [Decision Lifecycles](DECISION_LIFECYCLES.md). The online path follows [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
 
 The reasoning component owns the `IDecisionIntelligence` proposal-generation seam. Governance owns proposal validation, approval, and activation into `GovernedDecisionState`. For MVP, a script, fixture, or admin action can create the Tetris strategy proposal. The online path must consume the same governed strategy representation future AI agents will produce.
 
@@ -439,6 +439,112 @@ health routes are hosted only by the data-plane executable. Evidence and policy
 ports and local adapters are owned by their respective modules and injected
 into reasoning.
 
+### Phase 2.5: Local SDK-service acceptance demo
+
+Goal: prove the completed SDK and decision service work together in a minimal,
+cloud-free application before introducing the Tetris UI or a telemetry-backed
+closed loop.
+
+Scope boundary: this phase verifies extraction, registration, decision
+consumption, policy behavior, exposure confirmation, telemetry emission, and
+fallback semantics. The application computes its inference metric locally.
+Telemetry ingestion, server-side metric derivation, evidence updates, and
+learning from outcomes remain Phase 3 concerns.
+
+Scenario: implement a TypeScript console application under
+`examples/adaptive-worker/` that processes an in-memory work queue. Flaggo
+decides `demo.workerBatchSize`, and the worker applies that value as the number
+of queue items processed per cycle.
+
+Each work item should contain only the fields needed to produce observable,
+deterministic behavior:
+
+```ts
+interface WorkItem {
+  id: string;
+  processingMs: number;
+  shouldFail: boolean;
+}
+```
+
+The workload should use deterministic predefined profiles rather than
+uncontrolled randomness:
+
+- steady: enqueue two normal-cost items per tick,
+- burst: enqueue eight items per tick,
+- slow downstream: enqueue three higher-cost items per tick,
+- recovery: enqueue one item per tick.
+
+Seeded randomness may vary item cost or failure within a profile, but the seed
+must be configurable and test runs must remain reproducible.
+
+The worker derives queue pressure from actual queue state and supplies it as a
+live inference input. The initial formula should remain transparent and
+bounded:
+
+```text
+queuePressure = clamp(
+  0.7 * queueDepth / queueCapacity
+  + 0.3 * oldestItemAgeMs / targetLatencyMs,
+  0,
+  1
+)
+```
+
+For this phase, `demo.queuePressure` is declared as an app-emitted metric
+because the local service does not yet ingest events to calculate derived
+metrics. The worker should also emit:
+
+- `demo.itemEnqueued`,
+- `demo.itemCompleted`,
+- `demo.queueDepth`,
+- `demo.queuePressure`,
+- `demo.processingLatencyMs`.
+
+Deliverables:
+
+- minimal TypeScript application using the built `@flaggo/sdk`,
+- statically extracted canonical bundle for `demo.workerBatchSize`,
+- startup registration against the local .NET host,
+- development-only service scenario that seeds the registered definition,
+  numeric-rule governed state, deterministic evidence snapshot, and
+  authoritative target mapping,
+- numeric action space from `1` to `10` with step `1` and fallback `3`,
+- deterministic rule that returns batch size `3` below pressure `0.7` and `6`
+  at or above pressure `0.7`,
+- policy bounds, maximum delta `3`, and a short cooldown,
+- application of each returned batch size before exposure confirmation,
+- telemetry sink that exposes emitted signals locally, preferably through the
+  OpenTelemetry-compatible SDK adapter,
+- documented commands for starting the service and running the worker,
+- automated smoke test covering the complete SDK-to-service path.
+
+Validation:
+
+- the extractor emits a deterministic bundle and descriptor for the worker,
+- startup registration returns a receipt whose accepted binding matches the
+  extracted contract digest,
+- steady load selects and applies batch size `3`,
+- burst load selects and applies batch size `6` within policy,
+- recovery returns toward batch size `3` without violating cooldown,
+- queue pressure is calculated from real queued items rather than generated as
+  an independent random input,
+- exposure confirmation occurs only after the selected batch size is applied,
+- repeated confirmation returns the original exposure identity,
+- emitted telemetry contains the expected signal keys, schema digests, values,
+  and timestamps,
+- service-policy fallback and SDK availability fallback are distinguishable,
+- stopping the service uses local fallback `3` only when explicitly enabled,
+- the demo runs without cloud services or the Tetris application.
+
+Non-goals:
+
+- feeding emitted telemetry back into service evidence,
+- server-side aggregation or derived-metric calculation,
+- adapting policy or strategy from observed outcomes,
+- durable queue, registry, state, evidence, exposure, or audit storage,
+- production authentication or deployment.
+
 ### Phase 3: Integration and Tetris adaptive demo
 
 Goal: prove the hero scenario end to end.
@@ -535,11 +641,12 @@ Validation:
 2. Design and merge OpenAPI, JSON Schema, canonical fixtures, and contract tests.
 3. Branch client and service tracks from the same merged contract revision.
 4. Implement SDK and service concurrently against fixture-based conformance suites.
-5. Integrate frequently; do not wait for either track to be feature-complete.
-6. Wire Tetris through decide, apply, exposure confirmation, telemetry, and audit.
-7. Add scripted proposal review and governed strategy activation.
-8. Package local startup and publish the contract artifacts and quickstart.
-9. Add optional cloud adapters only after the local MVP is stable.
+5. Prove SDK-to-service interoperability with the local adaptive-worker acceptance demo.
+6. Integrate frequently; do not wait for either track to be feature-complete.
+7. Wire Tetris through decide, apply, exposure confirmation, telemetry, and audit.
+8. Add scripted proposal review and governed strategy activation.
+9. Package local startup and publish the contract artifacts and quickstart.
+10. Add optional cloud adapters only after the local MVP is stable.
 
 ## Branch and integration discipline
 

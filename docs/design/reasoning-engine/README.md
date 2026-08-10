@@ -2,12 +2,13 @@
 
 ## Purpose
 
-The reasoning engine is the seam for decision intelligence and bounded strategy execution.
+The reasoning engine currently hosts two distinct seams: async decision-intelligence proposal generation and bounded runtime strategy execution. They may share an MVP component, but they remain separate architectural responsibilities and interfaces.
 
 For the MVP, do not build a full AI agent platform. Build the online strategy executor and keep async intelligence as a scripted or fixture-based proposal source that uses the same shared contracts future agents will use.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Decision intelligence model: [Decision Intelligence](../../DECISION_INTELLIGENCE.md).
+Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXECUTION.md).
 
 ## MVP split
 
