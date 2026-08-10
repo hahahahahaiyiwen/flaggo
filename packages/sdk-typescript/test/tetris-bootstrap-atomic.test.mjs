@@ -540,6 +540,7 @@ describe("Tetris durable atomic JSON writes", () => {
       const root = artifactPath("native-junction-swap-back");
       const outside = artifactPath("native-junction-swap-back-outside");
       const generations = resolve(root, "generations");
+      const parkedJunction = `${generations}-junction`;
       const signalPath = `${root}-opened`;
       const releasePath = `${root}-release`;
       await mkdir(root, { recursive: true });
@@ -570,7 +571,7 @@ describe("Tetris durable atomic JSON writes", () => {
           signalPath,
           releasePath,
           async () => {
-            await removeWindowsJunction(generations);
+            await rename(generations, parkedJunction);
             await mkdir(generations);
           },
         );
@@ -581,6 +582,7 @@ describe("Tetris durable atomic JSON writes", () => {
         await expect(readFile(resolve(root, "current.json")))
           .rejects.toMatchObject({ code: "ENOENT" });
       } finally {
+        await removeWindowsJunction(parkedJunction);
         await removeWindowsJunction(generations);
         await rm(root, { recursive: true, force: true });
         await rm(outside, { recursive: true, force: true });
@@ -2183,6 +2185,7 @@ async function invokeActualHelperWithPause(
       resolvePromise(code);
     });
   });
+  let responseReceived = false;
   const response = new Promise((resolvePromise, rejectPromise) => {
     child.stdout.setEncoding("utf8");
     let output = "";
@@ -2191,7 +2194,9 @@ async function invokeActualHelperWithPause(
       const newline = output.indexOf("\n");
       if (newline >= 0) {
         try {
-          resolvePromise(JSON.parse(output.slice(0, newline)));
+          const parsed = JSON.parse(output.slice(0, newline));
+          responseReceived = true;
+          resolvePromise(parsed);
         } catch (error) {
           rejectPromise(error);
         }
@@ -2199,13 +2204,14 @@ async function invokeActualHelperWithPause(
     });
     child.once("error", rejectPromise);
     child.once("exit", (code) => {
-      if (code !== 0 && output.length === 0) {
+      if (!responseReceived) {
         rejectPromise(new Error(
-          `Windows helper exited with ${code}: ${stderr}`,
+          `Windows helper exited with ${code} before responding: ${stderr}`,
         ));
       }
     });
   });
+  void response.catch(() => {});
   child.stdin.write(`${JSON.stringify(request)}\n`);
   try {
     await waitForPath(signalPath);
@@ -2216,6 +2222,7 @@ async function invokeActualHelperWithPause(
     return result;
   } finally {
     await stopActualHelper(child, exit, () => exited);
+    await response.catch(() => {});
   }
 }
 

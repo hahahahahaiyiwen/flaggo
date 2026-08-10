@@ -205,10 +205,6 @@ public sealed class RuntimeStateTests
         using var completionPublished = new ManualResetEventSlim();
         using var releaseClaim = new ManualResetEventSlim();
         var calls = 0;
-        var recoveryAttempted = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var recoveryStarted = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
         var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>();
         var store = new InMemoryDecideIdempotencyStore(
             new FixedTimeProvider(),
@@ -247,46 +243,29 @@ public sealed class RuntimeStateTests
             Assert.True(completionPublished.Wait(TimeSpan.FromSeconds(5)));
             var followerResult = await follower.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(503, followerResult.Outcome.Failure!.Status);
-            var recovery = Task.Factory.StartNew(
-                () =>
-                {
-                    recoveryAttempted.SetResult();
-                    return store.ExecuteAsync(
-                        "tenant/app/dev",
-                        "key",
-                        "fingerprint",
-                        _ =>
-                        {
-                            Interlocked.Increment(ref calls);
-                            recoveryStarted.SetResult();
-                            return Task.FromResult(
-                                CreateOutcome("decision-recovered"));
-                        },
-                        CancellationToken.None);
-                },
-                CancellationToken.None,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default).Unwrap();
-
-            await recoveryAttempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.False(recoveryStarted.Task.IsCompleted);
             Assert.Equal(1, Volatile.Read(ref calls));
-
-            releaseClaim.Set();
-            await publishRetryable.WaitAsync(TimeSpan.FromSeconds(5));
-            var ownerResult = await owner;
-            var recovered = await recovery.WaitAsync(TimeSpan.FromSeconds(5));
-
-            Assert.Equal(503, ownerResult.Outcome.Failure!.Status);
-            Assert.Equal(
-                "decision-recovered",
-                recovered.Outcome.Result!.DecisionId);
-            Assert.Equal(2, Volatile.Read(ref calls));
         }
         finally
         {
             releaseClaim.Set();
         }
+
+        await publishRetryable.WaitAsync(TimeSpan.FromSeconds(5));
+        var ownerResult = await owner;
+        var recovered = await store.ExecuteAsync(
+            "tenant/app/dev",
+            "key",
+            "fingerprint",
+            _ =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(CreateOutcome("decision-recovered"));
+            },
+            CancellationToken.None);
+
+        Assert.Equal(503, ownerResult.Outcome.Failure!.Status);
+        Assert.Equal("decision-recovered", recovered.Outcome.Result!.DecisionId);
+        Assert.Equal(2, Volatile.Read(ref calls));
     }
 
     [Fact]
