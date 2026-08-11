@@ -237,7 +237,11 @@
           "items": { "$ref": "#/$defs/ContractChange" },
           "contains": {
             "type": "object",
-            "properties": { "kind": { "const": "semantic-change" } },
+            "properties": {
+              "kind": {
+                "enum": ["created", "semantic-change"]
+              }
+            },
             "required": ["kind"]
           }
         },
@@ -293,7 +297,11 @@
               "items": { "$ref": "#/$defs/ContractChange" },
               "contains": {
                 "type": "object",
-                "properties": { "kind": { "const": "semantic-change" } },
+                "properties": {
+                  "kind": {
+                    "enum": ["created", "semantic-change"]
+                  }
+                },
                 "required": ["kind"]
               }
             },

@@ -64,6 +64,99 @@ public sealed class ServiceFixtureConformanceTests
         Assert.Equal(files.Order(StringComparer.Ordinal), actualFixtureFiles);
     }
 
+    [Fact]
+    public void AssertApproval_AllowsMixedChangeKindsWithoutArrayOrderDependency()
+    {
+        using var expected = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "created",
+                  "decisionKey": "demo.newDecision"
+                },
+                {
+                  "kind": "semantic-change",
+                  "decisionKey": "demo.existingDecision"
+                }
+              ]
+            }
+            """);
+        using var actual = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "semantic-change",
+                  "decisionKey": "demo.existingDecision",
+                  "semanticDiff": [
+                    {
+                      "path": "/fallback",
+                      "before": 3,
+                      "after": 6
+                    }
+                  ]
+                },
+                {
+                  "kind": "created",
+                  "decisionKey": "demo.newDecision"
+                }
+              ]
+            }
+            """);
+
+        AssertApproval(expected.RootElement, actual.RootElement);
+    }
+
+    [Fact]
+    public void AssertApproval_AllowsMetadataChangesWithoutSemanticDiff()
+    {
+        using var expected = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "metadata-updated",
+                  "decisionKey": "demo.workerBatchSize"
+                }
+              ]
+            }
+            """);
+        using var actual = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "metadata-updated",
+                  "decisionKey": "demo.workerBatchSize"
+                }
+              ]
+            }
+            """);
+
+        AssertApproval(expected.RootElement, actual.RootElement);
+    }
+
     [Theory]
     [MemberData(nameof(ManifestCases))]
     public async Task ManifestCase_ExecutesItsOwnedBehavior(string name)
@@ -687,6 +780,20 @@ public sealed class ServiceFixtureConformanceTests
 
     private static void AssertApproval(JsonElement expected, JsonElement actual)
     {
+        var expectedChanges = expected.GetProperty("changes")
+            .EnumerateArray()
+            .ToArray();
+        if (expectedChanges.Length > 0 &&
+            expectedChanges.All(
+                change =>
+                    change.GetProperty("kind").GetString() == "created"))
+        {
+            Assert.True(
+                JsonElement.DeepEquals(expected, actual),
+                $"Created approval response differs.\nExpected: {expected}\nActual: {actual}");
+            return;
+        }
+
         foreach (var property in new[]
                  {
                      "approvalRequestId", "application", "environment",
@@ -711,7 +818,36 @@ public sealed class ServiceFixtureConformanceTests
             }
         }
 
-        Assert.NotEmpty(actual.GetProperty("changes").EnumerateArray());
+        var actualChanges = actual.GetProperty("changes")
+            .EnumerateArray()
+            .ToList();
+        Assert.Equal(expectedChanges.Length, actualChanges.Count);
+        foreach (var expectedChange in expectedChanges)
+        {
+            var expectedKind = expectedChange.GetProperty("kind").GetString();
+            var expectedDecisionKey = expectedChange.GetProperty("decisionKey").GetString();
+            var actualIndex = actualChanges.FindIndex(
+                candidate =>
+                    candidate.GetProperty("kind").GetString() == expectedKind &&
+                    candidate.GetProperty("decisionKey").GetString() == expectedDecisionKey);
+            Assert.True(
+                actualIndex >= 0,
+                $"Approval change '{expectedKind}' for '{expectedDecisionKey}' was not returned.");
+            var actualChange = actualChanges[actualIndex];
+            actualChanges.RemoveAt(actualIndex);
+
+            if (expectedKind == "semantic-change")
+            {
+                Assert.NotEmpty(
+                    actualChange.GetProperty("semanticDiff").EnumerateArray());
+            }
+            else
+            {
+                Assert.True(
+                    JsonElement.DeepEquals(expectedChange, actualChange),
+                    $"Approval change differs. Expected: {expectedChange}; Actual: {actualChange}");
+            }
+        }
         if (expected.TryGetProperty("supersedesApprovalRequestId", out var supersedes))
         {
             Assert.Equal(
@@ -1203,6 +1339,8 @@ public sealed class ServiceFixtureConformanceTests
             ["apply-approved-receipt"] = Control(SetupKind.IdenticalDefinition),
             ["apply-idempotency-conflict"] = Control(SetupKind.ApplyConflict),
             ["apply-requires-approval"] = Control(SetupKind.PreviousDefinition),
+            ["apply-created-requires-approval"] =
+                Control(SetupKind.EmptyRegistry),
             ["apply-multi-definition-receipt"] = Control(SetupKind.MultiDefinition),
             ["apply-metadata-only"] = Control(SetupKind.MetadataOnly),
             ["apply-expired-resubmission-linked"] = Control(SetupKind.ExpiredResubmission),

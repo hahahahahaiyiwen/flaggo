@@ -123,11 +123,8 @@ builder.Services.AddSingleton<
     ExposureConfirmationService>();
 builder.Services.AddSingleton<ITargetResolver>(
     new DefaultTargetResolver(
-        new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["new_players"] = "new_players",
-            ["whales"] = "new_players"
-        }));
+        LocalTargetingHosting.CreateAuthoritativeCohorts(
+            builder.Configuration)));
 builder.Services.AddSingleton<IStrategyExecutor, DeterministicStrategyExecutor>();
 builder.Services.AddSingleton<IPolicyEvaluator>(provider =>
     new DefaultPolicyEvaluator(provider.GetRequiredService<TimeProvider>()));

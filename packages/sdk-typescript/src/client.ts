@@ -520,7 +520,10 @@ function isRequiresApprovalResult(
     && result.changes.length > 0
     && result.changes.every(isContractChange)
     && result.changes.some(
-      (change) => record(change)?.kind === "semantic-change",
+      (change) => {
+        const kind = record(change)?.kind;
+        return kind === "semantic-change" || kind === "created";
+      },
     )
     && Array.isArray(result.issues)
     && result.issues.every((issue) => isContractIssue(issue, true));

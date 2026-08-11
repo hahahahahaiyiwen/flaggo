@@ -16,9 +16,13 @@ contracts/
   mock/          Fixture-backed development server
 ```
 
-The fixture manifest indexes 71 cases covering all 43 required scenarios from
+The fixture manifest indexes 72 cases covering all 43 required scenarios from
 the proposal. SDK and service implementations must use the same artifacts
 rather than maintain independent wire DTOs.
+
+Approval-required change sets contain at least one newly `created` definition
+or `semantic-change`; metadata-only changes remain immediately applicable and
+cannot masquerade as an approval request.
 
 ## Validate
 

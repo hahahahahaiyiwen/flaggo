@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Flaggo.DataPlane;
 using Flaggo.Evidence;
+using Flaggo.Hosting;
 using Flaggo.Registry;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
@@ -17,6 +18,49 @@ public sealed class BootstrapGenerationResolverTests
         "def-phase3",
         $"sha256:{new string('a', 64)}",
         "rev-phase3");
+
+    [Fact]
+    public void AuthoritativeCohorts_IncludeDefaultsAndConfiguredMappings()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["Flaggo:Targeting:AuthoritativeCohorts:worker-canary"] =
+                        "adaptive-workers",
+                    ["Flaggo:Targeting:AuthoritativeCohorts:adaptive-workers"] =
+                        "adaptive-workers"
+                })
+            .Build();
+
+        var mappings =
+            LocalTargetingHosting.CreateAuthoritativeCohorts(configuration);
+
+        Assert.Equal("new_players", mappings["whales"]);
+        Assert.Equal("adaptive-workers", mappings["worker-canary"]);
+        Assert.Equal("adaptive-workers", mappings["adaptive-workers"]);
+    }
+
+    [Fact]
+    public void LocalDevelopmentIdentity_UsesConfiguredApplicationScope()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["Flaggo:Authentication:LocalDevelopmentAppId"] =
+                        "adaptive-worker-demo",
+                    ["Flaggo:Authentication:LocalDevelopmentEnvironment"] =
+                        "dev"
+                })
+            .Build();
+
+        var identity =
+            LocalDevelopmentIdentityHosting.FromConfiguration(configuration);
+
+        Assert.Equal("adaptive-worker-demo", identity.AppId);
+        Assert.Equal("dev", identity.Environment);
+    }
 
     [Fact]
     public async Task PointerSwitch_ResolvesEachGenerationWithoutMixingFiles()

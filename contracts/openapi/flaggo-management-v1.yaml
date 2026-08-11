@@ -46,7 +46,7 @@
         "tags": ["definition-bundle"],
         "operationId": "applyDefinitionBundle",
         "summary": "Atomically apply a bundle under an idempotency key.",
-        "description": "Repeats validation, then performs an atomic registry change. Returns 200 with a RegistrationReceipt when immediately approved, 202 requires-approval when a semantic change needs approval (no mutation), and 422 invalid-bundle when validation rejects the write.",
+        "description": "Repeats validation, then performs an atomic registry change. Returns 200 with a RegistrationReceipt when immediately approved, 202 requires-approval when a newly created definition or semantic change needs approval (no mutation), and 422 invalid-bundle when validation rejects the write.",
         "security": [{ "oauth2": ["polari.definitions:apply"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ApplyIdempotencyKeyHeader" },
