@@ -41,6 +41,9 @@ Registration receipts and `requires-approval` responses are validated as
 strict wire contracts before their identity or metadata is trusted. An
 approved receipt must contain exactly one accepted binding for every submitted
 definition, with matching canonical contract digests.
+Approval-required responses accept both newly created definitions and
+semantic changes as reviewable contract changes; metadata-only change sets
+cannot masquerade as a new-contract approval.
 Digest and RFC 3339 validators require exact whole-string matches; encoded
 trailing line breaks or other boundary characters are not accepted.
 

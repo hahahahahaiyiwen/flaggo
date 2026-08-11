@@ -6,8 +6,11 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
+    "build:adaptive-worker": "npm run build --workspace @flaggo/sdk && npm run extract:adaptive-worker && tsc -p examples/adaptive-worker/tsconfig.json",
     "check:openapi": "npm run check:openapi --workspace @flaggo/sdk",
+    "extract:adaptive-worker": "node packages/sdk-typescript/dist/extract-cli.js --project examples/adaptive-worker/tsconfig.json --app adaptive-worker-demo --environment dev --out examples/adaptive-worker/generated/definitions.json --repository github.com/hahahahahaiyiwen/flaggo --source-path examples/adaptive-worker/src",
     "test": "npm run test --workspaces",
+    "test:adaptive-worker": "npm run build:adaptive-worker && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/adaptive-worker/smoke.mjs",
     "test:tetris-integration": "npm run build --workspace @flaggo/sdk && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/tetris-integration/run.mjs",
     "typecheck": "npm run typecheck --workspaces"
   }

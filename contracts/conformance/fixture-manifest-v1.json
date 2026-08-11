@@ -2,7 +2,7 @@
   "$schema-note": "Index of Phase 1 golden fixtures. Each case references a fixture file and the required scenario numbers it covers.",
   "version": "1",
   "generatedFor": "Phase 1 API contract freeze",
-  "totalCases": 71,
+  "totalCases": 72,
   "requiredScenarioCount": 43,
   "coveredScenarios": [
     1,
@@ -920,6 +920,22 @@
       "sdkLocal": false,
       "schemaNegative": false,
       "invariant": "A semantic bundle change returns 202 requires-approval with an approvalRequestId and performs no registry mutation."
+    },
+    {
+      "name": "apply-created-requires-approval",
+      "scenarios": [
+        16
+      ],
+      "group": "management/definition-bundle",
+      "file": "fixtures/management/definition-bundle/14-apply-created-requires-approval.json",
+      "method": "POST",
+      "httpPath": "/v1/definition-bundles:apply",
+      "status": 202,
+      "requestSchema": "decision-definition-bundle-v1.schema.json",
+      "responseSchema": "management-models-v1.schema.json#/$defs/RequiresApprovalResult",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "A previously unknown decision key returns 202 requires-approval with a created change and performs no registry mutation."
     },
     {
       "name": "apply-multi-definition-receipt",

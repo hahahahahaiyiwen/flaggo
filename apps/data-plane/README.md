@@ -35,7 +35,10 @@ Protected runtime endpoints require OAuth bearer authentication and
 operation-specific
 scopes. The explicit `Flaggo__Authentication__LocalDevelopmentBypass=true`
 setting provides a Development-environment-only principal with runtime scopes
-and the seeded application/environment claims. The host fails at startup when the
+and the configured application/environment claims. The resource scope defaults
+to `tetris-demo`/`dev`; local scenarios can override it through
+`Flaggo__Authentication__LocalDevelopmentAppId` and
+`Flaggo__Authentication__LocalDevelopmentEnvironment`. The host fails at startup when the
 bypass is enabled in another environment or when neither the bypass nor OAuth
 authority and audience are configured. OAuth credentials must carry
 `polari_app_id` and `polari_environment` claims matching the request body.
@@ -116,3 +119,8 @@ module adapters and in-memory ports remain available for unit/domain
 composition. The receipt is published and digest-validated in a bootstrap
 generation for bootstrap and SDK consumers but is not a data-plane runtime
 adapter input.
+
+Local scenarios may add authoritative cohort aliases under
+`Flaggo__Targeting__AuthoritativeCohorts__<claimed>=<resolved>`. These mappings
+augment the existing Tetris development aliases and are passed to the
+constructor-injected target resolver; empty identifiers fail host startup.

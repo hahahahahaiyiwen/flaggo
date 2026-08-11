@@ -1,0 +1,5 @@
+{
+  "name": "@flaggo/example-adaptive-worker",
+  "private": true,
+  "type": "module"
+}

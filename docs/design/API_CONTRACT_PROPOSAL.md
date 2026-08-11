@@ -436,9 +436,9 @@ Startup registration:
 
 The startup caller requires management authorization. A browser or other untrusted runtime must not contain a long-lived control-plane credential.
 
-### Approve a semantic revision
+### Approve a new or semantic revision
 
-When apply detects a semantic change under an existing decision key, it returns `status: "requires-approval"` plus an `approvalRequestId` and performs no registry mutation.
+When apply detects a previously unknown decision key or a semantic change under an existing key, it returns `status: "requires-approval"` plus an `approvalRequestId` and performs no registry mutation.
 
 Apply returns `200` with `RegistrationReceipt` when immediately approved, `202` with the following result when approval is pending, and `422 invalid-bundle` when validation rejects the write:
 
@@ -504,7 +504,7 @@ Reject request:
 }
 ```
 
-Every approval resource variant requires `approvalRequestId`, `application`, `environment`, `bundleDigest`, `createdAt`, `expiresAt`, `changes`, and `snapshotUrl`. `changes` is non-empty, contains at least one `semantic-change`, and every semantic change carries a non-empty canonical `semanticDiff`. A renewed request also carries `supersedesApprovalRequestId`. Its status-specific fields form a discriminated union:
+Every approval resource variant requires `approvalRequestId`, `application`, `environment`, `bundleDigest`, `createdAt`, `expiresAt`, `changes`, and `snapshotUrl`. `changes` is non-empty, contains at least one `created` or `semantic-change` entry, and every semantic change carries a non-empty canonical `semanticDiff`. A renewed request also carries `supersedesApprovalRequestId`. Its status-specific fields form a discriminated union:
 
 - `pending` has no receipt or terminal decision.
 - `approved` requires `decidedAt`, the complete `RegistrationReceipt`, and approval metadata containing the server-derived actor plus optional persisted comment.
@@ -568,7 +568,7 @@ Each issue should contain a stable `code`, severity, JSON Pointer `path`, human-
 
 Validation results are a discriminated union. `status: "valid"` requires `bundleDigest`, `compatibility`, a non-empty `validatedDefinitions` map, and `issues`. `status: "invalid"` requires at least one error issue; digest and partial validation fields are optional when canonicalization reached them.
 
-`requires-approval` is also strict: it requires at least one `semantic-change`, every semantic change requires a non-empty `semanticDiff`, and `issues` may contain warnings only. Approval resources preserve that semantic-change invariant in every lifecycle state.
+`requires-approval` is also strict: it requires at least one `created` or `semantic-change` entry, every semantic change requires a non-empty `semanticDiff`, and `issues` may contain warnings only. Approval resources preserve that approval-requiring change invariant in every lifecycle state.
 
 Each definition entry is also a discriminated union keyed by `valueType`. Boolean, number, and string entries require matching action-space defaults and fallback value types. Numeric bounds must ascend, defaults and fallbacks must be in range, `step` must be positive, and numeric defaults/fallbacks must align to it. String defaults and fallbacks must belong to `allowedValues` when that set is present.
 
@@ -619,7 +619,7 @@ Apply invariants:
 - A semantic conflict never overwrites an immutable definition identity.
 - No management mutation occurs from the runtime decide endpoint.
 - Failed atomic apply leaves all previously registered resources unchanged and produces no accepted identity for the submitted bundle.
-- Semantic change returns `requires-approval` with no mutation. Only the explicit approval operation may authorize and atomically apply that pending canonical bundle.
+- A newly created definition or semantic change returns `requires-approval` with no mutation. Only the explicit approval operation may authorize and atomically apply that pending canonical bundle.
 - Apply failure blocks contract activation, not application deployment. If code is deployed anyway, the data plane rejects its missing or unknown expected identity.
 
 ## Authentication and authorization
@@ -766,7 +766,7 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 13. Invalid exposure token.
 14. Valid bundle with identical compatibility.
 15. Invalid bundle with structured issues and no mutations.
-16. Semantic bundle change returns `202 requires-approval` with no mutation.
+16. New definition or semantic bundle change returns `202 requires-approval` with no mutation.
 17. Idempotent bundle apply and key/body conflict.
 18. Eligible `503 service-unavailable` SDK-local fallback after retry exhaustion when explicitly enabled.
 19. Concurrent startup registration of the same bundle returns one accepted identity.
@@ -875,10 +875,10 @@ fixtures, conformance tests, and mock projection are accepted as the baseline.
 **Options**
 
 1. Apply automatically mints semantic revisions when the submitted key changed.
-2. Apply returns `requires-approval` and makes no mutation until an explicit approval operation.
+2. Apply returns `requires-approval` for new definitions and semantic changes and makes no mutation until an explicit approval operation.
 3. The client must provide a new explicit definition ID before apply.
 
-**Decision:** option 2. Apply returns `requires-approval` and makes no mutation. The approval resource records review state; explicit approval atomically creates new opaque runtime revisions under the affected definition lineages, applies the pending canonical bundle, and produces the registration receipt.
+**Decision:** option 2. Apply returns `requires-approval` for new definitions and semantic changes and makes no mutation. The approval resource records review state; explicit approval atomically creates new opaque runtime revisions under the affected definition lineages, applies the pending canonical bundle, and produces the registration receipt.
 
 **Consequence:** under MVP startup registration, `requires-approval` rejects initialization. After approval, startup retries or restarts and receives the accepted binding for the same canonical bundle.
 

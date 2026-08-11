@@ -687,6 +687,16 @@ public sealed class ServiceFixtureConformanceTests
 
     private static void AssertApproval(JsonElement expected, JsonElement actual)
     {
+        if (expected.GetProperty("changes").EnumerateArray().Any(
+                change =>
+                    change.GetProperty("kind").GetString() == "created"))
+        {
+            Assert.True(
+                JsonElement.DeepEquals(expected, actual),
+                $"Created approval response differs.\nExpected: {expected}\nActual: {actual}");
+            return;
+        }
+
         foreach (var property in new[]
                  {
                      "approvalRequestId", "application", "environment",
@@ -711,7 +721,35 @@ public sealed class ServiceFixtureConformanceTests
             }
         }
 
-        Assert.NotEmpty(actual.GetProperty("changes").EnumerateArray());
+        var expectedChanges = expected.GetProperty("changes")
+            .EnumerateArray()
+            .ToArray();
+        var actualChanges = actual.GetProperty("changes")
+            .EnumerateArray()
+            .ToArray();
+        Assert.Equal(expectedChanges.Length, actualChanges.Length);
+        for (var index = 0; index < expectedChanges.Length; index++)
+        {
+            var expectedChange = expectedChanges[index];
+            var actualChange = actualChanges[index];
+            Assert.Equal(
+                expectedChange.GetProperty("kind").GetString(),
+                actualChange.GetProperty("kind").GetString());
+            Assert.Equal(
+                expectedChange.GetProperty("decisionKey").GetString(),
+                actualChange.GetProperty("decisionKey").GetString());
+            if (expectedChange.GetProperty("kind").GetString() == "created")
+            {
+                Assert.True(
+                    JsonElement.DeepEquals(expectedChange, actualChange),
+                    $"Created approval change differs. Expected: {expectedChange}; Actual: {actualChange}");
+            }
+            else
+            {
+                Assert.NotEmpty(
+                    actualChange.GetProperty("semanticDiff").EnumerateArray());
+            }
+        }
         if (expected.TryGetProperty("supersedesApprovalRequestId", out var supersedes))
         {
             Assert.Equal(
@@ -1203,6 +1241,8 @@ public sealed class ServiceFixtureConformanceTests
             ["apply-approved-receipt"] = Control(SetupKind.IdenticalDefinition),
             ["apply-idempotency-conflict"] = Control(SetupKind.ApplyConflict),
             ["apply-requires-approval"] = Control(SetupKind.PreviousDefinition),
+            ["apply-created-requires-approval"] =
+                Control(SetupKind.EmptyRegistry),
             ["apply-multi-definition-receipt"] = Control(SetupKind.MultiDefinition),
             ["apply-metadata-only"] = Control(SetupKind.MetadataOnly),
             ["apply-expired-resubmission-linked"] = Control(SetupKind.ExpiredResubmission),

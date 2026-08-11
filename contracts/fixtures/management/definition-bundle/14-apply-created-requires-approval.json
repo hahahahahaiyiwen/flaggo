@@ -1,0 +1,190 @@
+{
+  "name": "apply-created-requires-approval",
+  "scenario": 16,
+  "scenarios": [
+    16
+  ],
+  "invariant": "Applying a previously unknown decision key returns 202 requires-approval with a created change and performs no registry mutation.",
+  "requestSchema": "decision-definition-bundle-v1.schema.json",
+  "responseSchema": "management-models-v1.schema.json#/$defs/RequiresApprovalResult",
+  "digest": {
+    "bundleDigest": "sha256:9d63a48cc430c93abf5f07b058a4ed79493515b2736738b3a14fbf9f9575ce41"
+  },
+  "request": {
+    "method": "POST",
+    "path": "/v1/definition-bundles:apply",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "apply-key-created-1"
+    },
+    "body": {
+      "format": "flaggo.decision-definition-bundle/v1",
+      "application": {
+        "id": "adaptive-worker-demo",
+        "environment": "dev"
+      },
+      "source": {
+        "repository": "github.com/hahahahahaiyiwen/flaggo",
+        "path": "examples/adaptive-worker/src"
+      },
+      "signals": [
+        {
+          "kind": "event",
+          "key": "demo.itemCompleted",
+          "fields": {
+            "itemId": "string",
+            "succeeded": "boolean"
+          }
+        },
+        {
+          "kind": "event",
+          "key": "demo.itemEnqueued",
+          "fields": {
+            "itemId": "string",
+            "processingMs": "number",
+            "shouldFail": "boolean"
+          },
+          "units": {
+            "processingMs": "ms"
+          }
+        },
+        {
+          "kind": "metric",
+          "key": "demo.processingLatencyMs",
+          "type": "number",
+          "source": "app-emitted",
+          "unit": "ms",
+          "range": [
+            0,
+            10000
+          ]
+        },
+        {
+          "kind": "metric",
+          "key": "demo.queueDepth",
+          "type": "number",
+          "source": "app-emitted",
+          "range": [
+            0,
+            1000
+          ]
+        },
+        {
+          "kind": "metric",
+          "key": "demo.queuePressure",
+          "type": "number",
+          "source": "app-emitted",
+          "range": [
+            0,
+            1
+          ]
+        }
+      ],
+      "definitions": [
+        {
+          "key": "demo.workerBatchSize",
+          "valueType": "number",
+          "actionSpace": {
+            "type": "number",
+            "min": 1,
+            "max": 10,
+            "step": 1,
+            "default": 3
+          },
+          "fallback": {
+            "value": 3,
+            "reason": "safe_default_worker_batch_size"
+          },
+          "runtimeContextSchema": {
+            "workerId": {
+              "type": "string",
+              "required": true
+            },
+            "cohort": {
+              "type": "string",
+              "target": "cohort"
+            }
+          },
+          "targetHierarchy": [
+            "cohort",
+            "global"
+          ],
+          "signals": {
+            "allowed": [
+              {
+                "key": "demo.queuePressure"
+              }
+            ]
+          },
+          "inference": {
+            "target": "cohort",
+            "inputs": [
+              {
+                "key": "demo.queuePressure"
+              }
+            ],
+            "fallbackOrder": [
+              "global"
+            ]
+          },
+          "onlineStrategy": {
+            "mode": "approved-strategy",
+            "liveInputs": [
+              "queuePressure"
+            ]
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "cooldown",
+                "seconds": 1
+              },
+              {
+                "kind": "max-delta",
+                "value": 3
+              },
+              {
+                "kind": "min-evidence-quality",
+                "value": 0.8
+              },
+              {
+                "kind": "number-bounds",
+                "min": 1,
+                "max": 10
+              }
+            ],
+            "clientFallback": {
+              "requiredEvidenceUnavailable": "allow"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "expected": {
+    "status": 202,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-created-requires-approval"
+    },
+    "body": {
+      "status": "requires-approval",
+      "approvalRequestId": "apr_01JQ91C2D3E4F5G6H7J8K9M0N1",
+      "application": "adaptive-worker-demo",
+      "environment": "dev",
+      "bundleDigest": "sha256:9d63a48cc430c93abf5f07b058a4ed79493515b2736738b3a14fbf9f9575ce41",
+      "compatibility": "new-contract-required",
+      "expiresAt": "2026-08-06T18:30:00.000Z",
+      "changes": [
+        {
+          "kind": "created",
+          "decisionKey": "demo.workerBatchSize"
+        }
+      ],
+      "snapshotUrl": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
+      "issues": []
+    }
+  }
+}

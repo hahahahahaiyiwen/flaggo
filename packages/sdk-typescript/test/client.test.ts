@@ -226,6 +226,36 @@ describe("startup registration", () => {
     );
   });
 
+  it("accepts created definitions as approval-requiring changes", async () => {
+    const pending = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: { approvalRequestId: string } };
+    }>("management/definition-bundle/14-apply-created-requires-approval.json");
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(
+      response(202, pending.expected.body),
+    );
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: pending.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "adaptive-worker-demo",
+        environment: "dev",
+        fetch,
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<RequiresApprovalError>>({
+        name: "RequiresApprovalError",
+        approvalRequestId: pending.expected.body.approvalRequestId,
+      }),
+    );
+  });
+
   it("rejects an approval response for another bundle identity", async () => {
     const pending = fixture<{
       request: { body: DecisionDefinitionBundle };
