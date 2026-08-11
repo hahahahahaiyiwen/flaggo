@@ -64,6 +64,99 @@ public sealed class ServiceFixtureConformanceTests
         Assert.Equal(files.Order(StringComparer.Ordinal), actualFixtureFiles);
     }
 
+    [Fact]
+    public void AssertApproval_AllowsMixedChangeKindsWithoutArrayOrderDependency()
+    {
+        using var expected = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "created",
+                  "decisionKey": "demo.newDecision"
+                },
+                {
+                  "kind": "semantic-change",
+                  "decisionKey": "demo.existingDecision"
+                }
+              ]
+            }
+            """);
+        using var actual = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "semantic-change",
+                  "decisionKey": "demo.existingDecision",
+                  "semanticDiff": [
+                    {
+                      "path": "/fallback",
+                      "before": 3,
+                      "after": 6
+                    }
+                  ]
+                },
+                {
+                  "kind": "created",
+                  "decisionKey": "demo.newDecision"
+                }
+              ]
+            }
+            """);
+
+        AssertApproval(expected.RootElement, actual.RootElement);
+    }
+
+    [Fact]
+    public void AssertApproval_AllowsMetadataChangesWithoutSemanticDiff()
+    {
+        using var expected = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "metadata-updated",
+                  "decisionKey": "demo.workerBatchSize"
+                }
+              ]
+            }
+            """);
+        using var actual = JsonDocument.Parse(
+            """
+            {
+              "approvalRequestId": "apr_test",
+              "application": "adaptive-worker-demo",
+              "environment": "dev",
+              "bundleDigest": "sha256:test",
+              "status": "requires-approval",
+              "changes": [
+                {
+                  "kind": "metadata-updated",
+                  "decisionKey": "demo.workerBatchSize"
+                }
+              ]
+            }
+            """);
+
+        AssertApproval(expected.RootElement, actual.RootElement);
+    }
+
     [Theory]
     [MemberData(nameof(ManifestCases))]
     public async Task ManifestCase_ExecutesItsOwnedBehavior(string name)
@@ -687,7 +780,11 @@ public sealed class ServiceFixtureConformanceTests
 
     private static void AssertApproval(JsonElement expected, JsonElement actual)
     {
-        if (expected.GetProperty("changes").EnumerateArray().Any(
+        var expectedChanges = expected.GetProperty("changes")
+            .EnumerateArray()
+            .ToArray();
+        if (expectedChanges.Length > 0 &&
+            expectedChanges.All(
                 change =>
                     change.GetProperty("kind").GetString() == "created"))
         {
@@ -721,33 +818,34 @@ public sealed class ServiceFixtureConformanceTests
             }
         }
 
-        var expectedChanges = expected.GetProperty("changes")
-            .EnumerateArray()
-            .ToArray();
         var actualChanges = actual.GetProperty("changes")
             .EnumerateArray()
-            .ToArray();
-        Assert.Equal(expectedChanges.Length, actualChanges.Length);
-        for (var index = 0; index < expectedChanges.Length; index++)
+            .ToList();
+        Assert.Equal(expectedChanges.Length, actualChanges.Count);
+        foreach (var expectedChange in expectedChanges)
         {
-            var expectedChange = expectedChanges[index];
-            var actualChange = actualChanges[index];
-            Assert.Equal(
-                expectedChange.GetProperty("kind").GetString(),
-                actualChange.GetProperty("kind").GetString());
-            Assert.Equal(
-                expectedChange.GetProperty("decisionKey").GetString(),
-                actualChange.GetProperty("decisionKey").GetString());
-            if (expectedChange.GetProperty("kind").GetString() == "created")
-            {
-                Assert.True(
-                    JsonElement.DeepEquals(expectedChange, actualChange),
-                    $"Created approval change differs. Expected: {expectedChange}; Actual: {actualChange}");
-            }
-            else
+            var expectedKind = expectedChange.GetProperty("kind").GetString();
+            var expectedDecisionKey = expectedChange.GetProperty("decisionKey").GetString();
+            var actualIndex = actualChanges.FindIndex(
+                candidate =>
+                    candidate.GetProperty("kind").GetString() == expectedKind &&
+                    candidate.GetProperty("decisionKey").GetString() == expectedDecisionKey);
+            Assert.True(
+                actualIndex >= 0,
+                $"Approval change '{expectedKind}' for '{expectedDecisionKey}' was not returned.");
+            var actualChange = actualChanges[actualIndex];
+            actualChanges.RemoveAt(actualIndex);
+
+            if (expectedKind == "semantic-change")
             {
                 Assert.NotEmpty(
                     actualChange.GetProperty("semanticDiff").EnumerateArray());
+            }
+            else
+            {
+                Assert.True(
+                    JsonElement.DeepEquals(expectedChange, actualChange),
+                    $"Approval change differs. Expected: {expectedChange}; Actual: {actualChange}");
             }
         }
         if (expected.TryGetProperty("supersedesApprovalRequestId", out var supersedes))
