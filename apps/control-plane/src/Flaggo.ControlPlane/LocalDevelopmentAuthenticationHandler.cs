@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Flaggo.Hosting;
 using Microsoft.AspNetCore.Authentication;
@@ -17,20 +16,13 @@ public sealed class LocalDevelopmentAuthenticationHandler(
     {
         var resource =
             LocalDevelopmentIdentityHosting.FromConfiguration(configuration);
-        var identity = new ClaimsIdentity(
-        [
-            new Claim(ClaimTypes.NameIdentifier, "local-development"),
-            new Claim(
-                "scope",
-                "polari.definitions:validate polari.definitions:apply " +
-                "polari.definitions:approve"),
-            new Claim("polari_app_id", resource.AppId),
-            new Claim("polari_environment", resource.Environment),
-            new Claim("polari_tenant_id", "local-development")
-        ],
-        Scheme.Name);
+        var principal = LocalDevelopmentIdentityHosting.CreatePrincipal(
+            resource,
+            "polari.definitions:validate polari.definitions:apply " +
+            "polari.definitions:approve",
+            Scheme.Name);
         return Task.FromResult(
             AuthenticateResult.Success(
-                new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name)));
+                new AuthenticationTicket(principal, Scheme.Name)));
     }
 }
