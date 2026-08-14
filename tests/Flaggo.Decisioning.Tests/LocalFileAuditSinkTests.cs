@@ -1918,60 +1918,6 @@ public sealed class LocalFileAuditSinkTests
     }
 }
 
-internal sealed class TestJsonFile : IDisposable
-{
-    private readonly string _directory;
-
-    public TestJsonFile(string prefix)
-    {
-        _directory = System.IO.Path.Combine(
-            TestPaths.RepositoryRoot,
-            ".flaggo",
-            "test-artifacts");
-        Directory.CreateDirectory(_directory);
-        Path = System.IO.Path.Combine(
-            _directory,
-            $"{prefix}-{Guid.NewGuid():N}.json");
-    }
-
-    public string Path { get; }
-
-    public Task WriteAsync(string content) => File.WriteAllTextAsync(Path, content);
-
-    public void Dispose()
-    {
-        if (File.Exists(Path))
-        {
-            File.Delete(Path);
-        }
-
-        var lockPath = $"{Path}.lock";
-        if (File.Exists(lockPath))
-        {
-            File.Delete(lockPath);
-        }
-
-        var auditDirectory = $"{Path}.d";
-        if (Directory.Exists(auditDirectory))
-        {
-            Directory.Delete(auditDirectory, recursive: true);
-        }
-
-        var parent = System.IO.Path.GetDirectoryName(Path);
-        var name = System.IO.Path.GetFileName(Path);
-        if (parent is not null && Directory.Exists(parent))
-        {
-            foreach (var stagingDirectory in Directory.GetDirectories(
-                         parent,
-                         $"{name}.d.tmp-*"))
-            {
-                Directory.Delete(stagingDirectory, recursive: true);
-            }
-        }
-
-    }
-}
-
 internal sealed class RecordingAuditDirectoryOperations :
     IDurableDirectoryOperations
 {

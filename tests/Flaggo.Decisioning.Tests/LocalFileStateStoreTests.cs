@@ -13,7 +13,7 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task GetActiveAsync_LoadsWeightedRuleAndReloadsReplacedFile()
     {
-        using var file = new TestJsonFile("state");
+        using var file = TestJsonFile.CreateCommitted("state");
         await file.WriteAsync(StateDocument(850, "2026-08-05T23:00:00Z"));
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -67,8 +67,9 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task LastChangedAt_ZAndOffsetNormalizeToEquivalentUtc()
     {
-        using var zFile = new TestJsonFile("state-timestamp-z");
-        using var offsetFile = new TestJsonFile("state-timestamp-offset");
+        using var zFile = TestJsonFile.CreateCommitted("state-timestamp-z");
+        using var offsetFile =
+            TestJsonFile.CreateCommitted("state-timestamp-offset");
         await zFile.WriteAsync(StateDocument(800, "2026-08-05T22:00:00Z"));
         await offsetFile.WriteAsync(
             StateDocument(800, "2026-08-06T00:00:00+02:00"));
@@ -96,7 +97,8 @@ public sealed class LocalFileStateStoreTests
     public async Task InvalidOrOffsetlessLastChangedAt_FailsLookupAndHealth(
         string timestamp)
     {
-        using var file = new TestJsonFile("state-timestamp-invalid");
+        using var file =
+            TestJsonFile.CreateCommitted("state-timestamp-invalid");
         await file.WriteAsync(StateDocument(800, timestamp));
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -109,7 +111,8 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task LastChangedAt_AcceptsValidExtremeTimestampWithoutCooldownBound()
     {
-        using var file = new TestJsonFile("state-timestamp-extreme");
+        using var file =
+            TestJsonFile.CreateCommitted("state-timestamp-extreme");
         await file.WriteAsync(
             StateDocument(800, DateTimeOffset.MaxValue.ToString("O")));
         var store = new LocalFileStateStore(
@@ -139,7 +142,8 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task OffsetNormalizedTimestamp_PreservesCooldownBehavior()
     {
-        using var file = new TestJsonFile("state-timestamp-cooldown");
+        using var file =
+            TestJsonFile.CreateCommitted("state-timestamp-cooldown");
         await file.WriteAsync(
             StateDocument(800, "2026-08-06T00:00:00+02:00"));
         var store = new LocalFileStateStore(
@@ -167,7 +171,7 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task GetActiveAsync_FollowsTargetResolutionOrder()
     {
-        using var file = new TestJsonFile("target-order");
+        using var file = TestJsonFile.CreateCommitted("target-order");
         await file.WriteAsync(StateDocument(800, null));
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -189,7 +193,7 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task MalformedStateFile_FailsLookupAndHealth()
     {
-        using var file = new TestJsonFile("malformed");
+        using var file = TestJsonFile.CreateCommitted("malformed");
         await file.WriteAsync("""{"version":1,"states":[{"decisionKey":""}]}""");
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -236,7 +240,8 @@ public sealed class LocalFileStateStoreTests
         string document)
     {
         _ = location;
-        using var file = new TestJsonFile("state-duplicate-property");
+        using var file =
+            TestJsonFile.CreateCommitted("state-duplicate-property");
         await file.WriteAsync(document);
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -257,7 +262,7 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task TrailingJsonData_FailsBeforeStateDeserialization()
     {
-        using var file = new TestJsonFile("state-trailing-data");
+        using var file = TestJsonFile.CreateCommitted("state-trailing-data");
         await file.WriteAsync($"{StateDocument(800, null)}{{}}");
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -283,7 +288,8 @@ public sealed class LocalFileStateStoreTests
         sibling["definitionId"] = "def-sibling";
         sibling["revision"] = "rev-sibling";
         states.Add(sibling);
-        using var file = new TestJsonFile("state-sibling-properties");
+        using var file =
+            TestJsonFile.CreateCommitted("state-sibling-properties");
         await file.WriteAsync(document.ToJsonString());
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -336,7 +342,8 @@ public sealed class LocalFileStateStoreTests
                 null)
         };
         document["states"] = states;
-        using var file = new TestJsonFile("state-structural-identity");
+        using var file =
+            TestJsonFile.CreateCommitted("state-structural-identity");
         await file.WriteAsync(document.ToJsonString());
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -375,7 +382,7 @@ public sealed class LocalFileStateStoreTests
     [Fact]
     public async Task OmittedFormatVersion_FailsWithStableReadErrorAndHealth()
     {
-        using var file = new TestJsonFile("state-version");
+        using var file = TestJsonFile.CreateCommitted("state-version");
         var document = JsonNode.Parse(StateDocument(800, null))!.AsObject();
         document.Remove("version");
         await file.WriteAsync(document.ToJsonString());
@@ -487,7 +494,7 @@ public sealed class LocalFileStateStoreTests
         string document)
     {
         _ = name;
-        using var file = new TestJsonFile("invalid-state");
+        using var file = TestJsonFile.CreateCommitted("invalid-state");
         await file.WriteAsync(document);
         var store = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -513,7 +520,7 @@ public sealed class LocalFileStateStoreTests
         string original,
         string replacement)
     {
-        using var file = new TestJsonFile("state-ieee-collision");
+        using var file = TestJsonFile.CreateCommitted("state-ieee-collision");
         await file.WriteAsync(
             StateDocument(800, null).Replace(
                 original,
@@ -534,7 +541,8 @@ public sealed class LocalFileStateStoreTests
     [InlineData("0.10000000000000002")]
     public async Task EveryAcceptedStateNumber_IsAcceptedByAudit(string rawValue)
     {
-        using var stateFile = new TestJsonFile("state-audit-parity");
+        using var stateFile =
+            TestJsonFile.CreateCommitted("state-audit-parity");
         await stateFile.WriteAsync(
             StateDocument(800, null).Replace(
                 "\"value\":800",
@@ -544,7 +552,8 @@ public sealed class LocalFileStateStoreTests
             new LocalFileStateStoreOptions(stateFile.Path));
         var state = await LoadStateAsync(store);
 
-        using var auditFile = new TestJsonFile("state-audit-parity-log");
+        using var auditFile =
+            TestJsonFile.CreateCommitted("state-audit-parity-log");
         using var audit = new LocalFileAuditSink(
             new LocalFileAuditSinkOptions(auditFile.Path));
         await audit.RecordDecisionAsync(
@@ -676,36 +685,5 @@ public sealed class LocalFileStateStoreTests
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
-    }
-
-    private sealed class TestJsonFile : IDisposable
-    {
-        private readonly string _directory;
-
-        public TestJsonFile(string prefix)
-        {
-            _directory = System.IO.Path.Combine(
-                TestPaths.RepositoryRoot,
-                ".flaggo",
-                "test-artifacts",
-                $"{prefix}-{Guid.NewGuid():N}");
-            Path = System.IO.Path.Combine(_directory, "current.commit.json");
-        }
-
-        public string Path { get; }
-
-        public async Task WriteAsync(string content) =>
-            await CommittedFileSnapshotWriter.PublishAsync(
-                Path,
-                System.Text.Encoding.UTF8.GetBytes(content),
-                artifactStem: "snapshot");
-
-        public void Dispose()
-        {
-            if (Directory.Exists(_directory))
-            {
-                Directory.Delete(_directory, recursive: true);
-            }
-        }
     }
 }
