@@ -11,7 +11,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task GetEvidenceAsync_LoadsStrategySnapshot()
     {
-        using var file = new TestJsonFile("evidence");
+        using var file = TestJsonFile.CreateCommitted("evidence");
         await file.WriteAsync(
             """
             {
@@ -42,7 +42,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task GetEvidenceAsync_PreservesLegitimateZeroScalars()
     {
-        using var file = new TestJsonFile("evidence-zero");
+        using var file = TestJsonFile.CreateCommitted("evidence-zero");
         await file.WriteAsync(
             """
             {
@@ -94,7 +94,7 @@ public sealed class LocalFileEvidenceProviderTests
         string json,
         string expectedReadError)
     {
-        using var file = new TestJsonFile("evidence-required");
+        using var file = TestJsonFile.CreateCommitted("evidence-required");
         await file.WriteAsync(json);
         var provider = new LocalFileEvidenceProvider(
             new LocalFileEvidenceProviderOptions(file.Path));
@@ -112,7 +112,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task MalformedEvidenceFile_FailsLookupAndHealth()
     {
-        using var file = new TestJsonFile("evidence-malformed");
+        using var file = TestJsonFile.CreateCommitted("evidence-malformed");
         await file.WriteAsync(
             """{"version":1,"evidenceByStrategy":""");
         var provider = new LocalFileEvidenceProvider(
@@ -184,7 +184,8 @@ public sealed class LocalFileEvidenceProviderTests
         string document)
     {
         _ = location;
-        using var file = new TestJsonFile("evidence-duplicate-property");
+        using var file =
+            TestJsonFile.CreateCommitted("evidence-duplicate-property");
         await file.WriteAsync(document);
         var provider = new LocalFileEvidenceProvider(
             new LocalFileEvidenceProviderOptions(file.Path));
@@ -203,7 +204,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task TrailingJsonData_FailsBeforeEvidenceDeserialization()
     {
-        using var file = new TestJsonFile("evidence-trailing-data");
+        using var file = TestJsonFile.CreateCommitted("evidence-trailing-data");
         await file.WriteAsync(
             """
             {
@@ -228,7 +229,8 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task SamePropertyNamesInSiblingEvidenceEntries_AreAccepted()
     {
-        using var file = new TestJsonFile("evidence-sibling-properties");
+        using var file =
+            TestJsonFile.CreateCommitted("evidence-sibling-properties");
         await file.WriteAsync(
             """
             {
@@ -259,7 +261,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task PropertyNamesThatDifferOnlyByCase_AreDistinct()
     {
-        using var file = new TestJsonFile("evidence-property-case");
+        using var file = TestJsonFile.CreateCommitted("evidence-property-case");
         await file.WriteAsync(
             """
             {
@@ -290,7 +292,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task MissingEvidenceFile_FailsThroughEvidenceBoundary()
     {
-        using var file = new TestJsonFile("evidence-missing");
+        using var file = TestJsonFile.CreateCommitted("evidence-missing");
         var provider = new LocalFileEvidenceProvider(
             new LocalFileEvidenceProviderOptions(file.Path));
 
@@ -306,7 +308,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task UnreadableEvidencePath_FailsThroughEvidenceBoundary()
     {
-        using var file = new TestJsonFile("evidence-unreadable");
+        using var file = TestJsonFile.CreateCommitted("evidence-unreadable");
         Directory.CreateDirectory(file.Path);
         try
         {
@@ -328,7 +330,7 @@ public sealed class LocalFileEvidenceProviderTests
     [Fact]
     public async Task PublishedReplacement_IsObservedOnNextRead()
     {
-        using var file = new TestJsonFile("evidence-replacement");
+        using var file = TestJsonFile.CreateCommitted("evidence-replacement");
         await file.WriteAsync(EvidenceDocument(0.8));
         var provider = new LocalFileEvidenceProvider(
             new LocalFileEvidenceProviderOptions(file.Path));
@@ -413,35 +415,4 @@ public sealed class LocalFileEvidenceProviderTests
             StrategyId: strategyId),
         new Dictionary<string, System.Text.Json.JsonElement>(),
         []);
-
-    private sealed class TestJsonFile : IDisposable
-    {
-        private readonly string _directory;
-
-        public TestJsonFile(string prefix)
-        {
-            _directory = System.IO.Path.Combine(
-                TestPaths.RepositoryRoot,
-                ".flaggo",
-                "test-artifacts",
-                $"{prefix}-{Guid.NewGuid():N}");
-            Path = System.IO.Path.Combine(_directory, "current.commit.json");
-        }
-
-        public string Path { get; }
-
-        public async Task WriteAsync(string content) =>
-            await CommittedFileSnapshotWriter.PublishAsync(
-                Path,
-                System.Text.Encoding.UTF8.GetBytes(content),
-                artifactStem: "snapshot");
-
-        public void Dispose()
-        {
-            if (Directory.Exists(_directory))
-            {
-                Directory.Delete(_directory, recursive: true);
-            }
-        }
-    }
 }

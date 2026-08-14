@@ -165,24 +165,28 @@ async function register(
     );
   }
   const receipt = body;
-  if (
-    receipt.status !== "approved"
-    || receipt.bundleDigest !== digest
-    || receipt.application !== bundle.application.id
-    || receipt.environment !== bundle.application.environment
-  ) {
-    throw new InvalidServerResponseError(
-      "Registration receipt does not match the submitted canonical bundle.",
-    );
-  }
-  validateReceiptBindings(receipt, bundle);
+  validateReceiptAgainstBundle(
+    receipt,
+    bundle,
+    digest,
+    "Registration receipt does not match the submitted canonical bundle.",
+  );
   return receipt;
 }
 
-function validateReceiptBindings(
+function validateReceiptAgainstBundle(
   receipt: RegistrationReceipt,
   bundle: DecisionDefinitionBundle,
+  expectedBundleDigest: RegistrationReceipt["bundleDigest"],
+  identityMismatchMessage: string,
 ): void {
+  if (
+    receipt.bundleDigest !== expectedBundleDigest
+    || receipt.application !== bundle.application.id
+    || receipt.environment !== bundle.application.environment
+  ) {
+    throw new InvalidServerResponseError(identityMismatchMessage);
+  }
   const submittedDefinitions = new Map(
     bundle.definitions.map((definition) => [
       definition.key,
@@ -944,16 +948,12 @@ export async function createFlaggoClient(
     ? undefined
     : normalizeBundle(configuredBundle);
   if (bundle !== undefined) {
-    if (
-      receipt.bundleDigest !== bundleDigest(bundle)
-      || receipt.application !== bundle.application.id
-      || receipt.environment !== bundle.application.environment
-    ) {
-      throw new InvalidServerResponseError(
-        "Registration receipt does not match the configured static bundle.",
-      );
-    }
-    validateReceiptBindings(receipt, bundle);
+    validateReceiptAgainstBundle(
+      receipt,
+      bundle,
+      bundleDigest(bundle),
+      "Registration receipt does not match the configured static bundle.",
+    );
   }
   const definitions = new Map(
     bundle?.definitions
