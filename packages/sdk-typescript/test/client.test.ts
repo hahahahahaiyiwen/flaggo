@@ -21,6 +21,7 @@ import {
   type FetchLike,
   type NumberDecisionDefinition,
   type RegistrationReceipt,
+  type RequiresApprovalResult,
 } from "../src/index.js";
 
 const repositoryRoot = resolve(import.meta.dirname, "../../..");
@@ -136,7 +137,7 @@ describe("canonical definition identity", () => {
 });
 
 describe("startup registration", () => {
-  it("initializes runtime bindings only from acceptedDefinitions", async () => {
+  it("accepts an approved registration and initializes accepted bindings", async () => {
     const apply = fixture<{
       request: { body: DecisionDefinitionBundle };
       expected: { body: RegistrationReceipt };
@@ -167,6 +168,11 @@ describe("startup registration", () => {
       environment: "dev",
       fetch,
     });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(String(fetch.mock.calls[0]![0])).toBe(
+      "https://control.flaggo.test/v1/definition-bundles:apply",
+    );
 
     const result = await client.tune.numberDetailed("tetris.dropInterval", {
       runtimeTarget: { type: "session", id: "game-456" },
@@ -199,7 +205,7 @@ describe("startup registration", () => {
   it("fails typed and leaves no client when approval is required", async () => {
     const pending = fixture<{
       request: { body: DecisionDefinitionBundle };
-      expected: { body: { approvalRequestId: string } };
+      expected: { body: RequiresApprovalResult };
     }>("management/definition-bundle/06-apply-requires-approval.json");
     const fetch = vi.fn<FetchLike>().mockResolvedValue(
       response(202, pending.expected.body),
@@ -218,11 +224,18 @@ describe("startup registration", () => {
         environment: "dev",
         fetch,
       }),
-    ).rejects.toEqual(
-      expect.objectContaining<Partial<RequiresApprovalError>>({
-        name: "RequiresApprovalError",
-        approvalRequestId: pending.expected.body.approvalRequestId,
-      }),
+    ).rejects.toMatchObject({
+      name: "RequiresApprovalError",
+      message:
+        `Definition bundle requires approval: ${pending.expected.body.approvalRequestId}`,
+      approvalRequestId: pending.expected.body.approvalRequestId,
+      bundleDigest: pending.expected.body.bundleDigest,
+      expiresAt: pending.expected.body.expiresAt,
+      snapshotUrl: pending.expected.body.snapshotUrl,
+    } satisfies Partial<RequiresApprovalError>);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(String(fetch.mock.calls[0]![0])).toBe(
+      "https://control.flaggo.test/v1/definition-bundles:apply",
     );
   });
 
@@ -278,7 +291,41 @@ describe("startup registration", () => {
         environment: "dev",
         fetch,
       }),
-    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message: "Flaggo returned a malformed requires-approval result.",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a receipt whose environment does not match the submitted bundle", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const receipt = structuredClone(apply.expected.body);
+    receipt.environment = "stage";
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(response(200, receipt));
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "startup-register",
+          url: "https://control.flaggo.test",
+          bundle: apply.request.body,
+          credential: { mode: "local-development" },
+        },
+        appId: "tetris-demo",
+        environment: "stage",
+        fetch,
+      }),
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message:
+        "Registration receipt does not match the submitted canonical bundle.",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("rejects a receipt whose digest does not match the submitted bundle", async () => {
@@ -288,6 +335,8 @@ describe("startup registration", () => {
     }>("management/definition-bundle/04-apply-approved-receipt.json");
     const receipt = structuredClone(apply.expected.body);
     receipt.bundleDigest = `sha256:${"0".repeat(64)}`;
+    receipt.acceptedDefinitions["tetris.dropInterval"]!.contractDigest =
+      `sha256:${"1".repeat(64)}`;
     const fetch = vi.fn<FetchLike>().mockResolvedValue(response(200, receipt));
 
     await expect(
@@ -303,7 +352,12 @@ describe("startup registration", () => {
         environment: "dev",
         fetch,
       }),
-    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message:
+        "Registration receipt does not match the submitted canonical bundle.",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("rejects schema-invalid registration receipt fields", async () => {
@@ -333,10 +387,14 @@ describe("startup registration", () => {
         environment: "dev",
         fetch,
       }),
-    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message: "Flaggo returned a malformed registration receipt.",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it("binds approved receipt identity to the submitted bundle", async () => {
+  it("rejects a receipt whose application does not match the submitted bundle", async () => {
     const apply = fixture<{
       request: { body: DecisionDefinitionBundle };
       expected: { body: RegistrationReceipt };
@@ -358,7 +416,12 @@ describe("startup registration", () => {
         environment: "dev",
         fetch,
       }),
-    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message:
+        "Registration receipt does not match the submitted canonical bundle.",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("uses deterministic registration identity across concurrent clients", async () => {
@@ -441,7 +504,12 @@ describe("startup registration", () => {
           environment: "dev",
           fetch,
         }),
-      ).rejects.toBeInstanceOf(InvalidServerResponseError);
+      ).rejects.toMatchObject({
+        name: "InvalidServerResponseError",
+        message:
+          "Registration receipt bindings do not match the submitted definitions.",
+      });
+      expect(fetch).toHaveBeenCalledOnce();
     }
   });
 });
@@ -1510,6 +1578,8 @@ describe("runtime safety", () => {
       fetch,
     });
 
+    expect(fetch).not.toHaveBeenCalled();
+
     await client.tune.number("tetris.dropInterval", { context: {} });
     const runtimeDefinition = structuredClone(
       apply.request.body.definitions[0]!,
@@ -1547,10 +1617,40 @@ describe("runtime safety", () => {
 
   it("rejects a pre-registered receipt for another application", async () => {
     const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
       expected: { body: RegistrationReceipt };
     }>("management/definition-bundle/04-apply-approved-receipt.json");
     const receipt = structuredClone(apply.expected.body);
     receipt.application = "another-app";
+    const fetch = vi.fn<FetchLike>();
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "pre-registered",
+          receipt,
+          bundle: apply.request.body,
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        fetch,
+      }),
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message:
+        "Registration receipt does not match the configured application identity.",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pre-registered receipt for another environment", async () => {
+    const apply = fixture<{
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const receipt = structuredClone(apply.expected.body);
+    receipt.environment = "stage";
+    const fetch = vi.fn<FetchLike>();
 
     await expect(
       createFlaggoClient({
@@ -1558,8 +1658,75 @@ describe("runtime safety", () => {
         controlPlane: { mode: "pre-registered", receipt },
         appId: "tetris-demo",
         environment: "dev",
+        fetch,
       }),
-    ).rejects.toBeInstanceOf(InvalidServerResponseError);
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message:
+        "Registration receipt does not match the configured application identity.",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pre-registered receipt whose digest does not match its static bundle", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const receipt = structuredClone(apply.expected.body);
+    receipt.bundleDigest = `sha256:${"0".repeat(64)}`;
+    receipt.acceptedDefinitions["tetris.dropInterval"]!.contractDigest =
+      `sha256:${"1".repeat(64)}`;
+    const fetch = vi.fn<FetchLike>();
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "pre-registered",
+          receipt,
+          bundle: apply.request.body,
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        fetch,
+      }),
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message:
+        "Registration receipt does not match the configured static bundle.",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects pre-registered bindings that do not match the static definitions", async () => {
+    const apply = fixture<{
+      request: { body: DecisionDefinitionBundle };
+      expected: { body: RegistrationReceipt };
+    }>("management/definition-bundle/04-apply-approved-receipt.json");
+    const receipt = structuredClone(apply.expected.body);
+    receipt.acceptedDefinitions["tetris.dropInterval"]!.contractDigest =
+      `sha256:${"0".repeat(64)}`;
+    const fetch = vi.fn<FetchLike>();
+
+    await expect(
+      createFlaggoClient({
+        dataPlaneUrl: "https://data.flaggo.test",
+        controlPlane: {
+          mode: "pre-registered",
+          receipt,
+          bundle: apply.request.body,
+        },
+        appId: "tetris-demo",
+        environment: "dev",
+        fetch,
+      }),
+    ).rejects.toMatchObject({
+      name: "InvalidServerResponseError",
+      message:
+        "Registration receipt bindings do not match the submitted definitions.",
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("sends correlation and retry identities only in their dedicated headers", async () => {
