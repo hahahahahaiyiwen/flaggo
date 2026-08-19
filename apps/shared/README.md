@@ -16,4 +16,11 @@ own operation scope when constructing the principal.
 `Flaggo:Authentication:LocalDevelopmentEnvironment` default to the existing
 `tetris-demo`/`dev` resource and must remain non-empty when overridden.
 
+Local registry hosting seeds a typed runtime definition projection with
+explicit Tetris target hierarchy, inference target, fallback order, and
+target-bearing context metadata. The seeded runtime and intelligence
+projections share the same numeric action space and safety policy so adaptive
+runtime execution cannot bypass lifecycle semantics. The registry remains the
+owner of both runtime and intelligence/lifecycle projections.
+
 Update this document when cross-host HTTP invariants change.

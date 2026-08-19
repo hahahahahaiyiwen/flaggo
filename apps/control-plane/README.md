@@ -15,6 +15,11 @@ definition validate/apply plus approval status, immutable snapshot,
 approve, and reject operations. It uses the local registry adapter and preserves
 the frozen strict JSON, Problem Details, correlation, digest-header,
 idempotency, and approval semantics.
+It also registers the registry-owned `IIntelligenceDefinitionReader` for
+future intelligence and lifecycle composition. That port returns typed
+objectives, signal roles, workflow permissions, action space, and safety
+envelope; control-plane consumers do not parse approval snapshots or registry
+storage.
 
 Management endpoints require OAuth bearer authentication and their
 operation-specific definition scopes. The explicit

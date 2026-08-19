@@ -24,13 +24,16 @@ public static class LocalRegistryHosting
                     ".flaggo",
                     "definition-registry-v1.json"))
             : Path.GetFullPath(configuredPath);
+        var definitions = DefaultDefinitions();
         return new LocalFileDefinitionRegistry(
             new LocalFileDefinitionRegistryOptions(filePath),
-            DefaultDefinitions(),
-            timeProvider: timeProvider);
+            definitions,
+            timeProvider: timeProvider,
+            seedIntelligenceDefinitions:
+                DefaultIntelligenceDefinitions(definitions));
     }
 
-    public static IReadOnlyList<RegisteredDecisionDefinition> DefaultDefinitions()
+    public static IReadOnlyList<RuntimeDecisionDefinition> DefaultDefinitions()
     {
         var contractIdentity = new RuntimeContractIdentity(
             "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
@@ -50,14 +53,16 @@ public static class LocalRegistryHosting
         ];
         RegisteredRuntimeContextField[] registeredRuntimeContext =
         [
-            new("userId", "string"),
-            new("sessionId", "string"),
-            new("cohort", "string"),
+            new("userId", "string", TargetType: "user"),
+            new("sessionId", "string", TargetType: "session"),
+            new("cohort", "string", TargetType: "cohort"),
             new("deviceType", "string")
         ];
+        var actionSpace = new NumberActionSpaceContract(200, 1500, 50);
+        var policy = DefaultTetrisPolicy();
         return
         [
-            new RegisteredDecisionDefinition(
+            new RuntimeDecisionDefinition(
                 "tetris-demo",
                 "dev",
                 "tetris.dropInterval",
@@ -66,8 +71,13 @@ public static class LocalRegistryHosting
                 JsonSerializer.SerializeToElement(800),
                 "safe_default_drop_interval",
                 registeredInputs,
-                registeredRuntimeContext),
-            new RegisteredDecisionDefinition(
+                registeredRuntimeContext,
+                NumberActionSpace: actionSpace,
+                Policy: policy,
+                TargetHierarchy: ["session", "user", "cohort", "global"],
+                InferenceTarget: "session",
+                FallbackOrder: ["cohort", "global"]),
+            new RuntimeDecisionDefinition(
                 "tetris-demo",
                 "dev",
                 "tetris.dropInterval",
@@ -77,7 +87,82 @@ public static class LocalRegistryHosting
                 "safe_default_drop_interval",
                 registeredInputs,
                 registeredRuntimeContext,
-                "retired")
+                "retired",
+                NumberActionSpace: actionSpace,
+                Policy: policy,
+                TargetHierarchy: ["session", "user", "cohort", "global"],
+                InferenceTarget: "session",
+                FallbackOrder: ["cohort", "global"])
         ];
     }
+
+    public static IReadOnlyList<IntelligenceLifecycleDefinitionSnapshot>
+        DefaultIntelligenceDefinitions(
+            IReadOnlyList<RuntimeDecisionDefinition>? runtimeDefinitions = null)
+    {
+        var runtime = (runtimeDefinitions ?? DefaultDefinitions())
+            .Single(definition => definition.LifecycleStatus == "active");
+        return
+        [
+            new IntelligenceLifecycleDefinitionSnapshot(
+                runtime.AppId,
+                runtime.Environment,
+                runtime.DecisionKey,
+                runtime.Identity,
+                runtime.LifecycleStatus,
+                new DecisionObjectives(
+                    Primary: new DecisionObjective(
+                        "tetris.earlyLossRate24h",
+                        "minimize"),
+                    Secondary:
+                    [
+                        new DecisionObjective(
+                            "tetris.hardDropRate24h",
+                            "target",
+                            0.45),
+                        new DecisionObjective(
+                            "tetris.recentPlacementTimeMs",
+                            "minimize")
+                    ],
+                    Rationale:
+                        "Keep gameplay challenging but playable while reducing early frustration."),
+                new RegisteredDecisionSignalRoles(
+                [
+                    "tetris.boardPressure",
+                    "tetris.currentLevel",
+                    "tetris.earlyLossRate24h",
+                    "tetris.hardDropRate24h",
+                    "tetris.recentPlacementTimeMs",
+                    "tetris.recoveryFailures"
+                ],
+                [],
+                []),
+                new DecisionWorkflowPermissions(
+                    "approved-strategy",
+                    [
+                        "currentLevel",
+                        "boardPressure",
+                        "recentPlacementTimeMs",
+                        "recoveryFailures"
+                    ]),
+                new DecisionActionSpaceContract(
+                    runtime.ValueType,
+                    runtime.FallbackValue,
+                    runtime.NumberActionSpace?.Minimum,
+                    runtime.NumberActionSpace?.Maximum,
+                    runtime.NumberActionSpace?.Step,
+                    []),
+                runtime.Policy ?? new DecisionPolicyContract())
+        ];
+    }
+
+    private static DecisionPolicyContract DefaultTetrisPolicy() =>
+        new(
+            Minimum: 200,
+            Maximum: 1500,
+            MaximumDelta: 50,
+            CooldownSeconds: 20,
+            MinimumEvidenceQuality: 0.7,
+            MaximumModelUncertainty: 0.35,
+            MinimumSampleSize: 30);
 }

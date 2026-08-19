@@ -513,7 +513,7 @@ public sealed partial class InMemoryDefinitionRegistry :
                 {
                     var lineageExists = _definitions.Values.Any(value =>
                         string.Equals(
-                            value.Identity.DefinitionId,
+                            value.Runtime.Identity.DefinitionId,
                             suppliedId,
                             StringComparison.Ordinal));
                     issues.Add(Issue(
@@ -549,7 +549,7 @@ public sealed partial class InMemoryDefinitionRegistry :
                 {
                     var lineageExists = _definitions.Values.Any(value =>
                         string.Equals(
-                            value.Identity.DefinitionId,
+                            value.Runtime.Identity.DefinitionId,
                             suppliedId,
                             StringComparison.Ordinal));
                     issues.Add(Issue(
@@ -673,7 +673,7 @@ public sealed partial class InMemoryDefinitionRegistry :
         var appId = application.GetProperty("id").GetString()!;
         var environment = application.GetProperty("environment").GetString()!;
         var accepted = new Dictionary<string, AcceptedDefinition>(StringComparer.Ordinal);
-        var replacements = new List<RegisteredDecisionDefinition>();
+        var replacements = new List<RegisteredDefinitionProjections>();
         foreach (var definition in bundle.GetProperty("definitions").EnumerateArray())
         {
             var key = definition.GetProperty("key").GetString()!;
@@ -692,7 +692,7 @@ public sealed partial class InMemoryDefinitionRegistry :
             if (applyDefinitions)
             {
                 replacements.Add(
-                    BuildRuntimeDefinition(
+                    BuildDefinitionProjections(
                         bundle,
                         definition,
                         definitionId,
@@ -704,29 +704,40 @@ public sealed partial class InMemoryDefinitionRegistry :
 
         foreach (var replacement in replacements)
         {
+            var runtime = replacement.Runtime;
             var existingKeys = _definitions
                 .Where(pair =>
-                    pair.Key.AppId == replacement.AppId &&
-                    pair.Key.Environment == replacement.Environment &&
-                    pair.Key.Key == replacement.DecisionKey &&
-                    pair.Value.LifecycleStatus == "active")
+                    pair.Key.AppId == runtime.AppId &&
+                    pair.Key.Environment == runtime.Environment &&
+                    pair.Key.Key == runtime.DecisionKey &&
+                    pair.Value.Runtime.LifecycleStatus == "active")
                 .Select(pair => pair.Key)
                 .ToArray();
             foreach (var key in existingKeys)
             {
-                _definitions[key] = _definitions[key] with { LifecycleStatus = "retired" };
+                var existing = _definitions[key];
+                _definitions[key] = existing with
+                {
+                    Runtime = existing.Runtime with { LifecycleStatus = "retired" },
+                    Intelligence = existing.Intelligence is null
+                        ? null
+                        : existing.Intelligence with
+                        {
+                            LifecycleStatus = "retired"
+                        }
+                };
             }
 
             _definitions[(
-                replacement.AppId,
-                replacement.Environment,
-                replacement.DecisionKey,
-                replacement.Identity.DefinitionId,
-                replacement.Identity.Revision)] = replacement;
+                runtime.AppId,
+                runtime.Environment,
+                runtime.DecisionKey,
+                runtime.Identity.DefinitionId,
+                runtime.Identity.Revision)] = replacement;
             _decisionKeys.Add((
-                replacement.AppId,
-                replacement.Environment,
-                replacement.DecisionKey));
+                runtime.AppId,
+                runtime.Environment,
+                runtime.DecisionKey));
         }
 
         var buildId = bundle.TryGetProperty("build", out var build) &&
@@ -750,7 +761,7 @@ public sealed partial class InMemoryDefinitionRegistry :
             changes);
     }
 
-    private RegisteredDecisionDefinition BuildRuntimeDefinition(
+    private RegisteredDefinitionProjections BuildDefinitionProjections(
         JsonElement bundle,
         JsonElement definition,
         string definitionId,
@@ -786,7 +797,15 @@ public sealed partial class InMemoryDefinitionRegistry :
                 contextSchema.EnumerateObject().Select(
                     property => new RegisteredRuntimeContextField(
                         property.Name,
-                        property.Value.GetProperty("type").GetString()!)));
+                        property.Value.GetProperty("type").GetString()!,
+                        property.Value.TryGetProperty("required", out var required) &&
+                        required.ValueKind == JsonValueKind.True,
+                        TryString(
+                            property.Value,
+                            "target",
+                            out var targetType)
+                            ? targetType
+                            : null)));
         }
 
         var fallback = definition.GetProperty("fallback");
@@ -795,22 +814,46 @@ public sealed partial class InMemoryDefinitionRegistry :
             : "configured_fallback";
         var numberActionSpace = ReadNumberActionSpace(definition);
         var policy = ReadPolicy(definition);
-        return new RegisteredDecisionDefinition(
+        var identity = new RuntimeContractIdentity(
+            definitionId,
+            contractDigest,
+            revision,
+            bundleDigest);
+        var targetHierarchy = ReadStringArray(definition, "targetHierarchy");
+        var inferenceTarget = inference.ValueKind == JsonValueKind.Object &&
+                              TryString(inference, "target", out var target)
+            ? target
+            : null;
+        var fallbackOrder = inference.ValueKind == JsonValueKind.Object
+            ? ReadStringArray(inference, "fallbackOrder")
+            : null;
+        var runtime = new RuntimeDecisionDefinition(
             application.GetProperty("id").GetString()!,
             application.GetProperty("environment").GetString()!,
             definition.GetProperty("key").GetString()!,
-            new RuntimeContractIdentity(
-                definitionId,
-                contractDigest,
-                revision,
-                bundleDigest),
+            identity,
             definition.GetProperty("valueType").GetString()!,
             fallback.GetProperty("value").Clone(),
             fallbackReason,
             registeredInputs,
             runtimeContext,
             NumberActionSpace: numberActionSpace,
-            Policy: policy);
+            Policy: policy,
+            TargetHierarchy: targetHierarchy,
+            InferenceTarget: inferenceTarget,
+            FallbackOrder: fallbackOrder);
+        var intelligence = new IntelligenceLifecycleDefinitionSnapshot(
+            runtime.AppId,
+            runtime.Environment,
+            runtime.DecisionKey,
+            identity,
+            runtime.LifecycleStatus,
+            ReadObjectives(definition),
+            ReadSignalRoles(definition),
+            ReadWorkflowPermissions(definition),
+            ReadActionSpace(definition),
+            policy ?? new DecisionPolicyContract());
+        return new RegisteredDefinitionProjections(runtime, intelligence);
     }
 
     private static Dictionary<string, SignalDeclaration> ReadSignals(
@@ -876,17 +919,23 @@ public sealed partial class InMemoryDefinitionRegistry :
         ICollection<ProblemIssue> issues)
     {
         var path = $"/definitions/{index}";
-        if (!definition.TryGetProperty("actionSpace", out var actionSpace) ||
-            !TryString(definition, "valueType", out var valueType) ||
-            !TryString(actionSpace, "type", out var actionType) ||
-            !string.Equals(valueType, actionType, StringComparison.Ordinal) ||
-            actionType == "number" &&
-            (!TryNumber(actionSpace, "min", out var minimum) ||
-             !TryNumber(actionSpace, "max", out var maximum) ||
-             minimum > maximum ||
-             !TryNumber(actionSpace, "default", out var defaultValue) ||
-             defaultValue < minimum ||
-             defaultValue > maximum))
+        var valueType = TryString(
+            definition,
+            "valueType",
+            out var parsedValueType)
+            ? parsedValueType
+            : null;
+        var validActionSpace =
+            definition.TryGetProperty("actionSpace", out var actionSpace) &&
+            valueType is not null &&
+            TryString(actionSpace, "type", out var actionType) &&
+            string.Equals(valueType, actionType, StringComparison.Ordinal) &&
+            IsValidActionSpace(actionSpace, actionType);
+        var validFallback =
+            validActionSpace &&
+            IsValidFallback(definition, valueType!, actionSpace);
+        if (!validActionSpace ||
+            !validFallback)
         {
             issues.Add(Issue(
                 "invalid-definition",
@@ -895,51 +944,95 @@ public sealed partial class InMemoryDefinitionRegistry :
                 decisionKey));
         }
 
-        var inferenceSignalKeys = new HashSet<string>(StringComparer.Ordinal);
-        if (definition.TryGetProperty("inference", out var inference) &&
-            inference.TryGetProperty("inputs", out var inputs) &&
-            inputs.ValueKind == JsonValueKind.Array)
-        {
-            var inputIndex = 0;
-            foreach (var input in inputs.EnumerateArray())
-            {
-                if (!TryString(input, "key", out var key) || !signals.ContainsKey(key))
-                {
-                    issues.Add(Issue(
-                        "unknown-signal",
-                        $"{path}/inference/inputs/{inputIndex}",
-                        "Inference input references an unknown signal.",
-                        decisionKey,
-                        key));
-                }
-                else
-                {
-                    inferenceSignalKeys.Add(key.Split('.').Last());
-                }
-
-                inputIndex++;
-            }
-        }
-
-        if (definition.TryGetProperty("intent", out var intent) &&
-            TryString(intent, "type", out var intentType) &&
-            intentType == "metric-objective" &&
-            (!intent.TryGetProperty("primary", out var primary) ||
-             !IsValidObjective(primary, signals)))
+        if (!HasValidSignalRoles(definition, signals))
         {
             issues.Add(Issue(
-                "invalid-objective",
-                $"{path}/intent/primary",
-                "Objective direction/target is invalid.",
+                "invalid-definition",
+                $"{path}/signals",
+                "Signal roles must contain objects with non-empty keys.",
                 decisionKey));
         }
 
+        ValidateTargeting(definition, path, decisionKey, issues);
+
+        var inferenceSignalKeys = new HashSet<string>(StringComparer.Ordinal);
+        if (definition.TryGetProperty("inference", out var inference) &&
+            inference.TryGetProperty("inputs", out var inputs))
+        {
+            if (inputs.ValueKind != JsonValueKind.Array)
+            {
+                issues.Add(Issue(
+                    "invalid-definition",
+                    $"{path}/inference/inputs",
+                    "Inference inputs must be an array.",
+                    decisionKey));
+            }
+            else
+            {
+                var inputIndex = 0;
+                foreach (var input in inputs.EnumerateArray())
+                {
+                    if (!TryString(input, "key", out var key) ||
+                        !signals.ContainsKey(key))
+                    {
+                        issues.Add(Issue(
+                            "unknown-signal",
+                            $"{path}/inference/inputs/{inputIndex}",
+                            "Inference input references an unknown signal.",
+                            decisionKey,
+                            key));
+                    }
+                    else
+                    {
+                        inferenceSignalKeys.Add(key.Split('.').Last());
+                    }
+
+                    inputIndex++;
+                }
+            }
+        }
+
+        if (definition.TryGetProperty("intent", out var intent))
+        {
+            var invalidObjective = !TryString(
+                intent,
+                "type",
+                out var intentType);
+            if (!invalidObjective)
+            {
+                invalidObjective = intentType switch
+                {
+                    "natural-language" =>
+                        !TryString(intent, "text", out _),
+                    "metric-objective" =>
+                        !HasValidMetricObjectives(intent, signals),
+                    _ => true
+                };
+            }
+
+            if (invalidObjective)
+            {
+                issues.Add(Issue(
+                    "invalid-objective",
+                    $"{path}/intent/primary",
+                    "Objective direction/target is invalid.",
+                    decisionKey));
+            }
+        }
+
         if (definition.TryGetProperty("onlineStrategy", out var strategy) &&
-            strategy.TryGetProperty("liveInputs", out var liveInputs) &&
-            liveInputs.ValueKind == JsonValueKind.Array &&
-            liveInputs.EnumerateArray().Any(
-                value => value.ValueKind != JsonValueKind.String ||
-                         !inferenceSignalKeys.Contains(value.GetString()!)))
+            (strategy.ValueKind != JsonValueKind.Object ||
+             !TryString(strategy, "mode", out var strategyMode) ||
+             strategyMode is not (
+                 "active-value" or
+                 "approved-strategy" or
+                 "experiment" or
+                 "fallback-only") ||
+             strategy.TryGetProperty("liveInputs", out var liveInputs) &&
+             (liveInputs.ValueKind != JsonValueKind.Array ||
+              liveInputs.EnumerateArray().Any(
+                  value => value.ValueKind != JsonValueKind.String ||
+                           !inferenceSignalKeys.Contains(value.GetString()!)))))
         {
             issues.Add(Issue(
                 "invalid-strategy",
@@ -1009,6 +1102,218 @@ public sealed partial class InMemoryDefinitionRegistry :
         }
     }
 
+    private static bool IsValidActionSpace(
+        JsonElement actionSpace,
+        string actionType)
+    {
+        if (!actionSpace.TryGetProperty("default", out var defaultValue))
+        {
+            return false;
+        }
+
+        return actionType switch
+        {
+            "number" =>
+                defaultValue.ValueKind == JsonValueKind.Number &&
+                defaultValue.TryGetDouble(out var numberDefault) &&
+                double.IsFinite(numberDefault) &&
+                TryReadNumberActionSpace(
+                    actionSpace,
+                    out var minimum,
+                    out var maximum,
+                    out var step) &&
+                IsAllowedNumber(numberDefault, minimum, maximum, step),
+            "boolean" =>
+                defaultValue.ValueKind is
+                    JsonValueKind.True or JsonValueKind.False,
+            "string" =>
+                defaultValue.ValueKind == JsonValueKind.String &&
+                IsValidAllowedValues(actionSpace, defaultValue.GetString()!),
+            _ => false
+        };
+    }
+
+    private static bool IsValidAllowedValues(
+        JsonElement actionSpace,
+        string defaultValue)
+    {
+        if (!actionSpace.TryGetProperty("allowedValues", out var allowedValues))
+        {
+            return true;
+        }
+
+        if (allowedValues.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var values = allowedValues.EnumerateArray().ToArray();
+        if (values.Length == 0 ||
+            !values.All(value =>
+                   value.ValueKind == JsonValueKind.String &&
+                   !string.IsNullOrWhiteSpace(value.GetString())))
+        {
+            return false;
+        }
+
+        var strings = values.Select(value => value.GetString()!).ToArray();
+        return strings.Distinct(StringComparer.Ordinal).Count() ==
+                   strings.Length &&
+               strings.Contains(defaultValue, StringComparer.Ordinal);
+    }
+
+    private static bool IsValidFallback(
+        JsonElement definition,
+        string valueType,
+        JsonElement actionSpace)
+    {
+        if (!definition.TryGetProperty("fallback", out var fallback) ||
+            fallback.ValueKind != JsonValueKind.Object ||
+            !fallback.TryGetProperty("value", out var fallbackValue))
+        {
+            return false;
+        }
+
+        return valueType switch
+        {
+            "number" =>
+                fallbackValue.ValueKind == JsonValueKind.Number &&
+                fallbackValue.TryGetDouble(out var number) &&
+                double.IsFinite(number) &&
+                TryReadNumberActionSpace(
+                    actionSpace,
+                    out var minimum,
+                    out var maximum,
+                    out var step) &&
+                IsAllowedNumber(number, minimum, maximum, step),
+            "boolean" =>
+                fallbackValue.ValueKind is
+                    JsonValueKind.True or JsonValueKind.False,
+            "string" =>
+                fallbackValue.ValueKind == JsonValueKind.String &&
+                IsAllowedString(
+                    actionSpace,
+                    fallbackValue.GetString()!),
+            _ => false
+        };
+    }
+
+    private static bool TryReadNumberActionSpace(
+        JsonElement actionSpace,
+        out double minimum,
+        out double maximum,
+        out double? step)
+    {
+        minimum = 0;
+        maximum = 0;
+        step = null;
+        if (!TryNumber(actionSpace, "min", out minimum) ||
+            !TryNumber(actionSpace, "max", out maximum) ||
+            minimum > maximum)
+        {
+            return false;
+        }
+
+        if (actionSpace.TryGetProperty("step", out _))
+        {
+            if (!TryNumber(actionSpace, "step", out var parsedStep) ||
+                parsedStep <= 0)
+            {
+                return false;
+            }
+
+            step = parsedStep;
+        }
+
+        return true;
+    }
+
+    private static bool IsAllowedNumber(
+        double value,
+        double minimum,
+        double maximum,
+        double? step)
+    {
+        if (value < minimum || value > maximum || step is null)
+        {
+            return value >= minimum && value <= maximum;
+        }
+
+        var stepCount = (value - minimum) / step.Value;
+        var tolerance = 1e-9 * Math.Max(1, Math.Abs(stepCount));
+        return Math.Abs(stepCount - Math.Round(stepCount)) <= tolerance;
+    }
+
+    private static bool IsAllowedString(
+        JsonElement actionSpace,
+        string value)
+    {
+        if (!actionSpace.TryGetProperty("allowedValues", out var allowedValues))
+        {
+            return true;
+        }
+
+        return allowedValues.EnumerateArray().Any(item =>
+            string.Equals(
+                item.GetString(),
+                value,
+                StringComparison.Ordinal));
+    }
+
+    private static bool HasValidSignalRoles(
+        JsonElement definition,
+        IReadOnlyDictionary<string, SignalDeclaration> signalDeclarations)
+    {
+        if (!definition.TryGetProperty("signals", out var signals))
+        {
+            return true;
+        }
+
+        if (signals.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        return new[] { "allowed", "evidence", "guardrails" }
+            .All(role => HasValidSignalRole(
+                signals,
+                role,
+                signalDeclarations));
+    }
+
+    private static bool HasValidSignalRole(
+        JsonElement signals,
+        string role,
+        IReadOnlyDictionary<string, SignalDeclaration> signalDeclarations)
+    {
+        if (!signals.TryGetProperty(role, out var values))
+        {
+            return true;
+        }
+
+        return values.ValueKind == JsonValueKind.Array &&
+               values.EnumerateArray().All(value =>
+                   value.ValueKind == JsonValueKind.Object &&
+                   TryString(value, "key", out var key) &&
+                   signalDeclarations.ContainsKey(key));
+    }
+
+    private static bool HasValidMetricObjectives(
+        JsonElement intent,
+        IReadOnlyDictionary<string, SignalDeclaration> signals)
+    {
+        if (!intent.TryGetProperty("primary", out var primary) ||
+            !IsValidObjective(primary, signals))
+        {
+            return false;
+        }
+
+        return !intent.TryGetProperty("secondary", out var secondary) ||
+               secondary.ValueKind == JsonValueKind.Array &&
+               secondary.EnumerateArray().All(objective =>
+                   IsValidObjective(objective, signals));
+    }
+
     private static bool IsValidObjective(
         JsonElement objective,
         IReadOnlyDictionary<string, SignalDeclaration> signals)
@@ -1016,7 +1321,11 @@ public sealed partial class InMemoryDefinitionRegistry :
         if (objective.ValueKind != JsonValueKind.Object ||
             !objective.TryGetProperty("signal", out var signal) ||
             !TryString(signal, "key", out var signalKey) ||
-            !signals.ContainsKey(signalKey) ||
+            !signals.TryGetValue(signalKey, out var declaration) ||
+            !string.Equals(
+                declaration.ValueType,
+                "number",
+                StringComparison.Ordinal) ||
             !TryString(objective, "direction", out var direction))
         {
             return false;
@@ -1028,6 +1337,131 @@ public sealed partial class InMemoryDefinitionRegistry :
             "minimize" or "maximize" => !objective.TryGetProperty("target", out _),
             _ => false
         };
+    }
+
+    private static void ValidateTargeting(
+        JsonElement definition,
+        string path,
+        string decisionKey,
+        ICollection<ProblemIssue> issues)
+    {
+        var invalid = false;
+        string[]? hierarchy = null;
+        if (definition.TryGetProperty("targetHierarchy", out var hierarchyElement))
+        {
+            if (hierarchyElement.ValueKind != JsonValueKind.Array)
+            {
+                invalid = true;
+            }
+            else
+            {
+                hierarchy = hierarchyElement.EnumerateArray()
+                    .Where(value => value.ValueKind == JsonValueKind.String)
+                    .Select(value => value.GetString()!)
+                    .ToArray();
+                invalid =
+                    hierarchy.Length != hierarchyElement.GetArrayLength() ||
+                    hierarchy.Length == 0 ||
+                    hierarchy.Any(string.IsNullOrWhiteSpace) ||
+                    hierarchy.Distinct(StringComparer.Ordinal).Count() !=
+                    hierarchy.Length;
+            }
+        }
+
+        string? inferenceTarget = null;
+        if (definition.TryGetProperty("inference", out var inference))
+        {
+            invalid |=
+                inference.ValueKind != JsonValueKind.Object ||
+                !TryString(inference, "target", out inferenceTarget);
+            if (inferenceTarget is not null &&
+                hierarchy is not null &&
+                !hierarchy.Contains(inferenceTarget, StringComparer.Ordinal))
+            {
+                invalid = true;
+            }
+
+            if (inference.ValueKind == JsonValueKind.Object &&
+                inference.TryGetProperty("fallbackOrder", out var fallback))
+            {
+                if (fallback.ValueKind != JsonValueKind.Array)
+                {
+                    invalid = true;
+                }
+                else
+                {
+                    var fallbackTargets = fallback.EnumerateArray()
+                        .Where(value => value.ValueKind == JsonValueKind.String)
+                        .Select(value => value.GetString()!)
+                        .ToArray();
+                    invalid |=
+                        fallbackTargets.Length != fallback.GetArrayLength() ||
+                        fallbackTargets.Any(string.IsNullOrWhiteSpace) ||
+                        fallbackTargets.Distinct(StringComparer.Ordinal).Count() !=
+                        fallbackTargets.Length ||
+                        hierarchy is not null &&
+                        fallbackTargets.Any(target =>
+                            !hierarchy.Contains(target, StringComparer.Ordinal));
+                }
+            }
+        }
+
+        if (definition.TryGetProperty("runtimeContextSchema", out var contextSchema))
+        {
+            if (contextSchema.ValueKind != JsonValueKind.Object)
+            {
+                invalid = true;
+            }
+            else
+            {
+                var targetFields = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in contextSchema.EnumerateObject())
+                {
+                    if (property.Value.ValueKind != JsonValueKind.Object ||
+                        !TryString(property.Value, "type", out var valueType) ||
+                        valueType is not ("boolean" or "number" or "string"))
+                    {
+                        invalid = true;
+                        continue;
+                    }
+
+                    if (property.Value.TryGetProperty("required", out var required) &&
+                        required.ValueKind is not (
+                            JsonValueKind.True or JsonValueKind.False))
+                    {
+                        invalid = true;
+                    }
+
+                    if (!property.Value.TryGetProperty("target", out var target))
+                    {
+                        continue;
+                    }
+
+                    if (target.ValueKind != JsonValueKind.String ||
+                        string.IsNullOrWhiteSpace(target.GetString()))
+                    {
+                        invalid = true;
+                        continue;
+                    }
+
+                    var targetType = target.GetString()!;
+                    invalid |=
+                        !string.Equals(valueType, "string", StringComparison.Ordinal) ||
+                        hierarchy is not null &&
+                        !hierarchy.Contains(targetType, StringComparer.Ordinal) ||
+                        !targetFields.Add(targetType);
+                }
+            }
+        }
+
+        if (invalid)
+        {
+            issues.Add(Issue(
+                "invalid-targeting",
+                path,
+                "Target hierarchy, inference fallback, and target-bearing runtime context must be consistent.",
+                decisionKey));
+        }
     }
 
     private static bool IsInvalidConstraint(JsonElement constraint)
@@ -1078,6 +1512,199 @@ public sealed partial class InMemoryDefinitionRegistry :
             minimum,
             maximum,
             TryNumber(actionSpace, "step", out var step) ? step : null);
+    }
+
+    private static IReadOnlyList<string>? ReadStringArray(
+        JsonElement value,
+        string propertyName)
+    {
+        if (!value.TryGetProperty(propertyName, out var array) ||
+            array.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        return array.EnumerateArray()
+            .Select(item => item.GetString()!)
+            .ToArray();
+    }
+
+    private static DecisionObjectives ReadObjectives(JsonElement definition)
+    {
+        if (!definition.TryGetProperty("intent", out var intent) ||
+            !TryString(intent, "type", out var type))
+        {
+            return new DecisionObjectives(Secondary: []);
+        }
+
+        if (type == "natural-language")
+        {
+            return new DecisionObjectives(
+                NaturalLanguage:
+                    TryString(intent, "text", out var text) ? text : null,
+                Secondary: []);
+        }
+
+        var primary = intent.TryGetProperty("primary", out var primaryElement)
+            ? ReadObjective(primaryElement)
+            : null;
+        var secondary = intent.TryGetProperty("secondary", out var secondaryElement) &&
+                        secondaryElement.ValueKind == JsonValueKind.Array
+            ? secondaryElement.EnumerateArray()
+                .Select(ReadObjective)
+                .Where(objective => objective is not null)
+                .Cast<DecisionObjective>()
+                .ToArray()
+            : [];
+        return new DecisionObjectives(
+            Primary: primary,
+            Secondary: secondary,
+            Rationale:
+                TryString(intent, "rationale", out var rationale)
+                    ? rationale
+                    : null);
+    }
+
+    private static DecisionObjective? ReadObjective(JsonElement objective)
+    {
+        if (!objective.TryGetProperty("signal", out var signal) ||
+            !TryString(signal, "key", out var signalKey) ||
+            !TryString(objective, "direction", out var direction))
+        {
+            return null;
+        }
+
+        return new DecisionObjective(
+            signalKey,
+            direction,
+            TryNumber(objective, "target", out var target) ? target : null);
+    }
+
+    private static RegisteredDecisionSignalRoles ReadSignalRoles(
+        JsonElement definition)
+    {
+        if (!definition.TryGetProperty("signals", out var signals) ||
+            signals.ValueKind != JsonValueKind.Object)
+        {
+            return new RegisteredDecisionSignalRoles([], [], []);
+        }
+
+        return new RegisteredDecisionSignalRoles(
+            ReadEffectiveAllowedSignals(definition, signals),
+            ReadSignalRole(signals, "evidence"),
+            ReadSignalRole(signals, "guardrails"));
+    }
+
+    private static IReadOnlyList<string> ReadEffectiveAllowedSignals(
+        JsonElement definition,
+        JsonElement signals)
+    {
+        var allowed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var role in new[] { "evidence", "guardrails" })
+        {
+            allowed.UnionWith(ReadSignalRole(signals, role));
+        }
+
+        if (definition.TryGetProperty("inference", out var inference) &&
+            inference.TryGetProperty("inputs", out var inputs) &&
+            inputs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var input in inputs.EnumerateArray())
+            {
+                if (TryString(input, "key", out var key))
+                {
+                    allowed.Add(key);
+                }
+            }
+        }
+
+        if (definition.TryGetProperty("intent", out var intent))
+        {
+            AddObjectiveSignal(intent, "primary", allowed);
+            if (intent.TryGetProperty("secondary", out var secondary) &&
+                secondary.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var objective in secondary.EnumerateArray())
+                {
+                    AddObjectiveSignal(objective, allowed);
+                }
+            }
+        }
+
+        return allowed.Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private static void AddObjectiveSignal(
+        JsonElement value,
+        string propertyName,
+        ISet<string> signals)
+    {
+        if (value.TryGetProperty(propertyName, out var objective))
+        {
+            AddObjectiveSignal(objective, signals);
+        }
+    }
+
+    private static void AddObjectiveSignal(
+        JsonElement objective,
+        ISet<string> signals)
+    {
+        if (objective.TryGetProperty("signal", out var signal) &&
+            TryString(signal, "key", out var key))
+        {
+            signals.Add(key);
+        }
+    }
+
+    private static IReadOnlyList<string> ReadSignalRole(
+        JsonElement signals,
+        string role)
+    {
+        if (!signals.TryGetProperty(role, out var values) ||
+            values.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return values.EnumerateArray()
+            .Select(value => value.GetProperty("key").GetString()!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static DecisionWorkflowPermissions ReadWorkflowPermissions(
+        JsonElement definition)
+    {
+        if (!definition.TryGetProperty("onlineStrategy", out var strategy) ||
+            !TryString(strategy, "mode", out var mode))
+        {
+            return new DecisionWorkflowPermissions("active-value", []);
+        }
+
+        return new DecisionWorkflowPermissions(
+            mode,
+            ReadStringArray(strategy, "liveInputs") ?? []);
+    }
+
+    private static DecisionActionSpaceContract ReadActionSpace(
+        JsonElement definition)
+    {
+        var actionSpace = definition.GetProperty("actionSpace");
+        var valueType = definition.GetProperty("valueType").GetString()!;
+        var allowedValues =
+            actionSpace.TryGetProperty("allowedValues", out var allowed) &&
+            allowed.ValueKind == JsonValueKind.Array
+                ? allowed.EnumerateArray()
+                    .Select(value => value.GetString()!)
+                    .ToArray()
+                : [];
+        return new DecisionActionSpaceContract(
+            valueType,
+            actionSpace.GetProperty("default").Clone(),
+            TryNumber(actionSpace, "min", out var minimum) ? minimum : null,
+            TryNumber(actionSpace, "max", out var maximum) ? maximum : null,
+            TryNumber(actionSpace, "step", out var step) ? step : null,
+            allowedValues);
     }
 
     private static DecisionPolicyContract? ReadPolicy(JsonElement definition)
@@ -1241,11 +1868,12 @@ public sealed partial class InMemoryDefinitionRegistry :
                 .ToArray()
             : [];
 
-    private RegisteredDecisionDefinition? FindCurrent(
+    private RuntimeDecisionDefinition? FindCurrent(
         string appId,
         string environment,
         string decisionKey) =>
         _definitions.Values
+            .Select(definition => definition.Runtime)
             .Where(definition =>
                 definition.AppId == appId &&
                 definition.Environment == environment &&

@@ -111,7 +111,7 @@ Cloud-backed implementations should be additive:
 
 | Port | Local MVP implementation | Future cloud implementation |
 | --- | --- | --- |
-| `IDefinitionRegistry` | in-memory or local JSON/SQLite | PostgreSQL, Azure SQL, DynamoDB, Firestore |
+| `IRuntimeDefinitionReader` / `IIntelligenceDefinitionReader` | in-memory or local JSON/SQLite | PostgreSQL, Azure SQL, DynamoDB, Firestore |
 | `IStateStore` | in-memory or SQLite | Redis, Cosmos DB, DynamoDB, Cloud SQL |
 | `IEvidenceProvider` | in-memory snapshots or local aggregation | OpenTelemetry pipeline, metrics store, data warehouse |
 | `IAuditSink` | console/file/SQLite | object storage, event hub, managed logging |
@@ -241,7 +241,7 @@ The Decision API composes module-owned interfaces:
 
 ```text
 DecideRequest
-  -> IDefinitionRegistry
+  -> IRuntimeDefinitionReader
   -> ITargetResolver
   -> IEvidenceProvider
   -> IStateStore
@@ -402,7 +402,7 @@ Deliverables:
 - runtime decide and exposure-confirmation endpoints,
 - definition validate/apply endpoints,
 - definition approval status/approve/reject endpoints,
-- `IDefinitionRegistry` local implementation,
+- `IRuntimeDefinitionReader` and `IIntelligenceDefinitionReader` local implementation,
 - contract-integrity and canonical digest verification,
 - `ITargetResolver`,
 - `IStateStore` local implementation,
@@ -597,6 +597,43 @@ Concrete Phase 3A implementation decision:
   to a configured telemetry sink. This phase does not change frozen runtime
   wire semantics.
 
+### Phase 3.5: Preserve executable definition semantics
+
+Goal: make the accepted definition bundle executable through registry-owned
+typed projections before async intelligence and lifecycle consumers are added.
+
+#### Track A: Runtime and intelligence/lifecycle projections
+
+Deliverables:
+
+- a runtime definition projection containing canonical identity, target
+  hierarchy, inference target, explicit fallback order, runtime-context
+  requirements and target bindings, inference inputs, fallback, action bounds,
+  and effective runtime policy;
+- a separate intelligence/lifecycle snapshot containing the same canonical
+  identity plus objectives, signal roles, workflow permissions, action space,
+  and safety envelope;
+- separate async registry read ports for the two projections; consumers never
+  parse persisted registry JSON or approval snapshots;
+- definition-driven target resolution that follows `inference.fallbackOrder`
+  exactly, including intentional omissions;
+- fail-closed validation for missing required context, inconsistent
+  target-bearing context, and runtime or governed-state target kinds outside
+  the registered hierarchy;
+- persistence and reload of both projections without changing canonical
+  digest, revision, or compatibility behavior.
+
+Validation:
+
+- reordered hierarchies and explicit fallback omissions change lookup order;
+- global-only fallback does not probe undeclared user or cohort state;
+- missing required runtime context returns a stable contract error;
+- runtime and control targets outside the definition hierarchy are rejected;
+- intelligence/lifecycle consumers can read objectives, evidence and guardrail
+  roles, workflow permissions, action space, and safety constraints without
+  raw JSON access;
+- Tetris and adaptive-worker requests remain contract-equivalent.
+
 ### Phase 4: Minimal async intelligence and governance loop
 
 Goal: introduce the async path without requiring a full AI platform.
@@ -663,7 +700,7 @@ Before adding features, verify the change extends one of these seams instead of 
 - new result shape: should not be added unless boolean/number/string is insufficient,
 - new strategy type: extend `DecisionStrategy`,
 - new evidence source: implement `IEvidenceProvider`,
-- new storage backend: implement `IDefinitionRegistry` or `IStateStore`,
+- new storage backend: implement the registry read/lifecycle ports or `IStateStore`,
 - new policy rule: extend `IPolicyEvaluator`,
 - new async reasoning mode: implement `IDecisionIntelligence`,
 - new telemetry transport: extend SDK telemetry mode without changing decision calls,

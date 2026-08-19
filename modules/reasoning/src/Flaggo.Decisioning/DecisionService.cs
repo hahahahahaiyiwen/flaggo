@@ -32,7 +32,7 @@ public sealed class GuidRuntimeIdGenerator : IRuntimeIdGenerator
 }
 
 public sealed class DecisionService(
-    IDefinitionRegistry definitionRegistry,
+    IRuntimeDefinitionReader definitionRegistry,
     IStateStore stateStore,
     IExposureStore exposureStore,
     IAuditSink auditSink,
@@ -49,7 +49,7 @@ public sealed class DecisionService(
         DecideRequest request,
         CancellationToken cancellationToken = default)
     {
-        var lookup = await definitionRegistry.ResolveAsync(
+        var lookup = await definitionRegistry.ResolveRuntimeAsync(
             request.Client.AppId,
             request.Client.Environment,
             decisionKey,
@@ -84,6 +84,7 @@ public sealed class DecisionService(
         VerifyInputs(definition.Inputs, request.Inputs);
 
         var targetPlan = await targetResolver.ResolveAsync(
+            definition,
             request.RuntimeTarget,
             request.RuntimeContext,
             cancellationToken);
@@ -94,13 +95,19 @@ public sealed class DecisionService(
             targetPlan.StateTargets,
             cancellationToken);
 
-        if (state is not null &&
-            !string.Equals(state.ContractDigest, definition.Identity.ContractDigest, StringComparison.Ordinal))
+        if (state is not null)
         {
-            throw new DecisionContractException(
-                409,
-                "contract-conflict",
-                "Governed state does not match the registered contract.");
+            VerifyStateTarget(definition, state, targetPlan.StateTargets);
+            if (!string.Equals(
+                    state.ContractDigest,
+                    definition.Identity.ContractDigest,
+                    StringComparison.Ordinal))
+            {
+                throw new DecisionContractException(
+                    409,
+                    "contract-conflict",
+                    "Governed state does not match the registered contract.");
+            }
         }
 
         DecisionEvidenceSnapshot? evidence = null;
@@ -117,6 +124,9 @@ public sealed class DecisionService(
         }
         else
         {
+            var effectivePolicy = EffectivePolicy(
+                definition.Policy,
+                state.Mode);
             try
             {
                 evidence = await evidenceProvider.GetEvidenceAsync(
@@ -137,9 +147,9 @@ public sealed class DecisionService(
                 evidence = null;
             }
 
-            if (evidence is null && definition.Policy?.RequiresEvidence == true)
+            if (evidence is null && effectivePolicy?.RequiresEvidence == true)
             {
-                throw RequiredEvidenceUnavailable(definition.Policy);
+                throw RequiredEvidenceUnavailable(effectivePolicy);
             }
 
             execution = await strategyExecutor.ExecuteAsync(
@@ -165,7 +175,7 @@ public sealed class DecisionService(
                     execution.Candidate,
                     state.Value,
                     definition.NumberActionSpace,
-                    definition.Policy,
+                    effectivePolicy,
                     evidence,
                     state.LastChangedAt,
                     execution.FailureReason),
@@ -425,6 +435,17 @@ public sealed class DecisionService(
         IReadOnlyDictionary<string, JsonElement> runtimeContext)
     {
         var contracts = registeredFields.ToDictionary(field => field.Key, StringComparer.Ordinal);
+        foreach (var required in registeredFields.Where(field => field.Required))
+        {
+            if (!runtimeContext.ContainsKey(required.Key))
+            {
+                throw new DecisionContractException(
+                    422,
+                    "invalid-runtime-context",
+                    $"Required runtime context field '{required.Key}' is missing.");
+            }
+        }
+
         foreach (var (key, value) in runtimeContext)
         {
             if (!contracts.TryGetValue(key, out var contract))
@@ -449,8 +470,49 @@ public sealed class DecisionService(
                     "invalid-runtime-context",
                     $"Runtime context field '{key}' must be a {contract.ValueType}.");
             }
+
+            if (!string.IsNullOrWhiteSpace(contract.TargetType) &&
+                value.ValueKind == JsonValueKind.String &&
+                string.IsNullOrWhiteSpace(value.GetString()))
+            {
+                throw new DecisionContractException(
+                    422,
+                    "invalid-runtime-context",
+                    $"Target-bearing runtime context field '{key}' must not be empty.");
+            }
         }
     }
+
+    private static void VerifyStateTarget(
+        RuntimeDecisionDefinition definition,
+        GovernedDecisionState state,
+        IReadOnlyList<DecisionTargetRef?> permittedTargets)
+    {
+        if (state.ControlTarget is not null &&
+            !definition.AllowsTargetKind(state.ControlTarget.Type) ||
+            !permittedTargets.Any(target =>
+                TargetsEqual(target, state.ControlTarget)))
+        {
+            throw new DecisionContractException(
+                409,
+                "contract-conflict",
+                "Governed state control target is outside the registered definition resolution plan.");
+        }
+    }
+
+    private static DecisionPolicyContract? EffectivePolicy(
+        DecisionPolicyContract? policy,
+        string mode) =>
+        policy is not null &&
+        mode is not ("strategy" or "experiment")
+            ? policy with
+            {
+                MinimumEvidenceQuality = null,
+                MaximumModelUncertainty = null,
+                MinimumExpectedOutcome = null,
+                MinimumSampleSize = null
+            }
+            : policy;
 
     private static bool TargetsEqual(DecisionTargetRef? left, DecisionTargetRef? right) =>
         left is null && right is null ||

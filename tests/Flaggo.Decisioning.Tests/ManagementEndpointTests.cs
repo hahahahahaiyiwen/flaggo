@@ -163,7 +163,7 @@ public sealed class ManagementEndpointTests
                 services.AddSingleton(
                     new InMemoryDefinitionRegistry(
                     [
-                        new RegisteredDecisionDefinition(
+                        new RuntimeDecisionDefinition(
                             "tetris-demo",
                             "dev",
                             "tetris.dropInterval",

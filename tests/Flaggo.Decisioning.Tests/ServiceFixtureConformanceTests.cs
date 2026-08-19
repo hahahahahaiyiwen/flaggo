@@ -907,7 +907,7 @@ public sealed class ServiceFixtureConformanceTests
             ? body
             : default;
 
-    private static IDefinitionRegistry RuntimeRegistry(
+    private static IRuntimeDefinitionReader RuntimeRegistry(
         JsonElement fixture,
         FixturePlan plan)
     {
@@ -998,7 +998,16 @@ public sealed class ServiceFixtureConformanceTests
                     RequiredEvidenceUnavailable: "forbid"),
             _ => null
         };
-        var definition = new RegisteredDecisionDefinition(
+        var inferenceTarget =
+            requestBody.TryGetProperty("runtimeTarget", out var runtimeTarget) &&
+            runtimeTarget.ValueKind == JsonValueKind.Object &&
+            runtimeTarget.TryGetProperty("type", out var runtimeTargetType)
+                ? runtimeTargetType.GetString()!
+                : decisionKey == "tetris.dropInterval"
+                    ? "session"
+                    : "global";
+        var hierarchy = new[] { "session", "user", "cohort", "global" };
+        var definition = new RuntimeDecisionDefinition(
             requestBody.TryGetProperty("client", out var client)
                 ? client.GetProperty("appId").GetString()!
                 : "tetris-demo",
@@ -1019,7 +1028,17 @@ public sealed class ServiceFixtureConformanceTests
             decisionKey == "tetris.dropInterval" ? runtimeFields : [],
             lifecycle,
             valueType == "number" ? new NumberActionSpaceContract(0, 5000) : null,
-            policy);
+            policy,
+            TargetHierarchy: hierarchy,
+            InferenceTarget: inferenceTarget,
+            FallbackOrder: hierarchy
+                .SkipWhile(target =>
+                    !string.Equals(
+                        target,
+                        inferenceTarget,
+                        StringComparison.Ordinal))
+                .Skip(1)
+                .ToArray());
         return new InMemoryDefinitionRegistry([definition]);
     }
 
@@ -1066,7 +1085,7 @@ public sealed class ServiceFixtureConformanceTests
         FixturePlan plan,
         MutableTimeProvider time)
     {
-        IReadOnlyList<RegisteredDecisionDefinition> definitions = plan.Setup switch
+        IReadOnlyList<RuntimeDecisionDefinition> definitions = plan.Setup switch
         {
             SetupKind.EmptyRegistry => [],
             SetupKind.PreviousDefinition or
@@ -1087,7 +1106,7 @@ public sealed class ServiceFixtureConformanceTests
             time);
     }
 
-    private static RegisteredDecisionDefinition IdenticalDefinition()
+    private static RuntimeDecisionDefinition IdenticalDefinition()
     {
         var definition = LocalRegistryHosting.DefaultDefinitions()[0];
         return definition with
@@ -1100,7 +1119,7 @@ public sealed class ServiceFixtureConformanceTests
         };
     }
 
-    private static RegisteredDecisionDefinition PreviousDefinition()
+    private static RuntimeDecisionDefinition PreviousDefinition()
     {
         var definition = LocalRegistryHosting.DefaultDefinitions()[0];
         return definition with
@@ -1113,7 +1132,7 @@ public sealed class ServiceFixtureConformanceTests
         };
     }
 
-    private static IReadOnlyList<RegisteredDecisionDefinition> MultiDefinitions(
+    private static IReadOnlyList<RuntimeDecisionDefinition> MultiDefinitions(
         JsonElement fixture)
     {
         var bundle = fixture.GetProperty("request").GetProperty("body");
@@ -1124,7 +1143,7 @@ public sealed class ServiceFixtureConformanceTests
         {
             var key = definition.GetProperty("key").GetString()!;
             var identity = accepted.GetProperty(key);
-            return new RegisteredDecisionDefinition(
+            return new RuntimeDecisionDefinition(
                 "tetris-demo",
                 "dev",
                 key,
@@ -1144,7 +1163,7 @@ public sealed class ServiceFixtureConformanceTests
         }).ToArray();
     }
 
-    private static IReadOnlyList<RegisteredDecisionDefinition>
+    private static IReadOnlyList<RuntimeDecisionDefinition>
         LineageMismatchDefinitions()
     {
         var current = IdenticalDefinition() with
@@ -1387,7 +1406,7 @@ public sealed class ServiceFixtureConformanceTests
             {
                 ConfigureAuthentication(services, fixture, plan);
                 services.RemoveAll<LocalFileDefinitionRegistry>();
-                services.RemoveAll<IDefinitionRegistry>();
+                services.RemoveAll<IRuntimeDefinitionReader>();
                 services.RemoveAll<IRegistryHealth>();
                 var registry = RuntimeRegistry(fixture, plan);
                 services.AddSingleton(registry);
@@ -1753,16 +1772,16 @@ public sealed class ServiceFixtureConformanceTests
     }
 
     private sealed class ThrowingRegistry(Exception exception) :
-        IDefinitionRegistry
+        IRuntimeDefinitionReader
     {
-        public Task<DefinitionLookup> ResolveAsync(
+        public Task<RuntimeDefinitionLookup> ResolveRuntimeAsync(
             string appId,
             string environment,
             string decisionKey,
             string definitionId,
             string revision,
             CancellationToken cancellationToken) =>
-            Task.FromException<DefinitionLookup>(exception);
+            Task.FromException<RuntimeDefinitionLookup>(exception);
     }
 
     private sealed class ThrowingExposureAuditSink(Exception exception) :
