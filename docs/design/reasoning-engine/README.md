@@ -20,6 +20,21 @@ Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXE
 
 The online executor must be fast and bounded. The async proposal source may later become agentic.
 
+## Definition projection ownership
+
+Runtime reasoning receives a typed `RuntimeDefinitionProjection` through the
+registry-owned async read port. It does not parse definition bundles or
+registry persistence. Target resolution uses the projection's inference target
+followed by its explicit fallback order; target hierarchy is an authorization
+boundary, not an implied precedence list. Missing required context,
+inconsistent target bindings, and runtime or governed-state targets outside
+that boundary fail closed before strategy execution.
+
+Async proposal generation receives the separate
+`IntelligenceLifecycleDefinitionSnapshot`, which exposes objectives, signal
+roles, workflow permissions, action space, and safety envelope without
+granting runtime authority.
+
 ## Online strategy executor port
 
 ```ts

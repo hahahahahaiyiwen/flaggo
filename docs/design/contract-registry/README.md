@@ -224,13 +224,26 @@ Tooling extracts signal identities and target schemas from the bindings above, d
 
 The registry and SDK use the canonicalization rules in [Shared Contracts](../shared-contracts/README.md#canonical-definition-normalization-and-digest), including RFC 8785 serialization, order-sensitive hierarchy/precedence arrays, key-sorted signal-role sets, and duplicate rejection.
 
-## MVP runtime port
+## Typed definition read ports
 
-The runtime Decision API should depend on a registry port, not a concrete database or cloud service.
+The runtime Decision API and async intelligence/lifecycle consumers depend on
+separate registry-owned projections, not a concrete database, approval
+snapshot, or raw persisted bundle.
 
 ```ts
-interface IDefinitionRegistry {
-  getActiveDefinition(ref: DecisionDefinitionRef): Promise<DecisionDefinition>;
+interface IRuntimeDefinitionReader {
+  getRuntimeDefinition(
+    ref: DecisionDefinitionRef
+  ): Promise<RuntimeDefinitionProjection>;
+}
+
+interface IIntelligenceDefinitionReader {
+  getIntelligenceDefinition(
+    ref: DecisionDefinitionRef
+  ): Promise<IntelligenceLifecycleDefinitionSnapshot>;
+}
+
+interface IDefinitionBundleManager {
   validateBundle(bundle: DecisionDefinitionBundle): Promise<DefinitionBundleValidationResult>;
   applyBundle(bundle: DecisionDefinitionBundle): Promise<DefinitionBundleApplyResult>;
 }
@@ -275,6 +288,17 @@ type ContractIssue = {
   signalKey?: string;
 };
 ```
+
+`RuntimeDefinitionProjection` contains only executable request-path semantics:
+canonical identity, target hierarchy, inference target, explicit fallback
+order, runtime-context requirements and target bindings, inference inputs,
+fallback, action bounds, and effective runtime policy.
+
+`IntelligenceLifecycleDefinitionSnapshot` carries the same canonical identity
+plus objectives, signal roles, workflow permissions, action space, and safety
+envelope. The registry constructs and persists both projections atomically from
+an accepted semantic definition. Compatibility classification and
+metadata-only updates therefore cannot make the projections disagree.
 
 MVP implementation:
 

@@ -141,7 +141,7 @@ public sealed class DefinitionLifecycleTests
             result.Issues,
             issue => issue.Code == "unknown-signal" &&
                      issue.Path == "/definitions/0/inference/inputs/0");
-        var lookup = await registry.ResolveAsync(
+        var lookup = await registry.ResolveRuntimeAsync(
             "tetris-demo",
             "dev",
             "tetris.dropInterval",
@@ -204,7 +204,7 @@ public sealed class DefinitionLifecycleTests
 
         Assert.Equal(202, apply.StatusCode);
         var pending = Assert.IsType<RequiresApprovalResult>(apply.Body);
-        var before = await registry.ResolveAsync(
+        var before = await registry.ResolveRuntimeAsync(
             "tetris-demo",
             "dev",
             "tetris.dropInterval",
@@ -225,7 +225,7 @@ public sealed class DefinitionLifecycleTests
         Assert.Equal(200, replay.StatusCode);
         Assert.Same(approved.Receipt, replay.Body);
         var accepted = Assert.Single(approved.Receipt!.AcceptedDefinitions).Value;
-        var after = await registry.ResolveAsync(
+        var after = await registry.ResolveRuntimeAsync(
             "tetris-demo",
             "dev",
             "tetris.dropInterval",
@@ -267,7 +267,7 @@ public sealed class DefinitionLifecycleTests
                 null,
                 CancellationToken.None));
         Assert.Equal("approval-terminal-conflict", conflict.Code);
-        var lookup = await registry.ResolveAsync(
+        var lookup = await registry.ResolveRuntimeAsync(
             "tetris-demo",
             "dev",
             "tetris.dropInterval",
@@ -342,7 +342,7 @@ public sealed class DefinitionLifecycleTests
         Assert.Equal("approval-stale-conflict", stale.Code);
         var accepted = Assert.Single(
             competingApproved.Receipt!.AcceptedDefinitions).Value;
-        var active = await registry.ResolveAsync(
+        var active = await registry.ResolveRuntimeAsync(
             "tetris-demo",
             "dev",
             "tetris.dropInterval",
@@ -453,7 +453,7 @@ public sealed class DefinitionLifecycleTests
         string digest) =>
         new(
         [
-            new RegisteredDecisionDefinition(
+            new RuntimeDecisionDefinition(
                 "tetris-demo",
                 "dev",
                 "tetris.dropInterval",

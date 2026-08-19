@@ -82,6 +82,8 @@ builder.Services.AddSingleton<IDefinitionBundleManager>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IDefinitionApprovalManager>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
+builder.Services.AddSingleton<IIntelligenceDefinitionReader>(
+    provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 
 var app = builder.Build();
 

@@ -148,6 +148,93 @@ public sealed class DecisionServiceTests
     }
 
     [Fact]
+    public async Task DecideAsync_RejectsMissingRequiredRuntimeContext()
+    {
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            runtimeContext:
+            [
+                new RegisteredRuntimeContextField(
+                    "sessionId",
+                    "string",
+                    Required: true,
+                    TargetType: "session")
+            ]);
+
+        var error = await Assert.ThrowsAsync<DecisionContractException>(
+            () => service.DecideAsync("tetris.dropInterval", CreateRequest()));
+
+        Assert.Equal(422, error.Status);
+        Assert.Equal("invalid-runtime-context", error.Code);
+        Assert.Contains("sessionId", error.Message);
+    }
+
+    [Fact]
+    public async Task DecideAsync_RejectsRuntimeTargetOutsideDefinitionHierarchy()
+    {
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            targetHierarchy: ["cohort", "global"],
+            inferenceTarget: "cohort",
+            fallbackOrder: ["global"]);
+
+        var error = await Assert.ThrowsAsync<DecisionContractException>(
+            () => service.DecideAsync("tetris.dropInterval", CreateRequest()));
+
+        Assert.Equal(422, error.Status);
+        Assert.Equal("invalid-runtime-target", error.Code);
+    }
+
+    [Fact]
+    public async Task DecideAsync_RejectsConflictingTargetBearingContext()
+    {
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            runtimeContext:
+            [
+                new RegisteredRuntimeContextField(
+                    "sessionId",
+                    "string",
+                    TargetType: "session")
+            ]);
+        var request = CreateRequest() with
+        {
+            RuntimeContext = new Dictionary<string, JsonElement>
+            {
+                ["sessionId"] = JsonSerializer.SerializeToElement("other-game")
+            }
+        };
+
+        var error = await Assert.ThrowsAsync<DecisionContractException>(
+            () => service.DecideAsync("tetris.dropInterval", request));
+
+        Assert.Equal("invalid-runtime-context", error.Code);
+    }
+
+    [Fact]
+    public async Task DecideAsync_RejectsStoreTargetOutsideDefinitionHierarchy()
+    {
+        var state = new GovernedDecisionState(
+            Identity.DefinitionId,
+            Identity.Revision,
+            Identity.ContractDigest,
+            JsonSerializer.SerializeToElement(700),
+            new DecisionTargetRef("cohort", "new_players"));
+        var service = CreateService(
+            new InMemoryAuditSink(),
+            stateStore: new IgnoringStateStore(state),
+            targetHierarchy: ["session", "global"],
+            inferenceTarget: "session",
+            fallbackOrder: ["global"]);
+
+        var error = await Assert.ThrowsAsync<DecisionContractException>(
+            () => service.DecideAsync("tetris.dropInterval", CreateRequest()));
+
+        Assert.Equal(409, error.Status);
+        Assert.Equal("contract-conflict", error.Code);
+    }
+
+    [Fact]
     public async Task DecideAsync_PersistsExposureAttributionSnapshot()
     {
         var exposure = new InMemoryExposureStore(new FixedTimeProvider(), () => "exposure-test");
@@ -385,7 +472,9 @@ public sealed class DecisionServiceTests
             Identity.DefinitionId,
             Identity.Revision,
             Identity.ContractDigest,
-            JsonSerializer.SerializeToElement(750));
+            JsonSerializer.SerializeToElement(750),
+            Mode: "strategy",
+            StrategyId: "strategy-test");
         var service = CreateService(
             new InMemoryAuditSink(),
             state,
@@ -478,9 +567,14 @@ public sealed class DecisionServiceTests
         IEvidenceProvider? evidenceProvider = null,
         NumberActionSpaceContract? numberActionSpace = null,
         DecisionPolicyContract? policy = null,
-        IStrategyExecutor? strategyExecutor = null)
+        IStrategyExecutor? strategyExecutor = null,
+        IReadOnlyList<RegisteredRuntimeContextField>? runtimeContext = null,
+        IReadOnlyList<string>? targetHierarchy = null,
+        string inferenceTarget = "session",
+        IReadOnlyList<string>? fallbackOrder = null,
+        IStateStore? stateStore = null)
     {
-        var definition = new RegisteredDecisionDefinition(
+        var definition = new RuntimeDecisionDefinition(
             "tetris-demo",
             "dev",
             "tetris.dropInterval",
@@ -489,21 +583,36 @@ public sealed class DecisionServiceTests
             JsonSerializer.SerializeToElement(800),
             "safe-default",
             [new RegisteredSignalInput("tetris.boardPressure", "number", 0, 1)],
+            runtimeContext ??
             [
-                new RegisteredRuntimeContextField("userId", "string"),
-                new RegisteredRuntimeContextField("sessionId", "string"),
-                new RegisteredRuntimeContextField("cohort", "string"),
+                new RegisteredRuntimeContextField(
+                    "userId",
+                    "string",
+                    TargetType: "user"),
+                new RegisteredRuntimeContextField(
+                    "sessionId",
+                    "string",
+                    TargetType: "session"),
+                new RegisteredRuntimeContextField(
+                    "cohort",
+                    "string",
+                    TargetType: "cohort"),
                 new RegisteredRuntimeContextField("deviceType", "string")
             ],
             NumberActionSpace: numberActionSpace,
-            Policy: policy);
+            Policy: policy,
+            TargetHierarchy:
+                targetHierarchy ?? ["session", "user", "cohort", "global"],
+            InferenceTarget: inferenceTarget,
+            FallbackOrder: fallbackOrder ?? ["user", "cohort", "global"]);
 
         return new DecisionService(
             new InMemoryDefinitionRegistry([definition]),
-            new InMemoryStateStore(
-                state is null
-                    ? []
-                    : [("tetris.dropInterval", state)]),
+            stateStore ??
+                new InMemoryStateStore(
+                    state is null
+                        ? []
+                        : [("tetris.dropInterval", state)]),
             exposureStore ?? new InMemoryExposureStore(
                 new FixedTimeProvider(),
                 () => "exposure-test"),
@@ -550,6 +659,17 @@ public sealed class DecisionServiceTests
             DecisionAuditRecord record,
             CancellationToken cancellationToken) =>
             Task.FromException(new IOException("audit unavailable"));
+    }
+
+    private sealed class IgnoringStateStore(GovernedDecisionState state) : IStateStore
+    {
+        public Task<GovernedDecisionState?> GetActiveAsync(
+            string decisionKey,
+            string definitionId,
+            string revision,
+            IReadOnlyList<DecisionTargetRef?> resolutionTargets,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<GovernedDecisionState?>(state);
     }
 
     private sealed class ThrowingEvidenceProvider : IEvidenceProvider

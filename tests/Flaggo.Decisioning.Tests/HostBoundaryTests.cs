@@ -338,8 +338,8 @@ public sealed class HostBoundaryTests
                 registryFile.Path,
                 services =>
                 {
-                    services.RemoveAll<IDefinitionRegistry>();
-                    services.AddSingleton<IDefinitionRegistry>(registry);
+                    services.RemoveAll<IRuntimeDefinitionReader>();
+                    services.AddSingleton<IRuntimeDefinitionReader>(registry);
                     services.RemoveAll<IStateStore>();
                     services.AddSingleton<IStateStore>(stateStore);
                     services.RemoveAll<IEvidenceProvider>();
@@ -408,8 +408,8 @@ public sealed class HostBoundaryTests
                 registryFile.Path,
                 services =>
                 {
-                    services.RemoveAll<IDefinitionRegistry>();
-                    services.AddSingleton<IDefinitionRegistry>(
+                    services.RemoveAll<IRuntimeDefinitionReader>();
+                    services.AddSingleton<IRuntimeDefinitionReader>(
                         new InMemoryDefinitionRegistry([definition]));
                     services.RemoveAll<IStateStore>();
                     services.AddSingleton<IStateStore>(
@@ -641,7 +641,7 @@ public sealed class HostBoundaryTests
         ["session:game-1", "cohort:new_players", "global"],
         new PolicyEvaluationResult("approved", [], []));
 
-    private static RegisteredDecisionDefinition RequiredEvidenceDefinition(
+    private static RuntimeDecisionDefinition RequiredEvidenceDefinition(
         string requiredEvidenceUnavailable) =>
         new(
             "tetris-demo",
@@ -659,7 +659,10 @@ public sealed class HostBoundaryTests
             NumberActionSpace: new NumberActionSpaceContract(700, 900),
             Policy: new DecisionPolicyContract(
                 MinimumEvidenceQuality: 0.7,
-                RequiredEvidenceUnavailable: requiredEvidenceUnavailable));
+                RequiredEvidenceUnavailable: requiredEvidenceUnavailable),
+            TargetHierarchy: ["cohort", "global"],
+            InferenceTarget: "cohort",
+            FallbackOrder: ["global"]);
 
     private sealed class LocalHostFactory<TEntryPoint>(
         string registryPath,

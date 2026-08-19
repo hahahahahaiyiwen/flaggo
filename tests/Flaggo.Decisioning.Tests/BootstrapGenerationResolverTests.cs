@@ -315,7 +315,7 @@ public sealed class BootstrapGenerationResolverTests
     private static DecisionEvidenceRequest EvidenceRequest(
         GovernedDecisionState state) =>
         new(
-            new RegisteredDecisionDefinition(
+            new RuntimeDecisionDefinition(
                 "tetris-demo",
                 "dev",
                 "tetris.dropInterval",

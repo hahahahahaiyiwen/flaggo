@@ -6,7 +6,7 @@ using Flaggo.State;
 namespace Flaggo.Evidence;
 
 public sealed record DecisionEvidenceRequest(
-    RegisteredDecisionDefinition Definition,
+    RuntimeDecisionDefinition Definition,
     GovernedDecisionState State,
     IReadOnlyDictionary<string, JsonElement> RuntimeContext,
     IReadOnlyList<SignalInput> Inputs);

@@ -83,7 +83,7 @@ builder.Services.AddSingleton(
         builder.Configuration,
         builder.Environment.ContentRootPath,
         TimeProvider.System));
-builder.Services.AddSingleton<IDefinitionRegistry>(
+builder.Services.AddSingleton<IRuntimeDefinitionReader>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IRegistryHealth>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());

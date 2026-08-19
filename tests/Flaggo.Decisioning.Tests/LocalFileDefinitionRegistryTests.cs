@@ -27,7 +27,7 @@ public sealed class LocalFileDefinitionRegistryTests
 
         var pending = Assert.IsType<RequiresApprovalResult>(
             (await writer.ApplyAsync("shared-file-apply", bundle)).Body);
-        var before = await reader.ResolveAsync(
+        var before = await reader.ResolveRuntimeAsync(
             seed.AppId,
             seed.Environment,
             seed.DecisionKey,
@@ -42,7 +42,7 @@ public sealed class LocalFileDefinitionRegistryTests
             new ApprovalActor("test-operator"),
             "Approved in another adapter instance.");
         var accepted = Assert.Single(approved.Receipt!.AcceptedDefinitions).Value;
-        var after = await reader.ResolveAsync(
+        var after = await reader.ResolveRuntimeAsync(
             seed.AppId,
             seed.Environment,
             seed.DecisionKey,
@@ -163,7 +163,7 @@ public sealed class LocalFileDefinitionRegistryTests
         Assert.Equal("bundle-idempotency-conflict", secondConflict.Code);
     }
 
-    private static RegisteredDecisionDefinition PreviousDefinition() =>
+    private static RuntimeDecisionDefinition PreviousDefinition() =>
         new(
             "tetris-demo",
             "dev",

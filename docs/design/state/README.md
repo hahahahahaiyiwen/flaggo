@@ -46,6 +46,13 @@ type StateUpdate = {
 };
 ```
 
+Runtime lookup receives an ordered set of exact targets from reasoning after
+the registry-owned runtime projection has authorized the target kinds.
+`IStateStore` owns storage and exact tuple matching; it does not derive
+hierarchy, add implicit user/cohort/global fallback, or parse registry
+definitions. Reasoning rejects any returned control target that is not one of
+the requested permitted targets.
+
 ## Runtime behavior
 
 ```text

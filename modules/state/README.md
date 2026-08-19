@@ -19,7 +19,10 @@ or incompatible governed state. Governed values carry their actual control
 target, optional deterministic numeric-rule strategy, and last-change time for
 cooldown evaluation. Lookup follows the request resolution hierarchy so
 attribution is derived from the selected state rather than independently from
-client claims.
+client claims. The reasoning boundary supplies an ordered list already
+validated against the registry-owned runtime definition projection. State
+adapters must match only those exact targets and must never invent broader
+fallback or reinterpret target hierarchy semantics.
 
 The module also defines in-memory async ports for 24-hour decide idempotency
 and exposure confirmation. Concurrent requests with the same key and request

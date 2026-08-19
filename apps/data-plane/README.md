@@ -8,6 +8,10 @@ audit ports. Contract/configuration errors fail closed; only explicitly
 eligible availability failures may reach an SDK-local fallback. Keep its wire
 behavior aligned with `contracts/openapi/flaggo-runtime-v1.yaml`.
 
+The host registers only `IRuntimeDefinitionReader` from the local registry.
+Runtime code receives the typed executable projection and cannot read
+intelligence/lifecycle semantics or parse registry persistence.
+
 ## Current implementation
 
 `src/Flaggo.DataPlane` is the .NET 10 runtime composition root. It exposes only
@@ -84,6 +88,10 @@ do not fall back to the seed.
 Rate-limited decision failures carry matching `Retry-After` and
 `retryAfterSeconds` values. Global resolution fallback retains the originating
 cohort claim in target provenance while identifying the resolved global target.
+Target lookup follows the registered inference target and explicit fallback
+order, accepts request targets only from the registered hierarchy, and rejects
+missing required or inconsistent target-bearing runtime context before state
+lookup.
 
 Phase 3 local integration selects file-backed state and audit adapters through
 `Flaggo__State__LocalFilePath`, `Flaggo__Evidence__LocalFilePath`, and

@@ -394,7 +394,7 @@ public sealed class LocalFileEvidenceProviderTests
             });
 
     private static DecisionEvidenceRequest Request(string strategyId) => new(
-        new RegisteredDecisionDefinition(
+        new RuntimeDecisionDefinition(
             "tetris-demo",
             "dev",
             "tetris.dropInterval",

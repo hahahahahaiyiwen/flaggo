@@ -9,7 +9,8 @@ public sealed record LocalFileDefinitionRegistryOptions(
     TimeSpan? LockRetryDelay = null);
 
 public sealed class LocalFileDefinitionRegistry :
-    IDefinitionRegistry,
+    IRuntimeDefinitionReader,
+    IIntelligenceDefinitionReader,
     IRegistryHealth,
     IDefinitionBundleManager,
     IDefinitionApprovalManager
@@ -24,15 +25,19 @@ public sealed class LocalFileDefinitionRegistry :
     private readonly string _lockPath;
     private readonly TimeSpan _lockTimeout;
     private readonly TimeSpan _lockRetryDelay;
-    private readonly IReadOnlyList<RegisteredDecisionDefinition> _seedDefinitions;
+    private readonly IReadOnlyList<RuntimeDecisionDefinition> _seedDefinitions;
+    private readonly IReadOnlyList<IntelligenceLifecycleDefinitionSnapshot>
+        _seedIntelligenceDefinitions;
     private readonly IDefinitionIdentityGenerator _identityGenerator;
     private readonly TimeProvider _timeProvider;
 
     public LocalFileDefinitionRegistry(
         LocalFileDefinitionRegistryOptions options,
-        IEnumerable<RegisteredDecisionDefinition> seedDefinitions,
+        IEnumerable<RuntimeDecisionDefinition> seedDefinitions,
         IDefinitionIdentityGenerator? identityGenerator = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IEnumerable<IntelligenceLifecycleDefinitionSnapshot>?
+            seedIntelligenceDefinitions = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(options.FilePath);
         _filePath = Path.GetFullPath(options.FilePath);
@@ -57,11 +62,13 @@ public sealed class LocalFileDefinitionRegistry :
         {
             FallbackValue = definition.FallbackValue.Clone()
         }).ToArray();
+        _seedIntelligenceDefinitions =
+            (seedIntelligenceDefinitions ?? []).ToArray();
         _identityGenerator = identityGenerator ?? new GuidDefinitionIdentityGenerator();
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public Task<DefinitionLookup> ResolveAsync(
+    public Task<RuntimeDefinitionLookup> ResolveRuntimeAsync(
         string appId,
         string environment,
         string decisionKey,
@@ -70,7 +77,25 @@ public sealed class LocalFileDefinitionRegistry :
         CancellationToken cancellationToken) =>
         ExecuteAsync(
             false,
-            registry => registry.ResolveAsync(
+            registry => registry.ResolveRuntimeAsync(
+                appId,
+                environment,
+                decisionKey,
+                definitionId,
+                revision,
+                cancellationToken),
+            cancellationToken);
+
+    public Task<IntelligenceDefinitionLookup> ResolveIntelligenceAsync(
+        string appId,
+        string environment,
+        string decisionKey,
+        string definitionId,
+        string revision,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            false,
+            registry => registry.ResolveIntelligenceAsync(
                 appId,
                 environment,
                 decisionKey,
@@ -245,7 +270,8 @@ public sealed class LocalFileDefinitionRegistry :
             var initial = new InMemoryDefinitionRegistry(
                 _seedDefinitions,
                 _identityGenerator,
-                _timeProvider);
+                _timeProvider,
+                intelligenceDefinitions: _seedIntelligenceDefinitions);
             await SaveAsync(
                 initial.CapturePersistenceState(),
                 cancellationToken);
@@ -265,7 +291,9 @@ public sealed class LocalFileDefinitionRegistry :
         return InMemoryDefinitionRegistry.RestorePersistenceState(
             document.RootElement,
             _identityGenerator,
-            _timeProvider);
+            _timeProvider,
+            _seedDefinitions,
+            _seedIntelligenceDefinitions);
     }
 
     private async Task SaveAsync(

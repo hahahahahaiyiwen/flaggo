@@ -259,6 +259,10 @@ public sealed class DecisionPortTests
         };
 
         var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["session", "user", "cohort", "global"],
+                "session",
+                ["user", "cohort", "global"]),
             runtimeTarget,
             context,
             CancellationToken.None);
@@ -290,13 +294,17 @@ public sealed class DecisionPortTests
             ["cohort"] = JsonSerializer.SerializeToElement("new_players")
         };
         var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["session", "user", "cohort", "global"],
+                "session",
+                ["user", "cohort", "global"]),
             new DecisionTargetRef("session", "game-1"),
             context,
             CancellationToken.None);
 
         var result = plan.Describe(
             new DecisionTargetRef("global", "global"),
-            selectedTargetIndex: 1);
+            selectedTargetIndex: 2);
 
         var provenance = Assert.Single(result.TargetProvenance);
         Assert.Equal("cohort", provenance.TargetType);
@@ -318,7 +326,14 @@ public sealed class DecisionPortTests
             ["cohort"] = JsonSerializer.SerializeToElement("whales")
         };
 
-        var plan = await resolver.ResolveAsync(null, context, CancellationToken.None);
+        var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["session", "user", "cohort", "global"],
+                "session",
+                ["user", "cohort", "global"]),
+            null,
+            context,
+            CancellationToken.None);
         var result = plan.Describe(plan.StateTargets[0], selectedTargetIndex: 0);
         var provenance = Assert.Single(result.TargetProvenance);
 
@@ -338,7 +353,14 @@ public sealed class DecisionPortTests
             ["cohort"] = JsonSerializer.SerializeToElement("admin_users")
         };
 
-        var plan = await resolver.ResolveAsync(null, context, CancellationToken.None);
+        var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["session", "user", "cohort", "global"],
+                "session",
+                ["user", "cohort", "global"]),
+            null,
+            context,
+            CancellationToken.None);
 
         Assert.DoesNotContain(
             plan.StateTargets,
@@ -353,6 +375,10 @@ public sealed class DecisionPortTests
         var claimedTarget = new DecisionTargetRef("cohort", "admin_users");
 
         var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["cohort", "global"],
+                "cohort",
+                ["global"]),
             claimedTarget,
             new Dictionary<string, JsonElement>(),
             CancellationToken.None);
@@ -373,6 +399,10 @@ public sealed class DecisionPortTests
             });
 
         var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["cohort", "global"],
+                "cohort",
+                ["global"]),
             new DecisionTargetRef("cohort", "whales"),
             new Dictionary<string, JsonElement>(),
             CancellationToken.None);
@@ -384,12 +414,461 @@ public sealed class DecisionPortTests
         Assert.Equal("server-replaced", provenance.Source);
     }
 
+    [Fact]
+    public async Task TargetResolver_GlobalFallbackRetainsRuntimeCohortClaim()
+    {
+        var resolver = new DefaultTargetResolver(
+            new Dictionary<string, string>
+            {
+                ["whales"] = "new_players"
+            });
+        var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["cohort", "global"],
+                "cohort",
+                ["global"]),
+            new DecisionTargetRef("cohort", "whales"),
+            new Dictionary<string, JsonElement>(),
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            new DecisionTargetRef("global", "global"),
+            selectedTargetIndex: 1);
+        var provenance = Assert.Single(result.TargetProvenance);
+
+        Assert.Equal("cohort", provenance.TargetType);
+        Assert.Equal("whales", provenance.ClaimedId);
+        Assert.Equal("global", provenance.ResolvedId);
+        Assert.Equal("server-derived", provenance.Source);
+    }
+
+    [Fact]
+    public async Task TargetResolver_GlobalBeforeCohortIsNotCohortDerived()
+    {
+        var resolver = new DefaultTargetResolver(
+            new Dictionary<string, string>
+            {
+                ["new_players"] = "new_players"
+            });
+        var plan = await resolver.ResolveAsync(
+            TargetDefinition(
+                ["session", "global", "cohort"],
+                "session",
+                ["global", "cohort"]),
+            new DecisionTargetRef("session", "game-1"),
+            new Dictionary<string, JsonElement>
+            {
+                ["cohort"] = JsonSerializer.SerializeToElement("new_players")
+            },
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            new DecisionTargetRef("global", "global"),
+            selectedTargetIndex: 1);
+        var provenance = Assert.Single(result.TargetProvenance);
+
+        Assert.Equal("global", provenance.TargetType);
+        Assert.Equal("server-derived", provenance.Source);
+    }
+
+    [Fact]
+    public async Task TargetResolver_FollowsExplicitFallbackOrderAndOmissions()
+    {
+        var resolver = new DefaultTargetResolver(
+            new Dictionary<string, string>
+            {
+                ["new_players"] = "new_players"
+            });
+        var definition = TargetDefinition(
+            ["global", "session", "cohort", "user"],
+            "session",
+            ["cohort", "global"]);
+        var context = new Dictionary<string, JsonElement>
+        {
+            ["userId"] = JsonSerializer.SerializeToElement("user-1"),
+            ["cohort"] = JsonSerializer.SerializeToElement("new_players")
+        };
+
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("session", "game-1"),
+            context,
+            CancellationToken.None);
+
+        Assert.Equal(
+            ["session:game-1", "cohort:new_players", "global"],
+            plan.ResolutionChain);
+        Assert.DoesNotContain(
+            plan.StateTargets,
+            target => target?.Type == "user");
+    }
+
+    [Fact]
+    public async Task TargetResolver_GlobalOnlyFallbackDoesNotProbeOtherTargets()
+    {
+        var resolver = new DefaultTargetResolver(
+            new Dictionary<string, string>
+            {
+                ["new_players"] = "new_players"
+            });
+        var definition = TargetDefinition(
+            ["session", "user", "cohort", "global"],
+            "session",
+            ["global"]);
+        var context = new Dictionary<string, JsonElement>
+        {
+            ["userId"] = JsonSerializer.SerializeToElement("user-1"),
+            ["cohort"] = JsonSerializer.SerializeToElement("new_players")
+        };
+
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("session", "game-1"),
+            context,
+            CancellationToken.None);
+
+        Assert.Equal(["session:game-1", "global"], plan.ResolutionChain);
+        Assert.DoesNotContain(
+            plan.StateTargets,
+            target => target?.Type is "user" or "cohort");
+        var result = plan.Describe(
+            new DecisionTargetRef("global", "global"),
+            selectedTargetIndex: 1);
+        var provenance = Assert.Single(result.TargetProvenance);
+        Assert.Equal("global", provenance.TargetType);
+        Assert.Equal("server-derived", provenance.Source);
+    }
+
+    [Fact]
+    public async Task TargetResolver_DoesNotInferTargetBindingFromContextKey()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = new RuntimeDecisionDefinition(
+            "tetris-demo",
+            "dev",
+            "tetris.dropInterval",
+            new RuntimeContractIdentity(
+                "def-test",
+                $"sha256:{new string('a', 64)}",
+                "rev-test",
+                $"sha256:{new string('b', 64)}"),
+            "number",
+            JsonSerializer.SerializeToElement(800),
+            "safe-default",
+            [],
+            [new RegisteredRuntimeContextField("sessionId", "string")],
+            TargetHierarchy: ["session", "global"],
+            InferenceTarget: "session",
+            FallbackOrder: ["global"]);
+        var context = new Dictionary<string, JsonElement>
+        {
+            ["sessionId"] = JsonSerializer.SerializeToElement("analytics-label")
+        };
+
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("session", "game-1"),
+            context,
+            CancellationToken.None);
+
+        Assert.Equal(["session:game-1", "global"], plan.ResolutionChain);
+        Assert.Empty(plan.TargetContextKeys!);
+    }
+
+    [Fact]
+    public async Task TargetResolver_DoesNotMarkIntermediateTargetAsFallback()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = new RuntimeDecisionDefinition(
+            "tetris-demo",
+            "dev",
+            "tetris.dropInterval",
+            new RuntimeContractIdentity(
+                "def-test",
+                $"sha256:{new string('a', 64)}",
+                "rev-test",
+                $"sha256:{new string('b', 64)}"),
+            "number",
+            JsonSerializer.SerializeToElement(800),
+            "safe-default",
+            [],
+            [
+                new RegisteredRuntimeContextField(
+                    "userId",
+                    "string",
+                    TargetType: "user")
+            ],
+            TargetHierarchy: ["session", "user", "global"],
+            InferenceTarget: "session",
+            FallbackOrder: ["user", "global"]);
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("session", "game-1"),
+            new Dictionary<string, JsonElement>
+            {
+                ["userId"] = JsonSerializer.SerializeToElement("user-1")
+            },
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            new DecisionTargetRef("user", "user-1"),
+            selectedTargetIndex: 1);
+
+        Assert.False(result.ResolutionFallbackUsed);
+    }
+
+    [Fact]
+    public async Task TargetResolver_DoesNotMarkPrimaryGlobalAsFallback()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = new RuntimeDecisionDefinition(
+            "demo",
+            "dev",
+            "application.maintenanceMode",
+            new RuntimeContractIdentity(
+                "def-global",
+                $"sha256:{new string('a', 64)}",
+                "rev-global",
+                $"sha256:{new string('b', 64)}"),
+            "boolean",
+            JsonSerializer.SerializeToElement(false),
+            "safe-default",
+            [],
+            [],
+            TargetHierarchy: ["global"],
+            InferenceTarget: "global",
+            FallbackOrder: []);
+        var plan = await resolver.ResolveAsync(
+            definition,
+            null,
+            new Dictionary<string, JsonElement>(),
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            new DecisionTargetRef("global", "global"),
+            selectedTargetIndex: 0);
+
+        Assert.False(result.ResolutionFallbackUsed);
+        Assert.Equal(
+            "server-derived",
+            Assert.Single(result.TargetProvenance).Source);
+    }
+
+    [Fact]
+    public async Task TargetResolver_TargetlessGlobalFollowsDeclaredFallbacks()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = new RuntimeDecisionDefinition(
+            "demo",
+            "dev",
+            "demo.orderedFallback",
+            new RuntimeContractIdentity(
+                "def-ordered",
+                $"sha256:{new string('a', 64)}",
+                "rev-ordered",
+                $"sha256:{new string('b', 64)}"),
+            "boolean",
+            JsonSerializer.SerializeToElement(false),
+            "safe-default",
+            [],
+            [
+                new RegisteredRuntimeContextField(
+                    "userId",
+                    "string",
+                    TargetType: "user")
+            ],
+            TargetHierarchy: ["session", "global", "user"],
+            InferenceTarget: "session",
+            FallbackOrder: ["global", "user"]);
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("session", "game-1"),
+            new Dictionary<string, JsonElement>
+            {
+                ["userId"] = JsonSerializer.SerializeToElement("user-1")
+            },
+            CancellationToken.None);
+
+        Assert.Collection(
+            plan.StateTargets,
+            target => Assert.Equal(
+                new DecisionTargetRef("session", "game-1"),
+                target),
+            target => Assert.Equal(
+                new DecisionTargetRef("global", "global"),
+                target),
+            target => Assert.Equal(
+                new DecisionTargetRef("user", "user-1"),
+                target),
+            Assert.Null);
+    }
+
+    [Fact]
+    public async Task TargetResolver_TargetlessGlobalFallbackIsReported()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = TargetDefinition(
+            ["session", "global"],
+            "session",
+            ["global"]);
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("session", "game-1"),
+            new Dictionary<string, JsonElement>(),
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            controlTarget: null,
+            selectedTargetIndex: 2);
+
+        Assert.True(result.ResolutionFallbackUsed);
+    }
+
+    [Fact]
+    public async Task TargetResolver_RuntimeTargetWithinHierarchyIsPrimary()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = TargetDefinition(
+            ["session", "user", "global"],
+            "session",
+            ["global"]);
+
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("user", "user-1"),
+            new Dictionary<string, JsonElement>(),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ["user:user-1", "global"],
+            plan.ResolutionChain);
+    }
+
+    [Fact]
+    public async Task TargetResolver_ReportsUserContextAsClientClaimed()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = new RuntimeDecisionDefinition(
+            "demo",
+            "dev",
+            "demo.userSetting",
+            new RuntimeContractIdentity(
+                "def-user",
+                $"sha256:{new string('a', 64)}",
+                "rev-user",
+                $"sha256:{new string('b', 64)}"),
+            "boolean",
+            JsonSerializer.SerializeToElement(false),
+            "safe-default",
+            [],
+            [
+                new RegisteredRuntimeContextField(
+                    "userId",
+                    "string",
+                    TargetType: "user")
+            ],
+            TargetHierarchy: ["user"],
+            InferenceTarget: "user",
+            FallbackOrder: []);
+        var plan = await resolver.ResolveAsync(
+            definition,
+            null,
+            new Dictionary<string, JsonElement>
+            {
+                ["userId"] = JsonSerializer.SerializeToElement("user-1")
+            },
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            new DecisionTargetRef("user", "user-1"),
+            selectedTargetIndex: 0);
+
+        Assert.Equal(
+            "client-claimed",
+            Assert.Single(result.TargetProvenance).Source);
+    }
+
+    [Fact]
+    public async Task TargetResolver_ReportsSessionTargetAsClientClaimed()
+    {
+        var resolver = new DefaultTargetResolver();
+        var definition = new RuntimeDecisionDefinition(
+            "demo",
+            "dev",
+            "demo.sessionSetting",
+            new RuntimeContractIdentity(
+                "def-session",
+                $"sha256:{new string('a', 64)}",
+                "rev-session",
+                $"sha256:{new string('b', 64)}"),
+            "boolean",
+            JsonSerializer.SerializeToElement(false),
+            "safe-default",
+            [],
+            [
+                new RegisteredRuntimeContextField(
+                    "sessionId",
+                    "string",
+                    TargetType: "session")
+            ],
+            TargetHierarchy: ["session"],
+            InferenceTarget: "session",
+            FallbackOrder: []);
+        var plan = await resolver.ResolveAsync(
+            definition,
+            new DecisionTargetRef("session", "game-1"),
+            new Dictionary<string, JsonElement>
+            {
+                ["sessionId"] = JsonSerializer.SerializeToElement("game-1")
+            },
+            CancellationToken.None);
+
+        var result = plan.Describe(
+            new DecisionTargetRef("session", "game-1"),
+            selectedTargetIndex: 0);
+
+        Assert.Equal(
+            "client-claimed",
+            Assert.Single(result.TargetProvenance).Source);
+    }
+
     private static GovernedDecisionState State() =>
         new(
             "def-test",
             "rev-test",
             $"sha256:{new string('a', 64)}",
             JsonSerializer.SerializeToElement(800));
+
+    private static RuntimeDecisionDefinition TargetDefinition(
+        IReadOnlyList<string> hierarchy,
+        string inferenceTarget,
+        IReadOnlyList<string> fallbackOrder) =>
+        new(
+            "tetris-demo",
+            "dev",
+            "tetris.dropInterval",
+            new RuntimeContractIdentity(
+                "def-test",
+                $"sha256:{new string('a', 64)}",
+                "rev-test",
+                $"sha256:{new string('b', 64)}"),
+            "number",
+            JsonSerializer.SerializeToElement(800),
+            "safe-default",
+            [],
+            [
+                new RegisteredRuntimeContextField(
+                    "userId",
+                    "string",
+                    TargetType: "user"),
+                new RegisteredRuntimeContextField(
+                    "cohort",
+                    "string",
+                    TargetType: "cohort")
+            ],
+            TargetHierarchy: hierarchy,
+            InferenceTarget: inferenceTarget,
+            FallbackOrder: fallbackOrder);
 
     private static NumericRuleStrategy TetrisRule() => new(
         "tetris.boardPressure",

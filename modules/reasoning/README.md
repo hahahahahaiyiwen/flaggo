@@ -41,10 +41,34 @@ exposure snapshots retain the full evidence view. Cohort claims resolved by the
 target adapter are marked `client-verified` when unchanged and
 `server-replaced` when an authoritative mapping changes them. Broader target
 selection records server-derived resolution fallback; global fallback retains
-the originating cohort claim and records `global` as the resolved target.
-Unverified cohort claims
-are excluded from governed-state lookup, whose precedence is runtime target,
-user, authoritative cohort, then global.
+the originating cohort claim and records `global` as the resolved target only
+when cohort was part of the permitted resolution path.
+Unverified cohort claims are excluded from governed-state lookup. Direct
+user, session, and custom context targets remain `client-claimed`; matching a
+client-provided value does not make it authoritative.
+
+Target resolution is definition-driven. Reasoning consumes the registry-owned
+runtime projection, validates the request target and target-bearing context
+against its hierarchy, uses a supplied permitted runtime target as the primary
+lookup target (otherwise the declared inference target), and then probes only
+the target kinds listed in `inference.fallbackOrder`, in that order.
+Missing required context and inconsistent target bindings fail closed before
+state lookup. Returned governed state must match one of the permitted
+resolution targets; a store cannot widen the definition by returning an
+undeclared control target. Runtime context contributes a target identifier
+only when the registry projection explicitly marks that field with a target
+type; conventional field names are not interpreted by reasoning.
+The frozen v1 `resolutionFallbackUsed` flag identifies terminal global or
+no-state resolution, while intermediate approved targets remain part of the
+normal resolution chain. A primary global target is therefore not reported as
+fallback and is attributed as server-derived when no client target supplied
+it. The legacy targetless-global state representation is probed only after all
+declared fallback targets so it cannot preempt their explicit order.
+
+Runtime action bounds and policy are shared with the intelligence projection.
+Evidence thresholds apply to adaptive `strategy` and `experiment` candidates;
+governed `active-value` state still enforces non-evidence constraints without
+requiring an evidence snapshot.
 
 `ExposureConfirmationService` owns confirmed-exposure orchestration through
 constructor-injected state and audit ports. It prepares a stable exposure
