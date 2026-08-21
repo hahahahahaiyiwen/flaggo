@@ -10,6 +10,9 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class ExposureConfirmationServiceTests
 {
+    private static readonly TimeSpan ConcurrentTestTimeout =
+        TimeSpan.FromSeconds(30);
+
     [Fact]
     public async Task ConfirmedReplay_ReturnsStoredResultWithoutAdditionalAudit()
     {
@@ -410,17 +413,24 @@ public sealed class ExposureConfirmationServiceTests
             AppIds,
             Environments,
             CancellationToken.None);
-        await attempt.Started.WaitAsync(TimeSpan.FromSeconds(5));
-        shutdown.Cancel();
+        try
+        {
+            await attempt.Started.WaitAsync(ConcurrentTestTimeout);
+            shutdown.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            async () => await confirmation.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Null(innerStore.Find("decision-1")!.Confirmation);
-        Assert.NotNull(innerStore.Find("decision-1")!.PreparedConfirmation);
-        Assert.Equal(0, timeProvider.ActiveTimerCount);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                async () => await confirmation.WaitAsync(ConcurrentTestTimeout));
+            Assert.Null(innerStore.Find("decision-1")!.Confirmation);
+            Assert.NotNull(innerStore.Find("decision-1")!.PreparedConfirmation);
+            Assert.Equal(0, timeProvider.ActiveTimerCount);
+        }
+        finally
+        {
+            shutdown.Cancel();
+            attempt.Succeed();
+        }
 
-        attempt.Succeed();
-        await attempt.Execution.WaitAsync(TimeSpan.FromSeconds(5));
+        await attempt.Execution.WaitAsync(ConcurrentTestTimeout);
     }
 
     private static ExposureConfirmationService CreateService(

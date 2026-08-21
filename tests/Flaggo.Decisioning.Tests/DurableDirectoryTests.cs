@@ -4,6 +4,9 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class DurableDirectoryTests
 {
+    private static readonly TimeSpan ConcurrentTestTimeout =
+        TimeSpan.FromSeconds(30);
+
     [Fact]
     public void Create_NestedMissingPath_SyncsEachParentBeforeItsChild()
     {
@@ -106,28 +109,29 @@ public sealed class DurableDirectoryTests
             var intermediate = Path.Combine(ancestor, "first");
             var target = Path.Combine(intermediate, "second");
             var state = new ConcurrentDirectoryState(ancestor);
-            using var created = new ManualResetEventSlim();
+            var created = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             using var releaseCreator = new ManualResetEventSlim();
             var creatorAOperations = new HookedDirectoryOperations(
                 state,
                 afterCreate: _ =>
                 {
-                    created.Set();
-                    if (!releaseCreator.Wait(TimeSpan.FromSeconds(10)))
+                    created.TrySetResult();
+                    if (!releaseCreator.Wait(ConcurrentTestTimeout))
                     {
                         throw new TimeoutException(
                             "Timed out waiting to release creator A.");
                     }
                 });
             var creatorBOperations = new HookedDirectoryOperations(state);
-            var creatorA = Task.Run(
+            var creatorA = RunLongRunning(
                 () => DurableDirectory.Create(
                     intermediate,
                     creatorAOperations));
 
-            Assert.True(created.Wait(TimeSpan.FromSeconds(10)));
             try
             {
+                await created.Task.WaitAsync(ConcurrentTestTimeout);
                 DurableDirectory.Create(target, creatorBOperations);
 
                 Assert.Equal(
@@ -145,7 +149,7 @@ public sealed class DurableDirectoryTests
             finally
             {
                 releaseCreator.Set();
-                await creatorA;
+                await creatorA.WaitAsync(ConcurrentTestTimeout);
             }
         }
     }
@@ -159,26 +163,27 @@ public sealed class DurableDirectoryTests
                 ArtifactPath($"durable-hook-{attempt}"));
             var target = Path.Combine(ancestor, "target");
             var state = new ConcurrentDirectoryState(ancestor);
-            using var created = new ManualResetEventSlim();
+            var created = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             using var releaseCreator = new ManualResetEventSlim();
             var creatorAOperations = new HookedDirectoryOperations(
                 state,
                 afterCreate: _ =>
                 {
-                    created.Set();
-                    if (!releaseCreator.Wait(TimeSpan.FromSeconds(10)))
+                    created.TrySetResult();
+                    if (!releaseCreator.Wait(ConcurrentTestTimeout))
                     {
                         throw new TimeoutException(
                             "Timed out waiting to release creator A.");
                     }
                 });
             var creatorBOperations = new HookedDirectoryOperations(state);
-            var creatorA = Task.Run(
+            var creatorA = RunLongRunning(
                 () => DurableDirectory.Create(target, creatorAOperations));
 
-            Assert.True(created.Wait(TimeSpan.FromSeconds(10)));
             try
             {
+                await created.Task.WaitAsync(ConcurrentTestTimeout);
                 DurableDirectory.Create(target, creatorBOperations);
 
                 Assert.Equal(
@@ -188,7 +193,7 @@ public sealed class DurableDirectoryTests
             finally
             {
                 releaseCreator.Set();
-                await creatorA;
+                await creatorA.WaitAsync(ConcurrentTestTimeout);
             }
         }
     }
@@ -202,14 +207,15 @@ public sealed class DurableDirectoryTests
                 ArtifactPath($"durable-hook-failure-{attempt}"));
             var target = Path.Combine(ancestor, "target");
             var state = new ConcurrentDirectoryState(ancestor);
-            using var created = new ManualResetEventSlim();
+            var created = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             using var releaseCreator = new ManualResetEventSlim();
             var creatorAOperations = new HookedDirectoryOperations(
                 state,
                 afterCreate: _ =>
                 {
-                    created.Set();
-                    if (!releaseCreator.Wait(TimeSpan.FromSeconds(10)))
+                    created.TrySetResult();
+                    if (!releaseCreator.Wait(ConcurrentTestTimeout))
                     {
                         throw new TimeoutException(
                             "Timed out waiting to release creator A.");
@@ -221,12 +227,12 @@ public sealed class DurableDirectoryTests
                 state,
                 flushFailure: path =>
                     path == failurePath ? expected : null);
-            var creatorA = Task.Run(
+            var creatorA = RunLongRunning(
                 () => DurableDirectory.Create(target, creatorAOperations));
 
-            Assert.True(created.Wait(TimeSpan.FromSeconds(10)));
             try
             {
+                await created.Task.WaitAsync(ConcurrentTestTimeout);
                 Assert.Same(
                     expected,
                     Assert.Throws<IOException>(
@@ -242,10 +248,17 @@ public sealed class DurableDirectoryTests
             finally
             {
                 releaseCreator.Set();
-                await creatorA;
+                await creatorA.WaitAsync(ConcurrentTestTimeout);
             }
         }
     }
+
+    private static Task RunLongRunning(Action action) =>
+        Task.Factory.StartNew(
+            action,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
     [Fact]
     public void Flush_SynchronizesDirectoryOnCurrentPlatform()

@@ -18,3 +18,37 @@ ignored/accounted bucket, and manifest cases without an explicit plan fail.
 Registry integration tests use unique files below `TestResults` and prove that
 an approval committed through a control-plane host becomes decidable through
 an already-created, separately configured data-plane host.
+
+## Decision-service CI diagnostics
+
+The `Contracts` workflow runs the solution test suite with a 10-minute test
+step limit and a 15-minute job limit, so a non-terminating test host cannot
+consume GitHub's six-hour hosted-runner limit.
+
+This safeguard was added after multiple Ubuntu runs left the `dotnet test`,
+MSBuild, VSTest, and testhost process tree alive until GitHub cancelled it at
+six hours. Identical code and runner images passed on rerun, and the current
+suite passed in a native Ubuntu container, so the stall is intermittent rather
+than a deterministic test failure. The historical runs had only the default
+summary logger, so they did not retain enough evidence to attribute the stall
+to one test.
+
+The first instrumented hosted run completed the suite instead of hanging and
+identified two load-sensitive concurrency guards:
+`IdempotencyStore_PublishesRetryableCompletionBeforeReleasingClaim` and
+`ApplicationShutdown_BoundsNonCooperativePostAuditCommit`. The idempotency
+test and durable-directory race tests synchronously blocked constrained xUnit
+workers while their queued continuations needed the same scheduler, which
+could also starve the shutdown test. Completion notifications are now
+asynchronous while deliberate blocking callbacks stay on dedicated workers.
+Their test-only coordination budget is 30 seconds, all awaited owner work is
+bounded, and the non-cooperative commit is released in `finally`. Production
+timeout semantics remain unchanged.
+
+CI now emits individual test progress, enables VSTest hang collection with a
+two-minute test timeout, and writes platform diagnostics to the runner's
+temporary directory. A failed test step uploads those diagnostics, including
+the sequence and mini dump when the hang collector can produce them. The
+outer step timeout remains authoritative if VSTest itself stops responding;
+GitHub hosted-runner cleanup has been observed terminating every remaining
+`dotnet` child process after cancellation.

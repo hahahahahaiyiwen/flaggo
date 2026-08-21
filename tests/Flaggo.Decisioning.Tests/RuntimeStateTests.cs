@@ -8,6 +8,9 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class RuntimeStateTests
 {
+    private static readonly TimeSpan ConcurrentTestTimeout =
+        TimeSpan.FromSeconds(30);
+
     [Fact]
     public void DecisionEvidenceSnapshot_RejectsUnknownMember()
     {
@@ -202,28 +205,34 @@ public sealed class RuntimeStateTests
     [Fact]
     public async Task IdempotencyStore_PublishesRetryableCompletionBeforeReleasingClaim()
     {
-        using var completionPublished = new ManualResetEventSlim();
+        var completionPublished = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         using var releaseClaim = new ManualResetEventSlim();
         var calls = 0;
         var ownerCompletion = new TaskCompletionSource<DecideTerminalOutcome>();
         var store = new InMemoryDecideIdempotencyStore(
             new FixedTimeProvider(),
-            followerWaitBudget: TimeSpan.FromSeconds(5),
+            followerWaitBudget: ConcurrentTestTimeout,
             retryableCompletionPublished: () =>
             {
-                completionPublished.Set();
+                completionPublished.TrySetResult();
                 releaseClaim.Wait();
             });
-        var owner = store.ExecuteAsync(
-            "tenant/app/dev",
-            "key",
-            "fingerprint",
-            _ =>
-            {
-                Interlocked.Increment(ref calls);
-                return ownerCompletion.Task;
-            },
-            CancellationToken.None);
+        var ownerStart = Task.Factory.StartNew(
+            () => store.ExecuteAsync(
+                "tenant/app/dev",
+                "key",
+                "fingerprint",
+                _ =>
+                {
+                    Interlocked.Increment(ref calls);
+                    return ownerCompletion.Task;
+                },
+                CancellationToken.None),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        var owner = await ownerStart.WaitAsync(ConcurrentTestTimeout);
         var follower = store.ExecuteAsync(
             "tenant/app/dev",
             "key",
@@ -240,8 +249,8 @@ public sealed class RuntimeStateTests
             TaskScheduler.Default);
         try
         {
-            Assert.True(completionPublished.Wait(TimeSpan.FromSeconds(5)));
-            var followerResult = await follower.WaitAsync(TimeSpan.FromSeconds(5));
+            await completionPublished.Task.WaitAsync(ConcurrentTestTimeout);
+            var followerResult = await follower.WaitAsync(ConcurrentTestTimeout);
             Assert.Equal(503, followerResult.Outcome.Failure!.Status);
             Assert.Equal(1, Volatile.Read(ref calls));
         }
@@ -250,8 +259,8 @@ public sealed class RuntimeStateTests
             releaseClaim.Set();
         }
 
-        await publishRetryable.WaitAsync(TimeSpan.FromSeconds(5));
-        var ownerResult = await owner;
+        await publishRetryable.WaitAsync(ConcurrentTestTimeout);
+        var ownerResult = await owner.WaitAsync(ConcurrentTestTimeout);
         var recovered = await store.ExecuteAsync(
             "tenant/app/dev",
             "key",
