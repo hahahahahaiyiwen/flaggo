@@ -36,12 +36,14 @@ to one test.
 The first instrumented hosted run completed the suite instead of hanging and
 identified two load-sensitive concurrency guards:
 `IdempotencyStore_PublishesRetryableCompletionBeforeReleasingClaim` and
-`ApplicationShutdown_BoundsNonCooperativePostAuditCommit`. Both allowed only
-five seconds for synthetic scheduling and cleanup while the full Ubuntu suite
-was active, although they passed repeatedly in isolation. Their test-only
-coordination budget is now 30 seconds, all awaited owner work is bounded, and
-the non-cooperative commit is released in `finally`. Production timeout
-semantics remain unchanged.
+`ApplicationShutdown_BoundsNonCooperativePostAuditCommit`. The idempotency
+test and durable-directory race tests synchronously blocked constrained xUnit
+workers while their queued continuations needed the same scheduler, which
+could also starve the shutdown test. Completion notifications are now
+asynchronous while deliberate blocking callbacks stay on dedicated workers.
+Their test-only coordination budget is 30 seconds, all awaited owner work is
+bounded, and the non-cooperative commit is released in `finally`. Production
+timeout semantics remain unchanged.
 
 CI now emits individual test progress, enables VSTest hang collection with a
 two-minute test timeout, and writes platform diagnostics to the runner's
