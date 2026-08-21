@@ -33,6 +33,16 @@ than a deterministic test failure. The historical runs had only the default
 summary logger, so they did not retain enough evidence to attribute the stall
 to one test.
 
+The first instrumented hosted run completed the suite instead of hanging and
+identified two load-sensitive concurrency guards:
+`IdempotencyStore_PublishesRetryableCompletionBeforeReleasingClaim` and
+`ApplicationShutdown_BoundsNonCooperativePostAuditCommit`. Both allowed only
+five seconds for synthetic scheduling and cleanup while the full Ubuntu suite
+was active, although they passed repeatedly in isolation. Their test-only
+coordination budget is now 30 seconds, all awaited owner work is bounded, and
+the non-cooperative commit is released in `finally`. Production timeout
+semantics remain unchanged.
+
 CI now emits individual test progress, enables VSTest hang collection with a
 two-minute test timeout, and writes platform diagnostics to the runner's
 temporary directory. A failed test step uploads those diagnostics, including
