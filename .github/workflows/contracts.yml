@@ -38,6 +38,7 @@ jobs:
 
   decision-service:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -45,7 +46,30 @@ jobs:
           dotnet-version: "10.0.x"
       - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
       - run: dotnet build Flaggo.slnx --configuration Release --no-restore
-      - run: dotnet test Flaggo.slnx --configuration Release --no-build --no-restore
+      - name: Run bounded decision-service tests with hang diagnostics
+        timeout-minutes: 10
+        run: |
+          results_directory="$RUNNER_TEMP/decision-service-test-results"
+          mkdir -p "$results_directory"
+          echo "[$(date --iso-8601=seconds)] Starting bounded decision-service test command"
+          dotnet test Flaggo.slnx \
+            --configuration Release \
+            --no-build \
+            --no-restore \
+            --logger "console;verbosity=detailed" \
+            --blame-hang \
+            --blame-hang-timeout 2m \
+            --blame-hang-dump-type mini \
+            --results-directory "$results_directory" \
+            --diag "$results_directory/vstest.log"
+      - name: Upload decision-service failure diagnostics
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: decision-service-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/decision-service-test-results
+          if-no-files-found: warn
+          retention-days: 7
 
   tetris-integration:
     runs-on: ubuntu-latest
