@@ -634,6 +634,37 @@ Validation:
   raw JSON access;
 - Tetris and adaptive-worker requests remain contract-equivalent.
 
+#### Track B: Governed-state identity and atomic lifecycle mutation
+
+Deliverables:
+
+- typed fixed-value and numeric-strategy proposals with exact definition,
+  control-target, expected-baseline, source, rationale, evidence, confidence,
+  creation, and expiry metadata;
+- lifecycle-created state identity, proposal identity, monotonic generation,
+  predecessor, approval, activation time, and explicit lifecycle status;
+- a state-owned lifecycle mutation port for baseline reads, idempotent
+  compare-and-swap activation, history lookup, completion, and expiry;
+- a read-only `IStateStore` projection so runtime consumers cannot mutate
+  authority;
+- a local adapter that persists state history and replay identities in an
+  immutable artifact and atomically switches its descriptor last;
+- stable conflicts for stale baseline, duplicate proposal, changed activation
+  replay, incompatible definition identity, target mismatch, and unsupported
+  state kind.
+
+Validation:
+
+- concurrent activation from the same baseline publishes exactly one
+  replacement;
+- successful activation replay returns the original state identity;
+- cancellation or publication failure leaves the previous authority visible;
+- replacement records supersession or rollback and links the new state to its
+  predecessor;
+- local restart preserves replay and compare-and-swap behavior;
+- legacy version 1 state remains runtime-readable but cannot be lifecycle
+  mutated without the missing identity metadata.
+
 ### Phase 4: Minimal async intelligence and governance loop
 
 Goal: introduce the async path without requiring a full AI platform.

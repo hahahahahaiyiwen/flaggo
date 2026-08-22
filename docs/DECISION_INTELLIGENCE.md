@@ -95,6 +95,14 @@ Every proposal should identify:
 - requested approval mode;
 - compatibility and supersession intent.
 
+The Phase 3.5 state boundary currently provides typed fixed-value and
+numeric-strategy proposal contracts. Their shared context carries proposal and
+source identity, exact definition identity, candidate control target, expected
+state ID and generation, rationale, evidence and confidence references, and
+creation/expiry metadata. These contracts are inputs to lifecycle governance;
+they do not grant proposal producers a direct `GovernedDecisionState` write
+path.
+
 The proposal is passed to the lifecycle layer:
 
 ```text
