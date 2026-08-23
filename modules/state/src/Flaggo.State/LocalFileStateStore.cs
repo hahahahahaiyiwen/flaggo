@@ -151,6 +151,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 
         var states = new Dictionary<StateIdentity, GovernedDecisionState>();
         var stateIds = new HashSet<string>(StringComparer.Ordinal);
+        var activeAddresses = new HashSet<GovernedStateAddress>();
         (string AppId, string Environment)? lifecycleScope = null;
         foreach (var persisted in document.States)
         {
@@ -226,8 +227,24 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 persisted.ApprovalReference,
                 activatedAt,
                 lifecycleStatus);
-            if (lifecycleStatus == GovernedDecisionStateStatus.Active &&
-                !states.TryAdd(identity, state))
+            if (lifecycleStatus != GovernedDecisionStateStatus.Active)
+            {
+                continue;
+            }
+
+            if (document.Version == LifecycleFormatVersion &&
+                !activeAddresses.Add(
+                    new GovernedStateAddress(
+                        persisted.AppId!,
+                        persisted.Environment!,
+                        persisted.DecisionKey,
+                        controlTarget)))
+            {
+                throw new InvalidDataException(
+                    "The local governed-state file contains duplicate active authority.");
+            }
+
+            if (!states.TryAdd(identity, state))
             {
                 throw new InvalidDataException(
                     "The local governed-state file contains duplicate active authority.");

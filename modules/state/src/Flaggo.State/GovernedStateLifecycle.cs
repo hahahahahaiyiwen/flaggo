@@ -441,6 +441,14 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                     "The governed state baseline was replaced before the transition.");
             }
 
+            if (entry.State.LifecycleStatus !=
+                GovernedDecisionStateStatus.Active)
+            {
+                throw Validation(
+                    "invalid-lifecycle-transition",
+                    "Only an active governed state may be completed or expired.");
+            }
+
             var transitioned = entry.State with
             {
                 LifecycleStatus = request.Status

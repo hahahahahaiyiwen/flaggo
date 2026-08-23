@@ -36,8 +36,12 @@ status. The current lifecycle statuses are `pending`, `active`, `superseded`,
 `expired`, `completed`, and `rolled-back`. Activation creates `active` state.
 Replacement atomically marks the prior active state `superseded` or
 `rolled-back`; completion and expiry deactivate authority without inventing a
-replacement. Historical state remains queryable by state ID, while runtime
-projection exposes only the latest `active` generation.
+replacement. Completion and expiry require the current state to remain
+`active`; a different transition identity cannot rewrite a terminal status.
+Historical state remains queryable by state ID, while runtime projection
+exposes only the latest `active` generation. Version 2 runtime documents reject
+multiple active states at the same authority address even when definition or
+revision lineage differs.
 
 Activation identities are idempotent. Replaying the same successful activation
 returns its original state ID, while changed activation content returns

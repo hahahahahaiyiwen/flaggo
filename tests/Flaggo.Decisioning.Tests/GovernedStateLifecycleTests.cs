@@ -428,6 +428,51 @@ public sealed class GovernedStateLifecycleTests
         Assert.Equal(state.StateId, replay.StateId);
     }
 
+    [Theory]
+    [InlineData(
+        GovernedDecisionStateStatus.Completed,
+        GovernedDecisionStateStatus.Expired)]
+    [InlineData(
+        GovernedDecisionStateStatus.Expired,
+        GovernedDecisionStateStatus.Completed)]
+    public async Task TransitionAsync_TerminalStateCannotTransitionAgain(
+        GovernedDecisionStateStatus firstStatus,
+        GovernedDecisionStateStatus secondStatus)
+    {
+        var store = Store("state-1");
+        var state = await store.ActivateAsync(
+            new GovernedStateActivationRequest(
+                "activation-1",
+                "approval-1",
+                FixedProposal("proposal-1", EmptyBaseline(), 800)),
+            CancellationToken.None);
+        await store.TransitionAsync(
+            new GovernedStateTransitionRequest(
+                "transition-1",
+                Address(),
+                state.StateId!,
+                state.Generation,
+                firstStatus),
+            CancellationToken.None);
+
+        var error = await Assert.ThrowsAsync<GovernedStateValidationException>(
+            () => store.TransitionAsync(
+                new GovernedStateTransitionRequest(
+                    "transition-2",
+                    Address(),
+                    state.StateId!,
+                    state.Generation,
+                    secondStatus),
+                CancellationToken.None));
+
+        Assert.Equal("invalid-lifecycle-transition", error.Code);
+        Assert.Equal(
+            firstStatus,
+            (await store.GetBaselineAsync(
+                Address(),
+                CancellationToken.None))!.LifecycleStatus);
+    }
+
     [Fact]
     public async Task ActivateAsync_RollbackMarksReplacedStateRolledBack()
     {

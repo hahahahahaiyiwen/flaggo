@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
 
@@ -163,6 +164,47 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
             [null],
             CancellationToken.None);
         Assert.Equal("state-1", projected!.StateId);
+    }
+
+    [Fact]
+    public async Task RuntimeRejectsMultipleActiveRevisionsAtOneAuthorityAddress()
+    {
+        using var file =
+            TestJsonFile.CreateCommitted("state-duplicate-active-address");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                new(null, 0),
+                800),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        var states = document["states"]!.AsArray();
+        var duplicate = states[0]!.DeepClone().AsObject();
+        duplicate["stateId"] = "state-2";
+        duplicate["proposalId"] = "proposal-2";
+        duplicate["revision"] = "revision-2";
+        duplicate["generation"] = 2;
+        duplicate["predecessorStateId"] = "state-1";
+        states.Add(duplicate);
+        await file.WriteAsync(document.ToJsonString());
+        var runtime = new LocalFileStateStore(
+            new LocalFileStateStoreOptions(file.Path));
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(
+            () => runtime.GetActiveAsync(
+                "decision",
+                "definition",
+                "revision",
+                [null],
+                CancellationToken.None));
+
+        Assert.Contains("duplicate active authority", error.Message);
     }
 
     [Fact]
