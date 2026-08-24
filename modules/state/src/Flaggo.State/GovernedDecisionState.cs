@@ -25,7 +25,15 @@ public sealed record GovernedDecisionState(
     string Mode = "active-value",
     string? StrategyId = null,
     NumericRuleStrategy? NumericRule = null,
-    DateTimeOffset? LastChangedAt = null);
+    DateTimeOffset? LastChangedAt = null,
+    string? StateId = null,
+    string? ProposalId = null,
+    long Generation = 0,
+    string? PredecessorStateId = null,
+    string? ApprovalReference = null,
+    DateTimeOffset? ActivatedAt = null,
+    GovernedDecisionStateStatus LifecycleStatus =
+        GovernedDecisionStateStatus.Active);
 
 public interface IStateStore
 {

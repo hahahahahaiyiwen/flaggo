@@ -67,6 +67,23 @@ Approval and activation are separate events. An approved proposal may remain pen
 
 Rollback is a transition, not a governed-state payload kind. It activates a replacement or previous known-safe state and marks the replaced state `rolled-back`.
 
+The current local lifecycle mutation boundary is
+`IGovernedStateLifecycleStore`. It accepts typed fixed-value or numeric-strategy
+proposals and creates state through compare-and-swap; proposal producers do not
+receive a direct state-write API. The expected baseline is a state ID plus
+generation for one application/environment/decision/control-target address.
+Successful replacement increments the generation and records the predecessor,
+approval reference, proposal ID, and activation time.
+
+Activation and proposal identities are durable idempotency boundaries.
+Identical successful activation replay returns the original state identity.
+Changed activation replay, proposal reuse, stale baseline, target mismatch,
+incompatible definition identity, and unsupported state kind are distinct
+stable conflicts. The local adapter retains state history and replay metadata
+in a committed immutable artifact; its descriptor is switched only after the
+replacement is durable, so readers observe either the complete prior authority
+or the complete replacement.
+
 ## Governance
 
 Governance evaluates proposals independently of the reasoning that produced them:

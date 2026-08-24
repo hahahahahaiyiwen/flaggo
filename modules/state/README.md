@@ -12,14 +12,55 @@ change.
 
 ## Current implementation
 
-`src/Flaggo.State` defines the async `IStateStore` lookup port and an in-memory
-adapter keyed by decision key, definition lineage, and runtime revision. State
-also carries the canonical contract digest so orchestration can reject stale
-or incompatible governed state. Governed values carry their actual control
-target, optional deterministic numeric-rule strategy, and last-change time for
-cooldown evaluation. Lookup follows the request resolution hierarchy so
-attribution is derived from the selected state rather than independently from
-client claims. The reasoning boundary supplies an ordered list already
+`src/Flaggo.State` keeps runtime reads and lifecycle mutation as separate
+module-owned ports. `IStateStore` remains the read-only data-plane projection,
+keyed by decision key, definition lineage, runtime revision, and control
+target. `IGovernedStateLifecycleStore` owns baseline reads, compare-and-swap
+activation, history lookup, and explicit completion or expiry transitions.
+`GovernedStateRuntimeProjection` adapts that lifecycle store back to the
+existing `IStateStore` contract without exposing mutation to runtime callers.
+
+The lifecycle boundary accepts typed `FixedValueDecisionProposal` and
+`NumericStrategyDecisionProposal` inputs. Proposal context includes globally
+stable proposal and source identities, exact application/environment/decision
+definition identity, candidate control target, expected state ID and
+generation, rationale, evidence and confidence references, and creation and
+expiry metadata. Proposal producers cannot submit an arbitrary
+`GovernedDecisionState`; the state module validates the proposal and constructs
+the runtime authority.
+
+Every lifecycle-created state has a generated state ID, proposal ID,
+monotonic generation within its authority address, predecessor state ID,
+approval reference, activation timestamp, last-change timestamp, and explicit
+status. The current lifecycle statuses are `pending`, `active`, `superseded`,
+`expired`, `completed`, and `rolled-back`. Activation creates `active` state.
+Replacement atomically marks the prior active state `superseded` or
+`rolled-back`; completion and expiry deactivate authority without inventing a
+replacement. Completion and expiry require the current state to remain
+`active`; a different transition identity cannot rewrite a terminal status.
+Historical state remains queryable by state ID, while runtime projection
+exposes only the latest `active` generation. Version 2 runtime documents reject
+multiple active states at the same authority address even when definition or
+revision lineage differs.
+
+Activation identities are idempotent. Replaying the same successful activation
+returns its original state ID, while changed activation content returns
+`activation-conflict`. Proposal identities are single-use and return
+`duplicate-proposal` when reused under another activation. Compare-and-swap
+failures return `stale-baseline`; a baseline from another authority address
+returns `target-conflict`; changing a digest under the same definition ID and
+revision returns `incompatible-definition`; unsupported proposal/state kinds
+return `unsupported-state-kind`.
+Replay returns the current lifecycle status of that immutable state identity;
+after replacement, replay therefore reports `superseded` or `rolled-back`
+rather than reconstructing the earlier `active` view.
+
+State also carries the canonical contract digest so orchestration can reject
+stale or incompatible governed state. Governed values carry their actual
+control target, optional deterministic numeric-rule strategy, and last-change
+time for cooldown evaluation. Lookup follows the request resolution hierarchy
+so attribution is derived from the selected state rather than independently
+from client claims. The reasoning boundary supplies an ordered list already
 validated against the registry-owned runtime definition projection. State
 adapters must match only those exact targets and must never invent broader
 fallback or reinterpret target hierarchy semantics.
@@ -84,6 +125,22 @@ directory again. Bootstrap/governance tooling publishes all
 receipt/state/evidence artifacts in a new generation and atomically switches
 its digest-pinned manifest last. Raw-file fallback is
 intentionally unsupported.
+
+Lifecycle mutation uses
+`LocalFileGovernedStateLifecycleStore` against the same committed-artifact
+format. Writers serialize a version 2 document containing complete state
+history plus activation and transition replay identities, then publish a new
+immutable artifact and atomically replace the descriptor. A write or
+cancellation before descriptor replacement leaves the previous authority
+visible. A process-wide file lease serializes local writers, and every
+mutation reloads the latest committed snapshot before applying compare-and-swap.
+Each local lifecycle artifact is restricted to one application/environment
+scope because the legacy runtime `IStateStore` lookup is intentionally scoped
+outside its method signature.
+Version 1 documents remain readable through `LocalFileStateStore` for runtime
+compatibility but are intentionally not mutable through the lifecycle port
+because they lack application scope, state identity, generation, approval, and
+replay metadata.
 
 The adapter accepts only the implemented `active-value` and `strategy` modes
 from the frozen decision-mode enum. Active values cannot carry strategy

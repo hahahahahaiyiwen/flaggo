@@ -398,7 +398,7 @@ public sealed class LocalFileStateStoreTests
                 CancellationToken.None));
 
         Assert.Equal(
-            "The local governed-state file must use version 1.",
+            "The local governed-state file must use version 1 or 2.",
             error.Message);
         Assert.False(await store.IsAvailableAsync(CancellationToken.None));
     }
