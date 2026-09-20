@@ -398,7 +398,7 @@ public sealed class LocalFileStateStoreTests
                 CancellationToken.None));
 
         Assert.Equal(
-            "The local governed-state file must use version 1 or 2.",
+            "The local governed-state file must use version 1 for bootstrap or 3 for audited lifecycle state.",
             error.Message);
         Assert.False(await store.IsAvailableAsync(CancellationToken.None));
     }

@@ -30,8 +30,7 @@ public sealed record LocalFileStateStoreOptions
 
 public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 {
-    private const int LegacyFormatVersion = 1;
-    private const int LifecycleFormatVersion = 2;
+    private const int BootstrapFormatVersion = 1;
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -119,6 +118,26 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 _snapshotOptions,
                 cancellationToken);
             StrictJson.Validate(json);
+            using var root = JsonDocument.Parse(json);
+            if (root.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException("The local governed-state document must be an object.");
+            }
+            if (root.RootElement.TryGetProperty("version", out var version) &&
+                version.ValueKind == JsonValueKind.Number &&
+                version.TryGetInt32(out var format) && format == 3)
+            {
+                var snapshotState = GovernedStatePersistence.Deserialize(json);
+                _ = new InMemoryGovernedStateLifecycleStore(
+                    snapshotState, TimeProvider.System, new GuidGovernedStateIdentityGenerator());
+                return snapshotState.States
+                    .Where(entry => entry.State.LifecycleStatus == GovernedDecisionStateStatus.Active)
+                    .ToDictionary(
+                        entry => StateIdentity.Create(
+                            entry.Address.DecisionKey, entry.State.DefinitionId,
+                            entry.State.Revision, entry.Address.ControlTarget),
+                        entry => entry.State);
+            }
             var document = JsonSerializer.Deserialize<PersistedStateDocument>(
                 json,
                 JsonOptions);
@@ -140,19 +159,15 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
     private static IReadOnlyDictionary<StateIdentity, GovernedDecisionState>
         ValidateAndMap(PersistedStateDocument document)
     {
-        if (document.Version is not
-                (LegacyFormatVersion or LifecycleFormatVersion) ||
+        if (document.Version != BootstrapFormatVersion ||
             document.States is null)
         {
             throw new InvalidDataException(
                 $"The local governed-state file must use version " +
-                $"{LegacyFormatVersion} or {LifecycleFormatVersion}.");
+                $"{BootstrapFormatVersion} for bootstrap or 3 for audited lifecycle state.");
         }
 
         var states = new Dictionary<StateIdentity, GovernedDecisionState>();
-        var stateIds = new HashSet<string>(StringComparer.Ordinal);
-        var activeAddresses = new HashSet<GovernedStateAddress>();
-        (string AppId, string Environment)? lifecycleScope = null;
         foreach (var persisted in document.States)
         {
             if (persisted is null ||
@@ -172,39 +187,6 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
             var numericRule = ValidateAndMapNumericRule(persisted.NumericRule);
             ValidateMode(persisted, value, numericRule);
             var lastChangedAt = ParseLastChangedAt(persisted.LastChangedAt);
-            var lifecycleStatus = ParseLifecycleStatus(
-                persisted.LifecycleStatus,
-                document.Version == LifecycleFormatVersion);
-            var activatedAt = ParseLifecycleTimestamp(
-                persisted.ActivatedAt,
-                document.Version == LifecycleFormatVersion);
-            if (document.Version == LifecycleFormatVersion &&
-                (string.IsNullOrWhiteSpace(persisted.AppId) ||
-                 string.IsNullOrWhiteSpace(persisted.Environment) ||
-                 string.IsNullOrWhiteSpace(persisted.StateId) ||
-                 !stateIds.Add(persisted.StateId) ||
-                 string.IsNullOrWhiteSpace(persisted.ProposalId) ||
-                 persisted.Generation is null or <= 0 ||
-                 string.IsNullOrWhiteSpace(persisted.ApprovalReference) ||
-                 lastChangedAt is null))
-            {
-                throw new InvalidDataException(
-                    "A lifecycle governed-state entry is missing required metadata.");
-            }
-
-            if (document.Version == LifecycleFormatVersion)
-            {
-                var entryScope = (persisted.AppId!, persisted.Environment!);
-                if (lifecycleScope is not null &&
-                    lifecycleScope.Value != entryScope)
-                {
-                    throw new InvalidDataException(
-                        "A local lifecycle governed-state document must contain exactly one application and environment scope.");
-                }
-
-                lifecycleScope = entryScope;
-            }
-
             var identity = StateIdentity.Create(
                 persisted.DecisionKey,
                 persisted.DefinitionId,
@@ -219,30 +201,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 persisted.Mode,
                 persisted.StrategyId,
                 numericRule,
-                lastChangedAt,
-                persisted.StateId,
-                persisted.ProposalId,
-                persisted.Generation ?? 0,
-                persisted.PredecessorStateId,
-                persisted.ApprovalReference,
-                activatedAt,
-                lifecycleStatus);
-            if (lifecycleStatus != GovernedDecisionStateStatus.Active)
-            {
-                continue;
-            }
-
-            if (document.Version == LifecycleFormatVersion &&
-                !activeAddresses.Add(
-                    new GovernedStateAddress(
-                        persisted.AppId!,
-                        persisted.Environment!,
-                        persisted.DecisionKey,
-                        controlTarget)))
-            {
-                throw new InvalidDataException(
-                    "The local governed-state file contains duplicate active authority.");
-            }
+                lastChangedAt);
 
             if (!states.TryAdd(identity, state))
             {
@@ -417,46 +376,6 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         return parsed.ToUniversalTime();
     }
 
-    private static DateTimeOffset? ParseLifecycleTimestamp(
-        string? value,
-        bool required)
-    {
-        if (value is null)
-        {
-            if (required)
-            {
-                throw new InvalidDataException(
-                    "A lifecycle governed-state activatedAt value is required.");
-            }
-
-            return null;
-        }
-
-        return ParseLastChangedAt(value);
-    }
-
-    private static GovernedDecisionStateStatus ParseLifecycleStatus(
-        string? value,
-        bool required)
-    {
-        if (value is null && !required)
-        {
-            return GovernedDecisionStateStatus.Active;
-        }
-
-        return value switch
-        {
-            "pending" => GovernedDecisionStateStatus.Pending,
-            "active" => GovernedDecisionStateStatus.Active,
-            "superseded" => GovernedDecisionStateStatus.Superseded,
-            "expired" => GovernedDecisionStateStatus.Expired,
-            "completed" => GovernedDecisionStateStatus.Completed,
-            "rolled-back" => GovernedDecisionStateStatus.RolledBack,
-            _ => throw new InvalidDataException(
-                "A local governed-state lifecycle status is invalid.")
-        };
-    }
-
     [GeneratedRegex("\\Asha256:[0-9a-f]{64}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex Sha256DigestPattern();
 
@@ -523,13 +442,9 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 
     private sealed record PersistedStateDocument(
         int? Version,
-        IReadOnlyList<PersistedState?>? States,
-        IReadOnlyList<PersistedActivation?>? Activations = null,
-        IReadOnlyList<PersistedTransition?>? Transitions = null);
+        IReadOnlyList<PersistedState?>? States);
 
     private sealed record PersistedState(
-        string? AppId,
-        string? Environment,
         string? DecisionKey,
         string? DefinitionId,
         string? Revision,
@@ -539,14 +454,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         string? Mode,
         string? StrategyId,
         PersistedNumericRule? NumericRule,
-        string? LastChangedAt,
-        string? StateId,
-        string? ProposalId,
-        long? Generation,
-        string? PredecessorStateId,
-        string? ApprovalReference,
-        string? ActivatedAt,
-        string? LifecycleStatus);
+        string? LastChangedAt);
 
     private sealed record PersistedDecisionTarget(
         string? Type,
@@ -564,18 +472,6 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         JsonElement? Minimum,
         JsonElement? Maximum,
         JsonElement? Weight);
-
-    private sealed record PersistedActivation(
-        string? ActivationId,
-        string? Fingerprint,
-        string? ProposalId,
-        string? ProposalFingerprint,
-        string? StateId);
-
-    private sealed record PersistedTransition(
-        string? TransitionId,
-        string? Fingerprint,
-        string? StateId);
 
     private sealed class SourceStateSnapshotProvider(
         CommittedFileSnapshotSource source) : IStateSnapshotProvider

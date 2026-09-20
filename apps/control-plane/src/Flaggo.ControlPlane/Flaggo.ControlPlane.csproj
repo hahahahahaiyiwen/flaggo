@@ -5,6 +5,7 @@
     <ProjectReference Include="..\..\..\shared\src\Flaggo.Hosting\Flaggo.Hosting.csproj" />
     <ProjectReference Include="..\..\..\..\packages\shared-contracts\src\Flaggo.Shared.Contracts\Flaggo.Shared.Contracts.csproj" />
     <ProjectReference Include="..\..\..\..\modules\registry\src\Flaggo.Registry\Flaggo.Registry.csproj" />
+    <ProjectReference Include="..\..\..\..\modules\lifecycle\src\Flaggo.Lifecycle\Flaggo.Lifecycle.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

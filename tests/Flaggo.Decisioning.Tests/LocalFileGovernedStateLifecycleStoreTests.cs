@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Flaggo.Shared.Contracts;
 using Flaggo.State;
@@ -7,315 +6,257 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class LocalFileGovernedStateLifecycleStoreTests
 {
-    private static readonly DateTimeOffset Now =
-        new(2026, 8, 21, 20, 0, 0, TimeSpan.Zero);
-
     [Fact]
-    public async Task RestartPreservesActivationReplayAndRuntimeProjection()
+    public async Task RestartPreservesReviewApprovalActivationAndRuntimeProjection()
     {
-        using var file = TestJsonFile.CreateCommitted("state-lifecycle");
-        var firstStore = Store(file.Path, "state-1");
-        var request = Request("activation-1", "proposal-1", new(null, 0), 800);
-        var activated = await firstStore.ActivateAsync(
-            request,
-            CancellationToken.None);
+        using var file = TestJsonFile.CreateCommitted("lifecycle-restart");
+        var firstStore = Store(file.Path);
+        var review = await LifecycleTestData.ReviewAsync(firstStore);
+        var activated = await LifecycleTestData.ActivateAsync(firstStore);
+        var restarted = Store(file.Path);
 
-        var restarted = Store(file.Path, "state-unexpected");
-        var replay = await restarted.ActivateAsync(
-            request,
-            CancellationToken.None);
-        var runtime = new LocalFileStateStore(
-            new LocalFileStateStoreOptions(file.Path));
-        var projected = await runtime.GetActiveAsync(
-            "decision",
-            "definition",
-            "revision",
-            [null],
-            CancellationToken.None);
+        var reviewReplay = await LifecycleTestData.ReviewAsync(restarted);
+        var activationReplay = await LifecycleTestData.ActivateAsync(restarted);
+        var runtime = await RuntimeState(file.Path);
+        var audit = await restarted.ReadAsync("app", "dev", CancellationToken.None);
 
-        Assert.Equal("state-1", activated.StateId);
-        Assert.Equal(activated.StateId, replay.StateId);
-        Assert.Equal(activated.ProposalId, replay.ProposalId);
-        Assert.Equal(activated.Generation, replay.Generation);
-        Assert.Equal(activated.Value.GetRawText(), replay.Value.GetRawText());
-        Assert.Equal(activated.StateId, projected!.StateId);
-        Assert.Equal(activated.ProposalId, projected.ProposalId);
-        Assert.Equal(activated.Generation, projected.Generation);
-        Assert.Equal(activated.Value.GetRawText(), projected.Value.GetRawText());
+        Assert.Equal(LifecycleJson.Digest(review), LifecycleJson.Digest(reviewReplay));
+        Assert.Equal(LifecycleJson.Digest(activated), LifecycleJson.Digest(activationReplay));
+        Assert.Equal(activated.StateId, runtime!.StateId);
+        Assert.Equal(review.Approval!.ApprovalId, runtime.ApprovalReference);
+        Assert.Equal(4, audit.Records.Count);
     }
 
     [Fact]
-    public async Task PublicationFailureLeavesPreviousAuthorityVisible()
+    public async Task PublicationFailureLeavesBothPreviousAuthorityAndAuditVisible()
     {
-        using var file = TestJsonFile.CreateCommitted("state-publication-failure");
-        var initial = Store(file.Path, "state-1");
-        var first = await initial.ActivateAsync(
-            Request("activation-1", "proposal-1", new(null, 0), 800),
-            CancellationToken.None);
-        var failing = new LocalFileGovernedStateLifecycleStore(
-            new LocalFileGovernedStateLifecycleStoreOptions(file.Path),
-            new FixedTimeProvider(),
-            new SequenceStateIdentityGenerator(["state-2"]),
-            new FailingPublisher());
+        using var file = TestJsonFile.CreateCommitted("lifecycle-publication-failure");
+        var initial = Store(file.Path);
+        await LifecycleTestData.ReviewAsync(initial);
+        var first = await LifecycleTestData.ActivateAsync(initial);
+        await LifecycleTestData.ReviewAsync(
+            initial, LifecycleTestData.Proposal("second", 850, new(first.StateId, first.Generation!.Value)),
+            "second");
+        var before = await initial.ReadAsync("app", "dev", CancellationToken.None);
+        var failing = Store(file.Path, new FailingPublisher());
 
-        await Assert.ThrowsAsync<IOException>(
-            () => failing.ActivateAsync(
-                Request(
-                    "activation-2",
-                    "proposal-2",
-                    new GovernedStateBaseline(
-                        first.StateId,
-                        first.Generation),
-                    850),
-                CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() =>
+            LifecycleTestData.ActivateAsync(failing, "second", "second"));
 
-        var runtime = new LocalFileStateStore(
-            new LocalFileStateStoreOptions(file.Path));
-        var projected = await runtime.GetActiveAsync(
-            "decision",
-            "definition",
-            "revision",
-            [null],
-            CancellationToken.None);
-        Assert.Equal("state-1", projected!.StateId);
-        Assert.Equal(800, projected.Value.GetInt32());
+        Assert.Equal(first.StateId, (await RuntimeState(file.Path))!.StateId);
+        var after = await Store(file.Path).ReadAsync("app", "dev", CancellationToken.None);
+        Assert.Equal(LifecycleJson.Digest(before), LifecycleJson.Digest(after));
     }
 
     [Fact]
-    public async Task ConcurrentInstancesRejectStaleReplacement()
+    public async Task LostPublicationResponseReplaysTheCommittedOutcomeWithoutAnotherWrite()
     {
-        using var file = TestJsonFile.CreateCommitted("state-concurrent-local");
-        var initial = Store(file.Path, "state-1");
-        var first = await initial.ActivateAsync(
-            Request("activation-1", "proposal-1", new(null, 0), 800),
-            CancellationToken.None);
-        var baseline = new GovernedStateBaseline(
-            first.StateId,
-            first.Generation);
-        var firstWriter = Store(file.Path, "state-2");
-        var secondWriter = Store(file.Path, "state-3");
+        using var file = TestJsonFile.CreateCommitted("lifecycle-lost-response");
+        var initial = Store(file.Path);
+        await LifecycleTestData.ReviewAsync(initial);
+        await Assert.ThrowsAsync<IOException>(() =>
+            LifecycleTestData.ActivateAsync(Store(file.Path, new LostResponsePublisher())));
+
+        var committed = await RuntimeState(file.Path);
+        var replay = await LifecycleTestData.ActivateAsync(Store(file.Path, new FailingPublisher()));
+        Assert.Equal(LifecycleMutationStatus.Applied, replay.Status);
+        Assert.Equal(committed!.StateId, replay.StateId);
+        Assert.Equal(4, (await initial.ReadAsync("app", "dev", CancellationToken.None)).Records.Count);
+    }
+
+    [Fact]
+    public async Task ConcurrentInstancesPublishOneAuditedReplacement()
+    {
+        using var file = TestJsonFile.CreateCommitted("lifecycle-concurrent");
+        var initial = Store(file.Path);
+        await LifecycleTestData.ReviewAsync(initial);
+        var first = await LifecycleTestData.ActivateAsync(initial);
+        var baseline = new GovernedStateBaseline(first.StateId, first.Generation!.Value);
+        await LifecycleTestData.ReviewAsync(initial, LifecycleTestData.Proposal("second", 850, baseline), "second");
+        await LifecycleTestData.ReviewAsync(initial, LifecycleTestData.Proposal("third", 750, baseline), "third");
 
         var outcomes = await Task.WhenAll(
-            new[]
-            {
-                (Store: firstWriter, Request: Request(
-                    "activation-2",
-                    "proposal-2",
-                    baseline,
-                    850)),
-                (Store: secondWriter, Request: Request(
-                    "activation-3",
-                    "proposal-3",
-                    baseline,
-                    750))
-            }.Select(async item =>
-            {
-                try
-                {
-                    return (State: await item.Store.ActivateAsync(
-                        item.Request,
-                        CancellationToken.None), Error: (Exception?)null);
-                }
-                catch (Exception error)
-                {
-                    return (State: (GovernedDecisionState?)null, Error: error);
-                }
-            }));
+            LifecycleTestData.ActivateAsync(Store(file.Path), "second", "second"),
+            LifecycleTestData.ActivateAsync(Store(file.Path), "third", "third"));
 
-        Assert.Single(outcomes.Where(outcome => outcome.State is not null));
-        var conflict = Assert.IsType<GovernedStateConflictException>(
-            Assert.Single(outcomes.Where(outcome => outcome.Error is not null)).Error);
-        Assert.Equal("stale-baseline", conflict.Code);
+        var winner = Assert.Single(outcomes.Where(item => item.Status == LifecycleMutationStatus.Applied));
+        var loser = Assert.Single(outcomes.Where(item => item.Status == LifecycleMutationStatus.Rejected));
+        Assert.Contains("stale-baseline", loser.Reasons);
+        Assert.Equal(winner.StateId, (await RuntimeState(file.Path))!.StateId);
+        var journal = await Store(file.Path).ReadAsync("app", "dev", CancellationToken.None);
+        Assert.Equal(2, journal.Activations.Count(item => item.Status == LifecycleMutationStatus.Applied));
     }
 
-    [Fact]
-    public async Task LocalDocumentRejectsMixedApplicationScopes()
+    [Theory]
+    [InlineData("audit")]
+    [InlineData("approval")]
+    [InlineData("value")]
+    [InlineData("duplicate-authority")]
+    [InlineData("state-history")]
+    [InlineData("audit-time")]
+    [InlineData("audit-target")]
+    [InlineData("audit-proposal")]
+    [InlineData("audit-policy")]
+    [InlineData("null-proposal")]
+    [InlineData("null-context")]
+    [InlineData("null-actor")]
+    [InlineData("null-reasons")]
+    public async Task RuntimeRejectsStateWithIncompleteOrInconsistentLifecycleProof(string corruption)
     {
-        using var file = TestJsonFile.CreateCommitted("state-mixed-scope");
-        var firstStore = Store(file.Path, "state-1");
-        await firstStore.ActivateAsync(
-            Request(
-                "activation-1",
-                "proposal-1",
-                new(null, 0),
-                800),
-            CancellationToken.None);
-        var secondStore = Store(file.Path, "state-2");
-
-        var error = await Assert.ThrowsAsync<InvalidDataException>(
-            () => secondStore.ActivateAsync(
-                Request(
-                    "activation-2",
-                    "proposal-2",
-                    new(null, 0),
-                    850,
-                    appId: "other-app"),
-                CancellationToken.None));
-
-        Assert.Contains(
-            "exactly one application and environment scope",
-            error.Message);
-        var runtime = new LocalFileStateStore(
-            new LocalFileStateStoreOptions(file.Path));
-        var projected = await runtime.GetActiveAsync(
-            "decision",
-            "definition",
-            "revision",
-            [null],
-            CancellationToken.None);
-        Assert.Equal("state-1", projected!.StateId);
-    }
-
-    [Fact]
-    public async Task RuntimeRejectsMultipleActiveRevisionsAtOneAuthorityAddress()
-    {
-        using var file =
-            TestJsonFile.CreateCommitted("state-duplicate-active-address");
-        var lifecycle = Store(file.Path, "state-1");
-        await lifecycle.ActivateAsync(
-            Request(
-                "activation-1",
-                "proposal-1",
-                new(null, 0),
-                800),
-            CancellationToken.None);
-        var bytes = await CommittedFileSnapshot.ReadAsync(
-            CommittedFileSnapshotSource.FromDescriptor(file.Path),
-            options: null,
-            CancellationToken.None);
-        var document = JsonNode.Parse(bytes)!.AsObject();
+        using var file = TestJsonFile.CreateCommitted("lifecycle-corrupt");
+        var store = Store(file.Path);
+        await LifecycleTestData.ReviewAsync(store);
+        await LifecycleTestData.ActivateAsync(store);
+        var document = JsonNode.Parse(await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path), null, CancellationToken.None))!.AsObject();
         var states = document["states"]!.AsArray();
-        var duplicate = states[0]!.DeepClone().AsObject();
-        duplicate["stateId"] = "state-2";
-        duplicate["proposalId"] = "proposal-2";
-        duplicate["revision"] = "revision-2";
-        duplicate["generation"] = 2;
-        duplicate["predecessorStateId"] = "state-1";
-        states.Add(duplicate);
+        var state = states[0]!["state"]!;
+        var journal = document["journal"]!;
+        switch (corruption)
+        {
+            case "audit":
+                journal["records"]!.AsArray().RemoveAt(3);
+                break;
+            case "approval":
+                journal["reviews"]![0]!["receipt"]!["approval"] = null;
+                break;
+            case "value":
+                state["value"] = 1000;
+                break;
+            case "duplicate-authority":
+                var duplicate = states[0]!.DeepClone();
+                duplicate["state"]!["stateId"] = "duplicate";
+                duplicate["state"]!["generation"] = 2;
+                states.Add(duplicate);
+                break;
+            case "state-history":
+                state["lifecycleStatus"] = "Completed";
+                break;
+            case "audit-time":
+                journal["records"]![3]!["recordedAt"] = LifecycleTestData.Now.AddSeconds(1).ToString("O");
+                break;
+            case "audit-target":
+                journal["records"]![3]!["controlTarget"]!["id"] = "other-target";
+                break;
+            case "audit-proposal":
+                journal["records"]![3]!["proposalId"] = "other-proposal";
+                break;
+            case "audit-policy":
+                journal["records"]![3]!["policyRevision"] = "other-policy";
+                break;
+            case "null-proposal":
+                journal["reviews"]![0]!["commit"]!["request"]!["proposal"] = null;
+                break;
+            case "null-context":
+                journal["reviews"]![0]!["commit"]!["request"]!["proposal"]!["context"] = null;
+                break;
+            case "null-actor":
+                journal["activations"]![0]!["actor"] = null;
+                break;
+            case "null-reasons":
+                journal["activations"]![0]!["reasons"] = null;
+                break;
+        }
         await file.WriteAsync(document.ToJsonString());
-        var runtime = new LocalFileStateStore(
-            new LocalFileStateStoreOptions(file.Path));
 
-        var error = await Assert.ThrowsAsync<InvalidDataException>(
-            () => runtime.GetActiveAsync(
-                "decision",
-                "definition",
-                "revision",
-                [null],
-                CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => RuntimeState(file.Path));
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Store(file.Path).GetBaselineAsync(
+                new("app", "dev", "decision", LifecycleTestData.Target), CancellationToken.None));
+        Assert.False(await new LocalFileStateStore(
+            new LocalFileStateStoreOptions(file.Path)).IsAvailableAsync(CancellationToken.None));
+    }
 
-        Assert.Contains("duplicate active authority", error.Message);
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task OldStateFormatsAreNotMigratedIntoLifecycleAuthority(int version)
+    {
+        using var file = TestJsonFile.CreateCommitted("lifecycle-old-format");
+        await file.WriteAsync($$"""{"version":{{version}},"states":[],"activations":[],"transitions":[]}""");
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Store(file.Path).GetReviewAsync("review", CancellationToken.None));
     }
 
     [Fact]
-    public async Task LegacyRuntimeDocumentIsReadableButNotLifecycleMutable()
+    public async Task OneJournalCannotMixApplicationScopes()
     {
-        using var file = TestJsonFile.CreateCommitted("state-legacy-lifecycle");
-        await file.WriteAsync(
-            JsonSerializer.Serialize(
-                new
-                {
-                    version = 1,
-                    states = new[]
-                    {
-                        new
-                        {
-                            decisionKey = "decision",
-                            definitionId = "definition",
-                            revision = "revision",
-                            contractDigest =
-                                $"sha256:{new string('a', 64)}",
-                            value = 800,
-                            controlTarget = (object?)null,
-                            mode = "active-value",
-                            strategyId = (string?)null,
-                            numericRule = (object?)null,
-                            lastChangedAt = Now.ToString("O")
-                        }
-                    }
-                }));
-        var runtime = new LocalFileStateStore(
-            new LocalFileStateStoreOptions(file.Path));
-        Assert.NotNull(await runtime.GetActiveAsync(
-            "decision",
-            "definition",
-            "revision",
-            [null],
-            CancellationToken.None));
-        var lifecycle = Store(file.Path, "state-1");
-
-        var error = await Assert.ThrowsAsync<InvalidDataException>(
-            () => lifecycle.ActivateAsync(
-                Request(
-                    "activation-1",
-                    "proposal-1",
-                    new(null, 0),
-                    850),
-                CancellationToken.None));
-
-        Assert.Contains("must use version 2", error.Message);
+        using var file = TestJsonFile.CreateCommitted("lifecycle-scope");
+        var store = Store(file.Path);
+        await LifecycleTestData.ReviewAsync(store);
+        var proposal = LifecycleTestData.Proposal("other");
+        proposal = proposal with
+        {
+            Context = proposal.Context with
+            {
+                Definition = LifecycleTestData.Definition with { AppId = "other-app" }
+            }
+        };
+        var error = await Assert.ThrowsAsync<GovernedStateValidationException>(() =>
+            LifecycleTestData.ReviewAsync(
+                store, proposal, "other", actor: LifecycleTestData.Actor with { AppId = "other-app" }));
+        Assert.Equal("resource-scope-mismatch", error.Code);
+        Assert.Single((await store.ReadAsync("app", "dev", CancellationToken.None)).Reviews);
     }
+
+    [Fact]
+    public async Task CancellationBeforePublicationLeavesTheOriginalSnapshot()
+    {
+        using var file = TestJsonFile.CreateCommitted("lifecycle-cancel");
+        var initial = Store(file.Path);
+        await LifecycleTestData.ReviewAsync(initial);
+        var review = (await initial.GetReviewAsync("review-1", CancellationToken.None))!;
+        using var cancellation = new CancellationTokenSource();
+        var store = Store(file.Path, new CancelBeforePublication(cancellation));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            store.CommitActivationAsync(
+                new LifecycleActivationCommit(
+                    new LifecycleActivationRequest("activation-1", "review-1"),
+                    LifecycleTestData.Actor, LifecycleIdentity.InputsDigest(review.Commit),
+                    review.Commit.Decision),
+                cancellation.Token));
+
+        Assert.Null(await RuntimeState(file.Path));
+        Assert.Empty((await initial.ReadAsync("app", "dev", CancellationToken.None)).Activations);
+    }
+
+    private static Task<GovernedDecisionState?> RuntimeState(string path) =>
+        new LocalFileStateStore(new LocalFileStateStoreOptions(path)).GetActiveAsync(
+            "decision", "definition", "revision", [LifecycleTestData.Target], CancellationToken.None);
 
     private static LocalFileGovernedStateLifecycleStore Store(
         string path,
-        params string[] stateIds) =>
-        new(
-            new LocalFileGovernedStateLifecycleStoreOptions(path),
-            new FixedTimeProvider(),
-            new SequenceStateIdentityGenerator(stateIds));
+        IGovernedStateDocumentPublisher? publisher = null) =>
+        publisher is null
+            ? new(new(path), new TestClock())
+            : new(new(path), new TestClock(), new GuidGovernedStateIdentityGenerator(), publisher);
 
-    private static GovernedStateActivationRequest Request(
-        string activationId,
-        string proposalId,
-        GovernedStateBaseline baseline,
-        int value,
-        string appId = "app",
-        string environment = "dev") =>
-        new(
-            activationId,
-            $"approval-{activationId}",
-            new FixedValueDecisionProposal(
-                new DecisionProposalContext(
-                    proposalId,
-                    new DecisionProposalSource(
-                        DecisionProposalSourceKind.Scripted,
-                        "fixture"),
-                    new GovernedDefinitionIdentity(
-                        appId,
-                        environment,
-                        "decision",
-                        new RuntimeContractIdentity(
-                            "definition",
-                            $"sha256:{new string('a', 64)}",
-                            "revision")),
-                    null,
-                    baseline,
-                    "Improve the governed value.",
-                    ["evidence-1"],
-                    ["confidence-1"],
-                    Now.AddMinutes(-1),
-                    Now.AddHours(1)),
-                JsonSerializer.SerializeToElement(value)));
-
-    private sealed class FixedTimeProvider : TimeProvider
+    private sealed class TestClock : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Now;
-    }
-
-    private sealed class SequenceStateIdentityGenerator(
-        IEnumerable<string> stateIds) : IGovernedStateIdentityGenerator
-    {
-        private readonly Queue<string> _stateIds = new(stateIds);
-
-        public string CreateStateId() => _stateIds.Dequeue();
+        public override DateTimeOffset GetUtcNow() => LifecycleTestData.Now;
     }
 
     private sealed class FailingPublisher : IGovernedStateDocumentPublisher
     {
-        public Task PublishAsync(
-            string commitDescriptorPath,
-            ReadOnlyMemory<byte> bytes,
-            CancellationToken cancellationToken) =>
-            throw new IOException("Injected publication failure.");
+        public Task PublishAsync(string path, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
+            throw new IOException("Injected failure before state and audit publication.");
+    }
+
+    private sealed class LostResponsePublisher : IGovernedStateDocumentPublisher
+    {
+        public async Task PublishAsync(string path, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+        {
+            await CommittedFileSnapshotWriter.PublishAsync(path, bytes, cancellationToken);
+            throw new IOException("Injected lost response after the complete snapshot committed.");
+        }
+    }
+
+    private sealed class CancelBeforePublication(CancellationTokenSource source) : IGovernedStateDocumentPublisher
+    {
+        public async Task PublishAsync(string path, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+        {
+            source.Cancel();
+            await CommittedFileSnapshotWriter.PublishAsync(path, bytes, cancellationToken);
+        }
     }
 }

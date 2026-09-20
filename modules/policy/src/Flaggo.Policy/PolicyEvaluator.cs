@@ -65,9 +65,10 @@ public sealed class DefaultPolicyEvaluator(TimeProvider timeProvider) : IPolicyE
             if (request.NumberActionSpace?.Step is double step)
             {
                 applied.Add("number-step");
-                var offset = candidateValue - request.NumberActionSpace.Minimum;
-                var quotient = offset / step;
-                if (Math.Abs(quotient - Math.Round(quotient)) > 1e-9)
+                if (!NumericPolicy.IsOnGrid(
+                        candidateValue,
+                        request.NumberActionSpace.Minimum,
+                        step))
                 {
                     reasons.Add("candidate_step_mismatch");
                 }

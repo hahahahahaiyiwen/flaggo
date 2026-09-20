@@ -95,13 +95,24 @@ Every proposal should identify:
 - requested approval mode;
 - compatibility and supersession intent.
 
-The Phase 3.5 state boundary currently provides typed fixed-value and
+The Phase 3.5 shared contracts currently provide typed fixed-value and
 numeric-strategy proposal contracts. Their shared context carries proposal and
 source identity, exact definition identity, candidate control target, expected
 state ID and generation, rationale, evidence and confidence references, and
 creation/expiry metadata. These contracts are inputs to lifecycle governance;
 they do not grant proposal producers a direct `GovernedDecisionState` write
 path.
+
+The implemented producer boundary is `IProposalGovernance.ReviewAsync` followed
+by explicit `ActivateAsync`. Environment and operator policy must both permit
+automatic approval, which is materialized as a separate auditable record.
+Human-required policy remains pending; producer labels never supply actor
+permissions or approval authority. Evidence/confidence references must resolve
+to trusted snapshots with the exact definition/target scope.
+Activation rechecks reviewed inputs and state generation; stale policy or
+evidence requires another review. Scripted producers and future agents use the
+same gate. Proposal generation and the operator/scripted entry point remain
+the Phase 4 work, not a hidden bypass in the state adapter.
 
 The proposal is passed to the lifecycle layer:
 

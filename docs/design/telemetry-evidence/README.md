@@ -39,6 +39,25 @@ type EvidenceRequest = {
 };
 ```
 
+## Proposal evidence port
+
+The implemented lifecycle path uses a separate `IProposalEvidenceReader`.
+`ProposalEvidenceRequest` contains the exact definition, explicit control
+target, and evidence/confidence references. It returns scoped
+`ProposalEvidenceSnapshot` records with observation/expiry metadata and the
+existing `DecisionEvidenceSnapshot` quality/uncertainty/outcome/sample data.
+No active state is fabricated to call the runtime evidence provider.
+
+The local adapter reads a version 1 committed, digest-pinned proposal catalog,
+not raw JSON or the runtime strategy-ID catalog. Missing references remain
+missing; lifecycle policy holds when evidence is required. Invalid or
+wrong-scope snapshots and configured-file failures are explicit dependency
+errors, never an empty successful fallback. Review captures resolved content,
+and activation rejects changed or stale evidence.
+
+This read boundary does not add telemetry ingestion, aggregation, or proposal
+generation. Those producers must preserve immutable reference content.
+
 ## Evidence snapshot
 
 ```ts

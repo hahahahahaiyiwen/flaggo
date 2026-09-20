@@ -13,6 +13,17 @@ rules change.
 
 ## Current implementation
 
+The internal lifecycle slice also shares proposal, governed-state, actor,
+policy-context, scoped-evidence, review/approval, operation-receipt, and audit
+data types. These are not new public HTTP/SDK schemas. Service interfaces
+remain in lifecycle, policy, evidence, state, registry, and audit.
+`DecisionProposalValidation` and `ProposalEvidenceValidation` define reusable
+shape/value invariants. `LifecycleJson` provides strict canonical snapshots
+and isolated copies: required fields, nullable annotations, enum names,
+RFC 3339 timestamps, exact numeric values, and duplicate-member rejection.
+`LifecycleIdentity` binds review, activation, and transition fingerprints to
+their content and authenticated identity, excluding bearer credentials.
+
 `src/Flaggo.Shared.Contracts` contains strict .NET runtime request, response,
 Problem Details, and exposure confirmation DTOs. Unknown JSON members are
 rejected, absent optional members are omitted, and required nullable contract

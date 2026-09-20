@@ -11,6 +11,27 @@ requirements change.
 
 ## Current implementation
 
+### Lifecycle journal
+
+`ILifecycleAuditReader` exposes the proposal, review, explicit automatic
+approval, activation/rejection, supersession/rollback, and completion/expiry
+trail for one application/environment. It is a trusted internal read boundary,
+not a public audit endpoint.
+
+`LifecycleAuditIntegrity` checks immutable receipts, fingerprints, complete
+audit-record correspondence, policy/approval identity, actor scope, timestamps,
+and proposal single-use. The state module additionally reconstructs the
+generation, predecessor, and status history. Missing or inconsistent proof is
+an explicit failure, never permission to serve lifecycle-created authority.
+
+Lifecycle records are physically co-committed with governed state and replay
+receipts in the state adapter's version 3 snapshot. There is no second sink,
+outbox, or window between an audit append and authority publication. Review
+and automatic approval are distinct events; no human approval is implied.
+Credentials and bearer bytes are not audit identity.
+
+### Runtime decision and exposure audit
+
 `src/Flaggo.Audit` defines the async `IAuditSink` port and a thread-safe
 in-memory adapter. Decision orchestration records the audit entry before
 returning a server success; sink failures propagate and therefore cannot

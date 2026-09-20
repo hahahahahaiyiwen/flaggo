@@ -29,6 +29,7 @@
     <ProjectReference Include="..\..\modules\state\src\Flaggo.State\Flaggo.State.csproj" />
     <ProjectReference Include="..\..\modules\evidence\src\Flaggo.Evidence\Flaggo.Evidence.csproj" />
     <ProjectReference Include="..\..\modules\policy\src\Flaggo.Policy\Flaggo.Policy.csproj" />
+    <ProjectReference Include="..\..\modules\lifecycle\src\Flaggo.Lifecycle\Flaggo.Lifecycle.csproj" />
     <ProjectReference Include="..\..\modules\reasoning\src\Flaggo.Decisioning\Flaggo.Decisioning.csproj" />
     <ProjectReference Include="..\..\apps\shared\src\Flaggo.Hosting\Flaggo.Hosting.csproj" />
     <ProjectReference Include="..\..\apps\control-plane\src\Flaggo.ControlPlane\Flaggo.ControlPlane.csproj" />

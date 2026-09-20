@@ -84,6 +84,9 @@ builder.Services.AddSingleton<IDefinitionApprovalManager>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
 builder.Services.AddSingleton<IIntelligenceDefinitionReader>(
     provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
+builder.Services.AddSingleton<IRuntimeDefinitionReader>(
+    provider => provider.GetRequiredService<LocalFileDefinitionRegistry>());
+LocalLifecycleHosting.AddServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();
 

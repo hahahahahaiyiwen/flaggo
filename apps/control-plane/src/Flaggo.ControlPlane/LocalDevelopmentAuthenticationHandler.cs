@@ -19,7 +19,8 @@ public sealed class LocalDevelopmentAuthenticationHandler(
         var principal = LocalDevelopmentIdentityHosting.CreatePrincipal(
             resource,
             "polari.definitions:validate polari.definitions:apply " +
-            "polari.definitions:approve",
+            "polari.definitions:approve " +
+            "polari.lifecycle:review polari.lifecycle:activate",
             Scheme.Name);
         return Task.FromResult(
             AuthenticateResult.Success(

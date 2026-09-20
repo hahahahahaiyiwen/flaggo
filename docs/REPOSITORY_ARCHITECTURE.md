@@ -54,7 +54,21 @@ their own repositories.
 ## Initial implementation shape
 
 The first server implementation should be a modular system with separate
-control-plane and data-plane hosts. Registry, policy, state, evidence,
+control-plane and data-plane hosts. Registry, lifecycle, policy, state, evidence,
 reasoning, and audit remain explicit modules behind owned ports. They may use
 in-memory adapters during the local MVP and become separate services only when
 operational requirements justify that change.
+
+`modules/lifecycle` owns proposal review and activation orchestration through
+`IProposalGovernance`, independently of runtime reasoning. It consumes
+registry-owned runtime/intelligence projections, lifecycle policy, proposal
+evidence, trusted actor resolution, and state commits. Interfaces remain with
+their owning module; cross-module proposal/state/policy/receipt data lives in
+`packages/shared-contracts`.
+
+Lifecycle audit semantics and its read port belong to audit; state owns the
+atomic journal/state persistence boundary and depends on audit integrity
+validation. This physically co-locates lifecycle audit and authority without
+introducing a distributed transaction. Runtime still consumes read-only state,
+runtime policy, and separate decision/exposure audit. Apps configure adapters
+and authentication, not governance logic.

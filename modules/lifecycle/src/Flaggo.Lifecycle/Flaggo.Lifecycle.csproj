@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\packages\shared-contracts\src\Flaggo.Shared.Contracts\Flaggo.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\registry\src\Flaggo.Registry\Flaggo.Registry.csproj" />
+    <ProjectReference Include="..\..\..\policy\src\Flaggo.Policy\Flaggo.Policy.csproj" />
+    <ProjectReference Include="..\..\..\evidence\src\Flaggo.Evidence\Flaggo.Evidence.csproj" />
+    <ProjectReference Include="..\..\..\state\src\Flaggo.State\Flaggo.State.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+  </ItemGroup>
+</Project>

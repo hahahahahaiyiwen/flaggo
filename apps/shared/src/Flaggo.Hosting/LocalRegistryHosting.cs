@@ -140,10 +140,10 @@ public static class LocalRegistryHosting
                 new DecisionWorkflowPermissions(
                     "approved-strategy",
                     [
-                        "currentLevel",
-                        "boardPressure",
-                        "recentPlacementTimeMs",
-                        "recoveryFailures"
+                        "tetris.currentLevel",
+                        "tetris.boardPressure",
+                        "tetris.recentPlacementTimeMs",
+                        "tetris.recoveryFailures"
                     ]),
                 new DecisionActionSpaceContract(
                     runtime.ValueType,

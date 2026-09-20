@@ -32,7 +32,8 @@ public sealed class LocalDevelopmentAuthenticationHandlerTests
         AssertPrincipal(
             result,
             "polari.definitions:validate polari.definitions:apply " +
-            "polari.definitions:approve");
+            "polari.definitions:approve " +
+            "polari.lifecycle:review polari.lifecycle:activate");
     }
 
     [Fact]

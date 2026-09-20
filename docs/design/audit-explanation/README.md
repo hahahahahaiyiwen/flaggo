@@ -81,6 +81,28 @@ The proposed Phase 1 runtime wire contract guarantees `auditId` only for server-
 
 The exposure confirm token is an authorization capability, not audit data. The Decision API must project the server response into `AuditDecisionResult` and remove `confirmToken` before calling any audit sink, including console and file sinks.
 
+## Lifecycle audit and authority
+
+Lifecycle governance uses a separate `ILifecycleAuditReader` and immutable
+proposal, review, explicit automatic approval, activation/rejection,
+supersession/rollback, and terminal-transition records. The trail preserves
+exact definition/target identity, producer and authenticated initiating actor,
+effective policy and evidence snapshots, predecessor/replacement identities,
+timestamps, reasons, and operation fingerprints.
+
+State owns a version 3 atomic journal containing these records alongside
+governed state and replay receipts. Audit owns integrity validation; runtime
+also reconstructs the state history before trusting it. No new authority can
+be published separately from its required audit or recorded approval.
+
+An automatic approval is not a human approval. Human-required policy remains
+pending, and source labels grant no permissions. Exact authorized replay
+returns the original receipt without duplicating audit or reactivating
+historical state. A lost response after descriptor publication is reconciled
+by the same operation identity, not treated as proof that the commit failed.
+The internal audit projection is sufficient for this slice; no public audit
+API or new decision/exposure wire contract is introduced.
+
 ## Tetris MVP audit example
 
 ```json

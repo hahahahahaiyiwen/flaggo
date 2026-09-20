@@ -9,6 +9,30 @@ and detailed evidence stays in audit rather than compact runtime responses.
 
 ## Current implementation
 
+### Proposal evidence
+
+`IProposalEvidenceReader` resolves references before state exists. It takes
+the exact definition identity and explicit control target; it does not
+fabricate an activated strategy to call the runtime evidence port.
+`ProposalEvidenceSnapshot` adds reference, definition, target, observation
+time, and optional expiry to the shared `DecisionEvidenceSnapshot`.
+
+`InMemoryProposalEvidenceReader` validates and isolates snapshots.
+`LocalFileProposalEvidenceReader` reads a version 1 `ProposalEvidenceDocument`
+from an immutable, digest-pinned committed artifact. Its document has a
+`snapshots` array with unique references. Publishers must keep reference
+content immutable; review captures the resolved content, and activation
+re-resolves it and rejects changed inputs.
+
+Missing references remain absent and lifecycle policy explicitly holds when
+required evidence is unavailable. Wrong scope, invalid quality/ranges,
+duplicate or malformed JSON, and configured-file failures raise
+`EvidenceUnavailableException` from the local adapter; they never become an
+empty successful catalog. The configured proposal catalog is separate from
+the runtime strategy-ID catalog and contains no telemetry ingestion pipeline.
+
+### Runtime evidence
+
 `src/Flaggo.Evidence` owns `IEvidenceProvider`, `IEvidenceHealth`,
 `DecisionEvidenceRequest`, and the deterministic `InMemoryEvidenceProvider`.
 Reasoning receives the provider through constructor injection and has no

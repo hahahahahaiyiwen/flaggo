@@ -40,7 +40,34 @@ Less-trusted or narrower layers may only narrow constraints, never widen them. F
 
 When layers conflict, the safest applicable constraint wins or policy returns fallback/blocked with a stable reason code.
 
-## Core port
+## Lifecycle policy port
+
+The current internal .NET lifecycle boundary is `ILifecyclePolicyEvaluator`.
+Its request contains the typed proposal, replacement intent, trusted actor,
+exact runtime and intelligence projections, environment/operator policy
+context, scoped evidence snapshots, captured baseline, and current time.
+`ILifecyclePolicyContextProvider` supplies policy independently of producers.
+
+It returns `approved`, `limited`, `pending-approval`, `hold`, or `rejected`,
+stable reasons, and the effective restrictions. Only explicit automatic
+permission in both configured layers permits an automatic approval record.
+Missing policy holds, conflicting intersections reject, and no non-approved
+disposition grants state authority. `limited` never silently clamps.
+
+Targets must be explicit and inside intersected kind/identity permissions.
+Strategies validate every possible output against action bounds and numeric
+grid, and every input against registered workflow/signal permissions.
+Evidence must resolve to the exact definition/target and meet quality,
+uncertainty, outcome, sample-size, freshness, and expiry constraints.
+
+`maximumActivationDelta` and `minimumActivationIntervalSeconds` constrain
+durable baseline changes and activation history. The definition's strategy
+maximum delta still bounds outputs relative to the strategy's initial value.
+This does not add per-request stabilization or change runtime cooldown
+semantics. The lifecycle service re-evaluates before activation; state performs
+the final recorded-approval and compare-and-swap checks.
+
+## Runtime policy port
 
 ```ts
 interface IPolicyEvaluator {

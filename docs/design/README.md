@@ -43,3 +43,9 @@ The [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md) maps those domain 
 The [Phase 3 Tetris Integration](tetris-integration/README.md) composes these
 component boundaries into the cloud-free hero scenario without adding a new
 wire contract or moving trusted bootstrap behavior into the browser.
+
+The internal [Lifecycle Module](../../modules/lifecycle/README.md) orchestrates
+the existing registry, policy, evidence, state, and audit capabilities for
+automatic-first proposal governance. Its design is specified by
+[Decision Lifecycles](../DECISION_LIFECYCLES.md) and the affected component
+contracts, rather than a second wire/API surface.

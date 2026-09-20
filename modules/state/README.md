@@ -15,13 +15,16 @@ change.
 `src/Flaggo.State` keeps runtime reads and lifecycle mutation as separate
 module-owned ports. `IStateStore` remains the read-only data-plane projection,
 keyed by decision key, definition lineage, runtime revision, and control
-target. `IGovernedStateLifecycleStore` owns baseline reads, compare-and-swap
-activation, history lookup, and explicit completion or expiry transitions.
+target. `IGovernedStateLifecycleStore` owns baseline/history and receipt reads,
+plus `CommitReviewAsync`, `CommitActivationAsync`, and `CommitTransitionAsync`.
+These trusted commits atomically include lifecycle audit and operation
+receipts; the old unaudited activation/transition APIs are removed.
 `GovernedStateRuntimeProjection` adapts that lifecycle store back to the
 existing `IStateStore` contract without exposing mutation to runtime callers.
 
-The lifecycle boundary accepts typed `FixedValueDecisionProposal` and
-`NumericStrategyDecisionProposal` inputs. Proposal context includes globally
+Producers submit typed `FixedValueDecisionProposal` and
+`NumericStrategyDecisionProposal` inputs to `IProposalGovernance`, not directly
+to the state commit port. Proposal context includes globally
 stable proposal and source identities, exact application/environment/decision
 definition identity, candidate control target, expected state ID and
 generation, rationale, evidence and confidence references, and creation and
@@ -39,21 +42,31 @@ Replacement atomically marks the prior active state `superseded` or
 replacement. Completion and expiry require the current state to remain
 `active`; a different transition identity cannot rewrite a terminal status.
 Historical state remains queryable by state ID, while runtime projection
-exposes only the latest `active` generation. Version 2 runtime documents reject
+exposes only the latest `active` generation. Version 3 documents reject
 multiple active states at the same authority address even when definition or
-revision lineage differs.
+revision lineage differs. Pending approval is a review disposition, not
+active state.
 
-Activation identities are idempotent. Replaying the same successful activation
-returns its original state ID, while changed activation content returns
+Review, activation, and terminal transition identities are idempotent. Exact
+replay returns the original immutable receipt, while changed activation content returns
 `activation-conflict`. Proposal identities are single-use and return
 `duplicate-proposal` when reused under another activation. Compare-and-swap
 failures return `stale-baseline`; a baseline from another authority address
 returns `target-conflict`; changing a digest under the same definition ID and
 revision returns `incompatible-definition`; unsupported proposal/state kinds
 return `unsupported-state-kind`.
-Replay returns the current lifecycle status of that immutable state identity;
-after replacement, replay therefore reports `superseded` or `rolled-back`
-rather than reconstructing the earlier `active` view.
+Current history lookup separately reports `superseded` or `rolled-back` after
+replacement. The original activation receipt remains unchanged and never
+claims that replay performed another activation.
+
+Automatic approval must already exist in the journal and bind the exact
+review/proposal and policy. New activation also requires unchanged reviewed
+inputs, current eligibility, non-expiry, and the expected baseline. Denied
+activation returns an explicit `rejected` receipt and audit, never an applied
+state. Review-only, held, limited, rejected, and human-required outcomes cannot
+change active authority. Returned snapshots are isolated copies.
+Proposal/evidence expiry and evidence age are checked at commit time, after
+writer-lock waits, and against recorded timestamps during journal replay.
 
 State also carries the canonical contract digest so orchestration can reject
 stale or incompatible governed state. Governed values carry their actual
@@ -128,19 +141,24 @@ intentionally unsupported.
 
 Lifecycle mutation uses
 `LocalFileGovernedStateLifecycleStore` against the same committed-artifact
-format. Writers serialize a version 2 document containing complete state
-history plus activation and transition replay identities, then publish a new
-immutable artifact and atomically replace the descriptor. A write or
-cancellation before descriptor replacement leaves the previous authority
-visible. A process-wide file lease serializes local writers, and every
+format. Writers serialize a version 3 document containing complete state
+history, replay identities, proposal/review/automatic-approval records, immutable
+receipts, and lifecycle audit. Audit integrity and state-history reconstruction
+must succeed before publishing the immutable artifact and replacing the
+descriptor. A failure or cancellation before publication leaves the previous
+authority visible; a timeout or lost response after publication requires
+same-identity reconciliation, not an assumption that no commit occurred.
+A cross-process file lease serializes local writers, and every
 mutation reloads the latest committed snapshot before applying compare-and-swap.
 Each local lifecycle artifact is restricted to one application/environment
 scope because the legacy runtime `IStateStore` lookup is intentionally scoped
 outside its method signature.
-Version 1 documents remain readable through `LocalFileStateStore` for runtime
-compatibility but are intentionally not mutable through the lifecycle port
-because they lack application scope, state identity, generation, approval, and
-replay metadata.
+Version 1 remains the separate standalone demo-bootstrap format, with no
+lifecycle metadata or mutation authority. Version 2 lifecycle documents are
+unsupported; no lifecycle migration or compatibility path exists. Exact replay
+does not publish another artifact. Runtime validates the complete version 3
+journal, including audit timestamps/targets, recorded approval, predecessor
+and generation chains, and terminal transitions before exposing state.
 
 The adapter accepts only the implemented `active-value` and `strategy` modes
 from the frozen decision-mode enum. Active values cannot carry strategy

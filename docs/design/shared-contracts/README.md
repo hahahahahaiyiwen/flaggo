@@ -28,6 +28,23 @@ These contracts are open-source native:
 6. Runtime responses must include target, fallback, policy, and audit metadata.
 7. New strategy types, storage backends, evidence sources, and policy rules must extend explicit interfaces instead of changing the runtime response shape.
 
+## Internal automatic lifecycle slice
+
+The current .NET implementation shares typed fixed-value/numeric-strategy
+proposals, governed-state identities/history, authenticated actor identity,
+policy layers, scoped evidence, review/approval records, activation/terminal
+receipts, and lifecycle audit through `Flaggo.Shared.Contracts`. Interfaces
+stay in their owning modules. These internal contracts do not add HTTP routes,
+SDK methods, or language-neutral wire schemas.
+
+`LifecycleJson` enforces strict canonical JSON, required/non-null fields,
+precise finite numbers, explicit-offset timestamps, and isolated snapshots.
+`LifecycleIdentity` binds operation fingerprints and review digests to content
+and authenticated identity, not bearer-token bytes. Separate immutable
+receipts support retries without confusing historical activation with current
+state status. Broader experiment/rollout shapes below remain design context,
+not implemented proposal permissions.
+
 ## Primitive types
 
 ```ts

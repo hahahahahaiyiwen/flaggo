@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\packages\shared-contracts\src\Flaggo.Shared.Contracts\Flaggo.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\audit\src\Flaggo.Audit\Flaggo.Audit.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

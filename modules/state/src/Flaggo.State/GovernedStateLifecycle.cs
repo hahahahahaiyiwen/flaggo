@@ -1,86 +1,18 @@
 using System.Security.Cryptography;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
+using Flaggo.Audit;
 using Flaggo.Shared.Contracts;
 
 namespace Flaggo.State;
 
-[JsonConverter(typeof(JsonStringEnumConverter<GovernedDecisionStateStatus>))]
-public enum GovernedDecisionStateStatus
-{
-    Pending,
-    Active,
-    Superseded,
-    Expired,
-    Completed,
-    RolledBack
-}
-
-[JsonConverter(typeof(JsonStringEnumConverter<DecisionProposalSourceKind>))]
-public enum DecisionProposalSourceKind
-{
-    Operator,
-    Scripted,
-    Automated,
-    Intelligence
-}
-
-public sealed record DecisionProposalSource(
-    DecisionProposalSourceKind Kind,
-    string Reference);
-
-public sealed record GovernedDefinitionIdentity(
-    string AppId,
-    string Environment,
-    string DecisionKey,
-    RuntimeContractIdentity Contract);
-
-public sealed record GovernedStateAddress(
-    string AppId,
-    string Environment,
-    string DecisionKey,
-    DecisionTargetRef? ControlTarget);
-
-public sealed record GovernedStateBaseline(
-    string? StateId,
-    long Generation);
-
-public sealed record DecisionProposalContext(
-    string ProposalId,
-    DecisionProposalSource Source,
-    GovernedDefinitionIdentity Definition,
-    DecisionTargetRef? ControlTarget,
-    GovernedStateBaseline ExpectedBaseline,
-    string Rationale,
-    IReadOnlyList<string> EvidenceReferences,
-    IReadOnlyList<string> ConfidenceReferences,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt);
-
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
-[JsonDerivedType(typeof(FixedValueDecisionProposal), "fixed-value")]
-[JsonDerivedType(typeof(NumericStrategyDecisionProposal), "numeric-strategy")]
-public abstract record DecisionProposal(DecisionProposalContext Context);
-
-public sealed record FixedValueDecisionProposal(
-    DecisionProposalContext Context,
-    JsonElement Value) : DecisionProposal(Context);
-
-public sealed record NumericStrategyDecisionProposal(
-    DecisionProposalContext Context,
-    JsonElement InitialValue,
-    string StrategyId,
-    NumericRuleStrategy Strategy) : DecisionProposal(Context);
-
-public sealed record GovernedStateActivationRequest(
+internal sealed record GovernedStateActivationRequest(
     string ActivationId,
     string ApprovalReference,
     DecisionProposal Proposal,
     GovernedDecisionStateStatus ReplacedStateStatus =
         GovernedDecisionStateStatus.Superseded);
 
-public sealed record GovernedStateTransitionRequest(
+internal sealed record GovernedStateTransitionRequest(
     string TransitionId,
     GovernedStateAddress Address,
     string StateId,
@@ -108,12 +40,28 @@ public interface IGovernedStateLifecycleStore
         string stateId,
         CancellationToken cancellationToken);
 
-    Task<GovernedDecisionState> ActivateAsync(
-        GovernedStateActivationRequest request,
+    Task<LifecycleReviewRecord?> GetReviewAsync(
+        string reviewId,
         CancellationToken cancellationToken);
 
-    Task<GovernedDecisionState> TransitionAsync(
-        GovernedStateTransitionRequest request,
+    Task<LifecycleActivationReceipt?> GetActivationAsync(
+        string activationId,
+        CancellationToken cancellationToken);
+
+    Task<LifecycleTransitionReceipt?> GetTransitionAsync(
+        string transitionId,
+        CancellationToken cancellationToken);
+
+    Task<LifecycleReviewReceipt> CommitReviewAsync(
+        LifecycleReviewCommit commit,
+        CancellationToken cancellationToken);
+
+    Task<LifecycleActivationReceipt> CommitActivationAsync(
+        LifecycleActivationCommit commit,
+        CancellationToken cancellationToken);
+
+    Task<LifecycleTransitionReceipt> CommitTransitionAsync(
+        LifecycleTransitionCommit commit,
         CancellationToken cancellationToken);
 }
 
@@ -172,17 +120,18 @@ public sealed class GovernedStateRuntimeProjection(
 }
 
 public sealed partial class InMemoryGovernedStateLifecycleStore :
-    IGovernedStateLifecycleStore
+    IGovernedStateLifecycleStore, ILifecycleAuditReader
 {
     private static readonly JsonSerializerOptions FingerprintOptions =
         new(JsonSerializerDefaults.Web);
 
     private readonly object _gate = new();
-    private readonly Dictionary<GovernedStateAddress, string> _latestStateIds = [];
-    private readonly Dictionary<string, GovernedStateEntry> _states = [];
-    private readonly Dictionary<string, GovernedStateActivationReplay> _activations = [];
-    private readonly Dictionary<string, GovernedStateTransitionReplay> _transitions = [];
-    private readonly Dictionary<string, string> _proposalFingerprints = [];
+    private Dictionary<GovernedStateAddress, string> _latestStateIds = [];
+    private Dictionary<string, GovernedStateEntry> _states = [];
+    private Dictionary<string, GovernedStateActivationReplay> _activations = [];
+    private Dictionary<string, GovernedStateTransitionReplay> _transitions = [];
+    private Dictionary<string, string> _proposalFingerprints = [];
+    private LifecycleAuditTrail _journal;
     private readonly TimeProvider _timeProvider;
     private readonly IGovernedStateIdentityGenerator _identityGenerator;
 
@@ -190,7 +139,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         TimeProvider? timeProvider = null,
         IGovernedStateIdentityGenerator? identityGenerator = null)
         : this(
-            new GovernedStatePersistenceSnapshot(2, [], [], []),
+            new GovernedStatePersistenceSnapshot(3, [], [], [], new([], [], [], [])),
             timeProvider ?? TimeProvider.System,
             identityGenerator ?? new GuidGovernedStateIdentityGenerator())
     {
@@ -203,6 +152,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
     {
         _timeProvider = timeProvider;
         _identityGenerator = identityGenerator;
+        _journal = snapshot.Journal;
         var activeAddresses = new HashSet<GovernedStateAddress>();
 
         foreach (var entry in snapshot.States)
@@ -265,6 +215,8 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                     "An older governed state cannot remain active after a later generation.");
             }
         }
+
+        ValidateJournalState();
     }
 
     public Task<GovernedDecisionState?> GetBaselineAsync(
@@ -277,7 +229,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         {
             return Task.FromResult(
                 _latestStateIds.TryGetValue(address, out var stateId)
-                    ? _states[stateId].State
+                    ? LifecycleJson.Copy(_states[stateId].State)
                     : null);
         }
     }
@@ -292,12 +244,12 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         {
             return Task.FromResult(
                 _states.TryGetValue(stateId, out var entry)
-                    ? entry.State
+                    ? LifecycleJson.Copy(entry.State)
                     : null);
         }
     }
 
-    public Task<GovernedDecisionState> ActivateAsync(
+    private GovernedDecisionState Activate(
         GovernedStateActivationRequest request,
         CancellationToken cancellationToken)
     {
@@ -321,7 +273,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                         "The activation identity was reused with different content.");
                 }
 
-                return Task.FromResult(_states[replay.StateId].State);
+                return _states[replay.StateId].State;
             }
 
             var proposalId = request.Proposal.Context.ProposalId;
@@ -383,11 +335,11 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                     proposalId,
                     proposalFingerprint,
                     stateId));
-            return Task.FromResult(state);
+            return state;
         }
     }
 
-    public Task<GovernedDecisionState> TransitionAsync(
+    private GovernedDecisionState Transition(
         GovernedStateTransitionRequest request,
         CancellationToken cancellationToken)
     {
@@ -410,7 +362,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                         "The transition identity was reused with different content.");
                 }
 
-                return Task.FromResult(_states[replay.StateId].State);
+                return _states[replay.StateId].State;
             }
 
             if (!_states.TryGetValue(request.StateId, out var entry))
@@ -461,7 +413,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                     request.TransitionId,
                     fingerprint,
                     request.StateId));
-            return Task.FromResult(transitioned);
+            return transitioned;
         }
     }
 
@@ -470,10 +422,11 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         lock (_gate)
         {
             return new GovernedStatePersistenceSnapshot(
-                2,
+                3,
                 _states.Values.ToArray(),
                 _activations.Values.ToArray(),
-                _transitions.Values.ToArray());
+                _transitions.Values.ToArray(),
+                _journal);
         }
     }
 
@@ -624,45 +577,16 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
 
     private void ValidateProposal(DecisionProposal proposal)
     {
-        if (proposal is null ||
-            proposal.Context is null ||
-            proposal.Context.Source is null ||
-            proposal.Context.Definition is null ||
-            proposal.Context.ExpectedBaseline is null ||
-            proposal.Context.EvidenceReferences is null ||
-            proposal.Context.ConfidenceReferences is null)
+        try
         {
-            throw Validation(
-                "invalid-proposal",
-                "The proposal is missing required typed context.");
+            DecisionProposalValidation.Validate(proposal);
+        }
+        catch (DecisionProposalValidationException error)
+        {
+            throw Validation(error.Code, error.Message);
         }
 
-        var context = proposal.Context;
-        if (string.IsNullOrWhiteSpace(context.ProposalId) ||
-            !Enum.IsDefined(context.Source.Kind) ||
-            string.IsNullOrWhiteSpace(context.Source.Reference) ||
-            string.IsNullOrWhiteSpace(context.Rationale))
-        {
-            throw Validation(
-                "invalid-proposal",
-                "Proposal identity, source, and rationale are required.");
-        }
-
-        ValidateDefinition(context.Definition);
-        ValidateTarget(context.ControlTarget);
-        ValidateBaseline(context.ExpectedBaseline);
-        ValidateReferences(context.EvidenceReferences, "evidence");
-        ValidateReferences(context.ConfidenceReferences, "confidence");
-        if (context.CreatedAt == default ||
-            context.ExpiresAt is { } expiresAt &&
-            expiresAt <= context.CreatedAt)
-        {
-            throw Validation(
-                "invalid-proposal",
-                "Proposal creation and expiry metadata is invalid.");
-        }
-
-        if (context.ExpiresAt is { } expiry &&
+        if (proposal.Context.ExpiresAt is { } expiry &&
             expiry <= _timeProvider.GetUtcNow())
         {
             throw Validation(
@@ -670,29 +594,6 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                 "The proposal expired before activation.");
         }
 
-        switch (proposal)
-        {
-            case FixedValueDecisionProposal fixedValue:
-                ValidateDecisionValue(fixedValue.Value);
-                break;
-            case NumericStrategyDecisionProposal strategy:
-                ValidateDecisionValue(strategy.InitialValue);
-                if (strategy.InitialValue.ValueKind != JsonValueKind.Number ||
-                    string.IsNullOrWhiteSpace(strategy.StrategyId) ||
-                    strategy.Strategy is null)
-                {
-                    throw Validation(
-                        "invalid-proposal",
-                        "A numeric strategy proposal requires a numeric initial value and strategy identity.");
-                }
-
-                ValidateNumericStrategy(strategy.Strategy);
-                break;
-            default:
-                throw Validation(
-                    "unsupported-state-kind",
-                    "The decision proposal kind is not supported by this state adapter.");
-        }
     }
 
     private static void ValidateTransition(GovernedStateTransitionRequest request)
@@ -715,24 +616,6 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
             throw Validation(
                 "invalid-lifecycle-transition",
                 "Only completion and expiry may deactivate authority without a replacement.");
-        }
-    }
-
-    private static void ValidateDefinition(GovernedDefinitionIdentity definition)
-    {
-        if (definition is null ||
-            definition.Contract is null ||
-            string.IsNullOrWhiteSpace(definition.AppId) ||
-            string.IsNullOrWhiteSpace(definition.Environment) ||
-            string.IsNullOrWhiteSpace(definition.DecisionKey) ||
-            string.IsNullOrWhiteSpace(definition.Contract.DefinitionId) ||
-            string.IsNullOrWhiteSpace(definition.Contract.Revision) ||
-            !ContractDigestPattern().IsMatch(
-                definition.Contract.ContractDigest ?? string.Empty))
-        {
-            throw Validation(
-                "invalid-proposal",
-                "The proposal must carry a complete canonical definition identity.");
         }
     }
 
@@ -760,102 +643,6 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
             throw Validation(
                 "invalid-state-address",
                 "A governed state target requires type and id.");
-        }
-    }
-
-    private static void ValidateBaseline(GovernedStateBaseline baseline)
-    {
-        ArgumentNullException.ThrowIfNull(baseline);
-        if (baseline.StateId is null && baseline.Generation != 0 ||
-            baseline.StateId is not null &&
-            (string.IsNullOrWhiteSpace(baseline.StateId) ||
-             baseline.Generation <= 0))
-        {
-            throw Validation(
-                "invalid-proposal",
-                "The expected baseline must be empty at generation zero or identify a positive generation.");
-        }
-    }
-
-    private static void ValidateReferences(
-        IReadOnlyList<string> references,
-        string kind)
-    {
-        ArgumentNullException.ThrowIfNull(references);
-        if (references.Any(string.IsNullOrWhiteSpace) ||
-            references.Distinct(StringComparer.Ordinal).Count() !=
-            references.Count)
-        {
-            throw Validation(
-                "invalid-proposal",
-                $"Proposal {kind} references must be nonempty and unique.");
-        }
-    }
-
-    private static void ValidateDecisionValue(JsonElement value)
-    {
-        if (value.ValueKind is
-            JsonValueKind.True or
-            JsonValueKind.False or
-            JsonValueKind.String)
-        {
-            return;
-        }
-
-        if (value.ValueKind == JsonValueKind.Number &&
-            CanonicalJson.IsIeee754CompatibleNumber(value))
-        {
-            return;
-        }
-
-        throw Validation(
-            "invalid-proposal",
-            "A governed value must be a canonical primitive decision value.");
-    }
-
-    private static void ValidateNumericStrategy(NumericRuleStrategy strategy)
-    {
-        ArgumentNullException.ThrowIfNull(strategy);
-        if (string.IsNullOrWhiteSpace(strategy.InputSignalKey) ||
-            !double.IsFinite(strategy.Threshold) ||
-            !double.IsFinite(strategy.ValueAtOrAbove) ||
-            !double.IsFinite(strategy.ValueBelow))
-        {
-            throw Validation(
-                "invalid-proposal",
-                "A numeric strategy contains invalid scalar configuration.");
-        }
-
-        if (strategy.WeightedInputs is not { Count: > 0 } weightedInputs)
-        {
-            return;
-        }
-
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        var totalWeight = 0d;
-        foreach (var input in weightedInputs)
-        {
-            if (string.IsNullOrWhiteSpace(input.SignalKey) ||
-                !keys.Add(input.SignalKey) ||
-                !double.IsFinite(input.Minimum) ||
-                !double.IsFinite(input.Maximum) ||
-                input.Maximum <= input.Minimum ||
-                !double.IsFinite(input.Weight) ||
-                input.Weight < 0)
-            {
-                throw Validation(
-                    "invalid-proposal",
-                    "A numeric strategy contains an invalid weighted input.");
-            }
-
-            totalWeight += input.Weight;
-        }
-
-        if (!double.IsFinite(totalWeight) || totalWeight <= 0)
-        {
-            throw Validation(
-                "invalid-proposal",
-                "A numeric strategy must have positive total weight.");
         }
     }
 
@@ -892,10 +679,6 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         string message) =>
         new(code, message);
 
-    [GeneratedRegex(
-        "\\Asha256:[0-9a-f]{64}\\z",
-        RegexOptions.CultureInvariant)]
-    private static partial Regex ContractDigestPattern();
 }
 
 internal sealed record GovernedStateEntry(
@@ -918,4 +701,5 @@ internal sealed record GovernedStatePersistenceSnapshot(
     int Version,
     IReadOnlyList<GovernedStateEntry> States,
     IReadOnlyList<GovernedStateActivationReplay> Activations,
-    IReadOnlyList<GovernedStateTransitionReplay> Transitions);
+    IReadOnlyList<GovernedStateTransitionReplay> Transitions,
+    LifecycleAuditTrail Journal);

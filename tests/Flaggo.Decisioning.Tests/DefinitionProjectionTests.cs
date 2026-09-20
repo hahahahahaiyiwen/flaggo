@@ -28,6 +28,9 @@ public sealed class DefinitionProjectionTests
             "approved-strategy",
             intelligence.WorkflowPermissions.Mode);
         Assert.Equal(0.7, intelligence.SafetyEnvelope.MinimumEvidenceQuality);
+        Assert.Equal(
+            runtime.Inputs.Select(input => input.Key).Order(StringComparer.Ordinal),
+            intelligence.WorkflowPermissions.LiveInputs.Order(StringComparer.Ordinal));
     }
 
     [Fact]

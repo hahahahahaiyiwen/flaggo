@@ -10,41 +10,54 @@ Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 
 ## MVP responsibility
 
-State stores:
+The implemented state boundary stores:
 
 - active value or active strategy,
-- previous value,
-- last decision time,
-- cooldown deadline,
-- pause state,
-- operator override,
-- definition ID/revision tied to the active state.
+- exact definition/control-target identity and immutable history,
+- state/proposal/approval identities and monotonic generations,
+- activation and last-change time,
+- supersession, rollback, completion, and expiry status,
+- lifecycle review/approval/audit records and immutable replay receipts.
 
-MVP state should support in-memory storage first. A later persistent implementation can use SQLite, PostgreSQL, Redis, or a cloud store behind the same interface.
+In-memory and local committed-file adapters implement the same atomic
+lifecycle boundary. Runtime is read-only; per-request cooldown/history and
+general override state are not added by this slice.
 
-## Core port
+## Separate read and lifecycle ports
 
-```ts
+```csharp
 interface IStateStore {
-  getActiveState(input: StateRequest): Promise<DecisionState | null>;
-  updateActiveState(input: StateUpdate): Promise<void>;
+  Task<GovernedDecisionState?> GetActiveAsync(
+    string decisionKey, string definitionId, string revision,
+    IReadOnlyList<DecisionTargetRef?> resolutionTargets,
+    CancellationToken cancellationToken);
 }
 
-type StateRequest = {
-  definition: DecisionDefinitionRef;
-  controlTarget?: DecisionTargetRef;
-  runtimeTarget?: DecisionTargetRef;
-};
-
-type StateUpdate = {
-  definition: DecisionDefinitionRef;
-  controlTarget?: DecisionTargetRef;
-  runtimeTarget?: DecisionTargetRef;
-  expectedContractVersion?: string;
-  nextState: DecisionState;
-  reason: string;
-};
+interface IGovernedStateLifecycleStore {
+  // Baseline, history, and immutable receipt reads are also exposed.
+  Task<LifecycleReviewReceipt> CommitReviewAsync(
+    LifecycleReviewCommit commit, CancellationToken cancellationToken);
+  Task<LifecycleActivationReceipt> CommitActivationAsync(
+    LifecycleActivationCommit commit, CancellationToken cancellationToken);
+  Task<LifecycleTransitionReceipt> CommitTransitionAsync(
+    LifecycleTransitionCommit commit, CancellationToken cancellationToken);
+}
 ```
+
+`IProposalGovernance` is the producer-facing application boundary. It supplies
+authenticated actor authority and evaluated policy to these trusted commits;
+producers cannot write arbitrary state or bypass approval. Activation requires
+a recorded automatic approval, fresh reviewed inputs, non-expiry, and the
+expected baseline state ID/generation. Human-required reviews stay pending.
+
+Version 3 persistence co-commits state history, lifecycle audit, approval, and
+replay receipts through immutable artifacts and descriptor-last publication.
+Runtime reconstructs the proof before exposing active state. Exact replay
+returns the original receipt, while current state status is read separately.
+Cancellation/timeout after publication can leave a committed outcome; retry
+the same identity. An underlying writer retains its lease until completion.
+Version 2 lifecycle persistence is removed, without migration. Version 1
+standalone demo bootstrap remains read-only and cannot carry lifecycle proof.
 
 Runtime lookup receives an ordered set of exact targets from reasoning after
 the registry-owned runtime projection has authorized the target kinds.
@@ -62,7 +75,7 @@ Decision API
   -> loads runtime target state for definition + runtime target, if needed
   -> checks override or pause
   -> executes active strategy or active value
-  -> updates lastDecisionAt/cooldown when needed
+  -> returns an audited value without mutating governed authority
 ```
 
 Precedence:
@@ -76,30 +89,35 @@ Precedence:
 
 ## Tetris MVP state
 
-Example active state:
+Illustrative runtime projection of an activated state, not a standalone
+persistence document:
 
 ```json
 {
-  "decisionKey": "tetris.dropInterval",
   "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
   "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
+  "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
+  "value": 800,
   "controlTarget": {
     "type": "cohort",
     "id": "new_players"
   },
-  "contractVersion": "1",
-  "lifecycle": "active",
-  "activeStrategy": {
-    "kind": "numeric-rule",
-    "id": "strategy-tetris-new-players-v1",
-    "baseValue": 800,
-    "min": 600,
-    "max": 1100,
-    "step": 50,
-    "cooldownSeconds": 20,
-    "rules": []
+  "mode": "strategy",
+  "strategyId": "strategy-tetris-new-players-v1",
+  "numericRule": {
+    "inputSignalKey": "tetris.boardPressure",
+    "threshold": 0.7,
+    "valueAtOrAbove": 850,
+    "valueBelow": 750
   },
-  "previousValue": 800
+  "stateId": "state-1",
+  "proposalId": "proposal-1",
+  "generation": 1,
+  "predecessorStateId": null,
+  "approvalReference": "approval-record-id",
+  "activatedAt": "2026-09-20T20:00:00Z",
+  "lastChangedAt": "2026-09-20T20:00:00Z",
+  "lifecycleStatus": "active"
 }
 ```
 
@@ -119,6 +137,7 @@ Rules:
 - Distributed locking.
 - Multi-region consistency.
 - Complex rollout state.
-- Long-term state history beyond audit.
+- Cross-store transactions that separate lifecycle audit from authority.
 
-Those can be added later behind `IStateStore` and audit records.
+Future adapters must preserve the lifecycle co-commit invariant while exposing
+only the read-only `IStateStore` projection to runtime.

@@ -30,6 +30,10 @@ envelope for async intelligence and lifecycle consumers. Both projections are
 persisted and reloaded together; consumers never parse registry JSON or
 approval snapshots.
 
+Workflow `LiveInputs` are registered signal keys, not shortened display names.
+The seeded Tetris projection uses the same `tetris.*` keys as its runtime input
+declarations so lifecycle policy can enforce the exact signal permissions.
+
 Legacy runtime-only v1 files migrate conventional target bindings only when
 the persisted definition predates explicit targeting metadata, including the
 legacy full fallback chain. New definitions that omit `fallbackOrder` authorize

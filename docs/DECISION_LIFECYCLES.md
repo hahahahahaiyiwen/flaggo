@@ -67,22 +67,40 @@ Approval and activation are separate events. An approved proposal may remain pen
 
 Rollback is a transition, not a governed-state payload kind. It activates a replacement or previous known-safe state and marks the replaced state `rolled-back`.
 
-The current local lifecycle mutation boundary is
-`IGovernedStateLifecycleStore`. It accepts typed fixed-value or numeric-strategy
-proposals and creates state through compare-and-swap; proposal producers do not
-receive a direct state-write API. The expected baseline is a state ID plus
-generation for one application/environment/decision/control-target address.
-Successful replacement increments the generation and records the predecessor,
-approval reference, proposal ID, and activation time.
+The producer-facing boundary is `IProposalGovernance` in `modules/lifecycle`.
+It accepts typed fixed-value or numeric-strategy proposals, resolves trusted
+actor authority separately, and orchestrates review and explicit activation.
+The expected baseline is a state ID/generation for one
+application/environment/decision/control-target address. No omitted target
+becomes implicit global authority.
 
-Activation and proposal identities are durable idempotency boundaries.
-Identical successful activation replay returns the original state identity.
-Changed activation replay, proposal reuse, stale baseline, target mismatch,
-incompatible definition identity, and unsupported state kind are distinct
-stable conflicts. The local adapter retains state history and replay metadata
-in a committed immutable artifact; its descriptor is switched only after the
-replacement is durable, so readers observe either the complete prior authority
-or the complete replacement.
+The current slice prioritizes automatic approval. An approved review persists
+a distinct approval bound to proposal/review digests, effective policy
+revision, initiating actor, timestamp, and `automatic` mode. It is not human
+approval. Human-required policy stays `pending-approval`; no manual approval
+workflow/UI or producer entry point is implemented by this slice.
+
+`IGovernedStateLifecycleStore` accepts trusted review/activation/terminal
+commits, not arbitrary runtime state or unaudited producer writes. It checks
+the recorded approval and expected baseline and atomically records approval,
+audit, receipts, and state. Replacement increments generation and records the
+predecessor, proposal, and activation identity. Before new activation, the
+application boundary rechecks definition, actor, policy, evidence, and expiry.
+
+Review and activation identities bind immutable operations. Exact authorized
+replay returns the original receipt, including after expiry or supersession;
+current state status is a separate history read. Changed reuse conflicts, and
+successful activation consumes the proposal once. New review identities are
+required after changed inputs or a hold.
+
+The local adapter's version 3 committed artifact co-locates the lifecycle
+journal and state history. Runtime rejects missing or inconsistent proof.
+Descriptor-last publication exposes only a complete snapshot. Pre-publication
+failure leaves old authority; timeout, cancellation, or a lost response after
+publication may have committed. Retry the same identity rather than assuming
+rollback. A bounded caller wait never releases an in-flight writer's lease.
+Old unaudited lifecycle formats are not migrated; standalone demo bootstrap
+remains separate.
 
 ## Governance
 
@@ -109,6 +127,15 @@ Effective policy is the intersection of:
 
 Less-trusted layers may narrow behavior but cannot widen it.
 
+The implementation uses a separate `ILifecyclePolicyEvaluator`; runtime
+`IPolicyEvaluator` continues guarding individual requests against approved
+state. Both environment policy and operator controls must explicitly allow
+automatic approval. Blast-radius enforcement currently means authorized
+target kinds/identities and one authority address per proposal, not traffic
+allocation or population estimates. `maximumActivationDelta` and
+`minimumActivationIntervalSeconds` apply to durable changes; runtime temporal
+stabilization remains separate work.
+
 ## Governance dispositions
 
 Proposal type and governance disposition are different concepts. An experiment is a proposal type, not an approval result.
@@ -116,7 +143,7 @@ Proposal type and governance disposition are different concepts. An experiment i
 | Disposition | Meaning |
 | --- | --- |
 | `approved` | The proposal may become active as submitted. |
-| `limited` | A constrained version may become active with reduced scope, traffic, delta, or duration. |
+| `limited` | Return restrictions; the submitted proposal cannot activate. A revised proposal requires another review. |
 | `pending-approval` | Human or external approval is required. |
 | `hold` | Existing authority remains unchanged because evidence or timing is insufficient. |
 | `rejected` | The proposal violates contract, policy, authority, or safety requirements. |
@@ -134,7 +161,9 @@ Approved authority may represent:
 | Fallback-only | Serve only the safe registered fallback. |
 | Override | Apply explicit operator authority until removed or expired. |
 
-These are state kinds. Runtime execution mechanisms are defined separately in [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
+These are the broader state kinds. The current lifecycle implementation
+supports fixed values and numeric-rule strategies only. Runtime execution
+mechanisms are defined separately in [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
 
 ## Adaptive optimization lifecycle
 
@@ -254,6 +283,11 @@ Lifecycle audit records should capture:
 - explanation and rollback rationale.
 
 Every active state must be reconstructable from its proposal, policy outcome, approval, and transition history.
+
+`ILifecycleAuditReader` exposes the current internal journal. Audit owns
+record semantics and integrity checks; state owns the co-commit boundary.
+Lifecycle audit is not appended to a separate sink before or after state
+publication. Request-time decision/exposure audit remains independent.
 
 ## Relationship to contract and evidence flows
 

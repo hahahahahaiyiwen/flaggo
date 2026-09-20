@@ -21,6 +21,10 @@
   <Folder Name="/modules/evidence/src/">
     <Project Path="modules/evidence/src/Flaggo.Evidence/Flaggo.Evidence.csproj" />
   </Folder>
+  <Folder Name="/modules/lifecycle/" />
+  <Folder Name="/modules/lifecycle/src/">
+    <Project Path="modules/lifecycle/src/Flaggo.Lifecycle/Flaggo.Lifecycle.csproj" />
+  </Folder>
   <Folder Name="/modules/policy/" />
   <Folder Name="/modules/policy/src/">
     <Project Path="modules/policy/src/Flaggo.Policy/Flaggo.Policy.csproj" />

@@ -3,38 +3,6 @@ using Flaggo.Shared.Contracts;
 
 namespace Flaggo.State;
 
-public sealed record NumericRuleInput(
-    string SignalKey,
-    double Minimum,
-    double Maximum,
-    double Weight);
-
-public sealed record NumericRuleStrategy(
-    string InputSignalKey,
-    double Threshold,
-    double ValueAtOrAbove,
-    double ValueBelow,
-    IReadOnlyList<NumericRuleInput>? WeightedInputs = null);
-
-public sealed record GovernedDecisionState(
-    string DefinitionId,
-    string Revision,
-    string ContractDigest,
-    JsonElement Value,
-    DecisionTargetRef? ControlTarget = null,
-    string Mode = "active-value",
-    string? StrategyId = null,
-    NumericRuleStrategy? NumericRule = null,
-    DateTimeOffset? LastChangedAt = null,
-    string? StateId = null,
-    string? ProposalId = null,
-    long Generation = 0,
-    string? PredecessorStateId = null,
-    string? ApprovalReference = null,
-    DateTimeOffset? ActivatedAt = null,
-    GovernedDecisionStateStatus LifecycleStatus =
-        GovernedDecisionStateStatus.Active);
-
 public interface IStateStore
 {
     Task<GovernedDecisionState?> GetActiveAsync(

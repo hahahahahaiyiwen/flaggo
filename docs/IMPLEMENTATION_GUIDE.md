@@ -658,12 +658,76 @@ Validation:
 - concurrent activation from the same baseline publishes exactly one
   replacement;
 - successful activation replay returns the original state identity;
-- cancellation or publication failure leaves the previous authority visible;
+- cancellation or failure before publication leaves the previous authority
+  visible; an interrupted response after publication requires replay;
 - replacement records supersession or rollback and links the new state to its
   predecessor;
 - local restart preserves replay and compare-and-swap behavior;
-- legacy version 1 state remains runtime-readable but cannot be lifecycle
-  mutated without the missing identity metadata.
+- standalone version 1 bootstrap state remains runtime-readable but cannot
+  be mutated through the lifecycle port.
+
+#### Track C: Automatic-first lifecycle policy and atomic audit
+
+The implemented #32 slice adds a small `modules/lifecycle` application
+boundary:
+
+```text
+authenticated proposal
+  -> deterministic lifecycle review
+  -> explicit recorded automatic approval
+  -> atomic audited activation
+  -> existing read-only runtime consumption
+```
+
+Deliverables:
+
+- `IProposalGovernance.ReviewAsync` and `ActivateAsync`, with authenticated
+  actor identity and resource permissions supplied by a trusted host port,
+  never by proposal source labels;
+- separate `ILifecyclePolicyEvaluator` and policy-context ports; effective
+  definition, environment, and operator constraints can narrow, not widen;
+- exact runtime/intelligence definition projections and scoped proposal
+  evidence, without reading registry persistence or inventing active state;
+- one explicit control target per proposal, authorized target kinds/identities,
+  numeric action bounds/grid, all strategy outputs and inputs, evidence
+  confidence/freshness, pause, replacement, and state-change constraints;
+- explicit automatic approval only when both policy layers permit it;
+  human-required policy remains `pending-approval`, and `limited` returns
+  restrictions without silently changing or activating the proposal;
+- version 3 state persistence co-committing lifecycle audit, approval,
+  immutable receipts, replay identities, and state history;
+- fresh activation checks plus state compare-and-swap; exact authorized
+  replay returns the original outcome without another activation;
+- control-plane DI and authenticated-principal mapping, without new HTTP
+  endpoints or SDK/OpenAPI changes.
+
+Acceptance evidence covers every non-approved disposition, actor/scope
+denial, changed policy/evidence, exact/conflicting replay, restart, concurrent
+writers, malformed journal proof, audit/publication failures, and
+timeout/cancellation with a non-cooperative writer retaining its lease.
+The composed Tetris definition can be reviewed, automatically approved, and
+activated for the same read-only state/runtime interfaces.
+
+The committed journal must reconstruct proposal, policy, approval authority,
+actor, predecessor/replacement, and audit identity before runtime state is
+exposed. Failure before publication leaves the old snapshot; timeout or a lost
+response after publication may have committed and must be reconciled using the
+same operation identity. No unaudited mutation API, two-store coordinator,
+compatibility alias, or lifecycle-format migration remains.
+
+See [Lifecycle Module](../modules/lifecycle/README.md) and
+[Control Plane](../apps/control-plane/README.md) for ports and configuration.
+Version 1 demo bootstrap remains a separate path, not evidence that governance
+ran. Proposal producers/operator entry points belong to #25; manual approval
+workflow/UI, experiments, rollouts, and telemetry ingestion are not part of
+this slice.
+
+#### Track D: Runtime temporal stabilization
+
+Issue #33 retains the cross-cutting runtime stabilization work.
+Lifecycle `maximumActivationDelta` and `minimumActivationIntervalSeconds`
+constrain durable authority changes; they do not add per-request history,
+hysteresis, or reinterpret the frozen runtime cooldown/maximum-delta behavior.
 
 ### Phase 4: Minimal async intelligence and governance loop
 
@@ -672,9 +736,9 @@ Goal: introduce the async path without requiring a full AI platform.
 Deliverables:
 
 - scripted or fixture-based strategy proposal generation,
-- `IProposalGovernance.review(...)`,
-- strategy activation flow,
-- audit record for proposal review and activation,
+- an operator/scripted entry point over Track C's `IProposalGovernance`,
+- strategy review and activation through the existing automatic approval gate,
+- inspection of the existing proposal/review/approval/activation audit trail,
 - documentation showing where future AI agents plug in.
 
 Validation:
@@ -730,9 +794,13 @@ Before adding features, verify the change extends one of these seams instead of 
 
 - new result shape: should not be added unless boolean/number/string is insufficient,
 - new strategy type: extend `DecisionStrategy`,
-- new evidence source: implement `IEvidenceProvider`,
-- new storage backend: implement the registry read/lifecycle ports or `IStateStore`,
-- new policy rule: extend `IPolicyEvaluator`,
+- new evidence source: implement `IEvidenceProvider` for runtime or
+  `IProposalEvidenceReader` for lifecycle evidence,
+- new storage backend: implement registry ports, read-only `IStateStore`, or
+  the atomic lifecycle journal contract; never split lifecycle audit from
+  authority publication,
+- new policy rule: extend `IPolicyEvaluator` for runtime or
+  `ILifecyclePolicyEvaluator` for proposed authority,
 - new async reasoning mode: implement `IDecisionIntelligence`,
 - new telemetry transport: extend SDK telemetry mode without changing decision calls,
 - new cloud provider: implement adapters behind existing ports instead of changing core contracts.
