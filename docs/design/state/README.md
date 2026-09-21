@@ -35,6 +35,12 @@ interface IStateStore {
 
 interface IGovernedStateLifecycleStore {
   // Baseline, history, and immutable receipt reads are also exposed.
+  Task<LifecycleReviewReceipt> ReplayReviewAsync(
+    LifecycleReviewRequest request, LifecycleActor actor,
+    CancellationToken cancellationToken);
+  Task<LifecycleActivationReceipt> ReplayActivationAsync(
+    LifecycleActivationRequest request, LifecycleActor actor,
+    CancellationToken cancellationToken);
   Task<LifecycleReviewReceipt> CommitReviewAsync(
     LifecycleReviewCommit commit, CancellationToken cancellationToken);
   Task<LifecycleActivationReceipt> CommitActivationAsync(
@@ -54,6 +60,12 @@ Version 3 persistence co-commits state history, lifecycle audit, approval, and
 replay receipts through immutable artifacts and descriptor-last publication.
 Runtime reconstructs the proof before exposing active state. Exact replay
 returns the original receipt, while current state status is read separately.
+Snapshot reads alone cannot acknowledge durability. Explicit replay acquires
+the writer lease, reloads and verifies the existing operation and actor, and
+synchronizes the descriptor directory before returning. Unchanged commit
+retries do the same. This prevents acknowledgement between descriptor rename
+and the final durability barrier and repairs an interrupted barrier without
+republishing state or creating an operation from an old observation.
 Cancellation/timeout after publication can leave a committed outcome; retry
 the same identity. An underlying writer retains its lease until completion.
 Version 2 lifecycle persistence is removed, without migration. Version 1

@@ -66,12 +66,18 @@ read-only state projection; it does not call lifecycle policy or receive a
 mutation port.
 
 An exact authorized retry returns the original immutable review or activation
-receipt before resolving changing dependencies. Changed reuse conflicts.
+receipt without resolving changing dependencies. It uses the state's explicit
+replay boundary, not a snapshot read: the recorded operation must still exist,
+its actor/fingerprint must match, and persistence must confirm durability.
+The local adapter waits for the writer lease and repairs any failed final
+directory barrier before acknowledging the receipt. Changed reuse conflicts.
 Successful activation consumes the proposal once. Current state/history lookup
 is separate: replaying an old activation does not reactivate a superseded state.
 
-Commit waits default to five seconds and honor request cancellation and host
-shutdown. An underlying non-cooperative writer keeps its lease until it really
+Commit and replay-confirmation waits default to five seconds and honor request
+cancellation and host shutdown. Store invocation runs independently of the
+caller wait so synchronous native durability barriers are bounded too.
+An underlying non-cooperative writer keeps its lease until it really
 finishes; late faults are observed and logged. Timeout, cancellation, or a lost
 response can mean an unknown committed outcome, not proof of rollback. Retry
 the original identity to reconcile; do not mint a replacement operation ID.

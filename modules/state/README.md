@@ -19,6 +19,10 @@ target. `IGovernedStateLifecycleStore` owns baseline/history and receipt reads,
 plus `CommitReviewAsync`, `CommitActivationAsync`, and `CommitTransitionAsync`.
 These trusted commits atomically include lifecycle audit and operation
 receipts; the old unaudited activation/transition APIs are removed.
+`ReplayReviewAsync` and `ReplayActivationAsync` acknowledge only an existing
+operation after checking its actor, fingerprint, and durability. They never
+materialize a missing operation. Ordinary `Get*`/audit reads are snapshot
+observations, not durability acknowledgements.
 `GovernedStateRuntimeProjection` adapts that lifecycle store back to the
 existing `IStateStore` contract without exposing mutation to runtime callers.
 
@@ -174,6 +178,15 @@ does not publish another artifact. On each content change, runtime validates
 the complete version 3 journal, including audit timestamps/targets, recorded
 approval, predecessor and generation chains, and terminal transitions before
 exposing state.
+
+A renamed descriptor can be visible before its publisher's final directory
+barrier completes. Explicit replay therefore takes the writer lease, reloads
+and validates the journal, checks the immutable operation, and synchronizes
+the descriptor directory under the lease before returning its receipt. This
+waits for an outstanding writer and repairs a previous failed final barrier.
+Unchanged review, activation, and terminal commit retries enforce the same
+under-lease barrier. A failed barrier never acknowledges success; replay does
+not republish artifacts or duplicate audit/state effects.
 
 The adapter accepts only the implemented `active-value` and `strategy` modes
 from the frozen decision-mode enum. Active values cannot carry strategy

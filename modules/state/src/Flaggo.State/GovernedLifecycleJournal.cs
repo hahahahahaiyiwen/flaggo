@@ -23,6 +23,38 @@ public sealed partial class InMemoryGovernedStateLifecycleStore
         Read(() => _journal.Transitions.SingleOrDefault(item =>
             item.Request.TransitionId == transitionId), cancellationToken);
 
+    public Task<LifecycleReviewReceipt> ReplayReviewAsync(
+        LifecycleReviewRequest request,
+        LifecycleActor actor,
+        CancellationToken cancellationToken) =>
+        Read(() =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            DecisionProposalValidation.Validate(request.Proposal);
+            var prior = _journal.Reviews.SingleOrDefault(item => item.Receipt.ReviewId == request.ReviewId)
+                ?? throw Validation("review-not-found", "The lifecycle review does not exist.");
+            var definition = prior.Commit.Request.Proposal.Context.Definition;
+            RequireActor(actor, definition.AppId, definition.Environment, review: true);
+            RequireFingerprint(prior.RequestFingerprint,
+                LifecycleIdentity.ReviewRequest(request, actor.Identity), "review-conflict");
+            return prior.Receipt;
+        }, cancellationToken);
+
+    public Task<LifecycleActivationReceipt> ReplayActivationAsync(
+        LifecycleActivationRequest request,
+        LifecycleActor actor,
+        CancellationToken cancellationToken) =>
+        Read(() =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            var prior = _journal.Activations.SingleOrDefault(item => item.ActivationId == request.ActivationId)
+                ?? throw Validation("activation-not-found", "The lifecycle activation does not exist.");
+            RequireActor(actor, prior.Definition.AppId, prior.Definition.Environment, review: false);
+            RequireFingerprint(prior.Fingerprint,
+                LifecycleIdentity.ActivationRequest(request, actor.Identity), "activation-conflict");
+            return prior;
+        }, cancellationToken);
+
     public Task<LifecycleAuditTrail> ReadAsync(
         string appId,
         string environment,
@@ -63,14 +95,13 @@ public sealed partial class InMemoryGovernedStateLifecycleStore
             store => store.RecordTransition(LifecycleJson.Copy(commit), cancellationToken),
             cancellationToken);
 
-    private Task<T?> Read<T>(Func<T?> read, CancellationToken cancellationToken)
-        where T : class
+    private Task<T> Read<T>(Func<T> read, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
             var value = read();
-            return Task.FromResult(value is null ? null : LifecycleJson.Copy(value));
+            return Task.FromResult(value is null ? value : LifecycleJson.Copy(value));
         }
     }
 

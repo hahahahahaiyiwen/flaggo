@@ -40,6 +40,7 @@ public interface IGovernedStateLifecycleStore
         string stateId,
         CancellationToken cancellationToken);
 
+    // Snapshot observations do not acknowledge durability; use replay or commit for that.
     Task<LifecycleReviewRecord?> GetReviewAsync(
         string reviewId,
         CancellationToken cancellationToken);
@@ -50,6 +51,16 @@ public interface IGovernedStateLifecycleStore
 
     Task<LifecycleTransitionReceipt?> GetTransitionAsync(
         string transitionId,
+        CancellationToken cancellationToken);
+
+    Task<LifecycleReviewReceipt> ReplayReviewAsync(
+        LifecycleReviewRequest request,
+        LifecycleActor actor,
+        CancellationToken cancellationToken);
+
+    Task<LifecycleActivationReceipt> ReplayActivationAsync(
+        LifecycleActivationRequest request,
+        LifecycleActor actor,
         CancellationToken cancellationToken);
 
     Task<LifecycleReviewReceipt> CommitReviewAsync(

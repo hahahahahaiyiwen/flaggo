@@ -29,6 +29,7 @@ public sealed class LocalFileGovernedStateLifecycleStore :
     private readonly IGovernedStateIdentityGenerator _identityGenerator;
     private readonly IGovernedStateDocumentPublisher _publisher;
     private readonly Action<string> _ensureDirectory;
+    private readonly Action<string> _flushDirectory;
 
     public LocalFileGovernedStateLifecycleStore(
         LocalFileGovernedStateLifecycleStoreOptions options,
@@ -65,6 +66,7 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         _ensureDirectory = directoryOperations is null
             ? DurableDirectory.Create
             : path => DurableDirectory.Create(path, directoryOperations);
+        _flushDirectory = directoryOperations is null ? DurableDirectory.Flush : directoryOperations.Flush;
     }
 
     public async Task<GovernedDecisionState?> GetBaselineAsync(
@@ -91,6 +93,18 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         string transitionId,
         CancellationToken cancellationToken) =>
         await (await LoadAsync(cancellationToken)).GetTransitionAsync(transitionId, cancellationToken);
+
+    public Task<LifecycleReviewReceipt> ReplayReviewAsync(
+        LifecycleReviewRequest request,
+        LifecycleActor actor,
+        CancellationToken cancellationToken) =>
+        ReplayAsync(store => store.ReplayReviewAsync(request, actor, cancellationToken), cancellationToken);
+
+    public Task<LifecycleActivationReceipt> ReplayActivationAsync(
+        LifecycleActivationRequest request,
+        LifecycleActor actor,
+        CancellationToken cancellationToken) =>
+        ReplayAsync(store => store.ReplayActivationAsync(request, actor, cancellationToken), cancellationToken);
 
     public async Task<LifecycleAuditTrail> ReadAsync(
         string appId,
@@ -131,7 +145,30 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         {
             await _publisher.PublishAsync(_commitDescriptorPath, replacement, cancellationToken);
         }
+        else
+        {
+            ConfirmDurability(cancellationToken);
+        }
         return result;
+    }
+
+    private async Task<T> ReplayAsync<T>(
+        Func<InMemoryGovernedStateLifecycleStore, Task<T>> replay,
+        CancellationToken cancellationToken)
+    {
+        await using var lease = await AcquireLeaseAsync(cancellationToken);
+        var store = await LoadAsync(cancellationToken);
+        var receipt = await replay(store);
+        ConfirmDurability(cancellationToken);
+        return receipt;
+    }
+
+    private void ConfirmDurability(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // A previous writer may have renamed the descriptor but failed its final barrier.
+        _flushDirectory(Path.GetDirectoryName(_commitDescriptorPath)!);
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private async Task<InMemoryGovernedStateLifecycleStore> LoadAsync(

@@ -119,6 +119,10 @@ Trusted publishers use `CommittedFileSnapshotWriter` with
 `LifecycleJson.Bytes(new ProposalEvidenceDocument(1, snapshots))`.
 
 `IGovernedStateLifecycleStore` and `ILifecycleAuditReader` share the same atomic
-file adapter. A five-second default commit wait is linked to request
-cancellation and host shutdown. An interrupted wait may have committed;
-retry the original operation identity to reconcile its immutable receipt.
+file adapter. A five-second default commit/replay-confirmation wait is linked
+to request cancellation and host shutdown, including synchronous durability
+barriers. Exact retries require durable confirmation under the writer lease,
+not merely a receipt visible after descriptor rename. An interrupted wait may
+have committed; retry the original operation identity to reconcile its
+immutable receipt. After host shutdown, reconciliation requires a live host
+rather than bypassing cancellation through a replay shortcut.

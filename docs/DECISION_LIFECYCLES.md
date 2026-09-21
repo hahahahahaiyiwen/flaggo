@@ -92,6 +92,11 @@ replay returns the original receipt, including after expiry or supersession;
 current state status is a separate history read. Changed reuse conflicts, and
 successful activation consumes the proposal once. New review identities are
 required after changed inputs or a hold.
+Replay acknowledgement requires persistence-owned durability confirmation,
+not just a visible receipt. The local adapter waits for any outstanding writer
+and synchronizes the descriptor directory under the lease, including recovery
+after a failed post-rename barrier. It never recreates a missing operation or
+reevaluates changing dependencies to confirm an existing one.
 
 The local adapter's version 3 committed artifact co-locates the lifecycle
 journal and state history. Runtime rejects missing or inconsistent proof.

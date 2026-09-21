@@ -350,8 +350,14 @@ public sealed class ProposalGovernanceTests
         var journal = await stable.ReadAsync("app", "dev", CancellationToken.None);
         Assert.Single(journal.Activations);
         Assert.Equal(4, journal.Records.Count);
+        if (interruption == "shutdown")
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                service.ActivateAsync(new("activation-1", "review-1"), CancellationToken.None));
+        }
+        var restarted = fixture.CreateService(stable);
         Assert.Equal(LifecycleJson.Digest(replay),
-            LifecycleJson.Digest(await service.ActivateAsync(new("activation-1", "review-1"), CancellationToken.None)));
+            LifecycleJson.Digest(await restarted.ActivateAsync(new("activation-1", "review-1"), CancellationToken.None)));
     }
 
     [Fact]

@@ -85,7 +85,9 @@ public sealed class ProposalGovernance(
                 prior.RequestFingerprint,
                 LifecycleIdentity.ReviewRequest(request, actor.Identity),
                 "review-conflict");
-            return prior.Receipt;
+            return await CommitAsync(
+                token => state.ReplayReviewAsync(request, actor, token),
+                cancellationToken);
         }
 
         var commit = await ResolveReviewAsync(request, actor, cancellationToken);
@@ -113,7 +115,9 @@ public sealed class ProposalGovernance(
                 prior.Fingerprint,
                 LifecycleIdentity.ActivationRequest(request, replayActor.Identity),
                 "activation-conflict");
-            return prior;
+            return await CommitAsync(
+                token => state.ReplayActivationAsync(request, replayActor, token),
+                cancellationToken);
         }
 
         var review = await state.GetReviewAsync(request.ReviewId, cancellationToken)
@@ -195,10 +199,12 @@ public sealed class ProposalGovernance(
         using var deadline = new CancellationTokenSource(_commitOptions.Timeout, clock);
         using var combined = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, deadline.Token, _commitOptions.Shutdown);
-        var pending = commit(combined.Token);
+        var commitToken = combined.Token;
+        // Native durability barriers can block before the store returns its task.
+        var pending = Task.Run(() => commit(commitToken), CancellationToken.None);
         try
         {
-            return await pending.WaitAsync(combined.Token);
+            return await pending.WaitAsync(commitToken);
         }
         catch (OperationCanceledException) when (
             deadline.IsCancellationRequested &&
