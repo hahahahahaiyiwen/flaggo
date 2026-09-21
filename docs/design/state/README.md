@@ -93,10 +93,13 @@ Decision API
 
 Precedence:
 
-1. Retired contract forces fallback.
-2. Active numeric rule produces an adaptive runtime value.
-3. Active value returns a fixed governed value.
-4. Missing or invalid state returns the contract fallback.
+Contract identity and lifecycle eligibility are validated before state
+resolution. A retired identity returns `409 retired-definition`; it never
+reaches state precedence or fallback.
+
+1. Active numeric rule produces an adaptive runtime value.
+2. Active value returns a fixed governed value.
+3. Missing or invalid state returns the contract fallback.
 
 Pause, override, cooldown, previous-result delta, hysteresis, and other
 temporal behavior require explicit follow-up contracts rather than implicit

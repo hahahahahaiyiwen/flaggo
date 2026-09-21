@@ -531,7 +531,11 @@ type DecisionResult<T> =
   | ClientFallbackResult<T>;
 ```
 
-`confidence` is `null` when Flaggo returns a static decision fallback because no evidence-backed decision was approved. If only target/evidence resolution fallback happened, confidence should still be present and should refer to the returned decision's evidence views and control target.
+`confidence` is present only when the returned authority makes an
+evidence-backed claim. It is `null` for decision fallback and deterministic
+bundle-authored strategies. Resolution fallback preserves the broader
+authority's semantics: evidence-backed authority retains confidence, while a
+deterministic broader-target strategy returns `null`.
 
 `decisionMode` tells the application how the value was produced without exposing internal implementation details. For the Tetris adaptive MVP, the expected mode is usually `strategy`: the server executed an approved strategy against live runtime context and returned an immediate numeric value.
 

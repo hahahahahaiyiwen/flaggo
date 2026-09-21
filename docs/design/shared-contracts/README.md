@@ -588,8 +588,13 @@ Rules:
 - A local client fallback caused by data-plane unavailability is an SDK-produced `ClientFallbackResult`; it is disabled unless explicitly configured and cannot claim server policy, definition status, decision, audit, or exposure identity.
 - A client fallback carries only `expectedContract` as client provenance, after the local call-site digest has matched the accepted runtime binding.
 - A 4xx contract/configuration response can never produce `ClientFallbackResult`.
-- `confidence` is `null` for server decision fallback and may be null for a non-evidence-based active value.
-- `strategy`, `experiment`, and any evidence-backed adaptation require confidence. Resolution fallback retains it when a broader target produced an approved evidence-backed decision.
+- `confidence` is non-null only when the returned authority makes an
+  evidence-backed claim. It is `null` for server decision fallback,
+  non-evidence-based active values, and deterministic bundle-authored
+  strategies.
+- Resolution fallback preserves the returned authority's confidence semantics:
+  an evidence-backed broader-target decision retains its confidence, while a
+  deterministic broader-target strategy returns `null`.
 - Client target/cohort claims are context, not authority. `targetProvenance` records whether each effective target was client-claimed, verified, server-derived, or replaced.
 - Default runtime responses contain compact confidence and target provenance; full evidence-view references remain in audit records.
 - `exposure.confirmToken` is required exactly when `confirmationRequired` is true and forbidden otherwise. The initial `RuntimeDecisionResult` must not include an `exposureId`; exposure identity is created by confirmation.
