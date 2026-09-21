@@ -986,6 +986,15 @@ type DefinitionBundleApplyResult =
       environment: string;
       bundleDigest: string;
       issues: ContractIssue[];
+    }
+  | {
+      status: "activation-failed";
+      approvalRequestId: string;
+      application: string;
+      environment: string;
+      bundleDigest: string;
+      retryability: "retryable" | "requires-new-approval";
+      issue: ContractIssue;
     };
 
 type ApprovalActor = {
@@ -1028,6 +1037,7 @@ type DefinitionBundleApprovalResult =
             }
           | {
               status: "failed";
+              retryability: "retryable" | "requires-new-approval";
               issue: ContractIssue;
             };
       }
@@ -1068,7 +1078,22 @@ Rules:
   semantic change returns `requires-approval` without active-authority
   mutation. Explicit approval is durably recorded before expected-baseline
   activation, and no ready receipt exists until activation succeeds.
-- Approval requests are immutable snapshots with an authoritative expiration. Pending requests transition once to approved, rejected, or expired; terminal states never transition.
+- For each bundle-approved definition, proposal and activation IDs are
+  server-derived in distinct namespaces from application, environment,
+  approval request ID, decision key, contract digest, and canonical initial
+  authority. Exact replay returns those IDs and the original state identity;
+  callers cannot supply or recompute them as authority.
+- `activation-failed` with `retryability: "retryable"` represents interruption
+  or outcome uncertainty. Exact apply resumes the same activation and first
+  resolves any already-published state before attempting publication again.
+  `requires-new-approval` represents a stale expected baseline or permanent
+  conflict. The failed approval remains non-ready; reapply revalidates against
+  current authority and creates one linked approval request rather than
+  overwriting state or reusing the failed activation.
+- Approval requests are immutable snapshots with an authoritative expiration.
+  The approval decision transitions once to approved, rejected, or expired and
+  never changes. Retryable activation progress may continue under the same
+  approved snapshot until it is ready or requires a new approval.
 - Approval changes include previous/proposed contract digests and a canonical semantic diff. `snapshotUrl` retrieves the immutable canonical bundle under review.
 - Snapshot HTTP responses quote the project `sha256:<hex>` value as an opaque `ETag` and separately encode the raw SHA-256 bytes using RFC 9530 `Content-Digest: sha-256=:<base64>:` syntax.
 - Approval/rejection records persist the server-derived actor and submitted comment. Expired apply attempts may be resubmitted with the same deterministic key; revalidation creates one linked replacement request.

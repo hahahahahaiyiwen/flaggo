@@ -528,11 +528,15 @@ Policy may block or force fallback because of:
 - out-of-range value,
 - max delta violation,
 - missing or incompatible state,
-- missing required inference inputs,
 - applicable evidence, uncertainty, guardrail, temporal, or operator
   constraints.
 
 Policy reason codes should be stable because clients, audits, and the operator console may depend on them.
+
+Missing, duplicate, invalid, or nonfinite required inference inputs and invalid
+runtime context are rejected during request validation with Problem Details;
+they do not enter policy evaluation or become fallback. Contract identity and
+registration-readiness failures likewise remain contract errors.
 
 ## Contract integrity
 

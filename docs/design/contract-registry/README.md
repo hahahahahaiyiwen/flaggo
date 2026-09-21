@@ -502,8 +502,11 @@ The important design is:
 - pending requests have an authoritative `expiresAt`; terminal transitions are immutable and compare-and-swap safe,
 - same terminal action is idempotent; opposite concurrent/terminal action returns `approval-terminal-conflict`,
 - approval/rejection persist the authorized actor and comment,
-- the server derives proposal, activation, and state identities and activates
-  through expected-baseline compare-and-swap,
+- the server derives per-definition proposal and activation identities from
+  the canonical tuple defined by
+  [Decision Lifecycles](../../DECISION_LIFECYCLES.md#bundle-approved-authority);
+  activation creates the state identity through expected-baseline
+  compare-and-swap,
 - reapplying an expired bundle with the same deterministic key revalidates and creates one linked replacement request,
 - startup retry with the same bundle returns `activation-pending` until state is
   active, then returns the original ready receipt,
@@ -512,6 +515,10 @@ The important design is:
   references per decision key,
 - exact replay returns the same activation and state; a stale expected baseline
   cannot overwrite newer bundle-approved or proposal-managed authority,
+- retryable interruption or outcome-unknown failure resumes the same approval
+  and activation identities, while stale-baseline or permanent conflicts
+  return `activation-failed` with `requires-new-approval`; reapply revalidates
+  current authority and creates one new linked approval request,
 - semantic updates create revisions,
 - deprecation/retirement are lifecycle transitions,
 - hard delete is not part of the normal lifecycle.

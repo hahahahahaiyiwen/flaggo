@@ -64,6 +64,29 @@ identities. Exact retry resumes the same activation. Changed authority requires
 a new semantic revision and approval. A stale expected baseline conflicts
 rather than replacing newer authority.
 
+For each definition in an approved bundle, the server derives proposal and
+activation identities from one canonical tuple:
+
+- application and environment;
+- approval request ID;
+- decision key;
+- contract digest;
+- canonical initial authority, including control target, kind, rule, and
+  rationale.
+
+Proposal and activation identities use distinct namespaces over that tuple.
+The decision key and canonical authority content make the identities unique per
+definition in a multi-definition approval. The IDs remain opaque to clients.
+Exact retry with the same tuple returns the same identities; finding either ID
+bound to different content is a conflict. The activation creates a state ID
+once, and replay returns that original state ID and generation.
+
+An interrupted or outcome-unknown activation is retryable with the same
+approval, proposal, and activation identities. Stale expected baseline,
+changed authority content, or another permanent activation conflict remains
+non-ready and requires bundle revalidation plus a new linked approval request;
+it never overwrites newer authority or silently allocates another state.
+
 Bundle-authored deterministic rules do not require model evidence or confidence.
 Their authored rationale and approval actor remain lifecycle provenance.
 

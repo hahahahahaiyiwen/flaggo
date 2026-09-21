@@ -570,18 +570,24 @@ or keeping hard-drop rate near a target.
 
 AI-native decisioning should amplify human intent, not replace it.
 
-### Fallback behavior exists when evidence, uncertainty, expected outcome, or safety is insufficient
+### Fallback behavior exists when safe runtime execution is unavailable
 
 The game must always have a safe behavior even when Flaggo cannot decide.
 
-For the Phase 3 bundle-approved path, fallback should be used when:
+For a valid registered Phase 3 request, Flaggo returns the audited server
+fallback when:
 
-- the service is unavailable,
-- required runtime inputs are missing or invalid,
 - active state is missing or incompatible,
-- runtime policy blocks the candidate,
-- the requested runtime context is invalid,
-- the contract identity is not ready.
+- runtime policy blocks the candidate.
+
+Separately, an explicitly configured SDK availability fallback may return the
+same value when the data plane is unavailable or times out. It has client
+provenance and cannot claim a server decision, policy, audit, or exposure.
+
+Missing or invalid inference inputs or runtime context are request errors.
+Missing, conflicting, retired, or non-ready contract identity is a contract or
+initialization error. These errors use Problem Details or failed initialization
+and never become server or client fallback decisions.
 
 Proposal-managed authority may add evidence, uncertainty, expected-outcome, or
 operator-mode fallback reasons.
@@ -592,7 +598,9 @@ For this scenario, fallback is simple:
 tetris.dropInterval -> 800ms
 ```
 
-Fallback is part of the primitive, not an exception path left to each developer to rediscover.
+Both fallback paths return `800ms`, but their provenance remains distinct.
+Fallback is part of the primitive, not an exception path left to each developer
+to rediscover.
 
 ## Desired runtime loop
 
