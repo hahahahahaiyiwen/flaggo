@@ -33,6 +33,17 @@ Runtime execution must be:
 
 For the MVP, runtime reasoning without compatible `GovernedDecisionState` is prohibited.
 
+## Authority-source independence
+
+Runtime execution does not care whether compatible state originated from an
+approved bundle candidate or an independently generated proposal. Both sources
+must produce the same governed-state shape and pass the same definition,
+target, output, and runtime-policy checks.
+
+A bundle-authored deterministic rule does not claim learned evidence or model
+confidence. Evidence and confidence are present only when the approved
+authority and applicable policy require them.
+
 ## Request flow
 
 ```text
@@ -45,7 +56,7 @@ Application
   -> execute fixed value, strategy, variant assignment,
      rollout routing, override, or fallback
   -> validate returned value
-  -> record decision and audit evidence
+  -> record decision inputs, state/policy lineage, and applicable evidence
   -> RuntimeDecisionResult
 ```
 
@@ -107,7 +118,7 @@ Supported forms may include:
 ```text
 active strategy
   + declared inference inputs
-  + permitted fresh evidence
+  + permitted fresh evidence when required
   -> evaluate
   -> clamp and align to action space
   -> runtime policy validation
@@ -173,9 +184,8 @@ Runtime checks may include:
 - target eligibility;
 - output type and bounds;
 - required inference inputs;
-- evidence freshness;
-- cooldown;
-- operator pause or override;
+- evidence freshness when evidence is required;
+- cooldown, pause, or override when their contracts exist;
 - experiment or rollout eligibility;
 - conflict detection;
 - fallback requirements.
@@ -230,7 +240,8 @@ An exposure is recorded only after the client confirms that it applied or render
 
 Fallback has explicit provenance:
 
-- **Server fallback** is an audited runtime result produced when compatible registered state, evidence, or policy prevents normal execution.
+- **Server fallback** is an audited runtime result produced when compatible
+  registered state, applicable evidence, or policy prevents normal execution.
 - **Client fallback** is permitted only for explicitly configured data-plane availability failures and cannot claim server decision, policy, audit, or exposure identity.
 - **Contract errors** never become fallback.
 
@@ -244,15 +255,20 @@ request:
   runtimeTarget = session:game-456
   boardPressure = 0.82
   recentPlacementTimeMs = 1420
+  recoveryFailures = 2
+  currentLevel = 8
 
 resolved state:
   controlTarget = cohort:new_players
   mode = strategy
-  baseValue = 800
+  threshold = 0.55
+  valueAtOrAbove = 850
+  valueBelow = 750
 
 execution:
-  approved rule adds 50ms
-  output remains within range and step
+  weighted score = 0.6665
+  score meets threshold
+  output remains within bounds, step, and max delta from contract baseline 800
 
 result:
   value = 850

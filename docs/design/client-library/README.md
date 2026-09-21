@@ -16,7 +16,9 @@ For the hero scenario, the first client library target is TypeScript for the Tet
 - Integrate with OpenTelemetry where configured.
 - Avoid forcing developers to build metrics aggregation, policy checks, or audit correlation manually.
 - Keep SDK interfaces stable while server-side strategies, evidence, and intelligence evolve.
-- Keep definition synchronization language-neutral: SDK declarations can generate a definition bundle, but the control plane must also support manifest-first, registry-first, and direct REST-client workflows.
+- Keep definition synchronization language-neutral: SDK declarations can
+  generate a definition bundle, but the control plane must also support
+  bundle-first, registry-first, and direct REST-client workflows.
 
 MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
@@ -34,7 +36,9 @@ build/release:
 
 application/bootstrap startup (MVP):
   validate/apply bundle through the control-plane API
-  receive registration receipt and runtime binding
+  obtain authenticated approval for declared initial authority
+  wait for activation and receive a ready registration receipt
+  initialize runtime binding
 
 deployment:
   deploy application independently
@@ -47,7 +51,7 @@ runtime:
 The application-facing loop should still feel like:
 
 ```text
-declare -> decide by observing
+declare -> approve -> decide -> observe
 ```
 
 ## Initial responsibilities
@@ -95,7 +99,9 @@ The client library should support:
 6. **Definition bundle support**
    - Generate or reference a canonical `DecisionDefinitionBundle` in code-first workflows.
    - Expose bundle digest/revision metadata to runtime calls.
-   - For MVP, explicitly validate/apply the extracted bundle during trusted application/bootstrap startup before enabling data-plane calls.
+   - For MVP, explicitly validate/apply the extracted bundle, authorize its
+     initial authority, and wait for activation readiness during trusted
+     application/bootstrap startup before enabling data-plane calls.
    - Keep management calls separate from decide and exposure operations.
 
 ## Example shape
@@ -127,9 +133,20 @@ const flaggo = await createFlaggoClient({
 });
 ```
 
-Startup registration sends the extracted bundle once to the management API and initializes compact expected identity from the accepted receipt. Production decision calls send only that identity. Availability fallback is disabled unless explicitly configured; `local-default` uses the decision's code-declared default only for recognized data-plane availability failures.
+Startup registration sends the extracted bundle once to the management API and
+initializes compact expected identity from a ready receipt. A ready receipt for
+a bundle-approved definition also identifies the derived proposal, activation,
+state, generation, target, and strategy kind. Production decision calls send
+only the definition identity. Availability fallback is disabled unless
+explicitly configured; `local-default` uses the decision's code-declared
+default only for recognized data-plane availability failures.
 
-If apply returns `requires-approval`, startup raises a typed error containing the `approvalRequestId` and does not initialize the data-plane client. After an authorized reviewer approves the pending bundle, retrying startup with the same bundle receives the approved receipt.
+If apply returns `requires-approval`, startup raises a typed error containing
+the `approvalRequestId` and does not initialize the data-plane client. After an
+authorized reviewer approves the exact bundle snapshot, the service derives
+the activation request and publishes state through expected-baseline
+compare-and-swap. Retrying startup with the same bundle receives the original
+ready receipt once activation succeeds.
 
 If approval expires, retrying the same startup apply and deterministic key causes the server to revalidate and create one fresh linked approval request. Concurrent replicas receive that replacement request rather than minting independent approvals.
 
@@ -253,14 +270,48 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     range: [200, 1500],
     step: 50
   },
-  policy: {
-    maxDelta: 50,
-    cooldown: "20s",
-    minSampleSize: 30,
-    minEvidenceQuality: 0.7,
-    maxModelUncertainty: 0.35
+  lifecycle: {
+    authorityMode: "bundle-approved",
+    initialAuthority: {
+      controlTarget: flaggo.target.cohort("new_players"),
+      kind: "numeric-rule",
+      rule: {
+        threshold: 0.55,
+        valueAtOrAbove: 850,
+        valueBelow: 750,
+        weightedInputs: [
+          {
+            signal: boardPressureSignal,
+            minimum: 0,
+            maximum: 1,
+            weight: 0.45
+          },
+          {
+            signal: recentPlacementTimeMsSignal,
+            minimum: 0,
+            maximum: 2000,
+            weight: 0.25
+          },
+          {
+            signal: recoveryFailuresSignal,
+            minimum: 0,
+            maximum: 5,
+            weight: 0.20
+          },
+          {
+            signal: currentLevelSignal,
+            minimum: 0,
+            maximum: 20,
+            weight: 0.10
+          }
+        ]
+      },
+      rationale: "Initial deterministic Tetris behavior."
+    }
   },
-  requestedApproval: "automatic",
+  policy: {
+    maxDelta: 50
+  },
   context: {
     sessionId: flaggo.target.session(sessionId),
     userId: flaggo.target.user(userId),
@@ -405,7 +456,9 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
       range: [200, 1500],
       step: 50
     },
-    requestedApproval: "automatic",
+    lifecycle: {
+      authorityMode: "proposal-managed"
+    },
     policy: {
       kind: "inline",
       constraints: [
@@ -540,8 +593,8 @@ type CodeFirstNumberTuneRequest = {
   inference?: BoundInferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
+  lifecycle: AuthorityLifecycleAuthoring;
   policy: PolicyAuthoring;
-  requestedApproval?: RequestedApprovalMode;
   context: BoundRuntimeContext;
 };
 
@@ -557,12 +610,24 @@ type AdvancedNumberTuneDefinition = {
   inference?: InferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
+  lifecycle: AuthorityLifecycleDeclaration;
   policy: PolicyReference | InlinePolicy;
-  requestedApproval?: RequestedApprovalMode;
   context: RuntimeContextSchema;
 };
 
-type RequestedApprovalMode = "automatic" | "human" | "policy-default";
+type AuthorityLifecycleAuthoring =
+  | BundleApprovedAuthorityAuthoring
+  | { authorityMode: "proposal-managed" };
+
+type BundleApprovedAuthorityAuthoring = {
+  authorityMode: "bundle-approved";
+  initialAuthority: {
+    controlTarget: DecisionTargetRef;
+    kind: "numeric-rule";
+    rule: NumericRuleDeclaration;
+    rationale: string;
+  };
+};
 
 type PolicyAuthoring = {
   maxDelta?: number;
@@ -752,7 +817,9 @@ write declaration in code
   -> extract flaggo.decision-definition-bundle.json
   -> deploy application independently
   -> trusted startup validates/applies bundle through management API
-  -> receive registration receipt
+  -> authorized actor approves the exact initial-authority snapshot
+  -> service activates state through the shared activation boundary
+  -> receive ready registration receipt
   -> initialize data-plane client with accepted identity
   -> runtime decide succeeds only for exact registered identity
 ```

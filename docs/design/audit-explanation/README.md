@@ -15,11 +15,12 @@ Audit records should capture:
 
 - request metadata,
 - decision key and definition,
-- requested runtime targets, resolved control targets, evidence targets, and policy targets,
+- requested runtime targets, resolved control targets, and policy targets,
 - contract version,
 - runtime context summary,
-- evidence snapshot summary,
+- evidence snapshot summary when evidence participated,
 - active value or active strategy,
+- state ID, generation, predecessor, proposal, activation, and approval references,
 - candidate value,
 - policy result,
 - returned value,
@@ -63,14 +64,14 @@ Explanation inputs:
 - matching strategy rule reason,
 - policy result,
 - fallback reason,
-- evidence quality,
+- evidence quality when evidence participated,
 - scope resolution fallback reason.
 
 ## Runtime behavior
 
 ```text
 Decision API
-  -> builds audit record from request, state, evidence, candidate, policy, response
+  -> builds audit record from request, state, optional evidence, candidate, policy, response
   -> writes through IAuditSink
   -> includes auditId in DecideResponse
 ```
@@ -94,14 +95,19 @@ The exposure confirm token is an authorization capability, not audit data. The D
   },
   "stateSummary": {
     "decisionMode": "strategy",
-    "strategyId": "strategy-tetris-new-players-v1"
+    "strategyId": "strategy-tetris-new-players-v1",
+    "stateId": "state_01...",
+    "generation": 1,
+    "proposalId": "proposal_01...",
+    "activationId": "activation_01...",
+    "approvalReference": "approval_01..."
   },
   "policy": {
     "result": "approved",
     "reasons": [],
-    "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
+    "appliedConstraints": ["number-bounds", "step", "max-delta"]
   },
-  "reason": "Approved strategy slowed the drop interval because board pressure was high and recent placement time was slow."
+  "reason": "The approved weighted numeric rule met its 0.55 threshold."
 }
 ```
 

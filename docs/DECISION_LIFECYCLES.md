@@ -2,20 +2,27 @@
 
 ## Purpose
 
-Decision lifecycles are the control-plane workflows that turn proposed behavior into approved runtime authority and manage that authority until it is superseded, expired, completed, or rolled back.
+Decision lifecycles are the control-plane workflows that turn declared or
+proposed behavior into approved runtime authority and manage that authority
+until it is superseded, expired, completed, or rolled back.
 
 They answer:
 
-> How does a proposed optimization, experiment, or rollout become active, remain governed, and safely end?
+> How does declared or proposed behavior become active, remain governed, and
+> safely end?
 
 Decision lifecycles do not generate deep recommendations and do not select values for individual application requests.
 
 ```text
-Decision Intelligence, operator, or authorized automation
-  -> DecisionProposal
-  -> validation and governance
+Definition bundle
+  -> initial authority candidate
+  -> authenticated bundle approval
+  -> activation
   -> GovernedDecisionState
-  -> observation and lifecycle transitions
+
+Decision Intelligence, operator, or authorized automation
+  -> DecisionProposal -> governance -> activation
+  -> GovernedDecisionState
 
 GovernedDecisionState
   -> Runtime Decision Execution
@@ -27,23 +34,64 @@ GovernedDecisionState
 | Capability | Owns | Does not own |
 | --- | --- | --- |
 | Decision intelligence | Evidence analysis and proposal generation. | Approval or active authority. |
-| Decision lifecycle | Validation, approval, activation, monitoring, conclusion, and state transitions. | Per-request value selection. |
+| Decision lifecycle | Bundle approval, proposal governance, activation, monitoring, conclusion, and state transitions. | Per-request value selection. |
 | Runtime execution | Applying compatible approved state to one request. | Proposing or approving future state. |
 
-Proposals may originate from intelligence, operators, deployment automation, or another authorized producer. Authority comes from governance, not from the proposal source.
+Initial authority may be declared in a definition bundle. Later proposals may
+originate from intelligence, operators, deployment automation, or another
+authorized producer. Authority comes from authenticated approval and lifecycle
+activation, not from candidate or proposal source.
+
+## Authority workflows
+
+### Bundle-approved authority
+
+The bundle declares a complete initial authority candidate for one definition:
+
+```text
+bundle apply
+  -> validate definition and candidate
+  -> approval request
+  -> authenticated approval of the exact snapshot
+  -> deterministic proposal and activation identities
+  -> expected-baseline compare-and-swap
+  -> active governed state
+  -> ready registration receipt
+```
+
+The bundle cannot provide trusted proposal, activation, state, or approval
+identities. Exact retry resumes the same activation. Changed authority requires
+a new semantic revision and approval. A stale expected baseline conflicts
+rather than replacing newer authority.
+
+Bundle-authored deterministic rules do not require model evidence or confidence.
+Their authored rationale and approval actor remain lifecycle provenance.
+
+### Proposal-managed authority
+
+Phase 4 adds independently generated candidates:
+
+```text
+definition + evidence + current state
+  -> authorized producer
+  -> DecisionProposal
+  -> governance
+  -> replacement activation
+```
+
+The producer cannot write runtime authority directly.
 
 ## Shared authority model
 
-The lifecycle layer consumes:
+Depending on the workflow, the lifecycle layer consumes:
 
 - a versioned decision definition;
-- a typed `DecisionProposal`;
-- current and previous governed state;
+- a bundle-declared initial authority candidate or typed `DecisionProposal`;
+- current governed state and expected baseline;
 - effective policy;
 - target authority and conflict information;
-- evidence quality and uncertainty;
-- operator controls;
-- current time and lifecycle history.
+- evidence quality and uncertainty when a proposal claims them;
+- operator controls and lifecycle history when the workflow requires them.
 
 It produces either:
 
@@ -53,9 +101,12 @@ It produces either:
 - a rejection with reason codes;
 - a transition to a replacement or previous known-safe state.
 
-## Proposal and state lifecycles
+## Candidate, proposal, and state lifecycles
 
 ```text
+Bundle initial authority:
+  declared -> approval-pending -> authorized -> activated
+
 DecisionProposal:
   proposed -> validated -> pending-approval | approved | rejected
 
@@ -63,30 +114,28 @@ GovernedDecisionState:
   pending -> active -> superseded | expired | completed | rolled-back
 ```
 
-Approval and activation are separate events. An approved proposal may remain pending until its start condition, schedule, or rollout prerequisite is satisfied.
+Approval and activation are separate events. Registration with required initial
+authority is not ready until activation succeeds. An approved proposal may
+remain pending until its start condition, schedule, or rollout prerequisite is
+satisfied.
 
 Rollback is a transition, not a governed-state payload kind. It activates a replacement or previous known-safe state and marks the replaced state `rolled-back`.
 
-The current local lifecycle mutation boundary is
-`IGovernedStateLifecycleStore`. It accepts typed fixed-value or numeric-strategy
-proposals and creates state through compare-and-swap; proposal producers do not
-receive a direct state-write API. The expected baseline is a state ID plus
-generation for one application/environment/decision/control-target address.
-Successful replacement increments the generation and records the predecessor,
-approval reference, proposal ID, and activation time.
+The shared activation core owns state identity and generation, authority
+address, expected-baseline compare-and-swap, idempotent replay, predecessor and
+approval references, validation conflicts, read-only runtime projection, and
+atomic publication.
 
-Activation and proposal identities are durable idempotency boundaries.
-Identical successful activation replay returns the original state identity.
-Changed activation replay, proposal reuse, stale baseline, target mismatch,
-incompatible definition identity, and unsupported state kind are distinct
-stable conflicts. The local adapter retains state history and replay metadata
-in a committed immutable artifact; its descriptor is switched only after the
-replacement is durable, so readers observe either the complete prior authority
-or the complete replacement.
+The merged Track B implementation is broader than this target. A follow-up
+review will remove or defer generic proposal/source abstractions,
+evidence/confidence/expiry metadata, completion/expiry/rollback transitions,
+broad lifecycle statuses, and public transition/history APIs not required by
+activation and replay.
 
 ## Governance
 
-Governance evaluates proposals independently of the reasoning that produced them:
+Proposal-managed governance evaluates proposals independently of the reasoning
+that produced them:
 
 ```text
 DecisionProposal
@@ -253,15 +302,17 @@ Lifecycle audit records should capture:
 - operator actions;
 - explanation and rollback rationale.
 
-Every active state must be reconstructable from its proposal, policy outcome, approval, and transition history.
+Every active state must be reconstructable from either its bundle candidate and
+bundle approval or its proposal, policy outcome, approval, and transition
+history.
 
 ## Relationship to contract and evidence flows
 
 Contract registration and telemetry ingestion support lifecycles but are not decision lifecycles themselves:
 
 ```text
-contract sync
-  -> supplies immutable definition identity and permissions
+contract sync and bundle approval
+  -> supplies immutable definition identity and optional initial authority
 
 telemetry ingestion
   -> supplies evidence and attributed outcomes
@@ -276,12 +327,13 @@ runtime execution
 ## Design principles
 
 1. **Authority is explicit**: only approved governed state can affect runtime behavior.
-2. **Proposal type is not disposition**: experiment and rollout describe proposed behavior; approved and rejected describe governance outcomes.
-3. **Approval is separate from activation**: timing and prerequisites remain enforceable.
-4. **Transitions are auditable**: promotion, supersession, completion, and rollback identify previous and replacement state.
-5. **Policy cannot be bypassed**: intelligence and operators act through explicit governance mechanisms.
-6. **Experiments require opt-in**: controlled variation must remain inside a definition-owned envelope.
-7. **Rollout and experiment intent remain distinct**: risk reduction is not causal comparison.
+2. **Bundles cannot self-approve**: a declared initial authority remains a candidate until authenticated approval and activation.
+3. **Proposal type is not disposition**: experiment and rollout describe proposed behavior; approved and rejected describe governance outcomes.
+4. **Approval is separate from activation**: timing and prerequisites remain enforceable.
+5. **Transitions are auditable**: promotion, supersession, completion, and rollback identify previous and replacement state.
+6. **Policy cannot be bypassed**: intelligence and operators act through explicit governance mechanisms.
+7. **Experiments require opt-in**: controlled variation must remain inside a definition-owned envelope.
+8. **Rollout and experiment intent remain distinct**: risk reduction is not causal comparison.
 
 ## Related documents
 

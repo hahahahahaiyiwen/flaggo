@@ -10,24 +10,25 @@ Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 
 ## MVP responsibility
 
-State stores:
+The Phase 3 activation core stores:
 
-- active value or active strategy,
-- previous value,
-- last decision time,
-- cooldown deadline,
-- pause state,
-- operator override,
-- definition ID/revision tied to the active state.
+- state ID and monotonic generation,
+- application, environment, decision key, and control target address,
+- definition ID, revision, and contract digest,
+- active value or numeric rule,
+- predecessor state ID,
+- proposal, activation, and approval references,
+- activation timestamp and lifecycle status.
 
-MVP state should support in-memory storage first. A later persistent implementation can use SQLite, PostgreSQL, Redis, or a cloud store behind the same interface.
+Runtime lookup remains read-only. Activation uses durable local persistence for
+the MVP; future adapters may use SQLite, PostgreSQL, Redis, or a cloud store
+behind the same boundary.
 
-## Core port
+## Core ports
 
 ```ts
 interface IStateStore {
   getActiveState(input: StateRequest): Promise<DecisionState | null>;
-  updateActiveState(input: StateUpdate): Promise<void>;
 }
 
 type StateRequest = {
@@ -36,13 +37,33 @@ type StateRequest = {
   runtimeTarget?: DecisionTargetRef;
 };
 
-type StateUpdate = {
+interface IStateActivationStore {
+  getBaseline(input: StateAddress): Promise<DecisionState | null>;
+  activate(input: ActivationRequest): Promise<DecisionState>;
+}
+
+type StateAddress = {
+  appId: string;
+  environment: string;
+  decisionKey: string;
+  controlTarget: DecisionTargetRef;
+};
+
+type ActivationRequest = {
+  activationId: string;
+  proposalId: string;
+  approvalReference: string;
   definition: DecisionDefinitionRef;
-  controlTarget?: DecisionTargetRef;
-  runtimeTarget?: DecisionTargetRef;
-  expectedContractVersion?: string;
-  nextState: DecisionState;
-  reason: string;
+  address: StateAddress;
+  expectedBaseline: {
+    stateId?: string;
+    generation: number;
+  };
+  candidate: {
+    kind: "numeric-rule";
+    rule: NumericRuleDeclaration;
+    rationale: string;
+  };
 };
 ```
 
@@ -53,26 +74,33 @@ hierarchy, add implicit user/cohort/global fallback, or parse registry
 definitions. Reasoning rejects any returned control target that is not one of
 the requested permitted targets.
 
+The activation port, not a proposal producer or runtime caller, constructs the
+durable state. It retains state identity and generation, expected-baseline
+compare-and-swap, idempotent replay, predecessor and approval references,
+validation conflicts, and atomic publication. Broader completion, expiry,
+rollback, evidence, confidence, and generic proposal-source surfaces are
+deferred until a concrete lifecycle requires them.
+
 ## Runtime behavior
 
 ```text
 Decision API
   -> resolves runtime target and control target
   -> loads governed control state for definition + control target, if present
-  -> loads runtime target state for definition + runtime target, if needed
-  -> checks override or pause
   -> executes active strategy or active value
-  -> updates lastDecisionAt/cooldown when needed
+  -> applies deterministic runtime policy
 ```
 
 Precedence:
 
 1. Retired contract forces fallback.
-2. Pause state forces fallback or existing safe value.
-3. Operator override takes precedence over active strategy.
-4. Active strategy produces adaptive runtime value.
-5. Active value returns fixed governed value.
-6. Missing state returns contract fallback.
+2. Active numeric rule produces an adaptive runtime value.
+3. Active value returns a fixed governed value.
+4. Missing or invalid state returns the contract fallback.
+
+Pause, override, cooldown, previous-result delta, hysteresis, and other
+temporal behavior require explicit follow-up contracts rather than implicit
+state-store mutation.
 
 ## Tetris MVP state
 
@@ -87,25 +115,56 @@ Example active state:
     "type": "cohort",
     "id": "new_players"
   },
-  "contractVersion": "1",
-  "lifecycle": "active",
-  "activeStrategy": {
-    "kind": "numeric-rule",
-    "id": "strategy-tetris-new-players-v1",
-    "baseValue": 800,
-    "min": 600,
-    "max": 1100,
-    "step": 50,
-    "cooldownSeconds": 20,
-    "rules": []
+  "contractDigest": "sha256:...",
+  "mode": "strategy",
+  "strategyId": "strategy-tetris-new-players-v1",
+  "numericRule": {
+    "threshold": 0.55,
+    "valueAtOrAbove": 850,
+    "valueBelow": 750,
+    "weightedInputs": [
+      {
+        "signalKey": "tetris.boardPressure",
+        "minimum": 0,
+        "maximum": 1,
+        "weight": 0.45
+      },
+      {
+        "signalKey": "tetris.recentPlacementTimeMs",
+        "minimum": 0,
+        "maximum": 2000,
+        "weight": 0.25
+      },
+      {
+        "signalKey": "tetris.recoveryFailures",
+        "minimum": 0,
+        "maximum": 5,
+        "weight": 0.2
+      },
+      {
+        "signalKey": "tetris.currentLevel",
+        "minimum": 0,
+        "maximum": 20,
+        "weight": 0.1
+      }
+    ]
   },
-  "previousValue": 800
+  "stateId": "state_01...",
+  "proposalId": "proposal_01...",
+  "activationId": "activation_01...",
+  "generation": 1,
+  "predecessorStateId": null,
+  "approvalReference": "approval_01...",
+  "lifecycle": "active"
 }
 ```
 
 ## State isolation across contracts
 
-Decision state is not the same thing as telemetry. State represents live authority: active strategy, active value, cooldown, pause, override, and rollback transition metadata. Governed control state must be isolated by decision definition plus control target. Runtime target state must be isolated by decision definition plus runtime target.
+Decision state is not the same thing as telemetry. State represents live
+authority: active strategy or active value plus its activation lineage.
+Governed control state must be isolated by decision definition plus control
+target.
 
 Rules:
 
@@ -119,6 +178,8 @@ Rules:
 - Distributed locking.
 - Multi-region consistency.
 - Complex rollout state.
+- Completion, expiry, rollback, pause, and override workflows.
+- Temporal stabilization semantics.
 - Long-term state history beyond audit.
 
 Those can be added later behind `IStateStore` and audit records.

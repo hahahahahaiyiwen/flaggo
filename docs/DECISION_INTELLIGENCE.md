@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Decision intelligence is the analysis and proposal-generation capability that operates over a decision definition and decision evidence.
+Decision intelligence is the optional analysis and proposal-generation
+capability used by the proposal-managed authority workflow. It operates over a
+decision definition and decision evidence.
 
 It answers:
 
@@ -27,7 +29,31 @@ GovernedDecisionState
   -> RuntimeDecisionResult
 ```
 
-This separation keeps Flaggo AI-native without allowing reasoning to become policy authority or request-time infrastructure.
+This separation keeps Flaggo AI-native without making intelligence a
+prerequisite for every usable decision or allowing reasoning to become policy
+authority or request-time infrastructure.
+
+## Relationship to authority workflows
+
+Phase 3 intentionally does not invoke decision intelligence:
+
+```text
+definition bundle + initial authority candidate
+  -> authenticated bundle approval
+  -> governed state
+```
+
+Phase 4 introduces the proposal-managed path:
+
+```text
+definition + evidence + current state
+  -> decision intelligence or another authorized producer
+  -> DecisionProposal
+  -> governance
+  -> governed replacement state
+```
+
+Both paths use the same runtime state and execution boundary.
 
 ## Core responsibility
 
@@ -61,7 +87,9 @@ Decision intelligence consumes resolved, typed inputs rather than raw unbounded 
 - **Evidence views**: historical observations and derived evidence sliced by target, time, and filters.
 - **Decision and exposure records**: prior returned values, confirmed application, and attribution metadata.
 - **Outcome evidence**: declared success metrics and guardrails.
-- **Current governed state**: active and previous values, strategies, experiments, rollouts, cooldowns, and overrides.
+- **Current governed state**: active authority and activation lineage, plus
+  previous-safe-state, experiment, rollout, cooldown, or override data only
+  when those lifecycle contracts exist.
 - **Uncertainty**: evidence quality, sample size, freshness, variance, missingness, and model uncertainty.
 - **Policy context**: constraints intelligence should consider before producing a proposal.
 
@@ -94,14 +122,6 @@ Every proposal should identify:
 - rationale and known risks;
 - requested approval mode;
 - compatibility and supersession intent.
-
-The Phase 3.5 state boundary currently provides typed fixed-value and
-numeric-strategy proposal contracts. Their shared context carries proposal and
-source identity, exact definition identity, candidate control target, expected
-state ID and generation, rationale, evidence and confidence references, and
-creation/expiry metadata. These contracts are inputs to lifecycle governance;
-they do not grant proposal producers a direct `GovernedDecisionState` write
-path.
 
 The proposal is passed to the lifecycle layer:
 
@@ -218,13 +238,18 @@ Example strategy proposal:
   "controlTarget": "cohort:new_players",
   "proposalType": "activate_strategy",
   "strategy": {
-    "baseValue": 800,
-    "allowedRange": {
-      "min": 600,
-      "max": 1100
-    },
-    "step": 50,
-    "cooldown": "20s"
+    "kind": "numeric-rule",
+    "threshold": 0.55,
+    "valueAtOrAbove": 850,
+    "valueBelow": 750,
+    "weightedInputs": [
+      {
+        "signal": { "key": "tetris.boardPressure" },
+        "minimum": 0,
+        "maximum": 1,
+        "weight": 0.45
+      }
+    ]
   },
   "confidence": {
     "evidenceQuality": 0.82,

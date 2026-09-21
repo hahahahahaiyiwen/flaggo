@@ -1,6 +1,6 @@
 # Phase 1 API Contract Proposal
 
-Status: **Accepted Phase 1 executable contract baseline**
+Status: **Accepted Phase 1 runtime baseline; bundle management replacement approved**
 
 This proposal is the accepted prose design source for Phase 1. The executable
 baseline under [`contracts/`](../../contracts/README.md) encodes it and passes
@@ -8,6 +8,16 @@ the conformance gate. Later behavior changes require an explicit contract
 revision with aligned schemas, OpenAPI, fixtures, and compatibility notes.
 
 It does not introduce a second domain model. Canonical domain types remain owned by [Shared Contracts](shared-contracts/README.md); this document defines how those types cross HTTP and build/release boundaries.
+
+Roadmap note: the runtime decision and exposure endpoint shapes remain the
+accepted baseline. The definition-bundle v1 management shape and the rule that
+every strategy result requires confidence are superseded by the approved
+bundle-authority design. The replacement permits `confidence: null` for a
+deterministic bundle-authored strategy that makes no evidence-backed claim.
+The follow-up changes these contracts and executable artifacts together, with
+no v1/v2 bundle compatibility layer. Until that work lands, the artifacts
+listed below describe the current executable repository rather than the target
+contract.
 
 Compatibility note (2026-08-06): exposure confirmation now explicitly
 documents the already implemented `500 internal-error` and retryable

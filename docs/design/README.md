@@ -25,12 +25,12 @@ Each component under [`DESIGN.md` / System components](../DESIGN.md#system-compo
 | # | High-level component | Design folder | Purpose |
 |---|---|---|---|
 | 1 | Client library | [client-library](client-library/README.md) | Developer-facing SDK for telemetry, decision declarations, runtime context, and decision calls. |
-| 2 | Decision API service | [decision-api](decision-api/README.md) | Runtime service API that evaluates definitions/evidence and returns `RuntimeDecisionResult` values. |
+| 2 | Decision API service | [decision-api](decision-api/README.md) | Runtime service API that evaluates definitions, governed state, live inputs, policy, and optional evidence. |
 | 3 | Telemetry and evidence service | [telemetry-evidence](telemetry-evidence/README.md) | Telemetry ingestion, evidence aggregation, OpenTelemetry integration, and evidence snapshots. |
 | 4 | Contract and registry service | [contract-registry](contract-registry/README.md) | Versioned storage for decision definitions, output contracts, signal declarations, inference configuration, policies, and fallbacks. |
-| 5 | Policy service | [policy](policy/README.md) | Deterministic safety gate for constraints, confidence, cooldowns, approvals, and guardrails. |
-| 6 | State service | [state](state/README.md) | Active decision values, previous decisions, cooldowns, rollouts, overrides, and rollback transition metadata. |
-| 7 | Decision reasoning engine | [reasoning-engine](reasoning-engine/README.md) | Candidate decision generation using rules, statistics, bandits, AI, or hybrid methods. |
+| 5 | Policy service | [policy](policy/README.md) | Deterministic safety gate for action-space, runtime, authority, and conditional evidence constraints. |
+| 6 | State service | [state](state/README.md) | Active authority, state identity/generation, activation lineage, CAS, replay, and runtime projection. |
+| 7 | Decision reasoning engine | [reasoning-engine](reasoning-engine/README.md) | Bounded runtime strategy execution plus optional future proposal generation. |
 | 8 | Audit and explanation service | [audit-explanation](audit-explanation/README.md) | Decision audit records, evidence lineage, policy outcomes, and explanations. |
 | 9 | Operator console | [operator-console](operator-console/README.md) | Human governance surface for inspection, control, override, pause, approval, and rollback. |
 
@@ -41,5 +41,6 @@ Each component under [`DESIGN.md` / System components](../DESIGN.md#system-compo
 The [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md) maps those domain contracts to the runtime, exposure, management, and health wire boundaries. Its accepted executable projection lives under [`contracts/`](../../contracts/README.md). Future wire changes follow the baseline's explicit compatibility and revision process.
 
 The [Phase 3 Tetris Integration](tetris-integration/README.md) composes these
-component boundaries into the cloud-free hero scenario without adding a new
-wire contract or moving trusted bootstrap behavior into the browser.
+component boundaries into the cloud-free hero scenario using authenticated
+bundle approval and the shared governed-state activation boundary without
+moving management authority into the browser.

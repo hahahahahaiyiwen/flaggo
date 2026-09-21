@@ -24,11 +24,11 @@ Decision Evidence
   provides runtime facts, declared signals, evidence views, quality, and provenance
 
 Decision Intelligence
-  analyzes evidence and proposes bounded changes
+  optionally analyzes evidence and proposes bounded changes
 
 Control-plane decision lifecycles
-  optimization, experimentation, and rollout
-  -> DecisionProposal -> governance -> GovernedDecisionState
+  bundle approval or proposal governance
+  -> GovernedDecisionState
 
 Runtime decision execution
   fixed resolution, strategy evaluation, variant assignment,
@@ -38,6 +38,25 @@ Runtime decision execution
 
 `GovernedDecisionState` is not part of a decision definition. It is produced by an approved control-plane lifecycle and consumed by runtime decision execution. A runtime decision result is also not part of the definition; it is the per-request output of the runtime decision provider.
 
+Flaggo supports two authority workflows:
+
+```text
+bundle-approved:
+  definition bundle + initial authority candidate
+  -> authenticated bundle approval
+  -> governed state
+
+proposal-managed:
+  definition + evidence + current state
+  -> decision intelligence or another authorized producer
+  -> DecisionProposal -> governance
+  -> governed state
+```
+
+Both workflows converge on the same governed-state and runtime execution path.
+The bundle contains an initial authority candidate, not self-approved active
+state.
+
 Control-plane lifecycles and runtime execution operate at different timescales. A lifecycle decides whether an optimization, experiment, or rollout should exist and how it progresses. Runtime execution applies the resulting approved state consistently for each request.
 
 ## Core concepts by layer
@@ -45,11 +64,11 @@ Control-plane lifecycles and runtime execution operate at different timescales. 
 | Concept | Answers | Owns | Does not own |
 | --- | --- | --- | --- |
 | Decision key | What decision family does the application delegate? | Stable developer-facing name such as `tetris.dropInterval`. | Revision semantics, evidence history, active strategy. |
-| Decision definition | What may be decided and how should the system resolve it? | Versioned contract: decision key, signals, intent, inference, output contract/action space, and safety constraints. | Raw telemetry history, application/build provenance, governed state, concrete runtime result. |
+| Decision definition | What may be decided and how should the system resolve it? | Versioned contract: decision key, signals, intent, inference, output contract/action space, safety constraints, and authority workflow. Bundle-approved definitions may declare an initial authority candidate. | Raw telemetry history, application/build provenance, approved governed state, concrete runtime result. |
 | Decision evidence | What is known now or historically? | Runtime facts, target identifiers, emitted events/metrics, evidence views, exposure records, evidence quality, uncertainty, provenance such as app/build identity. | Policy authority or active strategy state. |
-| Decision intelligence | What bounded behavior should Flaggo recommend from the definition and evidence? | Async analysis, proposal generation, and reasoning mode selection. | Lifecycle authority, governance approval, or per-request execution. |
-| Decision lifecycle | How does a proposed optimization, experiment, or rollout become and remain active? | Validation, approval, activation, observation, conclusion, promotion, supersession, and rollback. | Per-request value selection. |
-| Governed decision state | What behavior has been approved for future/runtime use? | Active value, strategy, experiment, rollout, cooldown, override, lifecycle, previous safe value. | Decision definition semantics or raw evidence history. |
+| Decision intelligence | What bounded behavior should Flaggo recommend from the definition and evidence? | Optional async analysis, proposal generation, and reasoning mode selection for proposal-managed authority. | Bundle approval, lifecycle authority, governance approval, or per-request execution. |
+| Decision lifecycle | How does declared or proposed behavior become and remain active? | Bundle approval, proposal governance, activation, observation, conclusion, promotion, supersession, and rollback. | Per-request value selection. |
+| Governed decision state | What behavior has been approved for future/runtime use? | Active value or strategy and activation lineage; experiments, rollouts, cooldown, override, and previous-safe-state data only under explicit lifecycle contracts. | Decision definition semantics or raw evidence history. |
 | Runtime decision execution | How is approved behavior applied to this request? | Fixed-value resolution, strategy evaluation, deterministic variant assignment, rollout routing, override, and fallback. | Proposing or approving future behavior. |
 | Runtime decision result | What did this request receive? | Returned value, fallback status, explanation, audit ID, confidence, policy result. | Future authority unless persisted as governed state. |
 
@@ -91,19 +110,25 @@ DecisionDefinition
       range: 200..1500
       step: 50
       default: 800
-  requestedApproval: automatic
+  lifecycle:
+      authorityMode: bundle-approved
+      initialAuthority:
+        controlTarget: cohort:new_players
+        kind: numeric-rule
+        rule:
+          threshold: 0.55
+          valueAtOrAbove: 850
+          valueBelow: 750
+          weightedInputs:
+            - tetris.boardPressure: 0..1 * 0.45
+            - tetris.recentPlacementTimeMs: 0..2000 * 0.25
+            - tetris.recoveryFailures: 0..5 * 0.20
+            - tetris.currentLevel: 0..20 * 0.10
+        rationale: Initial deterministic Tetris behavior.
   safety:
       constraints:
         - type: max-step-change
           value: 50
-        - type: cooldown
-          duration: 20s
-        - type: min-evidence-quality
-          value: 0.70
-        - type: max-model-uncertainty
-          value: 0.35
-        - type: min-sample-size
-          value: 30
 ```
 
 Notes:
@@ -122,7 +147,9 @@ Notes:
 - Intent is typed. Natural-language intent captures product direction; metric-objective intent binds optimization to declared signals.
 - Natural-language intent is advisory metadata unless paired with metric objectives or typed policy constraints.
 - Safety should use typed constraints when behavior must be machine-enforced. Labels such as `gradual` can remain presets only if they expand to concrete constraints.
-- Application-authored definitions can request an approval mode, but deployment or environment policy grants authority. A definition cannot grant itself automatic approval.
+- A bundle-authored initial authority is only a candidate. An authenticated
+  control-plane approval grants authority; the definition cannot approve
+  itself.
 - Evidence views are derived from the decision definition revision, referenced signal definitions, target hierarchy, and filter/window needs; they do not need to be manually bound as a separate concept in the definition. A view may select a window for a raw event or app-emitted metric, but must not override a fixed-window derived signal.
 
 ## Decision evidence
@@ -167,9 +194,21 @@ A value used online should be a declared signal, usually an app-emitted metric w
 
 This keeps the top-level model small while avoiding arbitrary context fields. Context may carry values, but only declared inference inputs are meaningful to runtime strategy evaluation.
 
-## Decision intelligence and decision lifecycles
+## Authority workflows
 
-Decision intelligence performs control-plane analysis and proposal generation, but it does not own governance authority. Control-plane lifecycles coordinate how proposed behavior becomes approved state:
+The bundle-approved workflow supplies a deterministic initial authority without
+decision intelligence:
+
+```text
+definition + initial authority candidate
+  -> bundle validation
+  -> authenticated bundle approval
+  -> expected-baseline activation
+  -> GovernedDecisionState
+```
+
+The proposal-managed workflow adds asynchronous reasoning or another authorized
+producer later:
 
 ```text
 Adaptive optimization lifecycle:
@@ -194,6 +233,9 @@ Progressive rollout lifecycle:
 ```
 
 Proposals may be produced by decision intelligence, operators, or other authorized automation. Governance, rather than the proposal source, grants authority.
+
+Bundle approval and proposal governance differ in how the candidate is
+produced, not in how runtime consumes the resulting state.
 
 Runtime decision execution consumes the approved state:
 
@@ -266,7 +308,9 @@ code-first declaration
   -> static extraction
   -> application deployment
   -> trusted startup control-plane registration
-  -> registered definition identity
+  -> authenticated bundle approval
+  -> initial governed authority activation
+  -> ready registration receipt
   -> data-plane decision
 ```
 
@@ -280,7 +324,7 @@ Use explicit names:
 
 | Name | Meaning |
 | --- | --- |
-| `DecisionProposal` | Candidate value, strategy, experiment, hold, rollback, or fallback recommendation produced by intelligence, an operator, or authorized automation. |
+| `DecisionProposal` | Candidate value, strategy, experiment, hold, rollback, or fallback recommendation produced by intelligence, an operator, authorized automation, or derived by the server from an approved bundle candidate. |
 | `GovernedDecisionState` | Approved durable authority that runtime decision execution may consume. |
 | `RuntimeDecisionResult` | Per-request response returned to application code. |
 
@@ -299,9 +343,13 @@ Assignment must be deterministic for the same declared assignment target across 
 experimentId + allocationVersion + assignmentTargetKind + assignmentTargetId + salt
 ```
 
-`DecisionProposal` and `GovernedDecisionState` have separate lifecycles:
+Bundle-derived authority and independently generated proposals have separate
+entry paths:
 
 ```text
+Bundle initial authority:
+  declared -> approval-pending -> authorized -> activated
+
 DecisionProposal:
   proposed -> validated -> approved | rejected
 
@@ -309,7 +357,10 @@ GovernedDecisionState:
   pending -> active -> superseded | expired | rolled-back
 ```
 
-Validation checks schema compatibility, output bounds, typed safety constraints, target authority, evidence quality, and policy. Approval can be automatic or human-controlled only when authorized by deployment or environment policy:
+Bundle-approved validation checks the declared target, inference inputs,
+numeric rule, action space, fallback, and applicable runtime policy; an
+authenticated actor approves that exact snapshot. The approval modes below
+apply to proposal-managed authority:
 
 | Approval mode | When appropriate |
 | --- | --- |

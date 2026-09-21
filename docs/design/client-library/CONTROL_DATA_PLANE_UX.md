@@ -31,7 +31,9 @@ application deployment
 application/bootstrap startup (MVP)
   SDK loads the extracted canonical bundle
   SDK calls control-plane validate/apply
-  registry returns definitionId + revision + contractDigest
+  authorized actor approves the exact initial-authority snapshot
+  service activates state through expected-baseline compare-and-swap
+  registry returns a ready receipt with definition and authority identities
   SDK initializes the data-plane client with that binding
 
 data plane
@@ -77,9 +79,14 @@ The exact SDK shape remains provisional, but behavior is fixed:
 1. Load the statically extracted canonical bundle; do not derive semantics from whichever runtime branch executes.
 2. Call the management validate/apply operation, not the decide endpoint.
 3. Use a deterministic idempotency key derived from application, environment, and `bundleDigest` so concurrent replicas submitting identical bundles converge on one result.
-4. Accept only an approved registration receipt.
-5. Initialize the data-plane binding from the returned definition ID, revision, and digest.
-6. Permit decision calls only after registration succeeds.
+4. Accept only a ready registration receipt after all required initial
+   authority is active.
+5. Verify that the receipt includes definition identity and, for
+   bundle-approved definitions, proposal, activation, state, generation,
+   target, and strategy-kind references.
+6. Initialize the data-plane binding from the returned definition ID,
+   revision, and digest.
+7. Permit decision calls only after registration succeeds.
 
 Startup registration does not bypass lifecycle or approval:
 
@@ -91,9 +98,18 @@ Startup registration does not bypass lifecycle or approval:
 
 The Flaggo client initialization rejects on validation failure, apply failure, conflict, or `requires-approval`. The host application decides whether to stop startup or continue without Polari, but it cannot turn that failure into a local decision fallback.
 
-The typed approval error includes the stable `approvalRequestId`. Approval atomically applies the pending canonical bundle; a later startup retry or restart with the same bundle receives the stored approved receipt and may initialize the data plane.
+The typed approval error includes the stable `approvalRequestId`. Approval
+authorizes the exact pending canonical bundle snapshot. The service then
+derives proposal and activation identities and atomically publishes state.
+A later startup retry or restart with the same bundle receives the stored ready
+receipt and may initialize the data plane.
 
-If that approval expires, the next startup apply uses the same deterministic key but triggers server-side revalidation and receives one fresh linked approval request. Concurrent replicas converge on the replacement request; the SDK does not need a renewal endpoint or a new locally generated key.
+If that approval expires before authorization, the next startup apply uses the
+same deterministic key but triggers server-side revalidation and receives one
+fresh linked approval request. Concurrent replicas converge on the replacement
+request; the SDK does not need a renewal endpoint or a new locally generated
+key. Once activation succeeds, exact retries return the same activation and
+state instead of creating new authority.
 
 ### Credential boundary
 
@@ -151,7 +167,7 @@ Known older revisions can continue operating during rolling deployments only whe
 | Digest conflicts with registered definition | `409 contract-conflict` | Forbidden |
 | Definition is retired | `409 retired-definition` | Forbidden |
 | Invalid context or inference input | `400` or `422` Problem Details | Forbidden |
-| Registered definition evaluates but policy/evidence blocks adaptation | `200` audited server fallback | Not applicable |
+| Registered definition evaluates but applicable state, policy, or evidence blocks adaptation | `200` audited server fallback | Not applicable |
 | Data plane is unavailable, unreachable, or times out | Transport/availability failure | Explicitly configurable |
 
 Contract errors are actionable deployment or control-plane mistakes. Converting them into local values would hide drift and make an unregistered build appear healthy.
@@ -164,7 +180,9 @@ The registered definition is evaluated and produces an approved value or strateg
 
 ### Governed server fallback
 
-The registered definition is valid, but evidence, policy, governed state, or safety prevents adaptation. The server returns the definition's registered fallback as an audited `200` decision result.
+The registered definition is valid, but governed state, policy, safety, or
+explicitly required evidence prevents adaptation. The server returns the
+definition's registered fallback as an audited `200` decision result.
 
 ### SDK availability fallback
 
@@ -176,7 +194,12 @@ Availability fallback is disabled by default. It is eligible only after configur
 
 `required-evidence-unavailable` is forbidden by default. It becomes eligible only when the registered definition policy separately allows that client fallback and the server returns the explicit eligibility extension. HTTP `503` alone is not sufficient.
 
-The default is one retry after the initial attempt with the same decide idempotency key. Before any remote attempt or local fallback, the generated call-site digest must match `acceptedDefinitions[decisionKey].contractDigest` from the approved registration receipt. Missing or mismatched binding is a local contract error, not availability.
+The default is one retry after the initial attempt with the same decide
+idempotency key. Before any remote attempt or local fallback, the generated
+call-site digest must match
+`acceptedDefinitions[decisionKey].contractDigest` from the ready registration
+receipt. Missing or mismatched binding is a local contract error, not
+availability.
 
 ## SDK error surface
 

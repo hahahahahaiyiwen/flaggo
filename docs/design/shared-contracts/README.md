@@ -2,7 +2,10 @@
 
 ## Purpose
 
-This document freezes the shared MVP contract shapes used across the Flaggo TypeScript SDK, Decision API, local adapters, tests, manifests, and future cloud adapters.
+This document defines the shared MVP contract shapes used across the Flaggo
+TypeScript SDK, Decision API, local adapters, tests, manifests, and future cloud
+adapters. The approved Phase 3 re-baseline replaces the original bundle v1
+authority declaration rather than adding a compatibility layer.
 
 The goal is not to finalize every future field. The goal is to define a small, stable set of provider-neutral interfaces that can serve the Tetris MVP while leaving clear extension seams.
 
@@ -24,7 +27,9 @@ These contracts are open-source native:
 2. Decision keys and definitions must be pre-registered or validated by manifest before production runtime.
 3. Adaptive behavior is represented by a `DecisionStrategy`, not hidden application logic.
 4. Online runtime returns a concrete value, even when that value came from a strategy.
-5. Async intelligence produces proposals; governance activates values, strategies, experiments, holds, or fallback-only states; rollback is a transition that activates a replacement or previous state and marks the replaced state rolled back.
+5. Authenticated bundle approval may activate a declared initial authority;
+   later async intelligence or another authorized producer creates independent
+   proposals for governance.
 6. Runtime responses must include target, fallback, policy, and audit metadata.
 7. New strategy types, storage backends, evidence sources, and policy rules must extend explicit interfaces instead of changing the runtime response shape.
 
@@ -108,7 +113,7 @@ Rules:
 ```ts
 type DecisionDefinition = {
   ref: DecisionDefinitionRef;
-  lifecycle: LifecycleState;
+  status: LifecycleState;
   valueType: ValueType;
   actionSpace: ActionSpace;
   fallback: FallbackContract;
@@ -117,9 +122,8 @@ type DecisionDefinition = {
   signals?: DecisionSignalReferences;
   inference?: InferenceDeclaration;
   intent?: DecisionIntent;
-  requestedApproval?: RequestedApprovalMode;
+  lifecycle: AuthorityLifecycleDeclaration;
   policy: PolicyReference | InlinePolicy;
-  onlineStrategy?: OnlineStrategyDeclaration;
   metadata?: Record<string, string>;
 };
 
@@ -223,8 +227,6 @@ type MetricObjective =
       target: number;
     };
 
-type RequestedApprovalMode = "automatic" | "human" | "policy-default";
-
 type PolicyReference = {
   kind: "reference";
   policyId: string;
@@ -240,13 +242,39 @@ type ClientFallbackPolicy = {
   requiredEvidenceUnavailable: "allow" | "forbid";
 };
 
-type OnlineStrategyDeclaration = {
-  mode: "active-value" | "approved-strategy" | "experiment" | "fallback-only";
-  liveInputs?: string[];
+type AuthorityLifecycleDeclaration =
+  | {
+      authorityMode: "bundle-approved";
+      initialAuthority: NumericRuleInitialAuthority;
+    }
+  | {
+      authorityMode: "proposal-managed";
+    };
+
+type NumericRuleInitialAuthority = {
+  controlTarget: DecisionTargetRef;
+  kind: "numeric-rule";
+  rule: NumericRuleDeclaration;
+  rationale: string;
+};
+
+type NumericRuleDeclaration = {
+  threshold: number;
+  valueAtOrAbove: number;
+  valueBelow: number;
+  weightedInputs: NumericRuleInput[];
 };
 ```
 
-MVP rule: `tetris.dropInterval` should use `onlineStrategy.mode = "approved-strategy"` and live inputs such as `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, and `currentLevel`.
+MVP rule: `tetris.dropInterval` uses
+`lifecycle.authorityMode = "bundle-approved"` with a numeric rule whose signal
+references are a subset of `inference.inputs`. The bundle supplies no trusted
+proposal, activation, state, or approval identities.
+
+`NumericRuleDeclaration.weightedInputs` must be non-empty. Each input must
+reference one declared inference input, use finite `minimum < maximum`, and
+have a finite nonnegative weight; total weight must be positive. Both branch
+values must satisfy the numeric action space and applicable runtime policy.
 
 `clientFallback.requiredEvidenceUnavailable` is independent from governed server fallback. Omission means `forbid`. The server projects the evaluated permission into the `required-evidence-unavailable` Problem Details extension; an SDK also requires its own local availability-fallback configuration before using a local value.
 
@@ -345,27 +373,17 @@ type FixedValueStrategy = {
 type NumericRuleStrategy = {
   kind: "numeric-rule";
   id: string;
-  baseValue: number;
-  min: number;
-  max: number;
-  step: number;
-  cooldownSeconds: number;
-  rules: NumericAdjustmentRule[];
+  threshold: number;
+  valueAtOrAbove: number;
+  valueBelow: number;
+  weightedInputs: NumericRuleInput[];
 };
 
-type NumericAdjustmentRule = {
-  id: string;
-  when: RuntimeCondition;
-  adjustBy: number;
-  reason: string;
-};
-
-type RuntimeCondition = {
-  all?: RuntimeCondition[];
-  any?: RuntimeCondition[];
-  fact?: string;
-  operator?: "eq" | "neq" | "gt" | "gte" | "lt" | "lte";
-  value?: RuntimeContextValue;
+type NumericRuleInput = {
+  signal: SignalRef;
+  minimum: number;
+  maximum: number;
+  weight: number;
 };
 ```
 
@@ -380,34 +398,31 @@ Rules:
 
 ```ts
 type DecisionState = {
+  stateId: string;
+  proposalId: string;
+  activationId: string;
   definition: DecisionDefinitionRef;
-  controlTarget?: DecisionTargetRef;
-  runtimeTarget?: DecisionTargetRef;
-  lifecycle: LifecycleState;
+  contractDigest: string;
+  controlTarget: DecisionTargetRef;
+  generation: number;
+  predecessorStateId?: string;
+  approvalReference: string;
+  activatedAt: string;
+  lifecycle: "active" | "superseded";
   activeValue?: DecisionValue;
   activeStrategy?: DecisionStrategy;
-  previousValue?: DecisionValue;
-  lastDecisionAt?: string;
-  cooldownUntil?: string;
-  paused?: boolean;
-  override?: OperatorOverride;
-};
-
-type OperatorOverride = {
-  value: DecisionValue;
-  reason: string;
-  setBy?: string;
-  expiresAt?: string;
 };
 ```
 
 Rules:
 
 - `DecisionState` owns live runtime authority; `DecisionDefinition` owns declared semantics.
-- `activeStrategy` is how async intelligence or operator tooling affects online adaptation.
-- Operator override takes precedence over active strategy unless policy says otherwise.
+- Bundle-approved and proposal-managed authority converge on this same state
+  shape and activation boundary.
 - Governed control state is keyed by decision definition plus control target.
-- Runtime target state is keyed by decision definition plus runtime target.
+- Activation uses expected-baseline compare-and-swap and idempotent replay.
+- Pause, override, completion, expiry, rollback, and temporal state require
+  explicit follow-up contracts.
 
 ## Evidence snapshot
 
@@ -586,6 +601,11 @@ Rules:
 
 Every authoring surface must normalize into the same language-neutral `DecisionDefinition` before compatibility comparison or hashing. Combined code-first and explicit forms that express the same semantics must produce byte-identical canonical definitions and therefore the same digest.
 
+The complete authority workflow declaration is semantic content. For
+bundle-approved definitions, the control target, numeric rule, weighted inputs,
+branch values, threshold, and rationale all participate in the definition
+digest.
+
 Normalization:
 
 1. Remove all bound runtime values.
@@ -594,7 +614,10 @@ Normalization:
 4. Normalize SDK-specific policy shorthand, such as client-library [`PolicyAuthoring`](../client-library/README.md#policy-authoring-normalization), into canonical `InlinePolicy` constraints.
 5. Materialize generated fields such as `signals.allowed` exclusively from semantic role references. A supplied generated allowlist is never an identity input; stale or extra entries are discarded during extraction.
 6. Reduce every signal role/reference to immutable `SignalRef { key }`. `schemaDigest` belongs to signal-declaration conflict detection and is excluded from decision-definition identity.
-7. Omit undefined fields and normalize equivalent optional/default forms according to the contract version. In v1, omitted `clientFallback.requiredEvidenceUnavailable` and explicit `"forbid"` are identical.
+7. Omit undefined fields and normalize equivalent optional/default forms
+   according to the contract version. In the replacement contract, omitted
+   `clientFallback.requiredEvidenceUnavailable` and explicit `"forbid"` are
+   identical.
 8. Sort JSON object keys recursively.
 9. Reject duplicate signal keys, duplicate context fields, duplicate policy constraint kinds, or conflicting role/schema declarations.
 10. Serialize with RFC 8785 JSON Canonicalization Scheme.
@@ -614,6 +637,7 @@ Order-insensitive collections are duplicate-free sets and are sorted by immutabl
 - `signals.guardrails`,
 - generated `signals.allowed`,
 - canonical `inference.inputs`,
+- `lifecycle.initialAuthority.rule.weightedInputs`, sorted by signal key,
 - signal declarations in a bundle,
 - `InlinePolicy.constraints`, sorted by constraint kind.
 
@@ -681,17 +705,27 @@ Flaggo should avoid sharing unsafe learned decision behavior across different co
 | --- | --- | --- |
 | Raw telemetry observations | Share across definitions with the same application, signal key, and target semantics. | Observations are historical facts, not learned policy. |
 | Evidence views | Share only when signal key, target, window, and filters match. | A metric can be reused if it is the same immutable signal viewed the same way. |
-| Decision state or active strategy | Isolate by definition ID and control/runtime target. | A learned value or strategy for one definition may be unsafe for another. |
+| Decision state or active strategy | Isolate by definition identity and control target. | Authority approved for one contract may be unsafe for another. |
 
 Rules:
 
 - Telemetry identity should be stable at the event/signal level so a new definition can reuse existing observations for unchanged inputs.
 - Evidence views should be identified by immutable signal key plus target, window, and filters.
-- A new definition may start in partial-warm mode: reused evidence can contribute immediately, while new signals collect data until policy marks them sufficient.
-- Decision state, active strategies, cooldowns, and operator overrides are keyed by definition ID plus resolved control/runtime target. They are not inherited automatically across definitions.
+- A new proposal-managed definition may start in partial-warm mode: reused
+  evidence can contribute immediately, while new signals collect data until
+  policy marks them sufficient.
+- Decision state and active strategies are keyed by definition identity plus
+  resolved control target. Future temporal or operator state follows its own
+  explicitly approved address contract. None is inherited automatically
+  across definitions.
 - State migration between definition IDs should be an explicit operator or registry action, not an implicit compatibility rule.
 
-## Proposal contracts
+## Proposal contracts (provisional Phase 4 design)
+
+These shapes describe the existing design space only. They are not part of the
+Phase 3 bundle-contract replacement or activation-core commitment. Phase 4 must
+finalize the smallest proposal contract after the Track B reduction rather
+than preserving this hierarchy for compatibility.
 
 ```ts
 type DecisionProposal =
@@ -755,8 +789,9 @@ type GovernanceOutcome = {
 
 Rules:
 
-- MVP async intelligence may be scripted, but it must produce `DecisionProposal`.
-- Governance activation writes `DecisionState`.
+- A Phase 4 scripted producer emits a typed proposal; it never writes active
+  state directly.
+- Governance activates through the shared expected-baseline boundary.
 - Online runtime consumes `DecisionState`, not raw proposal text.
 
 ## Audit record
@@ -782,8 +817,12 @@ type AuditRecord = {
   stateSummary?: {
     decisionMode: DecideResponse["decisionMode"];
     strategyId?: string;
-    paused?: boolean;
-    overrideUsed?: boolean;
+    stateId?: string;
+    generation?: number;
+    predecessorStateId?: string;
+    proposalId?: string;
+    activationId?: string;
+    approvalReference?: string;
   };
   policy?: PolicyEvaluationResult;
   proposal?: DecisionProposal;
@@ -803,7 +842,7 @@ Rules:
 
 ```ts
 type DecisionDefinitionBundle = {
-  format: "flaggo.decision-definition-bundle/v1";
+  format: "flaggo.decision-definition-bundle/v2";
   application: {
     id: string;
     environment: string;
@@ -835,7 +874,7 @@ type DecisionDefinitionBundleEntry = {
   intent?: DecisionIntent;
   fallback: FallbackContract;
   policy: PolicyReference | InlinePolicy;
-  onlineStrategy?: OnlineStrategyDeclaration;
+  lifecycle: AuthorityLifecycleDeclaration;
 };
 
 type DefinitionBundleValidationResult = {
@@ -900,6 +939,16 @@ type AcceptedDefinition = {
   definitionId: string;
   revision: string;
   contractDigest: string;
+  activatedAuthority?: ActivatedAuthorityReceipt;
+};
+
+type ActivatedAuthorityReceipt = {
+  proposalId: string;
+  activationId: string;
+  stateId: string;
+  generation: number;
+  controlTarget: DecisionTargetRef;
+  kind: "numeric-rule";
 };
 
 type RegistrationReceipt = {
@@ -910,7 +959,7 @@ type RegistrationReceipt = {
   artifactDigest?: string;
   acceptedDefinitions: Record<string, AcceptedDefinition>;
   compatibility: ContractCompatibility;
-  status: "approved";
+  status: "ready";
   changes?: ContractChange[];
   issues: ContractIssue[];
 };
@@ -928,6 +977,14 @@ type DefinitionBundleApplyResult =
       snapshotUrl: string;
       supersedesApprovalRequestId?: string;
       changes: ContractChange[];
+      issues: ContractIssue[];
+    }
+  | {
+      status: "activation-pending";
+      approvalRequestId: string;
+      application: string;
+      environment: string;
+      bundleDigest: string;
       issues: ContractIssue[];
     };
 
@@ -957,11 +1014,22 @@ type DefinitionBundleApprovalResult =
     | {
         status: "approved";
         decidedAt: string;
-        receipt: RegistrationReceipt;
         approval: {
           actor: ApprovalActor;
           comment?: string;
         };
+        activation:
+          | {
+              status: "pending";
+            }
+          | {
+              status: "ready";
+              receipt: RegistrationReceipt;
+            }
+          | {
+              status: "failed";
+              issue: ContractIssue;
+            };
       }
     | {
         status: "rejected";
@@ -978,8 +1046,6 @@ type DefinitionBundleApprovalResult =
       }
   );
 
-type ResourceOwnershipManifest = DecisionDefinitionBundle;
-type ManifestValidationResult = DefinitionBundleValidationResult;
 ```
 
 Rules:
@@ -991,12 +1057,17 @@ Rules:
 - Omitted `definitionId` resolves the existing lineage for a known key. A supplied ID must already belong to that same authorized application/environment/key; unknown or mismatched IDs are validation errors.
 - Missing bundle resources become deprecation candidates, not deletes.
 - Bundle data must remain provider-neutral.
-- `ResourceOwnershipManifest` is retained only as a compatibility alias while the design migrates to `DecisionDefinitionBundle`.
 - Build metadata is allowed in the bundle for traceability, but compatibility should be based on canonical definition content, not incidental build metadata. Two different builds with identical decision definitions may share the same `contractDigest` while having different `buildId` or `artifactDigest`.
-- `acceptedDefinitions` provides the complete per-key runtime binding. A client must initialize each call site from its receipt entry rather than combine a top-level digest with a revision map.
+- `acceptedDefinitions` provides the complete per-key runtime binding and any
+  required activated-authority references. A client must initialize each call
+  site from its receipt entry rather than combine a top-level digest with a
+  revision map.
 - Registry-managed revisioning is the default UX. Metadata-only changes keep the same runtime identity; approved semantic changes mint a new opaque revision and digest under the same definition lineage.
 - Bundle validation issues use stable machine-readable codes and JSON Pointer paths; clients must not parse prose messages.
-- Bundle apply is atomic under accepted decision A5. Under accepted decision A6, semantic changes return `requires-approval` without mutation; explicit approval atomically applies the pending canonical bundle and produces the receipt.
+- Bundle validation and immutable definition publication are atomic. A
+  semantic change returns `requires-approval` without active-authority
+  mutation. Explicit approval is durably recorded before expected-baseline
+  activation, and no ready receipt exists until activation succeeds.
 - Approval requests are immutable snapshots with an authoritative expiration. Pending requests transition once to approved, rejected, or expired; terminal states never transition.
 - Approval changes include previous/proposed contract digests and a canonical semantic diff. `snapshotUrl` retrieves the immutable canonical bundle under review.
 - Snapshot HTTP responses quote the project `sha256:<hex>` value as an opaque `ETag` and separately encode the raw SHA-256 bytes using RFC 9530 `Content-Digest: sha-256=:<base64>:` syntax.
@@ -1058,7 +1129,7 @@ The decision definition references those signal identities without redefining th
     "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
     "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
   },
-  "lifecycle": "active",
+  "status": "active",
   "valueType": "number",
   "actionSpace": {
     "type": "number",
@@ -1109,32 +1180,66 @@ The decision definition references those signal identities without redefining th
     ],
     "rationale": "Keep gameplay challenging but playable while reducing early frustration."
   },
-  "onlineStrategy": {
-    "mode": "approved-strategy",
-    "liveInputs": [
-      "currentLevel",
-      "boardPressure",
-      "recentPlacementTimeMs",
-      "recoveryFailures"
-    ]
+  "lifecycle": {
+    "authorityMode": "bundle-approved",
+    "initialAuthority": {
+      "controlTarget": {
+        "type": "cohort",
+        "id": "new_players"
+      },
+      "kind": "numeric-rule",
+      "rule": {
+        "threshold": 0.55,
+        "valueAtOrAbove": 850,
+        "valueBelow": 750,
+        "weightedInputs": [
+          {
+            "signal": { "key": "tetris.boardPressure" },
+            "minimum": 0,
+            "maximum": 1,
+            "weight": 0.45
+          },
+          {
+            "signal": { "key": "tetris.recentPlacementTimeMs" },
+            "minimum": 0,
+            "maximum": 2000,
+            "weight": 0.25
+          },
+          {
+            "signal": { "key": "tetris.recoveryFailures" },
+            "minimum": 0,
+            "maximum": 5,
+            "weight": 0.2
+          },
+          {
+            "signal": { "key": "tetris.currentLevel" },
+            "minimum": 0,
+            "maximum": 20,
+            "weight": 0.1
+          }
+        ]
+      },
+      "rationale": "Initial deterministic Tetris behavior."
+    }
   },
   "policy": {
     "kind": "inline",
     "constraints": [
-      { "kind": "cooldown", "seconds": 20 },
       { "kind": "max-delta", "value": 50 },
-      { "kind": "max-model-uncertainty", "value": 0.35 },
-      { "kind": "min-evidence-quality", "value": 0.7 },
-      { "kind": "min-sample-size", "value": 30 },
       { "kind": "number-bounds", "min": 200, "max": 1500 }
     ]
   }
 }
 ```
 
-## MVP domain and wire contract freeze
+## MVP domain and wire contract direction
 
-For the first implementation, treat these provider-neutral domain contracts as frozen:
+The bundle v1 freeze is superseded by the approved bundle-approved authority
+design. The contract-first implementation must update schema, generated types,
+canonical fixtures, SDK and service conformance together and remove the v1 path
+rather than supporting both formats.
+
+Retain these provider-neutral domain boundaries:
 
 - result value primitives,
 - action space shapes,
@@ -1149,8 +1254,8 @@ For the first implementation, treat these provider-neutral domain contracts as f
 - `ContractRuntimeStatus`,
 - `ContractCompatibility`.
 
-The HTTP projections of `DecideRequest`, `ServerDecisionResult`, exposure
-confirmation, validation/apply/approval results, and `RegistrationReceipt` are
-frozen by the accepted [Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md)
-and executable conformance artifacts. Future wire changes should be additive
-unless an explicit breaking-version decision is accepted.
+The runtime decision and exposure projections remain governed by the accepted
+[Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md) and executable
+conformance artifacts. The bundle management, approval, and registration
+receipt projections are intentionally replaced by the approved v2 direction;
+the follow-up contract issue must update all executable artifacts together.

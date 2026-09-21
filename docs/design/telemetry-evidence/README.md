@@ -2,7 +2,10 @@
 
 ## Purpose
 
-The telemetry/evidence component turns runtime observations into decision evidence. It supplies request-time inputs to runtime decision execution and historical evidence to decision intelligence and decision lifecycles.
+The telemetry/evidence component turns emitted observations into historical
+decision evidence. Live runtime inference inputs travel with the decision
+request; evidence is a separate optional input to authorities or policies that
+explicitly require it.
 
 For the MVP, evidence can be simple and local. The design should still preserve a clean `IEvidenceProvider` seam so later implementations can use OpenTelemetry pipelines, metrics stores, or cloud data services.
 
@@ -21,7 +24,10 @@ Evidence should provide:
 - confidence when available,
 - numeric metrics used by policy or strategy execution.
 
-The MVP may use fixture or in-memory evidence. Runtime context can carry the most important live facts for Tetris.
+The revised Phase 3 Tetris path does not require an evidence fixture or
+confidence report. It emits linked telemetry for inspection and future
+proposal-managed use. Later paths may use fixture, in-memory, or aggregated
+evidence behind the same port.
 
 ## Core port
 
@@ -57,10 +63,10 @@ type EvidenceSnapshot = {
 
 ```text
 Decision API
-  -> resolves runtime target, control target, and evidence views
-  -> requests evidence snapshots
-  -> passes evidence to strategy executor and policy evaluator
-  -> records evidence summary in audit
+  -> determines whether active authority or policy requires evidence
+  -> when required, resolves evidence views and requests snapshots
+  -> passes optional evidence to strategy execution and policy
+  -> records an evidence summary only when evidence participated
 ```
 
 Missing evidence should not crash runtime. It should produce `quality = "missing"` or `quality = "insufficient"` and allow policy to decide whether fallback is required.
@@ -123,7 +129,7 @@ Design rule:
 
 Phase 1 does not define a Flaggo-specific telemetry HTTP API. SDK telemetry should use OTLP; any direct/demo ingestion path is non-blocking and must not alter decision or exposure contracts.
 
-## Tetris MVP evidence
+## Tetris telemetry and future evidence
 
 Useful metrics:
 
@@ -133,6 +139,11 @@ Useful metrics:
 - `recoveryFailureRate`.
 
 Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` can come from runtime context only after they are declared as metrics and selected as inference inputs. The same metrics can be emitted over time, captured in decision records when Flaggo returns a decision, and copied into exposure records only after the client confirms application/rendering. Aggregated evidence can provide broader confidence and sample-size context.
+
+In revised Phase 3, the bundle-approved rule consumes the declared live inputs
+directly and returns no learned confidence. Outcome telemetry is linked but is
+not ingested to create or replace authority. Phase 4 may aggregate these
+observations into evidence for independent proposals.
 
 ## MVP non-goals
 

@@ -24,10 +24,11 @@ Decision Evidence
   provides runtime facts, observations, evidence views, quality, and provenance
 
 Decision Intelligence
-  analyzes evidence and produces bounded proposals
+  optionally analyzes evidence and produces bounded proposals
 
 Decision Lifecycles
-  validate, approve, activate, observe, and transition governed state
+  approve bundle candidates or govern independent proposals,
+  then activate and transition governed state
 
 Runtime Decision Execution
   applies compatible governed state to one application request
@@ -36,6 +37,10 @@ Runtime Decision Execution
 Canonical loops:
 
 ```text
+DecisionDefinition + bundle-declared initial authority
+  -> authenticated bundle approval
+  -> GovernedDecisionState
+
 DecisionDefinition + DecisionEvidence + outcomes + objectives
   -> Decision Intelligence
   -> DecisionProposal
@@ -55,7 +60,7 @@ A decision key is the stable developer-facing name where application code delega
 
 Examples include `tetris.dropInterval`, `checkout.fraudReviewRequired`, `api.retryPolicy`, `llm.modelRoute`, and `workflow.escalationAction`.
 
-A decision definition is the versioned semantic contract behind a key. It answers: **what may be decided and how should it resolve for this revision?** It owns signal declarations, typed intent, inference configuration, safety constraints, and output contract/action space. It does not own governed state or concrete runtime results.
+A decision definition is the versioned semantic contract behind a key. It answers: **what may be decided and how should it resolve for this revision?** It owns signal declarations, typed intent, inference configuration, safety constraints, output contract/action space, and authority workflow. A bundle-approved definition may declare an initial authority candidate, but it does not own approved governed state or concrete runtime results.
 
 Detailed concept design: [DECISION_DEFINITION.md](DECISION_DEFINITION.md).
 
@@ -85,11 +90,11 @@ The decision definition declares a target hierarchy, and resolvers choose path-s
 
 ### Decision intelligence
 
-Decision intelligence is the AI-native reasoning layer that turns decision definitions and decision evidence into `DecisionProposal` objects. For real-time adaptive decisions, it usually proposes a bounded strategy that can later be governed and executed against live context.
+Decision intelligence is the optional AI-native reasoning layer that turns decision definitions and decision evidence into `DecisionProposal` objects. It participates in proposal-managed authority, not the bundle-approved Phase 3 path.
 
 It answers: **how should Flaggo reason about what to do next before governance decides whether it is safe to apply?**
 
-This is the layer that makes Flaggo more than a dynamic configuration or feature flag service. It can behave like an embedded data scientist or operator assistant: observe telemetry, compare outcomes, choose an analysis strategy, propose experiments, value changes, or bounded adaptation strategies, explain uncertainty, and recommend whether to hold, change, test, roll back, or fall back.
+This layer extends Flaggo beyond declarative authority once teams need a closed loop. It can behave like an embedded data scientist or operator assistant: observe telemetry, compare outcomes, choose an analysis strategy, propose experiments, value changes, or bounded adaptation strategies, explain uncertainty, and recommend whether to hold, change, test, roll back, or fall back.
 
 Decision intelligence should produce a **DecisionProposal**, not an automatically final runtime decision. A proposal can be a single value, an experiment, a rollout, or a bounded strategy.
 
@@ -99,7 +104,9 @@ Detailed concept design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md).
 
 ### Decision lifecycles
 
-Decision lifecycles validate proposals, apply policy and approval, activate `GovernedDecisionState`, and manage optimization, experiment, and rollout transitions through completion or rollback.
+Decision lifecycles authenticate bundle approval, govern independent proposals,
+activate `GovernedDecisionState`, and manage optimization, experiment, and
+rollout transitions through completion or rollback.
 
 Detailed concept design: [DECISION_LIFECYCLES.md](DECISION_LIFECYCLES.md).
 
@@ -146,8 +153,9 @@ Control target: cohort:new_players or global
 Runtime context: userId, sessionId, cohort, currentLevel, deviceType, boardPressure, recentPlacementTimeMs, recoveryFailures
 Evidence views: hard-drop rate, placement time, early game-over rate by session/cohort/global windows
 Goals: keep gameplay challenging but playable
-Policy constraints: min/max interval, max delta, cooldown, min evidence quality, max model uncertainty
-Governed state: active value or strategy, previous value, cooldown, rollout, operator mode
+Policy constraints: min/max interval and max delta; temporal semantics are clarified separately
+Initial authority: bundle-declared numeric rule for cohort:new_players
+Governed state: approved active strategy, predecessor, generation, and approval reference
 Action space: numeric interval from 200ms to 1500ms
 Fallback contract: 800ms default
 ```
@@ -156,12 +164,15 @@ This scenario should prove the smallest useful version of Flaggo:
 
 1. A developer can declare a stable decision key and bounded decision definition.
 2. The app can emit observations and ask for a decision for a runtime target.
-3. Flaggo can resolve evidence views, governed state, goals, policy, and uncertainty.
-4. Async intelligence can produce a proposal for a decision definition and control target.
-5. The decision lifecycle can approve, limit, hold, roll back, fall back, or activate the strategy.
-6. Runtime decision execution can apply governed state against live game context.
-7. The app can safely apply a value or fallback.
-8. An operator can inspect why the decision happened.
+3. The bundle can declare a bounded initial numeric rule and control target.
+4. An authenticated actor can approve the exact bundle snapshot.
+5. Flaggo can activate the derived governed state idempotently.
+6. Runtime decision execution can apply that state against live game context.
+7. The app can safely apply a value or fallback and confirm exposure.
+8. An operator can inspect the approval, activation, runtime policy, and outcome linkage.
+
+Phase 4 extends this scenario with evidence-backed proposal generation and
+independent governance; it does not redefine the runtime execution path.
 
 ## System components
 
@@ -248,7 +259,9 @@ Responsibilities:
 
 - resolve applicable policies by decision definition and target,
 - enforce hard constraints,
-- evaluate evidence quality, model uncertainty limits, sample-size requirements, cooldowns, max deltas, approval requirements, and guardrails,
+- evaluate bounds, max deltas, approval requirements, and guardrails, plus
+  evidence quality, model uncertainty, sample size, or temporal constraints
+  only when the active authority and policy require them,
 - block or require fallback when safety requirements are not met,
 - produce stable reason codes for audit and operator visibility.
 
@@ -260,15 +273,15 @@ The state service tracks the current and historical state of decisions.
 
 Responsibilities:
 
-- active value/action per decision definition and control target,
-- previous decisions,
-- cooldown state,
-- rollout or exposure state,
-- operator overrides,
-- paused/resumed mode,
-- rollback transition metadata.
+- active value or strategy per decision definition and control target,
+- state identity and monotonic generation,
+- predecessor, proposal, activation, and approval references,
+- atomic expected-baseline activation,
+- read-only runtime projection.
 
-State lets Flaggo avoid stateless one-off guesses and prevents thrashing or conflicting decisions.
+Later lifecycle capabilities may add completion, expiry, rollout, pause,
+override, rollback, and temporal stabilization state behind explicit
+contracts.
 
 ### 7. [Decision reasoning engine](design/reasoning-engine/README.md)
 
@@ -335,7 +348,9 @@ application code
 application deployment (independent)
   -> trusted application/bootstrap startup
   -> control-plane validate/apply
-  -> registered definition identity
+  -> authenticated approval of initial authority, when declared
+  -> expected-baseline activation
+  -> ready registration receipt
   -> initialize data-plane client
   -> runtime request carries exact definitionId + revision + contractDigest
 ```
@@ -359,8 +374,8 @@ Application code
 
 Decision API
   -> loads decision definition
-  -> resolves runtime target, control target, evidence views, policy, and fallback
-  -> fetches evidence snapshots
+  -> resolves runtime target, control target, policy, and fallback
+  -> fetches evidence snapshots only when active authority or policy requires them
   -> fetches compatible GovernedDecisionState
   -> executes fixed value, approved strategy, variant assignment,
      rollout routing, override, or fallback
@@ -386,7 +401,20 @@ Telemetry changes, schedule, operator request, definition activation, rollout re
   -> produce DecisionProposal
 ```
 
-The **decision lifecycle path** turns proposals into authority:
+The **bundle-approved lifecycle path** supplies the first deterministic
+authority without invoking decision intelligence:
+
+```text
+DecisionDefinition + initialAuthority
+  -> validate exact candidate
+  -> authenticated approval
+  -> server-derived proposal and activation identities
+  -> expected-baseline activation
+  -> GovernedDecisionState
+```
+
+The **proposal-managed lifecycle path** turns independent proposals into
+authority:
 
 ```text
 DecisionProposal
@@ -408,7 +436,13 @@ DecisionProposal: proposed -> validated -> pending-approval | approved | rejecte
 GovernedDecisionState: pending -> active -> superseded | expired | completed | rolled-back
 ```
 
-Approval can be automatic for low-risk changes within typed constraints and sufficient evidence only when deployment or environment policy grants that authority. Human approval is required for high-impact strategies, policy exceptions, insufficient evidence quality, excessive model uncertainty, weak expected outcome, overlapping target conflicts, or regulated/business-critical decisions.
+Proposal-managed approval can be automatic for low-risk changes within typed
+constraints and sufficient evidence only when deployment or environment policy
+grants that authority. Human approval is required for high-impact strategies,
+policy exceptions, insufficient evidence quality, excessive model uncertainty,
+weak expected outcome, overlapping target conflicts, or
+regulated/business-critical decisions. Bundle-approved authority instead
+requires an authenticated actor to approve the exact declared snapshot.
 
 Cross-cutting flows keep the system declared, evidenced, audited, and improved over time:
 

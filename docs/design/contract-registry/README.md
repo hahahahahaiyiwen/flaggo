@@ -14,7 +14,8 @@ It owns the server-side resources that application code references at runtime:
 - signal role references and evidence view requirements,
 - goals,
 - fallback contracts,
-- policy references.
+- policy references,
+- authority workflow and optional initial authority candidates.
 
 The registry exists so runtime decision requests can stay small and governed. Applications should call a pre-registered decision key and expected definition identity instead of sending all decision semantics inline on every request.
 
@@ -65,7 +66,8 @@ Examples of revision-worthy changes:
 - fallback contract changes,
 - signal role/reference changes,
 - goal definition changes,
-- policy reference changes.
+- policy reference changes,
+- authority mode, initial authority target, rule, or rationale changes.
 
 Small metadata changes can be mutable if they do not affect decision semantics, but the first design can keep this conservative. The developer-facing key can stay stable while the registry manages semantic revisions.
 
@@ -79,7 +81,7 @@ Example shape:
 
 ```json
 {
-  "format": "flaggo.decision-definition-bundle/v1",
+  "format": "flaggo.decision-definition-bundle/v2",
   "application": {
     "id": "tetris-demo",
     "environment": "dev"
@@ -113,7 +115,12 @@ Example shape:
       "targetHierarchy": ["session", "user", "cohort", "global"],
       "inference": {
         "target": "session",
-        "inputs": [{ "key": "tetris.boardPressure" }],
+        "inputs": [
+          { "key": "tetris.boardPressure" },
+          { "key": "tetris.recentPlacementTimeMs" },
+          { "key": "tetris.recoveryFailures" },
+          { "key": "tetris.currentLevel" }
+        ],
         "fallbackOrder": ["cohort", "global"]
       },
       "intent": {
@@ -124,10 +131,51 @@ Example shape:
         "value": 800,
         "reason": "safe_default_drop_interval"
       },
+      "lifecycle": {
+        "authorityMode": "bundle-approved",
+        "initialAuthority": {
+          "controlTarget": {
+            "type": "cohort",
+            "id": "new_players"
+          },
+          "kind": "numeric-rule",
+          "rule": {
+            "threshold": 0.55,
+            "valueAtOrAbove": 850,
+            "valueBelow": 750,
+            "weightedInputs": [
+              {
+                "signal": { "key": "tetris.boardPressure" },
+                "minimum": 0,
+                "maximum": 1,
+                "weight": 0.45
+              },
+              {
+                "signal": { "key": "tetris.recentPlacementTimeMs" },
+                "minimum": 0,
+                "maximum": 2000,
+                "weight": 0.25
+              },
+              {
+                "signal": { "key": "tetris.recoveryFailures" },
+                "minimum": 0,
+                "maximum": 5,
+                "weight": 0.2
+              },
+              {
+                "signal": { "key": "tetris.currentLevel" },
+                "minimum": 0,
+                "maximum": 20,
+                "weight": 0.1
+              }
+            ]
+          },
+          "rationale": "Initial deterministic Tetris behavior."
+        }
+      },
       "policy": {
         "kind": "inline",
         "constraints": [
-          { "kind": "cooldown", "seconds": 20 },
           { "kind": "max-delta", "value": 50 },
           { "kind": "number-bounds", "min": 200, "max": 1500 }
         ]
@@ -137,7 +185,11 @@ Example shape:
 }
 ```
 
-The bundle lets Flaggo compare declared resources with registered resources on the server without depending on application source code or a language SDK.
+The bundle lets Flaggo compare declared resources with registered resources on
+the server without depending on application source code or a language SDK. An
+initial authority remains a candidate until an authenticated approval and
+expected-baseline activation succeed. Registration readiness and its receipt
+are withheld until required authority is active.
 
 ## Build and deployment identity
 
@@ -183,19 +235,60 @@ flaggo.tune.number("tetris.dropInterval", {
   },
   inference: {
     target: "session",
-    inputs: [boardPressureSignal.input(boardPressure)],
+    inputs: [
+      boardPressureSignal.input(boardPressure),
+      recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+      recoveryFailuresSignal.input(recoveryFailures),
+      currentLevelSignal.input(game.level)
+    ],
     fallbackOrder: ["cohort", "global"]
   },
   output: {
     default: 800,
-    range: [200, 1500]
+    range: [200, 1500],
+    step: 50
+  },
+  lifecycle: {
+    authorityMode: "bundle-approved",
+    initialAuthority: {
+      controlTarget: flaggo.target.cohort("new_players"),
+      kind: "numeric-rule",
+      rule: {
+        threshold: 0.55,
+        valueAtOrAbove: 850,
+        valueBelow: 750,
+        weightedInputs: [
+          {
+            signal: boardPressureSignal,
+            minimum: 0,
+            maximum: 1,
+            weight: 0.45
+          },
+          {
+            signal: recentPlacementTimeMsSignal,
+            minimum: 0,
+            maximum: 2000,
+            weight: 0.25
+          },
+          {
+            signal: recoveryFailuresSignal,
+            minimum: 0,
+            maximum: 5,
+            weight: 0.20
+          },
+          {
+            signal: currentLevelSignal,
+            minimum: 0,
+            maximum: 20,
+            weight: 0.10
+          }
+        ]
+      },
+      rationale: "Initial deterministic Tetris behavior."
+    }
   },
   policy: {
-    maxDelta: 50,
-    cooldown: "20s",
-    minSampleSize: 30,
-    minEvidenceQuality: 0.7,
-    maxModelUncertainty: 0.35
+    maxDelta: 50
   },
   context: {
     sessionId: flaggo.target.session(sessionId),
@@ -209,12 +302,19 @@ Tooling extracts signal identities and target schemas from the bindings above, d
 
 - If semantics are unchanged, it returns the existing definition ID/revision.
 - If only metadata changed, it records registry/audit metadata history without changing runtime revision or digest.
-- If semantics changed, apply returns `requires-approval` with an approval request and performs no mutation. Explicit approval atomically creates the new semantic revision and applies the pending bundle.
+- If semantics changed, apply returns `requires-approval` with an approval
+  request and performs no active-authority mutation. Explicit approval records
+  the immutable revision and authorizes expected-baseline activation.
+- Registration remains non-ready until every required initial authority is
+  active. Exact retries return the original ready receipt.
 - Old builds continue using the old identity; new builds use the new identity.
 - Within one build, repeated declarations of the same decision key must normalize to the same canonical digest. Identical definitions are deduplicated; different digests are a `contract-conflict` build error.
 - Runtime calls attach a build-generated or memoized descriptor and evaluate only bound values. They must not recalculate or register static definition semantics on each call.
 - Unsupported or runtime-dependent extraction is invalid. Production runtime returns 4xx Problem Details for an unknown or conflicting identity; it never derives management state from an executed branch, selects another revision, or invokes local fallback.
 - Every `inference.inputs` key must resolve to a registered app-emitted primitive metric. Event signals and service-derived metrics are rejected even if a non-TypeScript client submits them.
+- Every bundle numeric-rule input must be one of those declared inference
+  inputs, and its values, threshold, ranges, and weights must be finite and
+  valid for the definition action space and policy.
 - Every metric-objective signal must resolve to a registered numeric metric. App-emitted and derived numeric metrics are valid; events and boolean/string metrics are rejected.
 - A metric objective with `direction: "target"` must include a finite numeric `target`; `minimize` and `maximize` objectives must not include `target`.
 - Every canonical decision definition must contain `policy: PolicyReference | InlinePolicy`. Missing policy is a validation error; the registry does not insert an implicit environment/default reference.
@@ -321,9 +421,10 @@ code declarations, hand-authored bundle, or registry export
   -> classify semantic changes
   -> keep the runtime tuple for unchanged or metadata-only contracts
   -> require approval, then create a new opaque revision/digest for semantic changes
+  -> activate required initial authority through expected-baseline compare-and-swap
   -> mark missing resources as deprecation candidates
   -> require explicit retirement
-  -> return registration receipt
+  -> return a ready registration receipt
 ```
 
 If multiple builds are live, each runtime request carries the exact accepted definition tuple for that workload. The registry should recognize known immutable tuples rather than forcing all builds onto one current revision.
@@ -332,9 +433,9 @@ Recommended behavior:
 
 | Diff | Action |
 |---|---|
-| New decision key | Create active decision definition and initial revision. |
+| New decision key | Return `requires-approval`; approval creates the initial revision and authorizes required initial-authority activation. |
 | Compatible metadata change | Update registry/audit metadata without changing runtime identity. |
-| Semantic definition change | Return `requires-approval`; approval creates a new opaque revision/digest under the same definition lineage. |
+| Semantic definition change | Return `requires-approval`; approval creates a new opaque revision/digest and authorizes required initial-authority activation under the same definition lineage. |
 | Resource missing from bundle | Mark as deprecation candidate; do not delete. |
 | Deprecated resource with no active clients | Allow explicit retirement. |
 | Active runtime usage exists | Block retirement unless forced by operator policy. |
@@ -393,20 +494,32 @@ The important design is:
 - validation is read-only and returns structured issues,
 - apply repeats validation and is atomic and idempotent,
 - semantic change returns `requires-approval` plus a stable `approvalRequestId` without mutation,
-- approval atomically applies the immutable pending canonical bundle and stores its approved receipt,
+- approval durably authorizes the immutable pending canonical bundle before
+  derived authority activation,
 - approval review exposes previous/proposed digests, canonical semantic diff, and immutable canonical bundle snapshot,
-- approval status is `pending`, `approved`, `rejected`, or `expired`; only approved includes a receipt,
+- approval status is `pending`, `approved`, `rejected`, or `expired`; approved
+  activation may still be pending or explicitly failed,
 - pending requests have an authoritative `expiresAt`; terminal transitions are immutable and compare-and-swap safe,
 - same terminal action is idempotent; opposite concurrent/terminal action returns `approval-terminal-conflict`,
 - approval/rejection persist the authorized actor and comment,
+- the server derives proposal, activation, and state identities and activates
+  through expected-baseline compare-and-swap,
 - reapplying an expired bundle with the same deterministic key revalidates and creates one linked replacement request,
-- startup retry with the same bundle returns the final approved receipt after approval,
-- registration returns `acceptedDefinitions`, containing the complete definition ID/revision/digest tuple per decision key,
+- startup retry with the same bundle returns `activation-pending` until state is
+  active, then returns the original ready receipt,
+- registration returns `acceptedDefinitions`, containing the complete
+  definition ID/revision/digest tuple and required activated-authority
+  references per decision key,
+- exact replay returns the same activation and state; a stale expected baseline
+  cannot overwrite newer bundle-approved or proposal-managed authority,
 - semantic updates create revisions,
 - deprecation/retirement are lifecycle transitions,
 - hard delete is not part of the normal lifecycle.
 
-Bundle atomicity is all-or-nothing (A5). Semantic revision creation requires explicit approval with no pre-approval mutation (A6).
+Bundle completion is all-or-nothing from the client readiness perspective:
+partial internal progress never produces a ready receipt. Semantic revision
+creation and initial authority activation require explicit approval with no
+pre-approval active-state mutation.
 
 ## Relationship to client library
 
@@ -435,7 +548,9 @@ For the Tetris hero scenario, the first registry design should support:
 - action space range,
 - fallback contract,
 - session/user/cohort/global hierarchy,
+- bundle-approved lifecycle with a numeric-rule initial authority candidate,
 - active/deprecated/retired lifecycle,
 - append-only definition revisions,
 - definition bundle validate/apply flow,
-- registration receipt with digest and revision.
+- authenticated approval and activation readiness,
+- registration receipt with definition and activated-authority identities.

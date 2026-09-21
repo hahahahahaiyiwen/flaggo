@@ -2,7 +2,10 @@
 
 ## Purpose
 
-A decision definition is the versioned contract for a Flaggo decision. It declares what may be decided, which target levels matter, which evidence may be used, what "better" means, and which safety/fallback rules constrain the system.
+A decision definition is the versioned contract for a Flaggo decision. It
+declares what may be decided, which target levels matter, which evidence may be
+used, what "better" means, which safety/fallback rules constrain the system,
+and how initial or future authority may be supplied.
 
 It participates in Flaggo's top-level mental model:
 
@@ -42,7 +45,8 @@ The key identifies the developer-facing decision family. `definitionId` is an op
 | Intent | Typed objective: natural-language product direction or metric-driven optimization over declared signals. | natural-language: challenging but playable; metric-objective: minimize early loss |
 | Inference | Runtime inference target, app-emitted metric inputs, and fallback order. | target `session`, inputs `boardPressure`, fallback `cohort -> global` |
 | Output contract | Result type, bounds, allowed values, step, default. | number, `200..1500`, step `50`, default `800` |
-| Safety/policy/guardrails | Hard constraints, operating limits, and requested approval mode. Deployment/environment policy decides whether requested automatic approval is allowed. | gradual, cooldown, min evidence quality, max model uncertainty, requested automatic approval |
+| Safety/policy/guardrails | Hard constraints and operating limits. Evidence-backed constraints apply only when the active authority claims that evidence. | bounds, step, max delta |
+| Authority workflow | How approved state is initially supplied and which runtime mechanism it contains. | authenticated bundle approval of a numeric-rule candidate |
 | Runtime context schema | Request-time facts the application must or may provide, including fields that identify target levels or metadata. | `sessionId`, `cohort`, `deviceType` |
 
 ## What it does not own
@@ -53,13 +57,17 @@ A decision definition does not own:
 - signal schemas,
 - evidence snapshots,
 - app/build provenance,
-- active strategy or governed state,
+- approved active strategy or governed state,
 - active experiment variants or allocation,
 - rollout state,
 - concrete runtime decision results,
 - audit records.
 
 Those belong to [Decision Evidence](DECISION_EVIDENCE.md), [Decision Intelligence](DECISION_INTELLIGENCE.md), [Decision Lifecycles](DECISION_LIFECYCLES.md), [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md), governed state, and audit/explanation components.
+
+A bundle-approved definition may contain an initial authority candidate. That
+candidate participates in semantic identity, but it is not active authority
+until an authenticated control-plane approval and state activation succeed.
 
 ## Signal ownership
 
@@ -172,14 +180,48 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     range: [200, 1500],
     step: 50
   },
-  policy: {
-    maxDelta: 50,
-    cooldown: "20s",
-    minSampleSize: 30,
-    minEvidenceQuality: 0.7,
-    maxModelUncertainty: 0.35
+  lifecycle: {
+    authorityMode: "bundle-approved",
+    initialAuthority: {
+      controlTarget: flaggo.target.cohort("new_players"),
+      kind: "numeric-rule",
+      rule: {
+        threshold: 0.55,
+        valueAtOrAbove: 850,
+        valueBelow: 750,
+        weightedInputs: [
+          {
+            signal: boardPressureSignal,
+            minimum: 0,
+            maximum: 1,
+            weight: 0.45
+          },
+          {
+            signal: recentPlacementTimeMsSignal,
+            minimum: 0,
+            maximum: 2000,
+            weight: 0.25
+          },
+          {
+            signal: recoveryFailuresSignal,
+            minimum: 0,
+            maximum: 5,
+            weight: 0.20
+          },
+          {
+            signal: currentLevelSignal,
+            minimum: 0,
+            maximum: 20,
+            weight: 0.10
+          }
+        ]
+      },
+      rationale: "Initial deterministic Tetris behavior."
+    }
   },
-  requestedApproval: "automatic",
+  policy: {
+    maxDelta: 50
+  },
   context: {
     sessionId: flaggo.target.session(sessionId),
     userId: flaggo.target.user(userId),
@@ -208,7 +250,10 @@ Code-first extraction is fail-closed. Static semantics must use the SDK's extrac
 
 Tooling extracts and hashes each call site's static descriptor once. Repeated runtime calls rebuild only bound values and attach the cached identity. Identical canonical definitions for the same decision key within one build are deduplicated; different canonical digests for the same key are a `contract-conflict` build error. Combined and explicit authoring forms use the same [canonical normalization and digest rules](design/shared-contracts/README.md#canonical-definition-normalization-and-digest).
 
-Automatic approval requires executable objectives. If a definition requests `requestedApproval: "automatic"`, the definition should use `intent.type: "metric-objective"` and typed policy constraints; natural-language-only intent should require human approval or policy-default handling.
+The bundle cannot request trusted authority for itself. A control-plane actor
+approves the exact semantic snapshot. Proposal-managed automatic approval, when
+introduced later, still requires executable objectives, typed policy
+constraints, and environment authority.
 
 Signal handles are the single declaration surface for facts Flaggo may understand:
 
@@ -290,11 +335,12 @@ Semantic changes create a new definition revision. Examples:
 - `inference.fallbackOrder` changes,
 - allowed signal roles change,
 - optimization intent changes,
-- safety/policy envelope changes.
+- safety/policy envelope changes,
+- authority mode, initial authority target, rule, or rationale changes.
 
 Metadata-only changes may keep the same semantic revision if the registry can prove runtime behavior is unchanged.
 
-Definition publication is a control-plane operation independent from application deployment. For MVP, static code-first extraction supplies a canonical bundle to trusted application/bootstrap startup, which validates/applies it before initializing the data-plane binding. Future control-plane clients may publish manually or through CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first tooling. Decide never registers a definition. If startup publication fails, Polari decisions remain unavailable and the data plane never selects the previous revision or local fallback.
+Definition publication is a control-plane operation independent from application deployment. For MVP, static code-first extraction supplies a canonical bundle to trusted application/bootstrap startup, which validates/applies it, obtains authenticated approval, activates required initial authority, and only then initializes the data-plane binding. Future control-plane clients may publish manually or through CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first tooling. Decide never registers a definition. If startup publication or required activation fails, Flaggo initialization remains non-ready.
 
 ## Tetris example
 
@@ -329,7 +375,33 @@ DecisionDefinition
     range: 200..1500
     step: 50
     default: 800
-  requestedApproval: automatic
+  lifecycle:
+    authorityMode: bundle-approved
+    initialAuthority:
+      controlTarget: cohort:new_players
+      kind: numeric-rule
+      rule:
+        threshold: 0.55
+        valueAtOrAbove: 850
+        valueBelow: 750
+        weightedInputs:
+          - signal: tetris.boardPressure
+            minimum: 0
+            maximum: 1
+            weight: 0.45
+          - signal: tetris.recentPlacementTimeMs
+            minimum: 0
+            maximum: 2000
+            weight: 0.25
+          - signal: tetris.recoveryFailures
+            minimum: 0
+            maximum: 5
+            weight: 0.20
+          - signal: tetris.currentLevel
+            minimum: 0
+            maximum: 20
+            weight: 0.10
+      rationale: Initial deterministic Tetris behavior.
   policy:
     kind: inline
     constraints:
@@ -338,12 +410,18 @@ DecisionDefinition
         max: 1500
       - kind: max-delta
         value: 50
-      - kind: cooldown
-        seconds: 20
 ```
 
-`requestedApproval` is part of the definition contract, but it is only a request. Deployment or environment policy decides whether automatic approval is actually permitted for the target, risk level, and policy envelope.
+`initialAuthority` is part of semantic identity but is only a candidate.
+Authenticated bundle approval authorizes the exact candidate, and registration
+is not ready until the derived state is active.
+
+For revised Phase 3, `max-delta` compares the rule output with the fixed
+contract baseline `actionSpace.default = 800`; it does not imply
+previous-result or request-time stabilization semantics.
 
 ## Design rule
 
-> A decision definition declares the semantic contract. It constrains decision intelligence, but it does not contain learned authority or runtime results.
+> A decision definition declares the semantic contract and may declare an
+> initial authority candidate. It never contains self-approved active state,
+> learned replacement authority, or runtime results.

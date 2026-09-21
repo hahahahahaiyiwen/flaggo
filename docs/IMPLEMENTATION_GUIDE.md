@@ -13,11 +13,15 @@ tetris.dropInterval
 The decision should support real-time adaptation:
 
 ```text
-async intelligence proposes a bounded strategy
-  -> governance activates it
+definition bundle declares bounded initial authority
+  -> authenticated approval authorizes the exact snapshot
+  -> shared activation publishes governed state
   -> online runtime executes it against live game context
   -> client receives an immediate dropInterval value
 ```
+
+Phase 4 later adds independently generated proposals through the same
+activation boundary.
 
 ## MVP boundaries
 
@@ -28,11 +32,11 @@ The first implementation should include:
 | Client library | TypeScript SDK for declaring the Tetris decision, emitting telemetry, and calling the runtime API. |
 | Decision API | Runtime endpoint that validates request, resolves targets, executes active value or active strategy, applies governance, audits, and returns a value. |
 | Definition registry | Minimal in-memory or simple persistent definition lookup for registered decision keys. |
-| Evidence | Minimal evidence snapshot abstraction; real aggregation can be simple at first. |
-| State | Active value or active strategy per decision definition and target. |
-| Policy | Deterministic bounds, max delta, cooldown, fallback, and evidence/model confidence handling. |
+| Evidence | Optional runtime evidence abstraction retained for authorities that explicitly require it; the bundle-approved Tetris rule does not. |
+| State | Active value or active strategy plus activation identity, generation, predecessor, and approval lineage per decision definition and target. |
+| Policy | Deterministic bounds, step, max delta, fallback, and conditional evidence/model handling. Temporal stabilization remains separately specified. |
 | Audit | Structured audit record with correlation ID. |
-| Async intelligence | Can start as manual or scripted strategy proposal generation, but must use the same proposal and strategy interfaces future agents will use. |
+| Async intelligence | Deferred to Phase 4; it must produce proposals for the same governed activation boundary. |
 
 The MVP should not require:
 
@@ -49,9 +53,13 @@ The MVP should not require:
 2. **Primitive result values**: runtime decisions return only `boolean`, `number`, or `string`.
 3. **Strategies are explicit contracts**: adaptive behavior is represented as a strategy object, not hidden application `if/else`.
 4. **Governance is downstream and mandatory**: a value or strategy is not runtime-authoritative until policy and state allow it.
-5. **Runtime stays bounded**: online execution should use active state, approved strategies, and fast evidence; deep analysis belongs to async intelligence.
+5. **Runtime stays bounded**: online execution should use active state,
+   approved strategies, and only evidence explicitly required by the active
+   authority; deep analysis belongs to async intelligence.
 6. **Extensibility through discriminated unions**: new strategy types, evidence sources, and proposal types should extend explicit unions instead of changing every call shape.
-7. **Audit every decision**: every runtime response should be reconstructable from definition revision, target, state, strategy, evidence, policy, and audit ID.
+7. **Audit every decision**: every runtime response should be reconstructable
+   from definition revision, target, state, strategy, applicable evidence,
+   policy, and audit ID.
 
 ## Open-source native and cloud portability principles
 
@@ -253,20 +261,24 @@ DecideRequest
 
 Port DTOs such as evidence, state, strategy execution, policy evaluation, and audit requests are owned by their component boundaries. Cross-component wire/domain contracts remain in [Shared Contracts](design/shared-contracts/README.md).
 
-## Async intelligence interfaces
+## Authority paths
 
-The MVP can keep async intelligence simple, but it must consume and produce the canonical proposal, confidence, strategy, lifecycle, and governed-state contracts from [Shared Contracts](design/shared-contracts/README.md), [Decision Intelligence](DECISION_INTELLIGENCE.md), and [Decision Lifecycles](DECISION_LIFECYCLES.md). The online path follows [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
-
-The reasoning component owns the `IDecisionIntelligence` proposal-generation seam. Governance owns proposal validation, approval, and activation into `GovernedDecisionState`. For MVP, a script, fixture, or admin action can create the Tetris strategy proposal. The online path must consume the same governed strategy representation future AI agents will produce.
+Phase 3 uses bundle-approved initial authority and does not invoke decision
+intelligence. Phase 4 adds proposal-managed authority at a high level; both
+paths converge on the same `GovernedDecisionState` activation and runtime
+execution boundaries described by [Decision Lifecycles](DECISION_LIFECYCLES.md)
+and [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
 
 ## MVP Tetris flow
 
 ```text
 1. Definition sync
-   Register tetris.dropInterval as number, 200-1500ms, step 50, fallback 800.
+   Register tetris.dropInterval as number, 200-1500ms, step 50, fallback 800,
+   with a bundle-approved initial numeric rule.
 
-2. Strategy activation
-   Activate a governed numeric-rule strategy for session/new-player targets.
+2. Approval and activation
+   An authenticated actor approves the exact bundle snapshot; the service
+   derives proposal/activation identities and publishes governed state.
 
 3. Runtime decision
    Game calls POST /v1/decisions/tetris.dropInterval:decide with target/metadata context
@@ -277,7 +289,7 @@ The reasoning component owns the `IDecisionIntelligence` proposal-generation sea
    Decision API loads active strategy and calculates the immediate value.
 
 5. Governance
-   Policy checks min/max, step, max delta, cooldown, pause/override, fallback.
+   Policy checks min/max, step, max delta, and fallback.
 
 6. Response
    API returns RuntimeDecisionResult with value, decisionId, decision mode, targets,
@@ -287,8 +299,8 @@ The reasoning component owns the `IDecisionIntelligence` proposal-generation sea
    Game applies the value and confirms exposure with decisionId.
 
 8. Feedback
-   Client emits outcome telemetry linked to the confirmed exposure for later evidence
-   and async intelligence.
+   Client emits outcome telemetry linked to the confirmed exposure. Phase 3
+   does not ingest it to generate replacement authority.
 ```
 
 ## MVP design and implementation plan
@@ -449,7 +461,7 @@ Scope boundary: this phase verifies extraction, registration, decision
 consumption, policy behavior, exposure confirmation, telemetry emission, and
 fallback semantics. The application computes its inference metric locally.
 Telemetry ingestion, server-side metric derivation, evidence updates, and
-learning from outcomes remain Phase 3 concerns.
+learning from outcomes remain Phase 4 concerns.
 
 Scenario: implement a TypeScript console application under
 `examples/adaptive-worker/` that processes an in-memory work queue. Flaggo
@@ -545,143 +557,143 @@ Non-goals:
 - durable queue, registry, state, evidence, exposure, or audit storage,
 - production authentication or deployment.
 
-### Phase 3: Integration and Tetris adaptive demo
+### Phase 3: Bundle-approved Tetris hero
 
-Goal: prove the hero scenario end to end.
+Goal: prove the hero scenario end to end without requiring decision
+intelligence. Phase 3 uses declarative authority authored in the definition
+bundle, explicitly approved by an authenticated control-plane actor, activated
+as governed state, and consumed by the existing deterministic runtime path.
 
-Scope boundary: semantic-change startup registration uses the accepted approval flow. A pending apply rejects client initialization; after approval, startup retry or restart receives the stored approved receipt for the same canonical bundle.
+Scope boundary:
 
-Deliverables:
-
-- SDK and service integrated against a shared local environment,
-- trusted Tetris bootstrap registers the canonical definition bundle through the management API,
-- Tetris supplies live inference inputs such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures`,
-- server has active `numeric-rule` strategy for `tetris.dropInterval`,
-- game applies returned `dropInterval` and confirms exposure,
-- outcome telemetry links to confirmed exposure,
-- audit output shows strategy execution and policy result,
-- server-policy and client-unavailability fallback paths are both visible.
-
-Validation:
-
-- SDK and direct REST calls produce contract-equivalent requests/results,
-- under high pressure and slow placement, interval slows within max delta,
-- after recovery, interval stabilizes or speeds up within bounds,
-- cooldown prevents chaotic changes,
-- fallback remains `800ms`,
-- missing active-strategy evidence fails closed under the canonical policy,
-- invalid state or malformed/torn audit persistence fails readiness,
-- exposure audit failure cannot commit a new confirmation,
-- unused decision receipts do not create exposure records.
-
-Concrete Phase 3A implementation decision:
-
-- `examples/tetris-integration` is the canonical local integration boundary:
-  it owns one bundle artifact consumed by both the SDK and trusted bootstrap,
-  an activation template bound to the approved receipt, and a deterministic
-  real-host harness.
-- Governed state and audit visibility use module-owned local file adapters
-  selected by explicit data-plane configuration. A module-owned local evidence
-  adapter supplies deterministic confidence for the activated strategy. No
-  production debug endpoint is added.
-- The active numeric rule computes a weighted score from all four declared
-  inputs and proposes only `750ms` or `850ms` around the `800ms` baseline;
-  policy still independently enforces bounds, `50ms` max delta, cooldown, and
-  minimum evidence quality. Missing active-strategy evidence is a fail-closed
-  `required-evidence-unavailable` result.
-- Local state accepts only coherent implemented decision modes and numeric
-  strategy state. Local audit readiness strictly parses existing JSON Lines,
-  and exposure confirmation records audit before committing prepared state.
-- Confirmed outcome linkage uses the existing SDK telemetry seam:
-  `tetris.outcomeObserved` carries the confirmed `decisionId` and `exposureId`
-  to a configured telemetry sink. This phase does not change frozen runtime
-  wire semantics.
-
-### Phase 3.5: Preserve executable definition semantics
-
-Goal: make the accepted definition bundle executable through registry-owned
-typed projections before async intelligence and lifecycle consumers are added.
-
-#### Track A: Runtime and intelligence/lifecycle projections
-
-Deliverables:
-
-- a runtime definition projection containing canonical identity, target
-  hierarchy, inference target, explicit fallback order, runtime-context
-  requirements and target bindings, inference inputs, fallback, action bounds,
-  and effective runtime policy;
-- a separate intelligence/lifecycle snapshot containing the same canonical
-  identity plus objectives, signal roles, workflow permissions, action space,
-  and safety envelope;
-- separate async registry read ports for the two projections; consumers never
-  parse persisted registry JSON or approval snapshots;
-- definition-driven target resolution that follows `inference.fallbackOrder`
-  exactly, including intentional omissions;
-- fail-closed validation for missing required context, inconsistent
-  target-bearing context, and runtime or governed-state target kinds outside
-  the registered hierarchy;
-- persistence and reload of both projections without changing canonical
-  digest, revision, or compatibility behavior.
-
-Validation:
-
-- reordered hierarchies and explicit fallback omissions change lookup order;
-- global-only fallback does not probe undeclared user or cohort state;
-- missing required runtime context returns a stable contract error;
-- runtime and control targets outside the definition hierarchy are rejected;
-- intelligence/lifecycle consumers can read objectives, evidence and guardrail
-  roles, workflow permissions, action space, and safety constraints without
-  raw JSON access;
-- Tetris and adaptive-worker requests remain contract-equivalent.
-
-#### Track B: Governed-state identity and atomic lifecycle mutation
-
-Deliverables:
-
-- typed fixed-value and numeric-strategy proposals with exact definition,
-  control-target, expected-baseline, source, rationale, evidence, confidence,
-  creation, and expiry metadata;
-- lifecycle-created state identity, proposal identity, monotonic generation,
-  predecessor, approval, activation time, and explicit lifecycle status;
-- a state-owned lifecycle mutation port for baseline reads, idempotent
-  compare-and-swap activation, history lookup, completion, and expiry;
-- a read-only `IStateStore` projection so runtime consumers cannot mutate
+- the bundle declares an initial authority candidate but cannot approve itself;
+- bundle approval authorizes the exact definition snapshot and its initial
   authority;
-- a local adapter that persists state history and replay identities in an
-  immutable artifact and atomically switches its descriptor last;
-- stable conflicts for stale baseline, duplicate proposal, changed activation
-  replay, incompatible definition identity, target mismatch, and unsupported
-  state kind.
+- registration is not ready until required initial authority is active;
+- outcome telemetry is emitted and attributed, but it is not ingested to learn
+  or propose a replacement strategy;
+- proposal-managed authority remains Phase 4.
 
-Validation:
+The replacement definition-bundle contract separates authority workflow from
+runtime execution kind:
 
-- concurrent activation from the same baseline publishes exactly one
-  replacement;
-- successful activation replay returns the original state identity;
-- cancellation or publication failure leaves the previous authority visible;
-- replacement records supersession or rollback and links the new state to its
-  predecessor;
-- local restart preserves replay and compare-and-swap behavior;
-- legacy version 1 state remains runtime-readable but cannot be lifecycle
-  mutated without the missing identity metadata.
+```json
+{
+  "lifecycle": {
+    "authorityMode": "bundle-approved",
+    "initialAuthority": {
+      "controlTarget": {
+        "type": "cohort",
+        "id": "new_players"
+      },
+      "kind": "numeric-rule",
+      "rule": {
+        "threshold": 0.55,
+        "valueAtOrAbove": 850,
+        "valueBelow": 750,
+        "weightedInputs": [
+          {
+            "signal": { "key": "tetris.boardPressure" },
+            "minimum": 0,
+            "maximum": 1,
+            "weight": 0.45
+          },
+          {
+            "signal": { "key": "tetris.recentPlacementTimeMs" },
+            "minimum": 0,
+            "maximum": 2000,
+            "weight": 0.25
+          },
+          {
+            "signal": { "key": "tetris.recoveryFailures" },
+            "minimum": 0,
+            "maximum": 5,
+            "weight": 0.2
+          },
+          {
+            "signal": { "key": "tetris.currentLevel" },
+            "minimum": 0,
+            "maximum": 20,
+            "weight": 0.1
+          }
+        ]
+      },
+      "rationale": "Initial deterministic Tetris behavior."
+    }
+  }
+}
+```
 
-### Phase 4: Minimal async intelligence and governance loop
-
-Goal: introduce the async path without requiring a full AI platform.
+`initialAuthority` is an approval candidate, not active state. It participates
+in semantic identity for the MVP, so changing its target, rule, or rationale
+creates a new definition revision and requires a new approval. The server
+derives proposal and activation identities; callers cannot supply trusted
+approval or state identities.
 
 Deliverables:
 
-- scripted or fixture-based strategy proposal generation,
-- `IProposalGovernance.review(...)`,
-- strategy activation flow,
-- audit record for proposal review and activation,
-- documentation showing where future AI agents plug in.
+- preserve registry-owned runtime and lifecycle projections and
+  definition-driven target resolution completed by #30;
+- complete #39 to review the state lifecycle introduced by #31 and retain only
+  state identity, generation, expected-baseline compare-and-swap, idempotent replay,
+  predecessor linkage, approval reference, validation, read-only runtime
+  projection, and atomic publication;
+- complete #40 to replace the frozen bundle v1 contract rather than adding a
+  compatibility layer, and remove the mixed-purpose `onlineStrategy`
+  declaration;
+- validate the initial numeric rule against the definition target hierarchy,
+  inference inputs, action space, fallback, and runtime policy;
+- durably record authenticated bundle approval before activating the derived
+  state, and keep registration non-ready until activation succeeds;
+- expose activated-authority proposal, activation, state, generation, target,
+  and kind references in the completed registration receipt;
+- complete #41 to migrate `examples/tetris-integration` so the canonical bundle
+  owns the numeric rule and control target;
+- remove direct bootstrap state publication and static model-style confidence
+  evidence from the intended Tetris path;
+- preserve the existing `750ms`/`850ms` runtime behavior, `800ms` server and
+  client fallback distinction, exposure confirmation, telemetry linkage, and
+  audit visibility.
 
 Validation:
 
-- a strategy proposal can be reviewed and activated,
-- rejected proposals do not affect runtime state,
-- activated strategies are consumed by the same online runtime path.
+- apply validates the complete definition and initial-authority candidate;
+- a semantic creation or change cannot initialize the SDK before approval;
+- authenticated approval activates the exact bundle-derived authority;
+- registration retry after interruption returns the original activation and
+  state identities;
+- exact bundle replay does not create another state;
+- changed initial authority requires a new approval;
+- stale expected baseline cannot overwrite newer bundle-approved or
+  proposal-managed authority;
+- SDK and direct REST calls remain contract-equivalent;
+- high pressure and slow placement return `850ms`, while recovery returns
+  `750ms`, within bounds and step;
+- bundle-authored rules do not claim model confidence or require fabricated
+  evidence quality;
+- exposure is committed only after application confirmation, and unused
+  decisions do not create exposure records.
+
+The current manual activation template and deterministic evidence fixture are
+historical evidence for the runtime path only. Phase 3 is complete again only
+after the bundle-approved path replaces them and the real-host integration is
+rerun. Temporal cooldown and previous-result stabilization semantics remain
+owned by #33 and are not silently resolved by this re-baseline.
+
+### Phase 4: Proposal-managed intelligence and governance
+
+Goal: add independently generated authority changes on top of the completed
+bundle-approved runtime and activation path. This work is tracked by #25 after
+#41 and #33.
+
+Deliverables:
+
+- a scripted or fixture-based proposal producer,
+- independent proposal review and approval,
+- governed replacement activation through the shared state boundary,
+- lifecycle audit and an operator-facing inspection path,
+- a documented extension point for future evidence-backed or AI-assisted
+  proposal producers.
 
 ### Phase 5: Packaging and portable deployment
 
@@ -711,10 +723,14 @@ Validation:
 4. Implement SDK and service concurrently against fixture-based conformance suites.
 5. Prove SDK-to-service interoperability with the local adaptive-worker acceptance demo.
 6. Integrate frequently; do not wait for either track to be feature-complete.
-7. Wire Tetris through decide, apply, exposure confirmation, telemetry, and audit.
-8. Add scripted proposal review and governed strategy activation.
-9. Package local startup and publish the contract artifacts and quickstart.
-10. Add optional cloud adapters only after the local MVP is stable.
+7. Preserve executable definition semantics and reduce governed-state mutation
+   to the shared activation core.
+8. Implement bundle-approved initial authority and rerun Tetris through
+   approval, activation, decide, exposure confirmation, telemetry, and audit.
+9. Clarify temporal stabilization semantics.
+10. Add proposal-managed generation, review, and replacement activation.
+11. Package local startup and publish the contract artifacts and quickstart.
+12. Add optional cloud adapters only after the local MVP is stable.
 
 ## Branch and integration discipline
 
