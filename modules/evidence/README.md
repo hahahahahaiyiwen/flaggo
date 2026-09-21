@@ -12,10 +12,14 @@ and detailed evidence stays in audit rather than compact runtime responses.
 ### Proposal evidence
 
 `IProposalEvidenceReader` resolves references before state exists. It takes
-the exact definition identity and explicit control target; it does not
+the exact semantic definition identity and explicit control target; it does not
 fabricate an activated strategy to call the runtime evidence port.
 `ProposalEvidenceSnapshot` adds reference, definition, target, observation
 time, and optional expiry to the shared `DecisionEvidenceSnapshot`.
+Scope matching requires application, environment, decision key, definition ID,
+revision, and contract digest. Optional bundle/build/deployment/artifact
+provenance does not change semantic compatibility; the complete provenance is
+still retained in captured evidence and immutable review fingerprints.
 
 `InMemoryProposalEvidenceReader` validates and isolates snapshots.
 `LocalFileProposalEvidenceReader` reads a version 1 `ProposalEvidenceDocument`

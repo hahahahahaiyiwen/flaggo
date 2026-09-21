@@ -68,9 +68,11 @@ public static class LocalRuntimeAdapterHosting
         if (!string.IsNullOrWhiteSpace(generationPath) ||
             !string.IsNullOrWhiteSpace(directCommitPath))
         {
+            services.AddSingleton<LocalFileStateSnapshotCache>();
             services.AddScoped<LocalFileStateStore>(
                 provider => new LocalFileStateStore(
-                    provider.GetRequiredService<IStateSnapshotProvider>()));
+                    provider.GetRequiredService<IStateSnapshotProvider>(),
+                    provider.GetRequiredService<LocalFileStateSnapshotCache>()));
             services.AddScoped<IStateStore>(
                 provider => provider.GetRequiredService<LocalFileStateStore>());
             services.AddScoped<IStateHealth>(

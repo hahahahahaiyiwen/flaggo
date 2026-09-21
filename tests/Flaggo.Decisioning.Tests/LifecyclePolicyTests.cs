@@ -10,6 +10,39 @@ public sealed class LifecyclePolicyTests
     private readonly DefaultLifecyclePolicyEvaluator _evaluator = new();
 
     [Theory]
+    [InlineData("app")]
+    [InlineData("environment")]
+    [InlineData("decision")]
+    [InlineData("definition")]
+    [InlineData("revision")]
+    [InlineData("digest")]
+    public async Task SemanticDefinitionIdentityAndResourceScopeMustStillMatch(string field)
+    {
+        var original = LifecycleTestData.Definition;
+        var definition = field switch
+        {
+            "app" => original with { AppId = "other" },
+            "environment" => original with { Environment = "other" },
+            "decision" => original with { DecisionKey = "other" },
+            "definition" => original with { Contract = original.Contract with { DefinitionId = "other" } },
+            "revision" => original with { Contract = original.Contract with { Revision = "other" } },
+            "digest" => original with
+            {
+                Contract = original.Contract with { ContractDigest = $"sha256:{new string('b', 64)}" }
+            },
+            _ => throw new InvalidOperationException("Unknown identity field.")
+        };
+        var proposal = LifecycleTestData.Proposal();
+        proposal = proposal with { Context = proposal.Context with { Definition = definition } };
+
+        var result = await _evaluator.EvaluateAsync(
+            LifecycleTestData.Evaluation(proposal), CancellationToken.None);
+
+        Assert.Equal(LifecycleDisposition.Rejected, result.Disposition);
+        Assert.Contains("definition_not_authorized", result.Reasons);
+    }
+
+    [Theory]
     [InlineData(DecisionProposalSourceKind.Operator)]
     [InlineData(DecisionProposalSourceKind.Scripted)]
     [InlineData(DecisionProposalSourceKind.Automated)]

@@ -11,7 +11,14 @@ public sealed record RuntimeContractIdentity(
     string? BundleDigest = null,
     string? BuildId = null,
     string? DeploymentId = null,
-    string? ArtifactDigest = null);
+    string? ArtifactDigest = null)
+{
+    public bool HasSameDefinition(RuntimeContractIdentity? other) =>
+        other is not null &&
+        DefinitionId == other.DefinitionId &&
+        Revision == other.Revision &&
+        ContractDigest == other.ContractDigest;
+}
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DecisionTargetRef(string Type, string Id);

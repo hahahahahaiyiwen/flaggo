@@ -118,6 +118,13 @@ request scope observes the newly published generation. No ambient context or
 process-global generation cache is used. Registry, audit, clocks, identifiers,
 strategy, policy, idempotency, and exposure services remain singleton where
 their implementations are thread-safe and do not capture scoped adapters.
+The singleton `LocalFileStateSnapshotCache` retains one validated active-state
+projection, keyed by content digest and byte length rather than
+generation or path. Each scoped reader still verifies its pinned artifact's
+path, bytes, length, and digest before cache access. New content receives full
+state/journal validation; failures never return a previous cached state.
+This reuses lifecycle-proof validation across requests without sharing or
+changing their generation selection.
 
 Direct state/evidence descriptor configuration uses the same scoped hosting
 boundary and pins the configured descriptors for the request. Independent

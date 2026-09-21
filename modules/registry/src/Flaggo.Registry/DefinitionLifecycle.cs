@@ -955,7 +955,7 @@ public sealed partial class InMemoryDefinitionRegistry :
 
         ValidateTargeting(definition, path, decisionKey, issues);
 
-        var inferenceSignalKeys = new HashSet<string>(StringComparer.Ordinal);
+        var inferenceSignalKeys = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         if (definition.TryGetProperty("inference", out var inference) &&
             inference.TryGetProperty("inputs", out var inputs))
         {
@@ -984,7 +984,13 @@ public sealed partial class InMemoryDefinitionRegistry :
                     }
                     else
                     {
-                        inferenceSignalKeys.Add(key.Split('.').Last());
+                        var name = key.Split('.').Last();
+                        if (!inferenceSignalKeys.TryGetValue(name, out var keys))
+                        {
+                            keys = new HashSet<string>(StringComparer.Ordinal);
+                            inferenceSignalKeys.Add(name, keys);
+                        }
+                        keys.Add(key);
                     }
 
                     inputIndex++;
@@ -1032,12 +1038,13 @@ public sealed partial class InMemoryDefinitionRegistry :
              (liveInputs.ValueKind != JsonValueKind.Array ||
               liveInputs.EnumerateArray().Any(
                   value => value.ValueKind != JsonValueKind.String ||
-                           !inferenceSignalKeys.Contains(value.GetString()!)))))
+                           !inferenceSignalKeys.TryGetValue(value.GetString()!, out var keys) ||
+                           keys.Count != 1))))
         {
             issues.Add(Issue(
                 "invalid-strategy",
                 $"{path}/onlineStrategy",
-                "The online strategy references an undeclared inference input.",
+                "The online strategy must reference uniquely named, declared inference inputs.",
                 decisionKey));
         }
 
@@ -1681,9 +1688,16 @@ public sealed partial class InMemoryDefinitionRegistry :
             return new DecisionWorkflowPermissions("active-value", []);
         }
 
-        return new DecisionWorkflowPermissions(
-            mode,
-            ReadStringArray(strategy, "liveInputs") ?? []);
+        var names = ReadStringArray(strategy, "liveInputs") ?? [];
+        if (names.Count == 0)
+        {
+            return new DecisionWorkflowPermissions(mode, []);
+        }
+        var keysByName = definition.GetProperty("inference").GetProperty("inputs")
+            .EnumerateArray().Select(input => input.GetProperty("key").GetString()!)
+            .ToLookup(key => key.Split('.').Last(), StringComparer.Ordinal);
+        return new DecisionWorkflowPermissions(mode,
+            names.Select(name => keysByName[name].Distinct(StringComparer.Ordinal).Single()).ToArray());
     }
 
     private static DecisionActionSpaceContract ReadActionSpace(

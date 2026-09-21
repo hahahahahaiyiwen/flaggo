@@ -28,6 +28,7 @@ public sealed class LocalFileGovernedStateLifecycleStore :
     private readonly TimeProvider _timeProvider;
     private readonly IGovernedStateIdentityGenerator _identityGenerator;
     private readonly IGovernedStateDocumentPublisher _publisher;
+    private readonly Action<string> _ensureDirectory;
 
     public LocalFileGovernedStateLifecycleStore(
         LocalFileGovernedStateLifecycleStoreOptions options,
@@ -45,7 +46,8 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         LocalFileGovernedStateLifecycleStoreOptions options,
         TimeProvider timeProvider,
         IGovernedStateIdentityGenerator identityGenerator,
-        IGovernedStateDocumentPublisher publisher)
+        IGovernedStateDocumentPublisher publisher,
+        IDurableDirectoryOperations? directoryOperations = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.CommitDescriptorPath);
@@ -60,6 +62,9 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         _timeProvider = timeProvider;
         _identityGenerator = identityGenerator;
         _publisher = publisher;
+        _ensureDirectory = directoryOperations is null
+            ? DurableDirectory.Create
+            : path => DurableDirectory.Create(path, directoryOperations);
     }
 
     public async Task<GovernedDecisionState?> GetBaselineAsync(
@@ -117,6 +122,11 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         var previous = GovernedStatePersistence.Serialize(store.CapturePersistenceSnapshot());
         var result = await mutation(store);
         var replacement = GovernedStatePersistence.Serialize(store.CapturePersistenceSnapshot());
+        if (replacement.Length > CommittedFileSnapshotOptions.DefaultMaximumArtifactBytes)
+        {
+            throw new InvalidDataException(
+                $"The lifecycle journal exceeds the {CommittedFileSnapshotOptions.DefaultMaximumArtifactBytes}-byte reader limit.");
+        }
         if (!previous.AsSpan().SequenceEqual(replacement))
         {
             await _publisher.PublishAsync(_commitDescriptorPath, replacement, cancellationToken);
@@ -168,7 +178,8 @@ public sealed class LocalFileGovernedStateLifecycleStore :
     {
         var directory = Path.GetDirectoryName(_commitDescriptorPath)
             ?? throw new InvalidOperationException("The governed-state path must include a directory.");
-        Directory.CreateDirectory(directory);
+        cancellationToken.ThrowIfCancellationRequested();
+        _ensureDirectory(directory);
         var started = Stopwatch.GetTimestamp();
         while (true)
         {

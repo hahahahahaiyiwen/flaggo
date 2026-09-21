@@ -41,27 +41,35 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 
     private readonly IStateSnapshotProvider _snapshotProvider;
     private readonly CommittedFileSnapshotOptions _snapshotOptions;
+    private readonly LocalFileStateSnapshotCache _cache;
 
-    public LocalFileStateStore(LocalFileStateStoreOptions options)
+    public LocalFileStateStore(
+        LocalFileStateStoreOptions options,
+        LocalFileStateSnapshotCache? cache = null)
         : this(
             new SourceStateSnapshotProvider(options.Snapshot),
-            new CommittedFileSnapshotOptions())
+            new CommittedFileSnapshotOptions(),
+            cache)
     {
     }
 
-    public LocalFileStateStore(IStateSnapshotProvider snapshotProvider)
-        : this(snapshotProvider, new CommittedFileSnapshotOptions())
+    public LocalFileStateStore(
+        IStateSnapshotProvider snapshotProvider,
+        LocalFileStateSnapshotCache? cache = null)
+        : this(snapshotProvider, new CommittedFileSnapshotOptions(), cache)
     {
     }
 
     internal LocalFileStateStore(
         IStateSnapshotProvider snapshotProvider,
-        CommittedFileSnapshotOptions snapshotOptions)
+        CommittedFileSnapshotOptions snapshotOptions,
+        LocalFileStateSnapshotCache? cache = null)
     {
         ArgumentNullException.ThrowIfNull(snapshotProvider);
         ArgumentNullException.ThrowIfNull(snapshotOptions);
         _snapshotProvider = snapshotProvider;
         _snapshotOptions = snapshotOptions;
+        _cache = cache ?? new LocalFileStateSnapshotCache();
     }
 
     public async Task<GovernedDecisionState?> GetActiveAsync(
@@ -82,7 +90,13 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                         target),
                     out var state))
             {
-                return state;
+                return state with
+                {
+                    Value = state.Value.Clone(),
+                    NumericRule = state.NumericRule is { } rule
+                        ? rule with { WeightedInputs = rule.WeightedInputs?.ToArray() }
+                        : null
+                };
             }
         }
 
@@ -117,36 +131,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 snapshot,
                 _snapshotOptions,
                 cancellationToken);
-            StrictJson.Validate(json);
-            using var root = JsonDocument.Parse(json);
-            if (root.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                throw new InvalidDataException("The local governed-state document must be an object.");
-            }
-            if (root.RootElement.TryGetProperty("version", out var version) &&
-                version.ValueKind == JsonValueKind.Number &&
-                version.TryGetInt32(out var format) && format == 3)
-            {
-                var snapshotState = GovernedStatePersistence.Deserialize(json);
-                _ = new InMemoryGovernedStateLifecycleStore(
-                    snapshotState, TimeProvider.System, new GuidGovernedStateIdentityGenerator());
-                return snapshotState.States
-                    .Where(entry => entry.State.LifecycleStatus == GovernedDecisionStateStatus.Active)
-                    .ToDictionary(
-                        entry => StateIdentity.Create(
-                            entry.Address.DecisionKey, entry.State.DefinitionId,
-                            entry.State.Revision, entry.Address.ControlTarget),
-                        entry => entry.State);
-            }
-            var document = JsonSerializer.Deserialize<PersistedStateDocument>(
-                json,
-                JsonOptions);
-            if (document is null)
-            {
-                throw new InvalidDataException("The local governed-state file is empty.");
-            }
-
-            return ValidateAndMap(document);
+            return _cache.GetOrAdd(snapshot, () => ValidateSnapshot(json), cancellationToken);
         }
         catch (JsonException error)
         {
@@ -154,6 +139,34 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 "The local governed-state file is not valid strict JSON.",
                 error);
         }
+    }
+
+    private static IReadOnlyDictionary<StateIdentity, GovernedDecisionState> ValidateSnapshot(byte[] json)
+    {
+        StrictJson.Validate(json);
+        using var root = JsonDocument.Parse(json);
+        if (root.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("The local governed-state document must be an object.");
+        }
+        if (root.RootElement.TryGetProperty("version", out var version) &&
+            version.ValueKind == JsonValueKind.Number &&
+            version.TryGetInt32(out var format) && format == 3)
+        {
+            var snapshotState = GovernedStatePersistence.Deserialize(json);
+            _ = new InMemoryGovernedStateLifecycleStore(
+                snapshotState, TimeProvider.System, new GuidGovernedStateIdentityGenerator());
+            return snapshotState.States
+                .Where(entry => entry.State.LifecycleStatus == GovernedDecisionStateStatus.Active)
+                .ToDictionary(
+                    entry => StateIdentity.Create(
+                        entry.Address.DecisionKey, entry.State.DefinitionId,
+                        entry.State.Revision, entry.Address.ControlTarget),
+                    entry => entry.State);
+        }
+        var document = JsonSerializer.Deserialize<PersistedStateDocument>(json, JsonOptions)
+            ?? throw new InvalidDataException("The local governed-state file is empty.");
+        return ValidateAndMap(document);
     }
 
     private static IReadOnlyDictionary<StateIdentity, GovernedDecisionState>
@@ -384,7 +397,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         RegexOptions.CultureInvariant)]
     private static partial Regex Rfc3339TimestampPattern();
 
-    private readonly struct StateIdentity : IEquatable<StateIdentity>
+    internal readonly struct StateIdentity : IEquatable<StateIdentity>
     {
         private StateIdentity(
             string decisionKey,

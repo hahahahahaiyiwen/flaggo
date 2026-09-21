@@ -6,6 +6,102 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class LocalFileGovernedStateLifecycleStoreTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task CompleteJournalHonorsTheExactReaderByteLimit(int overflowBytes)
+    {
+        using var file = TestJsonFile.CreateCommitted("lifecycle-size-limit");
+        var store = Store(file.Path);
+        await LifecycleTestData.ReviewAsync(store);
+        var active = await LifecycleTestData.ActivateAsync(store);
+        var descriptor = await File.ReadAllBytesAsync(file.Path);
+        var snapshot = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path), null, CancellationToken.None);
+        var candidate = new InMemoryGovernedStateLifecycleStore(
+            GovernedStatePersistence.Deserialize(snapshot), new TestClock(), new GuidGovernedStateIdentityGenerator());
+        var proposal = LifecycleTestData.Proposal("bounded",
+            baseline: new(active.StateId, Assert.IsType<long>(active.Generation)));
+        proposal = proposal with { Context = proposal.Context with { Rationale = "x" } };
+        await LifecycleTestData.ReviewAsync(candidate, proposal, "bounded");
+        var overhead = GovernedStatePersistence.Serialize(candidate.CapturePersistenceSnapshot()).Length - 1;
+        var limit = CommittedFileSnapshotOptions.DefaultMaximumArtifactBytes;
+        proposal = proposal with
+        {
+            Context = proposal.Context with { Rationale = new string('x', limit - overhead + overflowBytes) }
+        };
+
+        if (overflowBytes == 0)
+        {
+            var receipt = await LifecycleTestData.ReviewAsync(store, proposal, "bounded");
+            Assert.Equal(LifecycleDisposition.Approved, receipt.Disposition);
+            var committed = await CommittedFileSnapshot.ResolveAsync(
+                CommittedFileSnapshotSource.FromDescriptor(file.Path), null, CancellationToken.None);
+            Assert.Equal(limit, committed.ByteLength);
+            var replay = await LifecycleTestData.ReviewAsync(Store(file.Path), proposal, "bounded");
+            Assert.Equal(LifecycleJson.Digest(receipt), LifecycleJson.Digest(replay));
+        }
+        else
+        {
+            var audit = LifecycleJson.Digest(await store.ReadAsync("app", "dev", CancellationToken.None));
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                LifecycleTestData.ReviewAsync(store, proposal, "bounded"));
+
+            Assert.Contains($"{limit}-byte", error.Message);
+            Assert.Equal(descriptor, await File.ReadAllBytesAsync(file.Path));
+            var restarted = Store(file.Path);
+            Assert.Null(await restarted.GetReviewAsync("bounded", CancellationToken.None));
+            Assert.Equal(audit, LifecycleJson.Digest(await restarted.ReadAsync("app", "dev", CancellationToken.None)));
+            var retried = await LifecycleTestData.ReviewAsync(restarted, proposal with
+            {
+                Context = proposal.Context with { Rationale = "A bounded retry." }
+            }, "bounded");
+            Assert.Equal(LifecycleDisposition.Approved, retried.Disposition);
+        }
+
+        Assert.Equal(active.StateId, (await RuntimeState(file.Path))!.StateId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FirstUseDurablyCreatesAncestorsBeforeOpeningTheLease(bool failBarrier)
+    {
+        using var root = TestJsonFile.CreateCommitted("lifecycle-parent-barriers");
+        var first = Path.GetDirectoryName(root.Path)!;
+        var ancestor = Path.GetDirectoryName(first)!;
+        Directory.CreateDirectory(ancestor);
+        var middle = Path.Combine(first, "first");
+        var leaf = Path.Combine(middle, "second");
+        var path = Path.Combine(leaf, "current.commit.json");
+        var operations = new RecordingDirectoryOperations($"{path}.lock")
+        {
+            FailAt = failBarrier ? first : null
+        };
+        var publisher = new CountingPublisher();
+        var store = new LocalFileGovernedStateLifecycleStore(new(path), new TestClock(),
+            new GuidGovernedStateIdentityGenerator(), publisher, operations);
+
+        if (failBarrier)
+        {
+            await Assert.ThrowsAsync<IOException>(() => LifecycleTestData.ReviewAsync(store));
+            Assert.Equal(0, publisher.Calls);
+            Assert.False(File.Exists(path));
+            Assert.False(File.Exists($"{path}.lock"));
+            operations.FailAt = null;
+        }
+        await LifecycleTestData.ReviewAsync(store);
+        Assert.Equal(1, publisher.Calls);
+        foreach (var directory in new[] { ancestor, first, middle, leaf })
+        {
+            Assert.Contains($"sync:{directory}", operations.Events);
+        }
+        Assert.True(operations.Events.IndexOf($"sync:{ancestor}") <
+                    operations.Events.IndexOf($"mkdir:{middle}"));
+        Assert.True(operations.Events.IndexOf($"sync:{first}") <
+                    operations.Events.IndexOf($"mkdir:{leaf}"));
+    }
+
     [Fact]
     public async Task RestartPreservesReviewApprovalActivationAndRuntimeProjection()
     {
@@ -257,6 +353,38 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
         {
             source.Cancel();
             await CommittedFileSnapshotWriter.PublishAsync(path, bytes, cancellationToken);
+        }
+    }
+
+    private sealed class CountingPublisher : IGovernedStateDocumentPublisher
+    {
+        public int Calls { get; private set; }
+        public async Task PublishAsync(string path, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+        {
+            Calls++;
+            await CommittedFileSnapshotWriter.PublishAsync(path, bytes, cancellationToken);
+        }
+    }
+
+    private sealed class RecordingDirectoryOperations(string lockPath) : IDurableDirectoryOperations
+    {
+        public List<string> Events { get; } = [];
+        public string? FailAt { get; set; }
+        public bool Exists(string path) => Directory.Exists(path);
+        public void Create(string path)
+        {
+            Events.Add($"mkdir:{path}");
+            Directory.CreateDirectory(path);
+        }
+        public void Flush(string path)
+        {
+            Assert.False(File.Exists(lockPath));
+            Events.Add($"sync:{path}");
+            if (path == FailAt)
+            {
+                throw new IOException("Injected ancestor barrier failure.");
+            }
+            DurableDirectory.Flush(path);
         }
     }
 }

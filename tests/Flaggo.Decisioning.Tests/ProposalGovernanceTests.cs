@@ -264,6 +264,19 @@ public sealed class ProposalGovernanceTests
             }), CancellationToken.None));
         Assert.Equal("review-conflict", changed.Code);
 
+        var provenanceConflict = await Assert.ThrowsAsync<LifecycleGovernanceException>(() =>
+            fixture.Service.ReviewAsync(new("review", proposal with
+            {
+                Context = proposal.Context with
+                {
+                    Definition = proposal.Context.Definition with
+                    {
+                        Contract = proposal.Context.Definition.Contract with { BuildId = "another-build" }
+                    }
+                }
+            }), CancellationToken.None));
+        Assert.Equal("review-conflict", provenanceConflict.Code);
+
         fixture.Actors.Actor = LifecycleTestData.Actor with { Subject = "different-actor" };
         var actorConflict = await Assert.ThrowsAsync<LifecycleGovernanceException>(() =>
             fixture.Service.ActivateAsync(new("activation", "review"), CancellationToken.None));

@@ -136,11 +136,11 @@ public sealed class DefaultLifecyclePolicyEvaluator : ILifecyclePolicyEvaluator
         if (runtime.AppId != definition.AppId ||
             runtime.Environment != definition.Environment ||
             runtime.DecisionKey != definition.DecisionKey ||
-            runtime.Identity != definition.Contract ||
+            !runtime.Identity.HasSameDefinition(definition.Contract) ||
             intelligence.AppId != definition.AppId ||
             intelligence.Environment != definition.Environment ||
             intelligence.DecisionKey != definition.DecisionKey ||
-            intelligence.Identity != definition.Contract ||
+            !intelligence.Identity.HasSameDefinition(definition.Contract) ||
             runtime.LifecycleStatus != "active" ||
             intelligence.LifecycleStatus != "active")
         {
@@ -381,7 +381,7 @@ public sealed class DefaultLifecyclePolicyEvaluator : ILifecyclePolicyEvaluator
         }
         foreach (var snapshot in snapshots)
         {
-            if (snapshot.Definition != context.Definition ||
+            if (!snapshot.Definition.HasSameDefinition(context.Definition) ||
                 snapshot.ControlTarget != context.ControlTarget)
             {
                 rejected.Add("evidence_scope_mismatch");

@@ -7,6 +7,56 @@ namespace Flaggo.Decisioning.Tests;
 
 public sealed class ProposalEvidenceReaderTests
 {
+    [Theory]
+    [InlineData("provenance")]
+    [InlineData("app")]
+    [InlineData("environment")]
+    [InlineData("decision")]
+    [InlineData("definition")]
+    [InlineData("revision")]
+    [InlineData("digest")]
+    public async Task CatalogScopeUsesSemanticIdentityAndPreservesProvenance(string field)
+    {
+        var original = LifecycleTestData.Definition;
+        var snapshot = Snapshot() with
+        {
+            Definition = original with
+            {
+                Contract = original.Contract with { BundleDigest = $"sha256:{new string('c', 64)}" }
+            }
+        };
+        var requested = field switch
+        {
+            "provenance" => original with { Contract = original.Contract with { BuildId = "build" } },
+            "app" => original with { AppId = "other" },
+            "environment" => original with { Environment = "other" },
+            "decision" => original with { DecisionKey = "other" },
+            "definition" => original with { Contract = original.Contract with { DefinitionId = "other" } },
+            "revision" => original with { Contract = original.Contract with { Revision = "other" } },
+            "digest" => original with
+            {
+                Contract = original.Contract with { ContractDigest = $"sha256:{new string('b', 64)}" }
+            },
+            _ => throw new InvalidOperationException("Unknown identity field.")
+        };
+        var request = Request(["evidence"]) with { Definition = requested };
+        var memory = new InMemoryProposalEvidenceReader([snapshot]);
+        using var file = TestJsonFile.CreateCommitted("proposal-evidence-identity");
+        await file.WriteAsync(LifecycleJson.Bytes(new ProposalEvidenceDocument(1, [snapshot])));
+        var persisted = new LocalFileProposalEvidenceReader(file.Path);
+
+        if (field == "provenance")
+        {
+            Assert.Equal(snapshot, Assert.Single(await memory.GetAsync(request, CancellationToken.None)));
+            Assert.Equal(snapshot, Assert.Single(await persisted.GetAsync(request, CancellationToken.None)));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() => memory.GetAsync(request, CancellationToken.None));
+            await Assert.ThrowsAsync<EvidenceUnavailableException>(() => persisted.GetAsync(request, CancellationToken.None));
+        }
+    }
+
     [Fact]
     public void EmbeddedEvidenceCannotHideDuplicateJsonMembersOrUnsafeNumbers()
     {

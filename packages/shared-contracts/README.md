@@ -23,6 +23,12 @@ and isolated copies: required fields, nullable annotations, enum names,
 RFC 3339 timestamps, exact numeric values, and duplicate-member rejection.
 `LifecycleIdentity` binds review, activation, and transition fingerprints to
 their content and authenticated identity, excluding bearer credentials.
+`RuntimeContractIdentity.HasSameDefinition` compares definition ID, revision,
+and contract digest; `GovernedDefinitionIdentity.HasSameDefinition` also
+requires application/environment/decision scope. These compatibility checks
+exclude optional bundle/build/deployment/artifact provenance. Ordinary record
+equality, canonical snapshots, and operation fingerprints retain all fields,
+so changing provenance under an existing operation identity still conflicts.
 
 `src/Flaggo.Shared.Contracts` contains strict .NET runtime request, response,
 Problem Details, and exposure confirmation DTOs. Unknown JSON members are

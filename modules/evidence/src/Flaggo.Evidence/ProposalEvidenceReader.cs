@@ -51,7 +51,7 @@ public sealed class InMemoryProposalEvidenceReader : IProposalEvidenceReader
             {
                 continue;
             }
-            if (snapshot.Definition != request.Definition || snapshot.ControlTarget != request.ControlTarget)
+            if (!snapshot.Definition.HasSameDefinition(request.Definition) || snapshot.ControlTarget != request.ControlTarget)
             {
                 throw new InvalidDataException("The referenced evidence belongs to another definition or control target.");
             }

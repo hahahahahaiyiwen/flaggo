@@ -63,7 +63,15 @@ public sealed record GovernedDefinitionIdentity(
     string AppId,
     string Environment,
     string DecisionKey,
-    RuntimeContractIdentity Contract);
+    RuntimeContractIdentity Contract)
+{
+    public bool HasSameDefinition(GovernedDefinitionIdentity? other) =>
+        other is not null &&
+        AppId == other.AppId &&
+        Environment == other.Environment &&
+        DecisionKey == other.DecisionKey &&
+        Contract.HasSameDefinition(other.Contract);
+}
 
 public sealed record GovernedStateAddress(
     string AppId,

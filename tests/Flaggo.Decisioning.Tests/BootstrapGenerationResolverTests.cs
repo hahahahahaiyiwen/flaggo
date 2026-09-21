@@ -180,9 +180,11 @@ public sealed class BootstrapGenerationResolverTests
                 ValidateScopes = true
             });
         BootstrapGenerationResolver firstResolver;
+        LocalFileStateSnapshotCache firstCache;
 
         using (var scope = provider.CreateScope())
         {
+            firstCache = scope.ServiceProvider.GetRequiredService<LocalFileStateSnapshotCache>();
             firstResolver = scope.ServiceProvider
                 .GetRequiredService<BootstrapGenerationResolver>();
             Assert.Same(
@@ -209,10 +211,16 @@ public sealed class BootstrapGenerationResolverTests
             Assert.Equal(
                 "old",
                 evidence!.Details!["generation"].GetString());
+
+            using var newerScope = provider.CreateScope();
+            var newerState = await ReadStateAsync(newerScope.ServiceProvider.GetRequiredService<IStateStore>());
+            Assert.Equal(900, newerState.Value.GetInt32());
+            Assert.Equal(800, (await ReadStateAsync(stateStore)).Value.GetInt32());
         }
 
         using (var scope = provider.CreateScope())
         {
+            Assert.Same(firstCache, scope.ServiceProvider.GetRequiredService<LocalFileStateSnapshotCache>());
             Assert.NotSame(
                 firstResolver,
                 scope.ServiceProvider

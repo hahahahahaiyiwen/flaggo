@@ -11,6 +11,82 @@ namespace Flaggo.Decisioning.Tests;
 public sealed class LocalFileStateStoreTests
 {
     [Fact]
+    public async Task SharedProjectionCannotBeChangedByAReturnedWeightedRule()
+    {
+        using var file = TestJsonFile.CreateCommitted("state-cache-isolation");
+        await file.WriteAsync(StateDocument(800, null));
+        var cache = new LocalFileStateSnapshotCache();
+        var first = await LoadStateAsync(new LocalFileStateStore(new LocalFileStateStoreOptions(file.Path), cache));
+        var inputs = Assert.IsAssignableFrom<IList<NumericRuleInput>>(first.NumericRule!.WeightedInputs);
+        var original = inputs[0];
+        inputs[0] = original with { SignalKey = "not-authorized", Weight = 999 };
+
+        var second = await LoadStateAsync(new LocalFileStateStore(new LocalFileStateStoreOptions(file.Path), cache));
+
+        Assert.NotSame(first, second);
+        Assert.Equal(original, second.NumericRule!.WeightedInputs![0]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WarmCacheStillChecksArtifactLengthAndDigest(bool changeLength)
+    {
+        using var file = TestJsonFile.CreateCommitted("state-cache-integrity");
+        var json = StateDocument(800, null);
+        await file.WriteAsync(json);
+        var cache = new LocalFileStateSnapshotCache();
+        await LoadStateAsync(new LocalFileStateStore(new LocalFileStateStoreOptions(file.Path), cache));
+        await File.WriteAllTextAsync(file.ArtifactPath,
+            changeLength ? $"{json} " : json.Replace("\"value\":800", "\"value\":801", StringComparison.Ordinal));
+        var next = new LocalFileStateStore(new LocalFileStateStoreOptions(file.Path), cache);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => LoadStateAsync(next));
+        Assert.False(await next.IsAvailableAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task WarmCacheRequiresReadableCurrentArtifactEvenForTheSameDigest()
+    {
+        using var file = TestJsonFile.CreateCommitted("state-cache-path");
+        await file.WriteAsync(StateDocument(800, null));
+        var cache = new LocalFileStateSnapshotCache();
+        await LoadStateAsync(new LocalFileStateStore(new LocalFileStateStoreOptions(file.Path), cache));
+        var reference = await CommittedFileSnapshot.ResolveAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path), null, CancellationToken.None);
+        var unreadable = new LocalFileStateStore(
+            new PinnedSnapshot(reference with { ArtifactPath = $"{reference.ArtifactPath}.missing" }), cache);
+
+        await Assert.ThrowsAnyAsync<IOException>(() => LoadStateAsync(unreadable));
+        Assert.False(await unreadable.IsAvailableAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task NewContentRequiresLifecycleProofInsteadOfReusingACachedApproval()
+    {
+        using var file = TestJsonFile.CreateCommitted("state-cache-proof");
+        var lifecycle = new InMemoryGovernedStateLifecycleStore(new FixedTimeProvider(LifecycleTestData.Now));
+        await LifecycleTestData.ReviewAsync(lifecycle);
+        var activation = await LifecycleTestData.ActivateAsync(lifecycle);
+        var bytes = GovernedStatePersistence.Serialize(lifecycle.CapturePersistenceSnapshot());
+        await file.WriteAsync(bytes);
+        var cache = new LocalFileStateSnapshotCache();
+        async Task<GovernedDecisionState?> Read() =>
+            await new LocalFileStateStore(new LocalFileStateStoreOptions(file.Path), cache).GetActiveAsync(
+                "decision", "definition", "revision", [LifecycleTestData.Target], CancellationToken.None);
+        Assert.Equal(activation.StateId, (await Read())!.StateId);
+
+        var corrupt = JsonNode.Parse(bytes)!;
+        corrupt["journal"]!["reviews"]![0]!["receipt"]!["approval"] = null;
+        await file.WriteAsync(corrupt.ToJsonString());
+
+        await Assert.ThrowsAsync<InvalidDataException>(Read);
+        await Assert.ThrowsAsync<InvalidDataException>(Read);
+        Assert.False(await new LocalFileStateStore(new LocalFileStateStoreOptions(file.Path), cache)
+            .IsAvailableAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task GetActiveAsync_LoadsWeightedRuleAndReloadsReplacedFile()
     {
         using var file = TestJsonFile.CreateCommitted("state");
@@ -685,5 +761,11 @@ public sealed class LocalFileStateStoreTests
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private sealed class PinnedSnapshot(CommittedArtifactReference reference) : IStateSnapshotProvider
+    {
+        public Task<CommittedArtifactReference> ResolveStateSnapshotAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(reference);
     }
 }

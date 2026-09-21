@@ -31,8 +31,12 @@ persisted and reloaded together; consumers never parse registry JSON or
 approval snapshots.
 
 Workflow `LiveInputs` are registered signal keys, not shortened display names.
-The seeded Tetris projection uses the same `tetris.*` keys as its runtime input
-declarations so lifecycle policy can enforce the exact signal permissions.
+Bundle authoring names are resolved to their unique qualified inference-input
+keys when building the typed projection. A referenced name that matches no
+input or multiple distinct keys fails registration; unused ambiguous names
+grant no permissions. Missing or empty live-input lists remain empty. The
+registered and seeded Tetris projections therefore use the same `tetris.*`
+keys as runtime input declarations without changing the authored bundle.
 
 Legacy runtime-only v1 files migrate conventional target bindings only when
 the persisted definition predates explicit targeting metadata, including the

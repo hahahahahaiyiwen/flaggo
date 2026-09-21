@@ -130,6 +130,14 @@ store opens only that safe immutable sibling, reads bounded bytes, and verifies
 length plus sha256 before strict JSON and typed state validation. An in-place
 rewrite, including a valid parseable intermediate document paused
 indefinitely, fails digest validation. Stable reads have no mandatory delay.
+After those checks, `LocalFileStateSnapshotCache` reuses one validated active
+projection keyed by exact content digest and byte length. The host shares this
+bounded cache across request-scoped readers while retaining each request's
+pinned artifact. Concurrent cache misses serialize validation; each new
+content version must pass full JSON and lifecycle-proof validation before
+replacing the entry. Corrupt or unreadable current content never falls back to
+the cached projection. Returned states isolate mutable weighted-input lists
+from the cached authority.
 
 Trusted direct writers use `CommittedFileSnapshotWriter`: create and fsync a
 new immutable artifact, fsync its parent directory, create and fsync the
@@ -150,15 +158,22 @@ authority visible; a timeout or lost response after publication requires
 same-identity reconciliation, not an assumption that no commit occurred.
 A cross-process file lease serializes local writers, and every
 mutation reloads the latest committed snapshot before applying compare-and-swap.
+Before opening the lease, durable directory creation synchronizes each newly
+created ancestor entry and its parent, including first-use multilevel paths.
+The complete serialized replacement must fit the default reader's 16 MiB
+artifact limit before publication. Oversized history fails explicitly and
+leaves the previous descriptor, authority, audit, and operation identities
+unchanged; the rejected operation can be retried with bounded content.
 Each local lifecycle artifact is restricted to one application/environment
 scope because the legacy runtime `IStateStore` lookup is intentionally scoped
 outside its method signature.
 Version 1 remains the separate standalone demo-bootstrap format, with no
 lifecycle metadata or mutation authority. Version 2 lifecycle documents are
 unsupported; no lifecycle migration or compatibility path exists. Exact replay
-does not publish another artifact. Runtime validates the complete version 3
-journal, including audit timestamps/targets, recorded approval, predecessor
-and generation chains, and terminal transitions before exposing state.
+does not publish another artifact. On each content change, runtime validates
+the complete version 3 journal, including audit timestamps/targets, recorded
+approval, predecessor and generation chains, and terminal transitions before
+exposing state.
 
 The adapter accepts only the implemented `active-value` and `strategy` modes
 from the frozen decision-mode enum. Active values cannot carry strategy

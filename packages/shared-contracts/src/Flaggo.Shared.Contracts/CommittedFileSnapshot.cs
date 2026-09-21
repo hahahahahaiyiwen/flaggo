@@ -8,7 +8,9 @@ namespace Flaggo.Shared.Contracts;
 
 public sealed record CommittedFileSnapshotOptions
 {
-    public int MaximumArtifactBytes { get; init; } = 16 * 1024 * 1024;
+    public const int DefaultMaximumArtifactBytes = 16 * 1024 * 1024;
+
+    public int MaximumArtifactBytes { get; init; } = DefaultMaximumArtifactBytes;
 
     public int MaximumCommitBytes { get; init; } = 64 * 1024;
 
