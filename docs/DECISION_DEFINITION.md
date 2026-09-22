@@ -46,7 +46,7 @@ The key identifies the developer-facing decision family. `definitionId` is an op
 | Inference | Runtime inference target, app-emitted metric inputs, and fallback order. | target `session`, inputs `boardPressure`, fallback `cohort -> global` |
 | Output contract | Result type, bounds, allowed values, step, default. | number, `200..1500`, step `50`, default `800` |
 | Safety/policy/guardrails | Hard constraints and operating limits. Evidence-backed constraints apply only when the active authority claims that evidence. | bounds, step, max delta |
-| Authority workflow | How approved state is initially supplied and which runtime mechanism it contains. | authenticated bundle approval of a numeric-rule candidate |
+| Authority workflow | How approved state is initially supplied and which runtime mechanism it contains. | authenticated bundle approval of an `active-value` or `numeric-rule` candidate; Tetris uses `numeric-rule` |
 | Runtime context schema | Request-time facts the application must or may provide, including fields that identify target levels or metadata. | `sessionId`, `cohort`, `deviceType` |
 
 ## What it does not own
@@ -350,7 +350,8 @@ Semantic changes create a new definition revision. Examples:
 - allowed signal roles change,
 - optimization intent changes,
 - safety/policy envelope changes,
-- authority mode, initial authority target, rule, or rationale changes.
+- authority mode, initial authority target, kind-specific value or rule, or
+  rationale changes.
 
 Metadata-only changes may keep the same semantic revision if the registry can prove runtime behavior is unchanged.
 
@@ -429,7 +430,10 @@ DecisionDefinition
 
 `initialAuthority` is part of semantic identity but is only a candidate.
 Authenticated bundle approval authorizes the exact candidate, and registration
-is not ready until the derived state is active.
+is not ready until the derived state is active. The candidate is a
+discriminated `active-value` or `numeric-rule` union. Active-value authority
+carries a contract-valid value directly and has no strategy identity;
+numeric-rule authority carries the deterministic rule shown above.
 
 For revised Phase 3, `max-delta` compares the rule output with the fixed
 contract baseline `actionSpace.default = 800`; it does not imply

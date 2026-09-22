@@ -52,6 +52,18 @@ type StateAddress = {
   controlTarget: DecisionTargetRef;
 };
 
+type ActivationCandidate =
+  | {
+      kind: "active-value";
+      value: DecisionValue;
+      rationale: string;
+    }
+  | {
+      kind: "numeric-rule";
+      rule: NumericRuleDeclaration;
+      rationale: string;
+    };
+
 type ActivationRequest = {
   activationId: string;
   proposalId: string;
@@ -60,13 +72,14 @@ type ActivationRequest = {
   contractDigest: string;
   address: StateAddress;
   expectedBaseline: ExpectedAuthorityBaseline;
-  candidate: {
-    kind: "numeric-rule";
-    rule: NumericRuleDeclaration;
-    rationale: string;
-  };
+  candidate: ActivationCandidate;
 };
 ```
+
+Both candidates use the same expected-baseline compare-and-swap, replay, and
+publication path. Numeric-rule activation derives and persists `strategyId`;
+active-value activation persists the approved value directly and has no
+strategy identity.
 
 Runtime lookup receives an ordered set of exact targets from reasoning after
 the registry-owned runtime projection has authorized the target kinds. The

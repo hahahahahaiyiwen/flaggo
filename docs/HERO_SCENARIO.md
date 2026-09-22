@@ -312,14 +312,20 @@ gameEngine.updateConfig({ dropInterval: interval });
 Flaggo produces that value by executing the approved bundle-authored strategy:
 
 ```text
-current value = 800ms
+fixed contract default = 800ms
 board pressure = high
 recent placement time = slow
 recovery failures = 2
-approved strategy = slow down by one step when pressure is high and recovery is poor
+approved numeric rule candidate = 850ms
+max-delta policy = abs(850ms - 800ms) <= 50ms
 
 returned value = 850ms
 ```
+
+Recovery produces a `750ms` candidate, which is also `50ms` from the fixed
+contract default. Revised Phase 3 does not compare `850ms` with a previously
+returned or applied `750ms`; cooldown, hysteresis, and any separately named
+previous-result stabilization remain future work in #33.
 
 This keeps the game code simple while allowing runtime behavior to adapt to the current session.
 

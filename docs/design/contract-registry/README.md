@@ -67,7 +67,8 @@ Examples of revision-worthy changes:
 - signal role/reference changes,
 - goal definition changes,
 - policy reference changes,
-- authority mode, initial authority target, rule, or rationale changes.
+- authority mode, initial authority target, kind-specific value or rule, or
+  rationale changes.
 
 Small metadata changes can be mutable if they do not affect decision semantics, but the first design can keep this conservative. The developer-facing key can stay stable while the registry manages semantic revisions.
 
@@ -205,7 +206,9 @@ The bundle lets Flaggo compare declared resources with registered resources on
 the server without depending on application source code or a language SDK. An
 initial authority remains a candidate until an authenticated approval and
 expected-baseline activation succeed. Registration readiness and its receipt
-are withheld until required authority is active.
+are withheld until required authority is active. The candidate may be
+`active-value` or `numeric-rule`; both use the shared activation boundary, and
+only the numeric-rule receipt carries `strategyId`.
 
 ## Build and deployment identity
 

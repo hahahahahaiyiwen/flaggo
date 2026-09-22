@@ -752,6 +752,11 @@ Proposed response:
 }
 ```
 
+The example shows a `numeric-rule` receipt. `activatedAuthority` is
+discriminated by `kind`: `numeric-rule` requires `strategyId`, while
+`active-value` forbids `strategyId` and identifies the same proposal,
+activation, state, generation, and control target lineage.
+
 Apply invariants:
 
 - The bundle is the management write unit.

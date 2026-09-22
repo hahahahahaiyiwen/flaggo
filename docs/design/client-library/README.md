@@ -641,13 +641,22 @@ type AuthorityLifecycleAuthoring =
 
 type BundleApprovedAuthorityAuthoring = {
   authorityMode: "bundle-approved";
-  initialAuthority: {
-    controlTarget: DecisionTargetRef;
-    kind: "numeric-rule";
-    rule: NumericRuleAuthoring;
-    rationale: string;
-  };
+  initialAuthority: NumberInitialAuthorityAuthoring;
 };
+
+type NumberInitialAuthorityAuthoring =
+  | {
+      controlTarget: DecisionTargetRef;
+      kind: "active-value";
+      value: number;
+      rationale: string;
+    }
+  | {
+      controlTarget: DecisionTargetRef;
+      kind: "numeric-rule";
+      rule: NumericRuleAuthoring;
+      rationale: string;
+    };
 
 type NumericRuleAuthoring = Omit<NumericRuleDeclaration, "weightedInputs"> & {
   weightedInputs: Array<

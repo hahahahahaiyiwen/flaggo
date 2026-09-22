@@ -58,16 +58,17 @@ bundle apply
   -> approval request
   -> authenticated approval of the exact snapshot
   -> atomically persist allocated identities and captured authority-head baseline
-  -> deterministic proposal, activation, and strategy identities
+  -> deterministic proposal and activation identities
+  -> deterministic strategy identity when kind = numeric-rule
   -> expected-baseline compare-and-swap
   -> active governed state
   -> ready registration receipt
 ```
 
-The bundle cannot provide trusted proposal, activation, strategy, state, or
-approval identities. Exact retry resumes the same activation. Changed
-authority content requires a new semantic revision and approval. A stale
-expected baseline conflicts at the stable authority head identified by
+The bundle cannot provide trusted proposal, activation, state, approval, or
+numeric-rule strategy identities. Exact retry resumes the same activation.
+Changed authority content requires a new semantic revision and approval. A
+stale expected baseline conflicts at the stable authority head identified by
 application, environment, decision key, and control target rather than
 replacing newer authority through another revision namespace.
 
@@ -78,8 +79,8 @@ activation identities from one canonical tuple:
 - approval request ID;
 - decision key;
 - contract digest;
-- canonical initial authority, including control target, kind, rule, and
-  rationale.
+- canonical initial authority, including control target, kind, value or rule,
+  and rationale.
 
 Proposal and activation identities use distinct namespaces over that tuple.
 The decision key and canonical authority content make the identities unique per
@@ -88,11 +89,13 @@ At the same approval transition, the control plane reads each stable authority
 head once and persists that exact expected baseline with its activation ID.
 Every retry reuses the stored baseline; it never substitutes the head visible
 at retry time.
-Activation derives the strategy identity in a third namespace from the
-activation ID and canonical ID-free strategy declaration. Exact retry with the
-same tuple returns the same identities; finding any ID bound to different
-content is a conflict. The activation creates a state ID once, and replay
-returns that original strategy ID, state ID, and generation.
+Numeric-rule activation derives the strategy identity in a third namespace
+from the activation ID and canonical ID-free strategy declaration.
+Active-value activation persists the approved value directly and creates no
+strategy identity. Exact retry with the same tuple returns the same identities;
+finding any ID bound to different content is a conflict. The activation creates
+a state ID once, and replay returns that original state ID and generation plus
+the original strategy ID only for numeric-rule authority.
 
 An interrupted or outcome-unknown activation is retryable with the same
 approval, proposal, and activation identities. Stale expected baseline,
@@ -232,6 +235,11 @@ Approved Phase 3 authority represents exactly one of:
 | --- | --- |
 | `active-value` | Return one approved value. |
 | `numeric-rule` | Evaluate the approved deterministic numeric rule against declared inputs. |
+
+Both current kinds can cross the bundle-approved or proposal-managed workflow
+through the same activation candidate union and stable-head compare-and-swap.
+An `active-value` ready receipt omits `strategyId`; a `numeric-rule` receipt
+requires it.
 
 Governed fallback is a runtime outcome, not a persisted authority kind.
 Experiment, rollout, fallback-only, and override authority remain future

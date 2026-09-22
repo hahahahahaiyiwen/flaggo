@@ -243,11 +243,22 @@ type InlinePolicy = {
 type AuthorityLifecycleDeclaration =
   | {
       authorityMode: "bundle-approved";
-      initialAuthority: NumericRuleInitialAuthority;
+      initialAuthority: InitialAuthority;
     }
   | {
       authorityMode: "proposal-managed";
     };
+
+type InitialAuthority =
+  | ActiveValueInitialAuthority
+  | NumericRuleInitialAuthority;
+
+type ActiveValueInitialAuthority = {
+  controlTarget: DecisionTargetRef;
+  kind: "active-value";
+  value: DecisionValue;
+  rationale: string;
+};
 
 type NumericRuleInitialAuthority = {
   controlTarget: DecisionTargetRef;
@@ -269,6 +280,11 @@ MVP rule: `tetris.dropInterval` uses
 references are a subset of `inference.inputs`. The bundle supplies no trusted
 proposal, activation, strategy, state, or approval identities.
 
+Both current Phase 3 authority kinds are valid initial candidates.
+`active-value` carries one value that must satisfy the definition action space
+and applicable runtime policy. `numeric-rule` carries the deterministic rule
+validated below.
+
 `NumericRuleDeclaration.weightedInputs` must be non-empty. Each input must
 reference one declared inference input that resolves to an app-emitted numeric
 metric, use finite `minimum < maximum`, and have a finite nonnegative weight;
@@ -277,11 +293,12 @@ action space and applicable runtime policy. SDK authoring uses a branded
 numeric metric handle; registry and activation validation enforce the same
 numeric-source rule.
 
-Missing required evidence is a server evaluation outcome, not a data-plane
-availability failure. When governed fallback is permitted, the server returns
-the registered fallback as an audited decision. Otherwise it returns
-fallback-ineligible `required-evidence-unavailable` Problem Details. Definition
-policy never authorizes an SDK-local value for this outcome.
+Missing evidence explicitly required by runtime policy is a server evaluation
+outcome, not a numeric-rule executor input or data-plane availability failure.
+When governed fallback is permitted, the server returns the registered
+fallback as an audited decision. Otherwise it returns fallback-ineligible
+`required-evidence-unavailable` Problem Details. Definition policy never
+authorizes an SDK-local value for this outcome.
 
 `InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; registry validation and the Decision API must enforce it again against registered signal declarations.
 
@@ -983,15 +1000,23 @@ type AcceptedDefinition = {
   activatedAuthority?: ActivatedAuthorityReceipt;
 };
 
-type ActivatedAuthorityReceipt = {
+type ActivatedAuthorityReceiptCommon = {
   proposalId: string;
   activationId: string;
-  strategyId: string;
   stateId: string;
   generation: number;
   controlTarget: DecisionTargetRef;
-  kind: "numeric-rule";
 };
+
+type ActivatedAuthorityReceipt =
+  | (ActivatedAuthorityReceiptCommon & {
+      kind: "active-value";
+      strategyId?: never;
+    })
+  | (ActivatedAuthorityReceiptCommon & {
+      kind: "numeric-rule";
+      strategyId: string;
+    });
 
 type ExpectedAuthorityBaseline = {
   stateId?: string;
@@ -1005,6 +1030,7 @@ type InitialAuthorityActivationPlan = {
   proposalId: string;
   activationId: string;
   controlTarget: DecisionTargetRef;
+  kind: "active-value" | "numeric-rule";
   expectedBaseline: ExpectedAuthorityBaseline;
 };
 
@@ -1174,10 +1200,11 @@ Rules:
   approval request ID, decision key, contract digest, and canonical initial
   authority. Exact replay returns those IDs and the original state identity;
   callers cannot supply or recompute them as authority.
-- Activation derives the strategy ID in a third namespace from the activation
-  ID and canonical ID-free strategy declaration. It persists that identity in
-  the active state and ready receipt; exact replay returns the same strategy
-  ID.
+- Numeric-rule activation derives the strategy ID in a third namespace from
+  the activation ID and canonical ID-free strategy declaration. It persists
+  that identity in the active state and ready receipt; exact replay returns the
+  same strategy ID. Active-value activation persists the approved value
+  directly and its receipt forbids `strategyId`.
 - `activation-failed` with `retryability: "retryable"` represents interruption
   or outcome uncertainty. Exact apply resumes the same activation and first
   resolves any already-published state before attempting publication again.

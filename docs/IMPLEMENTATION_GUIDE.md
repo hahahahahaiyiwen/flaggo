@@ -53,9 +53,11 @@ The MVP should not require:
 2. **Primitive result values**: runtime decisions return only `boolean`, `number`, or `string`.
 3. **Strategies are explicit contracts**: adaptive behavior is represented as a strategy object, not hidden application `if/else`.
 4. **Governance is downstream and mandatory**: a value or strategy is not runtime-authoritative until policy and state allow it.
-5. **Runtime stays bounded**: online execution should use active state,
-   approved strategies, and only evidence explicitly required by the active
-   authority; deep analysis belongs to async intelligence.
+5. **Runtime stays bounded**: online execution uses the runtime definition
+   projection, approved `active-value` or `numeric-rule` authority, and live
+   declared inputs. `EvidenceSnapshot` never crosses the Phase 3 numeric-rule
+   executor port; evidence remains available to policy, audit/explanation, and
+   future async intelligence.
 6. **Extensibility through discriminated unions**: new strategy types, evidence sources, and proposal types should extend explicit unions instead of changing every call shape.
 7. **Audit every decision**: every runtime response should be reconstructable
    from definition revision, target, state, strategy, applicable evidence,
@@ -654,13 +656,23 @@ Deliverables:
 - complete #39 to review the state lifecycle introduced by #31 and retain only
   state identity, generation, expected-baseline compare-and-swap, idempotent replay,
   predecessor linkage, approval reference, validation, read-only runtime
-  projection, and atomic publication;
+  projection, and atomic publication for both `active-value` and
+  `numeric-rule` activation candidates;
 - complete #40 to replace the frozen bundle v1 contract rather than adding a
   compatibility layer, and remove the mixed-purpose `onlineStrategy`
   declaration; #40 also binds the durable local audit sink for ready service
   compositions and rejects volatile audit readiness;
-- validate the initial numeric rule against the definition target hierarchy,
-  inference inputs, action space, fallback, and runtime policy;
+- in #40, make `initialAuthority`, activation input, governed state, and ready
+  receipts one discriminated `active-value | numeric-rule` path;
+- in #40, replace the evidence-coupled strategy executor with the exact
+  `RuntimeDefinitionProjection + NumericRuleStrategy + SignalInput[]` port,
+  return `confidence: null`, and keep evidence at policy, audit/explanation,
+  and future-proposal boundaries;
+- in #40, evaluate Phase 3 `max-delta` against the fixed
+  `actionSpace.default`, not state value or a previous result;
+- validate active values against the action space and policy, and validate
+  numeric rules against the definition target hierarchy, inference inputs,
+  action space, fallback, and runtime policy;
 - durably record authenticated bundle approval before activating the derived
   state, and keep registration non-ready until activation succeeds;
 - expose activated-authority proposal, activation, state, generation, target,
@@ -691,9 +703,17 @@ Validation:
 - changed initial authority requires a new approval;
 - stale expected baseline cannot overwrite newer bundle-approved or
   proposal-managed authority;
+- active-value and numeric-rule candidates share activation replay, stale-head
+  conflict, and atomic publication behavior;
+- active-value receipts omit `strategyId`; numeric-rule receipts require and
+  replay the derived strategy identity;
 - SDK and direct REST calls remain contract-equivalent;
 - high pressure and slow placement return `850ms`, while recovery returns
   `750ms`, within bounds and step;
+- the numeric-rule executor returns those values from live inputs with no
+  `EvidenceSnapshot` and `confidence: null`;
+- with fixed default `800ms`, `750ms` followed by `850ms` remains valid because
+  each candidate is independently within the `50ms` fixed-baseline delta;
 - bundle-authored rules do not claim model confidence or require fabricated
   evidence quality;
 - every server decision audit distinguishes no-authority fallback from
@@ -705,8 +725,9 @@ Validation:
 The current manual activation template and deterministic evidence fixture are
 historical evidence for the runtime path only. Phase 3 is complete again only
 after the bundle-approved path replaces them and the real-host integration is
-rerun. Temporal cooldown and previous-result stabilization semantics remain
-owned by #33 and are not silently resolved by this re-baseline.
+rerun. The fixed-default Phase 3 `max-delta` contract is implemented by #40;
+temporal cooldown, hysteresis, and any separately named previous-result
+stabilization remain owned by #33.
 
 ### Phase 4: Proposal-managed intelligence and governance
 
@@ -717,6 +738,8 @@ bundle-approved runtime and activation path. This work is tracked by #25 after
 Deliverables:
 
 - a scripted or fixture-based proposal producer,
+- proposal candidates for both current authority kinds, `active-value` and
+  `numeric-rule`,
 - independent proposal review and approval,
 - governed initial or replacement activation through the shared state
   boundary, using the no-state baseline and no predecessor for first
