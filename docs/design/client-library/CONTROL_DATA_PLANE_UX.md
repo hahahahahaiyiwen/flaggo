@@ -31,9 +31,11 @@ application deployment
 application/bootstrap startup (MVP)
   SDK loads the extracted canonical bundle
   SDK calls control-plane validate/apply
-  authorized actor approves the exact initial-authority snapshot
-  service activates state through expected-baseline compare-and-swap
-  registry returns a ready receipt with definition and authority identities
+  authorized actor approves the exact canonical bundle when required
+  authority-workflow branch:
+    proposal-managed -> registry publishes the definition and returns a ready receipt
+    bundle-approved -> service activates state through expected-baseline
+      compare-and-swap and returns a ready receipt with authority identities
   SDK initializes the data-plane client with that binding
 
 data plane
@@ -79,8 +81,9 @@ The exact SDK shape remains provisional, but behavior is fixed:
 1. Load the statically extracted canonical bundle; do not derive semantics from whichever runtime branch executes.
 2. Call the management validate/apply operation, not the decide endpoint.
 3. Use a deterministic idempotency key derived from application, environment, and `bundleDigest` so concurrent replicas submitting identical bundles converge on one result.
-4. Accept only a ready registration receipt after all required initial
-   authority is active.
+4. Accept only a ready registration receipt: immediately after approved
+   proposal-managed publication when no initial authority exists, or after all
+   required bundle-approved authority is active.
 5. Verify that the receipt includes definition identity and, for
    bundle-approved definitions, proposal, activation, state, generation,
    target, and strategy-kind references.
@@ -99,17 +102,22 @@ Startup registration does not bypass lifecycle or approval:
 The Flaggo client initialization rejects on validation failure, apply failure, conflict, or `requires-approval`. The host application decides whether to stop startup or continue without Polari, but it cannot turn that failure into a local decision fallback.
 
 The typed approval error includes the stable `approvalRequestId`. Approval
-authorizes the exact pending canonical bundle snapshot. The service then
-derives proposal and activation identities and atomically publishes state.
-A later startup retry or restart with the same bundle receives the stored ready
-receipt and may initialize the data plane.
+authorizes the exact pending canonical bundle snapshot. For a proposal-managed
+definition, approval publishes the definition and stores a ready receipt
+without an activation plan or authority references. For bundle-approved
+authority, approval derives proposal and activation identities, stores the
+captured-baseline activation plan, and publishes state through
+expected-baseline compare-and-swap. A later startup retry or restart with the
+same bundle receives the stored ready receipt and may initialize the data
+plane.
 
 If that approval expires before authorization, the next startup apply uses the
 same deterministic key but triggers server-side revalidation and receives one
 fresh linked approval request. Concurrent replicas converge on the replacement
 request; the SDK does not need a renewal endpoint or a new locally generated
-key. Once activation succeeds, exact retries return the same activation and
-state instead of creating new authority.
+key. Once approved publication is ready, exact retries return the same receipt.
+For bundle-approved authority they also return the same activation and state
+instead of creating new authority.
 
 ### Credential boundary
 

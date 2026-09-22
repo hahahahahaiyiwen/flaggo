@@ -663,7 +663,6 @@ Order-sensitive arrays retain authored order because order changes behavior:
 - `targetHierarchy`,
 - `inference.fallbackOrder`,
 - prioritized objective lists such as `intent.secondary`,
-- rollout stages,
 - tuple-like values such as numeric ranges.
 
 Order-insensitive collections are duplicate-free sets and are sorted by immutable signal key:

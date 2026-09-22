@@ -144,8 +144,9 @@ Notes:
 
 - The decision key is a sub-concept of the decision definition: it identifies the decision family.
 - The definition owns the output **contract** or action space, not the actual runtime result.
-- A definition must explicitly permit experimentation before governed state can activate an experiment. It owns the experiment safety envelope, such as eligible assignment target kinds, allowed values, traffic limits, exposure requirements, and applicable approval constraints.
-- Active experiment identifiers, variants, allocation weights, assignment salt/version, lifecycle status, and promotion or rollback state belong to `GovernedDecisionState`, not the definition.
+- Experiment permission and active experiment metadata are future contract
+  concerns. The current Phase 3 `DecisionDefinition` and
+  `GovernedDecisionState` contain no experiment fields.
 - Signal definitions are owned outside individual decisions, usually near the producer. A signal key such as `tetris.boardPressure` is the immutable semantic identity for its schema, type, units, range, and meaning.
 - A decision definition does not redefine signal schemas. It explicitly allows the signal handles it may use and assigns them roles as objectives, inference inputs, evidence, or guardrails.
 - `targetHierarchy` defines meaningful target levels for signal aggregation, evidence views, learning, inference, governance, and fallback.
@@ -411,12 +412,16 @@ The `RuntimeDecisionResult` is an output record, not part of the definition:
 
 ```text
 value: 850
-fallbackUsed: false
+valueType: number
+decisionMode: strategy
+strategyId: strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5
 decisionId: decision-123
-confidence:
-  evidenceQuality: 0.82
-  modelUncertainty: 0.31
-  expectedOutcome: 0.72
+confidence: null
+fallback:
+  source: server
+  resolutionFallbackUsed: false
+  decisionFallbackUsed: false
+  reason: null
 policy:
   result: approved
 auditId: audit-789

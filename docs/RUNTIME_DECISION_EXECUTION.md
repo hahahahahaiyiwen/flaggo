@@ -297,8 +297,14 @@ execution:
 
 result:
   value = 850
+  valueType = number
   decisionMode = strategy
-  fallbackUsed = false
+  strategyId = strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5
+  confidence = null
+  fallback.source = server
+  fallback.resolutionFallbackUsed = false
+  fallback.decisionFallbackUsed = false
+  fallback.reason = null
 ```
 
 ## Design principles

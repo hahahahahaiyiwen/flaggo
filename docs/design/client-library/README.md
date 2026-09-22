@@ -36,8 +36,10 @@ build/release:
 
 application/bootstrap startup (MVP):
   validate/apply bundle through the control-plane API
-  obtain authenticated approval for declared initial authority
-  wait for activation and receive a ready registration receipt
+  obtain authenticated approval for the exact canonical bundle when required
+  authority-workflow branch:
+    proposal-managed -> publish the definition and receive a ready receipt
+    bundle-approved -> activate initial authority and receive a ready receipt
   initialize runtime binding
 
 deployment:
@@ -99,9 +101,11 @@ The client library should support:
 6. **Definition bundle support**
    - Generate or reference a canonical `DecisionDefinitionBundle` in code-first workflows.
    - Expose bundle digest/revision metadata to runtime calls.
-   - For MVP, explicitly validate/apply the extracted bundle, authorize its
-     initial authority, and wait for activation readiness during trusted
-     application/bootstrap startup before enabling data-plane calls.
+   - For MVP, explicitly validate/apply the extracted bundle and complete
+     exact-bundle approval when required during trusted
+     application/bootstrap startup. Proposal-managed definitions wait only for
+     approved publication; bundle-approved definitions also wait for initial
+     authority activation before enabling data-plane calls.
    - Keep management calls separate from decide and exposure operations.
 
 ## Example shape
@@ -838,9 +842,10 @@ write declaration in code
   -> extract flaggo.decision-definition-bundle.json
   -> deploy application independently
   -> trusted startup validates/applies bundle through management API
-  -> authorized actor approves the exact initial-authority snapshot
-  -> service activates state through the shared activation boundary
-  -> receive ready registration receipt
+  -> authorized actor approves the exact canonical bundle when required
+  -> authority-workflow branch:
+       proposal-managed -> publish definition and return ready receipt
+       bundle-approved -> activate initial authority and return ready receipt
   -> initialize data-plane client with accepted identity
   -> runtime decide succeeds only for exact registered identity
 ```
