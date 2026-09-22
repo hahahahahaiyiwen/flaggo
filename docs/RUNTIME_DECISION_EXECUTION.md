@@ -8,7 +8,10 @@ It answers:
 
 > Given this decision definition, runtime target, request context, policy, and active governed state, what value should this request receive?
 
-Runtime execution does not decide whether an experiment or rollout should exist, analyze which candidate is globally best, or mutate lifecycle authority.
+Runtime execution does not analyze which candidate is globally best or mutate
+lifecycle authority. Experiment, rollout, and override execution remain future
+mechanisms until their state, lifecycle, policy, and result contracts are
+separately approved.
 
 ```text
 DecisionDefinition
@@ -35,10 +38,11 @@ For the MVP, runtime reasoning without compatible `GovernedDecisionState` is pro
 
 ## Authority-source independence
 
-Runtime execution does not care whether compatible state originated from an
-approved bundle candidate or an independently generated proposal. Both sources
-must produce the same governed-state shape and pass the same definition,
-target, output, and runtime-policy checks.
+Runtime execution is source-independent by design. Phase 3 receives authority
+from an approved bundle candidate. A future proposal-managed source must
+produce the same current governed-state shape or introduce a separately
+approved extension, and must pass the same definition, target, output, and
+runtime-policy checks.
 
 A bundle-authored deterministic rule does not claim learned evidence or model
 confidence. Evidence and confidence are present only when the approved
@@ -55,8 +59,8 @@ Application
   -> read stable authority heads in that order
   -> select the first exact definition-compatible state
   -> verify state compatibility and policy
-  -> execute fixed value, strategy, variant assignment,
-     rollout routing, override, or fallback
+  -> resolve active-value authority, evaluate numeric-rule authority,
+     or produce governed fallback
   -> validate returned value
   -> record decision inputs, state/policy lineage, and applicable evidence
   -> RuntimeDecisionResult
@@ -68,14 +72,13 @@ Missing, unknown, conflicting, or retired definition identity is a contract erro
 
 | Mechanism | Runtime responsibility |
 | --- | --- |
-| Fixed resolution | Return the approved active value. |
-| Strategy evaluation | Evaluate approved deterministic rules or bounded models against declared inputs. |
-| Variant assignment | Deterministically assign an eligible target to an approved experiment variant. |
-| Rollout routing | Route an eligible target according to the current approved rollout stage. |
-| Override | Return the applicable operator-pinned value. |
+| Active-value resolution | Return the approved active value. |
+| Numeric-rule evaluation | Evaluate the approved deterministic numeric rule against declared inputs. |
 | Fallback | Return the registered safe value when no permitted target has compatible active state, or applicable evidence/runtime policy prevents normal execution. |
 
-The mechanism is selected from governed state; the runtime does not choose a new lifecycle.
+The mechanism is selected from governed state; the runtime does not choose a
+new lifecycle. Experiment assignment, rollout routing, and override require
+future contract extensions and are not current execution mechanisms.
 
 ## State and target resolution
 
@@ -99,9 +102,10 @@ The decision record should distinguish:
 - evidence target or views used by a strategy;
 - fallback target when fallback resolves elsewhere.
 
-## Fixed resolution
+## Active-value resolution
 
-Fixed state returns one approved value after compatibility and policy checks:
+Active-value state returns one approved value after compatibility and policy
+checks:
 
 ```text
 active fixed value
@@ -109,33 +113,32 @@ active fixed value
   -> return value
 ```
 
-## Strategy evaluation
+## Numeric-rule evaluation
 
-A strategy is an approved bounded plan for request-time evaluation.
-
-Supported forms may include:
-
-- rule tables;
-- scoring functions;
-- small deterministic models;
-- approved bandit policies;
-- explicitly authorized bounded AI inference.
+A Phase 3 numeric rule is the approved bounded strategy for request-time
+evaluation. It computes the declared weighted score, selects the declared
+threshold branch, and returns one of the two approved numeric values.
 
 ```text
-active strategy
+active numeric-rule strategy
   + declared inference inputs
-  + permitted fresh evidence when required
-  -> evaluate
+  -> compute weighted score
+  -> select threshold branch
   -> clamp and align to action space
   -> runtime policy validation
   -> result
 ```
 
-Most online requests must not run an unbounded agentic loop. Future ephemeral runtime candidates require explicit governed permission covering the generator, action space, target authority, fallback, audit requirements, and latency budget.
+Future strategy kinds or ephemeral runtime candidates require explicit
+governed contracts covering the evaluator, action space, target authority,
+fallback, audit requirements, and latency budget. Most online requests must
+not run an unbounded agentic loop.
 
-## Experiment variant assignment
+## Future experiment variant assignment
 
-Variant assignment is the runtime execution mechanism for active experiment state. The experiment lifecycle is owned by the control plane.
+This section is conceptual future behavior, not a current runtime contract.
+Variant assignment would be the runtime execution mechanism for approved
+experiment state; the experiment lifecycle would remain in the control plane.
 
 ```text
 active experiment state
@@ -167,9 +170,10 @@ Runtime assignment must not:
 - bucket outside eligibility constraints;
 - return values outside the definition action space.
 
-## Rollout routing
+## Future rollout routing
 
-Rollout routing applies the active rollout stage:
+This section is conceptual future behavior, not a current runtime contract.
+Rollout routing would apply an approved active rollout stage:
 
 ```text
 active rollout state
@@ -191,12 +195,12 @@ Runtime checks may include:
 - output type and bounds;
 - required inference inputs;
 - evidence freshness when evidence is required;
-- cooldown, pause, or override when their contracts exist;
-- experiment or rollout eligibility;
 - conflict detection;
 - fallback requirements.
 
 Runtime policy cannot widen the approved state.
+Cooldown, pause, override, experiment eligibility, and rollout eligibility are
+future checks that require separately approved contracts.
 
 ## RuntimeDecisionResult
 
@@ -209,7 +213,7 @@ A result should include:
 - runtime and control targets;
 - strategy ID when applicable;
 - policy result;
-- confidence fields when applicable;
+- confidence (`null` for Phase 3 bundle-approved authority);
 - decision and audit IDs;
 - explanation summary.
 
@@ -217,7 +221,7 @@ Governed state identity and activation lineage remain in
 `AuditRecord.stateSummary`; the Phase 3 runtime response does not expose a
 `stateId`.
 
-Experiment assignment must additionally include:
+Future experiment assignment results would additionally require:
 
 ```text
 experimentId
@@ -226,7 +230,8 @@ allocationVersion
 assignmentUnit
 ```
 
-Rollout routing should similarly identify rollout ID, stage, and allocation version.
+Future rollout results would similarly identify rollout ID, stage, and
+allocation version. These fields are not part of the current Phase 3 result.
 
 The result is a record of what this request received. It is not future authority.
 
@@ -245,7 +250,10 @@ RuntimeDecisionResult
   -> attributed outcome telemetry
 ```
 
-An exposure is recorded only after the client confirms that it applied or rendered the returned value. Experiment records must preserve experiment ID, variant ID, allocation version, and assignment unit so outcomes can be compared correctly.
+An exposure is recorded only after the client confirms that it applied or
+rendered the returned value. A future experiment contract must define the
+experiment ID, variant ID, allocation version, and assignment unit preserved
+for outcome comparison.
 
 ## Fallback behavior
 
@@ -299,7 +307,7 @@ result:
 2. **Deterministic by default** across retries and replicas.
 3. **Bounded request path** with no unapproved agent loop.
 4. **Exact contract identity** before execution.
-5. **Explicit mechanism** for fixed, strategy, experiment, rollout, override, and fallback behavior.
+5. **Explicit current mechanisms** for active-value, numeric-rule, and governed fallback behavior.
 6. **Runtime policy narrows only**.
 7. **Exposure follows application** rather than merely recording a returned response.
 

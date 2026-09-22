@@ -110,14 +110,20 @@ It should help software move from static branching toward governed runtime judgm
 The long-term ambition is for AI-native runtime decisioning to become a normal software primitive:
 
 ```text
+future control-plane extensions:
 definition + evidence + outcomes + objectives
   -> optimization, experiment, or rollout lifecycle
   -> proposal -> governance -> governed state
 
+current Phase 3 runtime core:
 definition + runtime context + compatible governed state + policy
-  -> fixed resolution, strategy evaluation, variant assignment,
-     rollout routing, override, or fallback
+  -> active-value resolution, numeric-rule evaluation,
+     or governed fallback
   -> runtime decision result
+
+future runtime mechanisms:
+  experiment assignment, rollout routing, and override
+  only after their contracts are approved
 ```
 
 Not every branch should become a decision call. Not every decision needs AI. Not every system should adapt automatically.

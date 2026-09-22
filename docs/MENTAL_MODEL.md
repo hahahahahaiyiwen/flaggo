@@ -24,15 +24,15 @@ Decision Evidence
   provides runtime facts, declared signals, evidence views, quality, and provenance
 
 Decision Intelligence
-  optionally analyzes evidence and proposes bounded changes
+  optionally analyzes evidence and proposes bounded future changes
 
 Control-plane decision lifecycles
-  bundle approval or proposal governance
+  Phase 3 bundle approval; future proposal governance
   -> GovernedDecisionState
 
 Runtime decision execution
-  fixed resolution, strategy evaluation, variant assignment,
-  rollout routing, override, or fallback
+  active-value resolution, numeric-rule evaluation,
+  or governed fallback
   -> RuntimeDecisionResult
 ```
 
@@ -46,18 +46,23 @@ bundle-approved:
   -> authenticated bundle approval
   -> governed state
 
-proposal-managed:
+proposal-managed (future Phase 4):
   definition + evidence + current state
   -> decision intelligence or another authorized producer
   -> DecisionProposal -> governance
   -> governed state
 ```
 
-Both workflows converge on the same governed-state and runtime execution path.
-The bundle contains an initial authority candidate, not self-approved active
-state.
+Phase 3 implements the bundle-approved workflow. A future proposal-managed
+workflow must converge on the same current governed-state and runtime
+execution path or introduce explicitly approved extensions. The bundle
+contains an initial authority candidate, not self-approved active state.
 
-Control-plane lifecycles and runtime execution operate at different timescales. A lifecycle decides whether an optimization, experiment, or rollout should exist and how it progresses. Runtime execution applies the resulting approved state consistently for each request.
+Control-plane lifecycles and runtime execution operate at different timescales.
+Phase 3 approves and activates bundle authority; runtime execution applies
+that authority consistently for each request. Future lifecycle contracts may
+decide whether an optimization, experiment, or rollout should exist and how it
+progresses.
 
 ## Core concepts by layer
 
@@ -67,9 +72,9 @@ Control-plane lifecycles and runtime execution operate at different timescales. 
 | Decision definition | What may be decided and how should the system resolve it? | Versioned contract: decision key, signals, intent, inference, output contract/action space, safety constraints, and authority workflow. Bundle-approved definitions may declare an initial authority candidate. | Raw telemetry history, application/build provenance, approved governed state, concrete runtime result. |
 | Decision evidence | What is known now or historically? | Runtime facts, target identifiers, emitted events/metrics, evidence views, exposure records, evidence quality, uncertainty, provenance such as app/build identity. | Policy authority or active strategy state. |
 | Decision intelligence | What bounded behavior should Flaggo recommend from the definition and evidence? | Optional async analysis, proposal generation, and reasoning mode selection for proposal-managed authority. | Bundle approval, lifecycle authority, governance approval, or per-request execution. |
-| Decision lifecycle | How does declared or proposed behavior become and remain active? | Bundle approval, proposal governance, activation, observation, conclusion, promotion, supersession, and rollback. | Per-request value selection. |
-| Governed decision state | What behavior has been approved for future/runtime use? | Active value or strategy and activation lineage; experiments, rollouts, cooldown, override, and previous-safe-state data only under explicit lifecycle contracts. | Decision definition semantics or raw evidence history. |
-| Runtime decision execution | How is approved behavior applied to this request? | Fixed-value resolution, strategy evaluation, deterministic variant assignment, rollout routing, override, and fallback. | Proposing or approving future behavior. |
+| Decision lifecycle | How does declared behavior become and remain active? | Phase 3 bundle approval, activation, and supersession; future contracts may add proposal governance and broader transitions. | Per-request value selection. |
+| Governed decision state | What behavior has been approved for runtime use? | Phase 3 `active-value` or `numeric-rule` authority plus activation lineage. | Decision definition semantics, raw evidence history, or unapproved future authority kinds. |
+| Runtime decision execution | How is approved behavior applied to this request? | Phase 3 active-value resolution, numeric-rule evaluation, and governed fallback. | Proposing or approving future behavior. |
 | Runtime decision result | What did this request receive? | Returned value, fallback status, explanation, audit ID, confidence, policy result. | Future authority unless persisted as governed state. |
 
 ## Decision definition
@@ -210,8 +215,9 @@ definition + initial authority candidate
   -> GovernedDecisionState
 ```
 
-The proposal-managed workflow adds asynchronous reasoning or another authorized
-producer later:
+The future proposal-managed workflow may add asynchronous reasoning or another
+authorized producer. The following lifecycles are conceptual rather than
+current contracts:
 
 ```text
 Adaptive optimization lifecycle:
@@ -235,7 +241,9 @@ Progressive rollout lifecycle:
   -> advance, pause, complete, or roll back
 ```
 
-Proposals may be produced by decision intelligence, operators, or other authorized automation. Governance, rather than the proposal source, grants authority.
+Future proposals may be produced by decision intelligence, operators, or other
+authorized automation. Governance, rather than the proposal source, grants
+authority.
 
 Bundle approval and proposal governance differ in how the candidate is
 produced, not in how runtime consumes the resulting state.
@@ -244,8 +252,8 @@ Runtime decision execution consumes the approved state:
 
 ```text
 DecisionDefinition + runtime context + compatible GovernedDecisionState + policy
-  -> fixed resolution, strategy evaluation, deterministic variant assignment,
-     rollout routing, override, or fallback
+  -> active-value resolution, numeric-rule evaluation,
+     or governed fallback
   -> RuntimeDecisionResult
 ```
 
@@ -302,8 +310,9 @@ Polari separates definition management from runtime evaluation:
 
 | Plane | Owns |
 | --- | --- |
-| Control plane | Definition bundles, immutable revisions, policies, optimization/experiment/rollout lifecycles, governed state, and registration receipts. |
-| Data plane | Fixed resolution, strategy evaluation, deterministic variant assignment, rollout routing, override/fallback execution, and exposure confirmation for exact registered identities. |
+| Phase 3 control plane | Definition bundles, immutable revisions, policies, bundle approval, activation, supersession, governed state, and registration receipts. |
+| Phase 3 data plane | Active-value resolution, numeric-rule evaluation, governed fallback, and exposure confirmation for exact registered identities. |
+| Future extensions | Proposal-managed optimization, experiment, rollout, override, and broader lifecycle transitions after their contracts are approved. |
 
 Application deployment is a third, developer-owned lifecycle. Code-first declarations generate control-plane artifacts. For MVP, trusted application/bootstrap startup validates/applies those artifacts and initializes the runtime binding before data-plane use. A runtime call must carry `definitionId + revision + contractDigest`.
 
@@ -328,11 +337,13 @@ Use explicit names:
 
 | Name | Meaning |
 | --- | --- |
-| `DecisionProposal` | Candidate value, strategy, experiment, hold, rollback, or fallback recommendation produced by intelligence, an operator, authorized automation, or derived by the server from an approved bundle candidate. |
+| `DecisionProposal` | Future Phase 4 candidate produced by intelligence, an operator, or authorized automation. |
 | `GovernedDecisionState` | Approved durable authority that runtime decision execution may consume. |
 | `RuntimeDecisionResult` | Per-request response returned to application code. |
 
-For experimentation, keep lifecycle and execution terminology distinct:
+For future experimentation, keep lifecycle and execution terminology distinct.
+The following table is conceptual and does not define current state or result
+fields:
 
 | Name | Plane | Meaning |
 | --- | --- | --- |
@@ -354,17 +365,20 @@ entry paths:
 Bundle initial authority:
   declared -> approval-pending -> authorized -> activated
 
-DecisionProposal:
+Future DecisionProposal:
   proposed -> validated -> approved | rejected
 
 GovernedDecisionState:
-  pending -> active -> superseded | expired | rolled-back
+  active -> superseded
+
+Future lifecycle transitions:
+  active -> expired | completed | rolled-back
 ```
 
 Bundle-approved validation checks the declared target, inference inputs,
 numeric rule, action space, fallback, and applicable runtime policy; an
-authenticated actor approves that exact snapshot. The approval modes below
-apply to proposal-managed authority:
+authenticated actor approves that exact snapshot. The future approval modes
+below are conceptual and apply to proposal-managed authority:
 
 | Approval mode | When appropriate |
 | --- | --- |
@@ -375,18 +389,21 @@ apply to proposal-managed authority:
 The operator-override row is conceptual. Phase 3 exposes no pause or override
 authoring/evaluation surface; later work must approve those contracts first.
 
-Effective policy is the intersection of definition constraints, environment policy, and operator controls. Less-trusted or narrower layers may restrict behavior but never widen it; an application-authored definition cannot override environment approval requirements, relax mandatory evidence-quality floors, or bypass an operator pause.
+Effective policy is the intersection of definition constraints, environment
+policy, and approved operator controls. Less-trusted or narrower layers may
+restrict behavior but never widen it; an application-authored definition
+cannot override environment approval requirements or relax mandatory
+evidence-quality floors. A future operator-pause contract would add another
+narrowing control rather than an implicit current behavior.
 
 Active `GovernedDecisionState` is then consumed by runtime decision execution:
 
 ```text
 runtime target + runtime context
   -> resolve applicable governed state
-  -> return an active fixed value
-     or evaluate an active strategy
-     or assign an active experiment variant
-     or route an active rollout
-     or apply an override or fallback
+  -> return active-value authority
+     or evaluate numeric-rule authority
+     or produce governed fallback
   -> RuntimeDecisionResult
 ```
 
@@ -405,7 +422,8 @@ policy:
 auditId: audit-789
 ```
 
-When variant assignment is used, the result must also identify the assignment:
+Under a future experiment contract, variant-assignment results would also
+identify the assignment:
 
 ```text
 decisionMode: experiment
@@ -440,7 +458,16 @@ RuntimeDecisionResult
   -> future DecisionProposal
 ```
 
-Decision records should capture definition revision/hash, runtime target, resolved control target, governed state ID, returned value, decision mode, fallback status, inference input values, policy result, audit ID, and timestamp. Experiment decisions must additionally capture experiment ID, variant ID, allocation version, and assignment unit. Exposure records should link to decision records and capture the fact that the application actually applied or rendered the value. Outcome events should declare attribution windows so unused responses, delayed outcomes, censoring, confounding, and selection bias can be handled explicitly rather than silently training the wrong lesson.
+Decision records should capture definition revision/hash, runtime target,
+resolved control target, governed state ID, returned value, decision mode,
+fallback status, inference input values, policy result, audit ID, and
+timestamp. A future experiment contract must additionally define the
+experiment ID, variant ID, allocation version, and assignment unit recorded
+for experiment decisions. Exposure records should link to decision records and
+capture the fact that the application actually applied or rendered the value.
+Outcome events should declare attribution windows so unused responses, delayed
+outcomes, censoring, confounding, and selection bias can be handled explicitly
+rather than silently training the wrong lesson.
 
 ## Reuse rule
 

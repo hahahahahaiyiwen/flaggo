@@ -59,6 +59,11 @@ When layers conflict, the safest applicable constraint wins or policy returns fa
 
 ## Core port
 
+The current port evaluates Phase 3 active-value, numeric-rule (`strategy` at
+the response boundary), and governed fallback candidates. Future experiment,
+rollout, override, or temporal modes must extend this port only after their
+contracts are approved.
+
 ```ts
 interface IPolicyEvaluator {
   evaluate(input: PolicyEvaluationRequest): Promise<PolicyEvaluationResult>;
@@ -70,7 +75,7 @@ type PolicyEvaluationRequest = {
   evidence?: EvidenceSnapshot;
   candidate: {
     value: DecisionValue;
-    decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
+    decisionMode: "active-value" | "strategy" | "fallback";
     strategyId?: string;
     reason: string;
   };

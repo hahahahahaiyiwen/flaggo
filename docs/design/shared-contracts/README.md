@@ -540,7 +540,7 @@ type ServerDecisionCommon = {
   decisionKey: string;
   definition: DecisionDefinitionRef;
   decisionId: string;
-  decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
+  decisionMode: "active-value" | "strategy" | "fallback";
   strategyId?: string;
   confidence: ConfidenceReport | null;
   reason: string;
@@ -605,7 +605,9 @@ Rules:
   management JSON request bodies never serialize it.
 - The response returns the final concrete value for application code.
 - `valueType` discriminates `value`; mismatched pairs and non-finite number values are invalid.
-- `decisionMode` explains how the value was produced without exposing internals.
+- `decisionMode` explains how the current Phase 3 value was produced without
+  exposing internals. Future mechanisms such as experiment assignment require
+  a separately approved response-contract extension.
 - The server wire response always contains `definition`, `decisionId`, `auditId`, `policy`, verified `definitionStatus`, and `exposure`.
 - A local client fallback caused by data-plane unavailability is an SDK-produced `ClientFallbackResult`; it is disabled unless explicitly configured and cannot claim server policy, definition status, decision, audit, or exposure identity.
 - A client fallback carries only `expectedContract` as client provenance, after the local call-site digest has matched the accepted runtime binding.

@@ -2,14 +2,16 @@
 
 ## Purpose
 
-Decision lifecycles are the control-plane workflows that turn declared or
-proposed behavior into approved runtime authority and manage that authority
-until it is superseded, expired, completed, or rolled back.
+Decision lifecycles are the control-plane workflows that turn declared
+behavior into approved runtime authority. Phase 3 activates bundle-approved
+authority and supersedes it when replacement authority is activated. Expiry,
+completion, rollback, and proposal-managed lifecycle transitions require
+separately approved future contracts.
 
 They answer:
 
-> How does declared or proposed behavior become active, remain governed, and
-> safely end?
+> How does declared behavior become active, remain governed, and become
+> superseded by replacement authority?
 
 Decision lifecycles do not generate deep recommendations and do not select values for individual application requests.
 
@@ -20,6 +22,7 @@ Definition bundle
   -> activation
   -> GovernedDecisionState
 
+Future Phase 4:
 Decision Intelligence, operator, or authorized automation
   -> DecisionProposal -> governance -> activation
   -> GovernedDecisionState
@@ -34,13 +37,14 @@ GovernedDecisionState
 | Capability | Owns | Does not own |
 | --- | --- | --- |
 | Decision intelligence | Evidence analysis and proposal generation. | Approval or active authority. |
-| Decision lifecycle | Bundle approval, proposal governance, activation, monitoring, conclusion, and state transitions. | Per-request value selection. |
+| Decision lifecycle | Phase 3 bundle approval, activation, and supersession; future contracts may add proposal governance and broader transitions. | Per-request value selection. |
 | Runtime execution | Applying compatible approved state to one request. | Proposing or approving future state. |
 
-Initial authority may be declared in a definition bundle. Later proposals may
-originate from intelligence, operators, deployment automation, or another
-authorized producer. Authority comes from authenticated approval and lifecycle
-activation, not from candidate or proposal source.
+Initial authority may be declared in a definition bundle. Future
+proposal-managed authority may originate from intelligence, operators,
+deployment automation, or another authorized producer. Authority always comes
+from authenticated approval and lifecycle activation, not from candidate or
+proposal source.
 
 ## Authority workflows
 
@@ -120,23 +124,24 @@ The producer cannot write runtime authority directly.
 
 ## Shared authority model
 
-Depending on the workflow, the lifecycle layer consumes:
+The Phase 3 lifecycle consumes:
 
 - a versioned decision definition;
-- a bundle-declared initial authority candidate or typed `DecisionProposal`;
+- a bundle-declared initial authority candidate;
 - current governed state and expected baseline;
 - effective policy;
-- target authority and conflict information;
-- evidence quality and uncertainty when a proposal claims them;
-- operator controls and lifecycle history when the workflow requires them.
+- target authority and conflict information.
 
 It produces either:
 
-- a new or updated `GovernedDecisionState`;
+- an active `GovernedDecisionState` that supersedes its predecessor;
 - a pending approval disposition;
-- a hold with no authority change;
-- a rejection with reason codes;
-- a transition to a replacement or previous known-safe state.
+- a rejected approval or failed activation with reason codes.
+
+Future proposal-managed contracts may additionally consume typed proposals,
+evidence, uncertainty, operator controls, and lifecycle history. They may add
+hold or broader transition outcomes without changing the Phase 3 state
+contract implicitly.
 
 ## Candidate, proposal, and state lifecycles
 
@@ -144,35 +149,39 @@ It produces either:
 Bundle initial authority:
   declared -> approval-pending -> authorized -> activated
 
-DecisionProposal:
+GovernedDecisionState:
+  active -> superseded
+
+Future DecisionProposal:
   proposed -> validated -> pending-approval | approved | rejected
 
-GovernedDecisionState:
-  pending -> active -> superseded | expired | completed | rolled-back
+Future lifecycle transitions:
+  active -> expired | completed | rolled-back
 ```
 
 Approval and activation are separate events. Registration with required initial
-authority is not ready until activation succeeds. An approved proposal may
-remain pending until its start condition, schedule, or rollout prerequisite is
-satisfied.
+authority is not ready until activation succeeds.
 
-Rollback is a transition, not a governed-state payload kind. It activates a replacement or previous known-safe state and marks the replaced state `rolled-back`.
+Future proposal-managed approvals may remain pending until an approved start
+condition or schedule is satisfied. Rollback is also a future transition
+contract: it would activate replacement or previous known-safe authority rather
+than becoming a governed-state payload kind.
 
 The shared activation core owns state identity and generation, authority
 address, expected-baseline compare-and-swap, idempotent replay, predecessor and
 approval references, validation conflicts, read-only runtime projection, and
 atomic publication.
 
-The merged Track B implementation is broader than this target. A follow-up
-review will remove or defer generic proposal/source abstractions,
-evidence/confidence/expiry metadata, completion/expiry/rollback transitions,
-broad lifecycle statuses, and public transition/history APIs not required by
-activation and replay.
+The Phase 3 contract intentionally excludes generic proposal/source
+abstractions, evidence/confidence/expiry metadata,
+completion/expiry/rollback transitions, broad lifecycle statuses, and public
+transition/history APIs not required by activation and replay.
 
-## Governance
+## Future proposal-managed governance
 
-Proposal-managed governance evaluates proposals independently of the reasoning
-that produced them:
+The following is a conceptual Phase 4 boundary, not a current wire or state
+contract. Proposal-managed governance would evaluate proposals independently
+of the reasoning that produced them:
 
 ```text
 DecisionProposal
@@ -195,7 +204,7 @@ Effective policy is the intersection of:
 
 Less-trusted layers may narrow behavior but cannot widen it.
 
-## Governance dispositions
+## Future governance dispositions
 
 Proposal type and governance disposition are different concepts. An experiment is a proposal type, not an approval result.
 The following terms are conceptual Phase 4 outcomes, not a frozen wire enum;
@@ -209,24 +218,26 @@ issue #25 owns the concrete proposal and governance contract.
 | `hold` | Existing authority remains unchanged because evidence or timing is insufficient. |
 | `rejected` | The proposal violates contract, policy, authority, or safety requirements. |
 
-## Governed state kinds
+## Current Phase 3 authority kinds
 
-Approved authority may represent:
+Approved Phase 3 authority represents exactly one of:
 
 | Kind | Meaning |
 | --- | --- |
-| Fixed value | Return one approved value. |
-| Strategy | Evaluate approved deterministic rules or bounded models. |
-| Experiment | Allocate declared assignment targets among approved variants to generate comparative evidence. |
-| Rollout | Progressively route an approved change across a population. |
-| Fallback-only | Serve only the safe registered fallback. |
-| Override | Apply explicit operator authority until removed or expired. |
+| `active-value` | Return one approved value. |
+| `numeric-rule` | Evaluate the approved deterministic numeric rule against declared inputs. |
 
-These are state kinds. Runtime execution mechanisms are defined separately in [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
+Governed fallback is a runtime outcome, not a persisted authority kind.
+Experiment, rollout, fallback-only, and override authority remain future
+concepts pending separately approved state, lifecycle, runtime, and policy
+contracts. Runtime execution mechanisms are defined separately in
+[Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
 
-## Adaptive optimization lifecycle
+## Future adaptive optimization lifecycle
 
-Adaptive optimization uses accumulated evidence to improve an active value or strategy:
+The following is conceptual Phase 4 behavior, not a current contract. Adaptive
+optimization may use accumulated evidence to improve an active value or
+strategy:
 
 ```text
 observe attributed outcomes and drift
@@ -336,22 +347,23 @@ recorded lifecycle transition, never a hidden exception.
 
 ## Audit and explanation
 
-Lifecycle audit records should capture:
+Phase 3 lifecycle audit records should capture:
 
-- proposal identity and source;
+- bundle candidate and server-derived proposal identity;
 - definition identity;
-- evidence references;
-- effective policy and reason codes;
+- effective policy and activation reason codes;
 - requested and resolved targets;
 - approval identity and timestamp;
 - previous and replacement state IDs;
-- experiment or rollout transition;
-- operator actions;
-- explanation and rollback rationale.
+- activation explanation.
 
-Every active state must be reconstructable from either its bundle candidate and
-bundle approval or its proposal, policy outcome, approval, and transition
-history.
+Future proposal-managed audit contracts may add evidence references, experiment
+or rollout transitions, operator actions, and rollback rationale.
+
+Every Phase 3 active state must be reconstructable from its bundle candidate,
+bundle approval, and activation record. A future proposal-managed state must
+likewise be reconstructable from its proposal, policy outcome, approval, and
+transition history.
 
 ## Relationship to contract and evidence flows
 
@@ -365,7 +377,7 @@ telemetry ingestion
   -> supplies evidence and attributed outcomes
 
 decision lifecycle
-  -> creates and transitions governed authority
+  -> activates and supersedes Phase 3 governed authority
 
 runtime execution
   -> consumes that authority
@@ -375,12 +387,12 @@ runtime execution
 
 1. **Authority is explicit**: only approved governed state can affect runtime behavior.
 2. **Bundles cannot self-approve**: a declared initial authority remains a candidate until authenticated approval and activation.
-3. **Proposal type is not disposition**: experiment and rollout describe proposed behavior; approved and rejected describe governance outcomes.
-4. **Approval is separate from activation**: timing and prerequisites remain enforceable.
-5. **Transitions are auditable**: promotion, supersession, completion, and rollback identify previous and replacement state.
+3. **Current authority kinds are narrow**: Phase 3 persists only `active-value` or `numeric-rule` authority.
+4. **Approval is separate from activation**: Phase 3 readiness requires both.
+5. **Transitions are auditable**: Phase 3 supersession identifies previous and replacement state; future transition kinds require their own contracts.
 6. **Policy cannot be bypassed**: intelligence and operators act through explicit governance mechanisms.
-7. **Experiments require opt-in**: controlled variation must remain inside a definition-owned envelope.
-8. **Rollout and experiment intent remain distinct**: risk reduction is not causal comparison.
+7. **Future experiments require opt-in**: controlled variation must remain inside a definition-owned envelope.
+8. **Future rollout and experiment intent remain distinct**: risk reduction is not causal comparison.
 
 ## Related documents
 

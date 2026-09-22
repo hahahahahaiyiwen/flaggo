@@ -44,8 +44,8 @@ request(decision key, runtime context, signal inputs)
   -> resolve the definition-owned target chain
   -> fetch governed state
   -> fetch telemetry evidence and assess uncertainty only when required
-  -> load active fixed value, strategy, experiment, rollout, override, or fallback
-  -> execute the matching approved runtime mechanism
+  -> load active-value or numeric-rule authority, or resolve governed fallback
+  -> execute the matching Phase 3 runtime mechanism
   -> apply deterministic runtime policy checks
   -> record audit/explanation
   -> return RuntimeDecisionResult, possibly containing fallback

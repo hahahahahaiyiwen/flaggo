@@ -55,6 +55,10 @@ definition + evidence + current state
 
 Both paths use the same runtime state and execution boundary.
 
+The remaining sections describe conceptual Phase 4 responsibilities and
+deliverables. They do not define current proposal, experiment, rollout,
+override, rollback, or fallback-only wire/state contracts.
+
 ## Core responsibility
 
 Decision intelligence behaves like an embedded data scientist and operator assistant. It can:

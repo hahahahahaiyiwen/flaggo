@@ -90,7 +90,9 @@ The decision definition declares a target hierarchy, and resolvers choose path-s
 
 ### Decision intelligence
 
-Decision intelligence is the optional AI-native reasoning layer that turns decision definitions and decision evidence into `DecisionProposal` objects. It participates in proposal-managed authority, not the bundle-approved Phase 3 path.
+Decision intelligence is the optional future Phase 4 reasoning layer that may
+turn decision definitions and decision evidence into `DecisionProposal`
+objects. It does not participate in the bundle-approved Phase 3 path.
 
 It answers: **how should Flaggo reason about what to do next before governance decides whether it is safe to apply?**
 
@@ -104,15 +106,19 @@ Detailed concept design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md).
 
 ### Decision lifecycles
 
-Decision lifecycles authenticate bundle approval, govern independent proposals,
-activate `GovernedDecisionState`, and manage optimization, experiment, and
-rollout transitions through completion or rollback.
+Phase 3 decision lifecycles authenticate bundle approval, activate
+`GovernedDecisionState`, and supersede prior authority. Future
+proposal-managed contracts may add optimization, experiment, rollout,
+completion, and rollback transitions.
 
 Detailed concept design: [DECISION_LIFECYCLES.md](DECISION_LIFECYCLES.md).
 
 ### Runtime decision execution
 
-Runtime decision execution resolves compatible governed state and applies fixed resolution, strategy evaluation, deterministic variant assignment, rollout routing, override, or fallback for one application request.
+Phase 3 runtime decision execution resolves compatible governed state and
+applies active-value resolution, numeric-rule evaluation, or governed fallback
+for one application request. Variant assignment, rollout routing, and override
+remain future mechanisms.
 
 Detailed concept design: [RUNTIME_DECISION_EXECUTION.md](RUNTIME_DECISION_EXECUTION.md).
 
@@ -135,8 +141,8 @@ At a high level:
 
 ```text
 DecisionDefinition + runtime context + compatible GovernedDecisionState
-  -> fixed resolution, strategy evaluation, variant assignment,
-     rollout routing, override, or fallback
+  -> active-value resolution, numeric-rule evaluation,
+     or governed fallback
   -> policy, target, and safety checks
   -> RuntimeDecisionResult, possibly containing fallback
 ```
@@ -294,19 +300,20 @@ contracts.
 
 ### 7. [Decision reasoning engine](design/reasoning-engine/README.md)
 
-The decision reasoning engine executes the decision intelligence model and proposes the next candidate action.
+The Phase 3 reasoning seam executes approved numeric rules. A future Phase 4
+seam may run decision intelligence and propose the next candidate action.
 
 Responsibilities:
 
-- interpret evidence relative to goals,
-- account for uncertainty,
-- compare candidate values and strategies within the action space,
-- choose an analysis mode such as qualitative reasoning, heuristic rules, experiment analysis, bandits, statistical models, or LLM-assisted reasoning,
-- produce decision proposals or strategy proposals rather than directly applying runtime decisions,
-- produce a rationale,
-- hand candidate decisions to policy before application.
+- deterministically execute the approved Phase 3 `numeric-rule`,
+- return a typed candidate or execution error without owning state, policy, or
+  fallback,
+- preserve a separate future boundary for evidence interpretation, uncertainty,
+  candidate comparison, proposal generation, and rationale.
 
-This engine may use AI, deterministic algorithms, statistical methods, bandits, rules, or hybrids. The design should not assume every decision requires an LLM.
+Future proposal generation may use AI, deterministic algorithms, statistical
+methods, bandits, rules, or hybrids. It must not change the bounded Phase 3
+runtime executor or assume every decision requires an LLM.
 
 ### 8. [Audit and explanation service](design/audit-explanation/README.md)
 
@@ -321,11 +328,13 @@ Responsibilities:
 
 Auditability is required for trust. It is not optional observability.
 
-### 9. [Operator console](design/operator-console/README.md)
+### 9. [Future operator console](design/operator-console/README.md)
 
-The operator console is the human governance interface.
+The future operator console is the human governance interface. Phase 3
+provides inspectable audit, state, and registration output but no current
+pause, override, or rollback authoring surface.
 
-Responsibilities:
+Future responsibilities:
 
 - list decision keys and definitions,
 - inspect runtime/control/evidence/policy targets and resolution chains,
@@ -386,8 +395,8 @@ Decision API
   -> resolves runtime target, control target, policy, and fallback
   -> fetches evidence snapshots only when active authority or policy requires them
   -> fetches compatible GovernedDecisionState
-  -> executes fixed value, approved strategy, variant assignment,
-     rollout routing, override, or fallback
+  -> resolves active-value authority, evaluates numeric-rule authority,
+     or produces governed fallback
   -> applies deterministic runtime policy checks
   -> records audit/explanation
   -> returns RuntimeDecisionResult, possibly containing fallback
@@ -397,7 +406,8 @@ Application code
   -> emits outcome telemetry
 ```
 
-The **decision intelligence path** analyzes evidence outside the application's request/response path:
+The future **decision intelligence path** analyzes evidence outside the
+application's request/response path:
 
 ```text
 Telemetry changes, schedule, operator request, definition activation, rollout review, or drift
@@ -422,8 +432,8 @@ DecisionDefinition + initialAuthority
   -> GovernedDecisionState
 ```
 
-The **proposal-managed lifecycle path** turns independent proposals into
-authority:
+The future **proposal-managed lifecycle path** conceptually turns independent
+proposals into authority:
 
 ```text
 DecisionProposal
@@ -436,22 +446,27 @@ DecisionProposal
 
 Runtime decision execution then applies deterministic, bounded, policy-gated state and returns a `RuntimeDecisionResult`.
 
-Rollback is not a kind of governed-state payload. A rollback proposal transitions authority by activating a replacement or previous known-safe state and marking the replaced state `rolled-back`.
+Rollback is a future transition contract, not a governed-state payload kind.
+It would activate replacement or previous known-safe authority.
 
-Governed state lifecycle:
+Current and future lifecycle boundaries:
 
 ```text
-DecisionProposal: proposed -> validated -> pending-approval | approved | rejected
-GovernedDecisionState: pending -> active -> superseded | expired | completed | rolled-back
+GovernedDecisionState:
+  active -> superseded
+
+Future DecisionProposal:
+  proposed -> validated -> pending-approval | approved | rejected
+
+Future lifecycle transitions:
+  active -> expired | completed | rolled-back
 ```
 
-Proposal-managed approval can be automatic for low-risk changes within typed
-constraints and sufficient evidence only when deployment or environment policy
-grants that authority. Human approval is required for high-impact strategies,
-policy exceptions, insufficient evidence quality, excessive model uncertainty,
-weak expected outcome, overlapping target conflicts, or
-regulated/business-critical decisions. Bundle-approved authority instead
-requires an authenticated actor to approve the exact declared snapshot.
+Future proposal-managed approval may be automatic for low-risk changes within
+typed constraints and sufficient evidence only when deployment or environment
+policy grants that authority. Its concrete automatic and human approval rules
+remain deferred. Phase 3 bundle-approved authority requires an authenticated
+actor to approve the exact declared snapshot.
 
 Cross-cutting flows keep the system declared, evidenced, audited, and improved over time:
 

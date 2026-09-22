@@ -32,7 +32,7 @@ Each component under [`DESIGN.md` / System components](../DESIGN.md#system-compo
 | 6 | State service | [state](state/README.md) | Active authority, state identity/generation, activation lineage, CAS, replay, and runtime projection. |
 | 7 | Decision reasoning engine | [reasoning-engine](reasoning-engine/README.md) | Bounded runtime strategy execution plus optional future proposal generation. |
 | 8 | Audit and explanation service | [audit-explanation](audit-explanation/README.md) | Decision audit records, evidence lineage, policy outcomes, and explanations. |
-| 9 | Operator console | [operator-console](operator-console/README.md) | Human governance surface for inspection, control, override, pause, approval, and rollback. |
+| 9 | Operator console | [operator-console](operator-console/README.md) | Current audit/state visibility seam and future human governance surface; override, pause, and rollback require later contracts. |
 
 ## Cross-cutting contracts
 
