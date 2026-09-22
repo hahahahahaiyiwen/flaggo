@@ -141,9 +141,10 @@ DecisionDefinition
             - tetris.recoveryFailures: 0..5 * 0.20
             - tetris.currentLevel: 0..20 * 0.10
         rationale: Initial deterministic Tetris behavior.
-  safety:
+  policy:
+      kind: inline
       constraints:
-        - type: max-step-change
+        - kind: max-delta
           value: 50
 ```
 
@@ -151,6 +152,10 @@ Notes:
 
 - The decision key is a sub-concept of the decision definition: it identifies the decision family.
 - The definition owns the output **contract** or action space, not the actual runtime result.
+- In revised Phase 3, `max-delta` compares the candidate with the fixed contract
+  default (`output.default = 800`, normalized as `actionSpace.default`). It does
+  not imply previous-result or request-time stabilization semantics, which
+  remain owned by #33.
 - Experiment permission and active experiment metadata are future contract
   concerns. The current Phase 3 `DecisionDefinition` and
   `GovernedDecisionState` contain no experiment fields.

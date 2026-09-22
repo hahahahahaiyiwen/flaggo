@@ -92,14 +92,18 @@ const flaggo = await createFlaggoClient({
     exporter: "opentelemetry",
     otlpEndpoint: "https://otel-collector.example.com",
     sampleRate: 1.0,
-    flushIntervalMs: 5000,
-    includeDecisionContext: true
+    flushIntervalMs: 5000
   },
   availabilityFallback: {
     mode: "local-default"
   }
 });
 ```
+
+The telemetry exporter emits raw domain telemetry only; it never attaches
+decision context. After the application applies a server decision and confirms
+the exposure, attributed outcome telemetry uses an explicit exposure-scoped
+operation or payload containing the returned `exposureId`.
 
 Startup registration sends the canonical bundle to the control-plane API once and initializes the data-plane client from the accepted receipt. Each production decision request then carries the required definition ID, revision, and contract digest plus optional build/deployment metadata; it does not resend the bundle.
 
