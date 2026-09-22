@@ -464,7 +464,9 @@ Scope boundary: this phase verifies extraction, registration, decision
 consumption, policy behavior, exposure confirmation, telemetry emission, and
 fallback semantics. The application computes its inference metric locally.
 Telemetry ingestion, server-side metric derivation, evidence updates, and
-learning from outcomes remain Phase 4 concerns.
+learning from outcomes remain Phase 4 concerns. Every ready decision path
+still requires a durable local audit sink; console and in-memory sinks are
+limited to tests or explicitly non-ready debugging modes.
 
 Scenario: implement a TypeScript console application under
 `examples/adaptive-worker/` that processes an in-memory work queue. Flaggo
@@ -532,6 +534,8 @@ Deliverables:
 - application of each returned batch size before exposure confirmation,
 - telemetry sink that exposes emitted signals locally, preferably through the
   OpenTelemetry-compatible SDK adapter,
+- durable local audit sink whose successful acknowledgment survives process
+  failure,
 - documented commands for starting the service and running the worker,
 - automated smoke test covering the complete SDK-to-service path.
 
@@ -550,6 +554,10 @@ Validation:
 - repeated confirmation returns the original exposure identity,
 - emitted telemetry contains the expected signal keys, schema digests, values,
   and timestamps,
+- a volatile audit sink makes the service non-ready and cannot authorize a
+  successful decision response,
+- after service restart, every successful decision remains reconstructable
+  from the durable local audit,
 - service-policy fallback and SDK availability fallback are distinguishable,
 - stopping the service uses local fallback `3` only when explicitly enabled,
 - the demo runs without cloud services or the Tetris application.
@@ -559,8 +567,12 @@ Non-goals:
 - feeding emitted telemetry back into service evidence,
 - server-side aggregation or derived-metric calculation,
 - adapting policy or strategy from observed outcomes,
-- durable queue, registry, state, evidence, exposure, or audit storage,
+- durable queue, registry, state, evidence, or exposure storage,
 - production authentication or deployment.
+
+The existing in-memory audit composition predates this readiness contract. #40
+owns binding the durable local sink and making volatile audit configurations
+non-ready before this acceptance path can be treated as ready.
 
 ### Phase 3: Bundle-approved Tetris hero
 
@@ -645,7 +657,8 @@ Deliverables:
   projection, and atomic publication;
 - complete #40 to replace the frozen bundle v1 contract rather than adding a
   compatibility layer, and remove the mixed-purpose `onlineStrategy`
-  declaration;
+  declaration; #40 also binds the durable local audit sink for ready service
+  compositions and rejects volatile audit readiness;
 - validate the initial numeric rule against the definition target hierarchy,
   inference inputs, action space, fallback, and runtime policy;
 - durably record authenticated bundle approval before activating the derived

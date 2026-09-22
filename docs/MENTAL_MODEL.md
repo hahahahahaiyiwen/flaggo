@@ -287,17 +287,21 @@ The word "scope" should not carry every meaning. Decision definitions declare a 
 | Fallback scope | Boundary where a fallback value or rule applies. |
 | Application/build provenance | Software artifact identity used for audit and operations, not a personalization target by default. |
 
-Target hierarchy is not a guarantee that every target kind forms a clean total order. Some target kinds, especially cohorts, can overlap. Resolution must therefore use selector semantics and precedence, not just "nearest ancestor wins."
+Current runtime resolution does not arbitrate overlapping selectors or
+priorities. Reasoning supplies an ordered set of exact targets authorized by
+the registry-owned runtime projection: the exact primary `inference.target`
+followed only by the exact target kinds declared in `inference.fallbackOrder`.
+Any future overlapping-selector or priority model requires a separately
+approved target-resolution contract.
 
-Target resolution should define:
+Authority replacement is independent of target-resolution precedence:
 
 | Rule | Meaning |
 | --- | --- |
-| Selector | Predicate or identifier that determines whether a target applies. |
-| Specificity | More specific targets usually outrank broader targets. |
-| Priority | Explicit numeric or ordered priority breaks ties among overlapping targets. |
-| Supersession | A state can replace another only through explicit `supersedesStateId`, a unique-active-state invariant, or policy-mediated conflict resolution. |
-| Conflict result | If two applicable states cannot be ordered safely, policy should force fallback or operator review. |
+| Stable address | Application, environment, decision key, and control target identify one authority head across semantic revisions. |
+| Expected baseline | Approval preparation captures and durably stores the current `ExpectedAuthorityBaseline` with the deterministic activation plan. |
+| Replacement | Activation compare-and-swaps the stable head against that captured baseline; a changed head produces a stale conflict rather than an alternate mutation path. |
+| Predecessor | A successful replacement creates a new immutable state whose `predecessorStateId` records the replaced state. |
 
 For the Tetris definition whose explicit fallback order is
 `cohort -> global`, resolution produces:
