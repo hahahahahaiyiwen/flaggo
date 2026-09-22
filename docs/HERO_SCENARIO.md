@@ -383,9 +383,10 @@ This explicit form remains useful when definitions are generated, reused across 
 
 The bundle may declare the initial authority candidate, but it cannot declare
 that candidate approved. Flaggo owns the generated proposal and activation
-identities, active state, predecessor, generation, approval reference, and
-future replacement transitions. Proposal-managed producers may later recommend
-fixed values, rules, experiments, learned strategies, or fallback-only state.
+identities, materialized strategy identity, active state, predecessor,
+generation, approval reference, and future replacement transitions.
+Proposal-managed producers may later recommend fixed values, rules,
+experiments, learned strategies, or fallback-only state.
 
 The declaration can produce or contribute to a canonical contract bundle during build or release:
 
@@ -415,16 +416,24 @@ Flaggo should support different owners and systems across the software lifecycle
 
 This lifecycle supports TypeScript-first development without making CI/CD integration a requirement. For MVP, trusted startup publishes the extracted bundle; future clients can move that operation to CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first tooling. Code can deploy even when startup registration later fails, but its Polari calls remain disabled. Rolling deployments remain safe because each successful startup receives and uses its exact immutable identity.
 
-When a definition changes semantically, Flaggo should not automatically share active decision state with the new definition. It may still reuse telemetry facts and matching immutable signal keys so the new definition does not start completely cold:
+When a definition changes semantically, Flaggo replaces authority through the
+same stable application/environment/decision-key/control-target head. The new
+immutable state remains bound to the new exact definition identity, while
+telemetry facts and matching immutable signal keys may still be reused:
 
 ```text
 raw observations: reusable when immutable signal keys match
 evidence views: reusable when signal key, target, window, and filters match
-governed state: isolated by decision definition and control target
+authority head: stable across semantic revisions for ordered CAS replacement
+governed state record: bound to one exact definition identity
 future temporal state: isolated by its explicitly approved address contract
 ```
 
-This lets a new `dropInterval` definition add a signal such as `recoveryFailures` while reusing historical `boardPressure` and `placementTimeMs` evidence. The new signal warms up independently, and active strategies remain isolated until an explicit migration is approved.
+This lets a new `dropInterval` revision add a signal such as
+`recoveryFailures` while reusing historical `boardPressure` and
+`placementTimeMs` evidence. The new signal warms up independently, and the new
+strategy becomes authority only through its own approved activation of the
+stable head.
 
 ### Operator and product experience
 
@@ -577,7 +586,7 @@ The game must always have a safe behavior even when Flaggo cannot decide.
 For a valid registered Phase 3 request, Flaggo returns the audited server
 fallback when:
 
-- active state is missing or incompatible,
+- no permitted target has compatible active state,
 - runtime policy blocks the candidate.
 
 Separately, an explicitly configured SDK availability fallback may return the
@@ -588,6 +597,9 @@ Missing or invalid inference inputs or runtime context are request errors.
 Missing, conflicting, retired, or non-ready contract identity is a contract or
 initialization error. These errors use Problem Details or failed initialization
 and never become server or client fallback decisions.
+
+Corrupt, torn, or internally incoherent persisted state also fails service
+readiness; it is not treated as an ordinary absence of compatible authority.
 
 Proposal-managed authority may add evidence, uncertainty, expected-outcome, or
 operator-mode fallback reasons.

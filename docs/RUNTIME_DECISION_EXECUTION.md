@@ -50,8 +50,10 @@ authority and applicable policy require them.
 Application
   -> Decision API
   -> validate exact definition identity
-  -> resolve runtime target
-  -> resolve applicable control state
+  -> validate registration and state-store readiness
+  -> resolve ordered exact targets from inference target + fallbackOrder
+  -> read stable authority heads in that order
+  -> select the first exact definition-compatible state
   -> verify state compatibility and policy
   -> execute fixed value, strategy, variant assignment,
      rollout routing, override, or fallback
@@ -71,20 +73,24 @@ Missing, unknown, conflicting, or retired definition identity is a contract erro
 | Variant assignment | Deterministically assign an eligible target to an approved experiment variant. |
 | Rollout routing | Route an eligible target according to the current approved rollout stage. |
 | Override | Return the applicable operator-pinned value. |
-| Fallback | Return the registered safe value when compatible state, evidence, or runtime policy prevents normal execution. |
+| Fallback | Return the registered safe value when no permitted target has compatible active state, or applicable evidence/runtime policy prevents normal execution. |
 
 The mechanism is selected from governed state; the runtime does not choose a new lifecycle.
 
 ## State and target resolution
 
 ```text
-runtime target + target hierarchy
-  -> find applicable compatible governed states
-  -> apply selector, specificity, priority, and supersession rules
-  -> one active control state
+runtime target + verified context + explicit fallbackOrder
+  -> ordered exact resolutionTargets
+  -> stable authority head for each target
+  -> first active state matching the request's exact definition identity
 ```
 
-If applicable states cannot be safely ordered, runtime policy must force an explicit conflict result, normally server fallback or operator review. Runtime execution must not arbitrarily pick one.
+The target hierarchy authorizes target kinds but never inserts undeclared
+fallback levels. A well-formed head for another revision is simply
+incompatible and resolution may continue. Corrupt or incoherent state, a torn
+store, or a non-ready registration is a readiness error; runtime must not turn
+those failures into `missing_state` fallback.
 
 The decision record should distinguish:
 
@@ -240,10 +246,13 @@ An exposure is recorded only after the client confirms that it applied or render
 
 Fallback has explicit provenance:
 
-- **Server fallback** is an audited runtime result produced when compatible
-  registered state, applicable evidence, or policy prevents normal execution.
+- **Server fallback** is an audited runtime result produced when no permitted
+  target has compatible active state, or applicable evidence or policy
+  prevents normal execution. Missing-state fallback has no selected control
+  target, state lineage, strategy identity, or exposure confirmation.
 - **Client fallback** is permitted only for explicitly configured data-plane availability failures and cannot claim server decision, policy, audit, or exposure identity.
-- **Contract errors** never become fallback.
+- **Contract/readiness errors**, including corrupt or incoherent persisted
+  state, never become fallback.
 
 Fallback remains inside the registered decision definition and effective policy.
 
@@ -253,10 +262,10 @@ Fallback remains inside the registered decision definition and effective policy.
 request:
   definition = tetris.dropInterval revision 2
   runtimeTarget = session:game-456
-  boardPressure = 0.82
-  recentPlacementTimeMs = 1420
-  recoveryFailures = 2
-  currentLevel = 8
+  inputs.tetris.boardPressure = 0.82
+  inputs.tetris.recentPlacementTimeMs = 1420
+  inputs.tetris.recoveryFailures = 2
+  inputs.tetris.currentLevel = 8
 
 resolved state:
   controlTarget = cohort:new_players

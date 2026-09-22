@@ -95,7 +95,7 @@ The exposure confirm token is an authorization capability, not audit data. The D
   },
   "stateSummary": {
     "decisionMode": "strategy",
-    "strategyId": "strategy-tetris-new-players-v1",
+    "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
     "stateId": "state_01...",
     "generation": 1,
     "proposalId": "proposal_01...",

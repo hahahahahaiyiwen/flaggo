@@ -105,7 +105,7 @@ Reason-code vocabulary, including future conditional policies:
 | `insufficient_sample_size` | Evidence sample size is below policy requirement. |
 | `decision_paused` | Operator pause blocks adaptive decisioning. |
 | `retired_contract` | Contract lifecycle prevents approved decisions. |
-| `missing_state` | Required state is unavailable. |
+| `missing_state` | No permitted target has compatible active state. |
 | `fallback_required` | No safe candidate can be approved. |
 
 ## Runtime behavior

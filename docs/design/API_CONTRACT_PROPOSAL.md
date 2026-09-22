@@ -242,6 +242,18 @@ Proposed request body:
     {
       "signal": { "key": "tetris.boardPressure" },
       "value": 0.82
+    },
+    {
+      "signal": { "key": "tetris.currentLevel" },
+      "value": 7
+    },
+    {
+      "signal": { "key": "tetris.recentPlacementTimeMs" },
+      "value": 1420
+    },
+    {
+      "signal": { "key": "tetris.recoveryFailures" },
+      "value": 2
     }
   ],
   "client": {
@@ -261,6 +273,7 @@ Request invariants:
 - Optional `Idempotency-Key` controls retry deduplication; the correlation header remains tracing metadata and is not uniqueness identity.
 - `inputs` contains unique signal keys and is key-sorted by conforming clients.
 - The server rejects duplicate signal keys within `inputs`; deterministic ordering does not make conflicting values valid.
+- Every required `inference.inputs` signal is present exactly once.
 - Every input must be declared for the decision's inference role and resolve to an app-emitted primitive metric.
 - Runtime context fields must conform to the registered context schema.
 - The caller may not submit policy, objectives, action-space changes, strategy definitions, or full decision definitions.
@@ -279,10 +292,10 @@ Proposed server response:
     "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
   },
   "decisionId": "decision-123",
-  "value": 700,
+  "value": 850,
   "valueType": "number",
   "decisionMode": "strategy",
-  "strategyId": "strategy-tetris-new-players-v1",
+  "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
   "runtimeTarget": {
     "type": "session",
     "id": "game-456"
@@ -301,25 +314,20 @@ Proposed server response:
   ],
   "resolutionChain": [
     "session:game-456",
-    "user:user-123",
     "cohort:new_players",
     "global"
   ],
-  "confidence": {
-    "evidenceQuality": 0.82,
-    "modelUncertainty": 0.31,
-    "expectedOutcome": 0.72
-  },
+  "confidence": null,
   "fallback": {
     "source": "server",
-    "resolutionFallbackUsed": false,
+    "resolutionFallbackUsed": true,
     "decisionFallbackUsed": false,
-    "reason": null
+    "reason": "no_active_session_authority"
   },
   "policy": {
     "result": "approved",
     "reasons": [],
-    "appliedConstraints": ["cooldown", "max-delta", "number-bounds"]
+    "appliedConstraints": ["number-bounds", "step", "max-delta"]
   },
   "definitionStatus": {
     "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
@@ -335,7 +343,7 @@ Proposed server response:
     "confirmationRequired": true,
     "confirmToken": "confirm-abc"
   },
-  "reason": "Approved strategy slowed the drop interval within policy bounds.",
+  "reason": "The approved weighted numeric rule met its 0.55 threshold.",
   "auditId": "audit-789"
 }
 ```
@@ -345,15 +353,27 @@ Server response invariants:
 - A successful wire response always has `decisionId`, `auditId`, and `fallback.source = "server"`.
 - A successful wire response always repeats the exact accepted `definitionId + revision + contractDigest` and has `definitionStatus.integrity = "verified"`.
 - `runtimeTarget` and `controlTarget` are optional. Global or otherwise targetless decisions omit them and return an empty provenance list with a resolution chain ending at `global`.
+- `controlTarget` and `strategyId` are omitted when no authority was selected.
+  A `missing_state` fallback then returns empty authority provenance while
+  retaining the ordered attempted targets in `resolutionChain`.
 - `valueType` and `value` form a discriminated union: boolean with boolean, number with finite JSON number, and string with string.
 - The initial response never has `exposureId`.
 - `confidence` is `null` when `decisionFallbackUsed` is true and may also be null for a non-evidence-based `active-value`.
-- `confidence` is required for `strategy` and `experiment` modes and whenever the reason claims evidence-backed adaptation. Resolution fallback therefore retains confidence when a broader target produced an approved evidence-backed decision.
+- `confidence` is non-null only when the selected authority makes an
+  evidence-backed claim. Deterministic bundle-authored strategies and server
+  decision fallback return `null`; an evidence-backed broader-target decision
+  retains its confidence.
 - A non-null confidence object requires `evidenceQuality`; an empty object is invalid. Every confidence field is in the inclusive range `[0, 1]`, and higher `modelUncertainty` means less certainty.
 - Exposure metadata is a union. `confirmationRequired: true` requires `confirmToken`; `confirmationRequired: false` forbids it.
+- Server decision fallback returns `confirmationRequired: false`; it is not an
+  exposure-eligible authority decision.
+- `resolutionFallbackUsed` is true only when an active authority was selected
+  from a broader permitted target, not when every target missed.
 - Set-like arrays are emitted in canonical order; semantically ordered arrays retain their defined order.
 - The response contains structured reason codes in policy/fallback fields. Human-readable `reason` is explanatory and must not be used for program logic.
 - A blocked policy never approves its candidate. When policy supplies the governed fallback value, the `200` response uses `decisionMode: "fallback"`, `decisionFallbackUsed: true`, and may report `policy.result: "blocked"`.
+- Pending activation, failed readiness, or corrupt/incoherent state is an error,
+  not a successful `missing_state` fallback.
 - The default response returns compact confidence and target-resolution provenance. Full evidence-view details remain in the audit record.
 
 The SDK may project this response into `DecisionReceipt<T>` or a detailed result. If the data plane is unavailable and application configuration explicitly enables availability fallback, the SDK creates a distinct client-fallback result with no server `decisionId`, `auditId`, `policy`, `definitionStatus`, or exposure confirmation metadata. It must never do this for a 4xx contract/configuration response.

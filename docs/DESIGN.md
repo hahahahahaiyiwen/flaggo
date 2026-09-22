@@ -214,7 +214,12 @@ Responsibilities:
 - execute compatible governed state through deterministic selection or approved strategy logic,
 - return a value/action, explanation, confidence, policy result, and fallback status.
 
-The Decision API must be fast, reliable, and safe-by-default. For a registered definition, if policy, evidence, or governed state prevents adaptation, it returns the registered fallback rather than pretending confidence exists. Missing, unknown, conflicting, or retired definition identity is a contract error, not a fallback decision.
+The Decision API must be fast, reliable, and safe-by-default. For a ready,
+registered definition, if no permitted target has compatible active state or
+if applicable evidence/policy prevents adaptation, it returns the registered
+fallback rather than pretending confidence exists. Missing, unknown,
+conflicting, retired, or non-ready definition identity and corrupt/incoherent
+state are errors, not fallback decisions.
 
 Fallback provenance is explicit. A server-produced policy fallback is a normal audited `RuntimeDecisionResult` with `source: server`, policy result, decision ID, and audit ID. An explicitly configured client fallback caused by data-plane unavailability has `source: client-fallback` and cannot claim server policy, decision, audit, or exposure identity. Contract/configuration errors never become client fallback.
 
@@ -273,7 +278,9 @@ The state service tracks the current and historical state of decisions.
 
 Responsibilities:
 
-- active value or strategy per decision definition and control target,
+- one stable authority head per application/environment/decision key/control
+  target,
+- immutable exact-definition active value or strategy records,
 - state identity and monotonic generation,
 - predecessor, proposal, activation, and approval references,
 - atomic expected-baseline activation,

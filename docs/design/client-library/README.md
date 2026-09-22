@@ -891,9 +891,14 @@ const decision = await dropInterval.decide({
   runtimeContext: {
     userId,
     sessionId,
-    boardPressure,
-    recentPlacementTimeMs
-  }
+    cohort: playerCohort
+  },
+  inputs: [
+    boardPressureSignal.input(boardPressure),
+    recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+    recoveryFailuresSignal.input(recoveryFailures),
+    currentLevelSignal.input(game.level)
+  ]
 });
 ```
 
@@ -904,6 +909,10 @@ The full `DecisionDefinitionBundle` should not be sent with each runtime request
 - environment variables,
 - deployment annotations or injected config,
 - direct REST headers/body fields.
+
+`runtimeContext` carries declared contextual and target-binding fields.
+Strategy operands use the canonical `inputs` collection; the SDK must not move
+or duplicate inference values into context.
 
 Different builds of the same service can be deployed at the same time. The SDK should treat expected definition identity as build/deployment metadata attached to each workload.
 

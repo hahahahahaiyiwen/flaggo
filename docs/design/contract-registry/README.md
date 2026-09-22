@@ -307,7 +307,11 @@ Tooling extracts signal identities and target schemas from the bindings above, d
   the immutable revision and authorizes expected-baseline activation.
 - Registration remains non-ready until every required initial authority is
   active. Exact retries return the original ready receipt.
-- Old builds continue using the old identity; new builds use the new identity.
+- Old builds continue sending their exact old identity; new builds send the new
+  identity. If a newer semantic revision has replaced the stable authority
+  head, an accepted old request never consumes that newer state and instead
+  receives server fallback unless another permitted target has exact compatible
+  authority.
 - Within one build, repeated declarations of the same decision key must normalize to the same canonical digest. Identical definitions are deduplicated; different digests are a `contract-conflict` build error.
 - Runtime calls attach a build-generated or memoized descriptor and evaluate only bound values. They must not recalculate or register static definition semantics on each call.
 - Unsupported or runtime-dependent extraction is invalid. Production runtime returns 4xx Problem Details for an unknown or conflicting identity; it never derives management state from an executed branch, selects another revision, or invokes local fallback.
@@ -502,19 +506,22 @@ The important design is:
 - pending requests have an authoritative `expiresAt`; terminal transitions are immutable and compare-and-swap safe,
 - same terminal action is idempotent; opposite concurrent/terminal action returns `approval-terminal-conflict`,
 - approval/rejection persist the authorized actor and comment,
-- the server derives per-definition proposal and activation identities from
+- the server derives per-definition proposal, activation, and strategy
+  identities from
   the canonical tuple defined by
   [Decision Lifecycles](../../DECISION_LIFECYCLES.md#bundle-approved-authority);
   activation creates the state identity through expected-baseline
-  compare-and-swap,
+  compare-and-swap on the stable
+  application/environment/decision-key/control-target head,
 - reapplying an expired bundle with the same deterministic key revalidates and creates one linked replacement request,
 - startup retry with the same bundle returns `activation-pending` until state is
   active, then returns the original ready receipt,
 - registration returns `acceptedDefinitions`, containing the complete
   definition ID/revision/digest tuple and required activated-authority
   references per decision key,
-- exact replay returns the same activation and state; a stale expected baseline
-  cannot overwrite newer bundle-approved or proposal-managed authority,
+- exact replay returns the same strategy, activation, and state; a stale
+  expected baseline cannot overwrite newer bundle-approved or proposal-managed
+  authority, including authority from another semantic revision,
 - retryable interruption or outcome-unknown failure resumes the same approval
   and activation identities, while stale-baseline or permanent conflicts
   return `activation-failed` with `requires-new-approval`; reapply revalidates

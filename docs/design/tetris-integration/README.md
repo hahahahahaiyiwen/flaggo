@@ -51,9 +51,15 @@ trusted registration behavior in browser code.
 - The bundle is rejected if the initial rule references undeclared inference
   inputs or violates target, action-space, fallback, or policy constraints.
 - The completed registration receipt identifies the proposal, activation,
-  active state, generation, control target, and numeric-rule kind.
+  server-derived strategy, active state, generation, control target, and
+  numeric-rule kind.
 - Exact startup retries return the same activation and state. A stale baseline
   cannot overwrite newer authority.
+- Semantic-revision replacement compare-and-swaps the same stable
+  application/environment/decision-key/control-target authority head.
+- Activation derives one opaque strategy ID from the activation and canonical
+  rule; the ready receipt, state, runtime response, and audit use that same ID,
+  including exact replay.
 - High pressure plus slow placement selects `850ms`, exactly one allowed
   `50ms` delta above the `800ms` contract baseline.
 - The real host computes all four normalizations and weights. A `0.9`
@@ -66,12 +72,15 @@ trusted registration behavior in browser code.
   aggregate threshold. The harness asserts response value, strategy ID,
   reason, and persisted audit inputs for every vector.
 - Recovery selects `750ms`, exactly one allowed delta below the baseline.
-- Missing or incompatible state, or a runtime-policy block, returns the audited
-  server fallback of `800ms`.
+- A ready definition with no compatible active state at any permitted target,
+  or a runtime-policy block, returns the audited server fallback of `800ms`.
+- Pending activation, failed readiness, corrupt persistence, and incoherent
+  state fail initialization/readiness rather than returning `800ms`.
 - Data-plane unavailability produces an SDK-local `800ms` fallback whose
   provenance remains distinct from server-policy fallback.
-- Applying and confirming a decision creates a confirmed-exposure audit record
-  and permits linked outcome telemetry; an unused receipt creates neither.
+- Applying and confirming an approved authority decision creates a
+  confirmed-exposure audit record and permits linked outcome telemetry; an
+  unused receipt or server fallback creates neither.
 - Audit output records strategy ID, all four inputs, policy result, fallback
   provenance, and confirmation linkage.
 - Bundle-authored authority records authored rationale and approval provenance,

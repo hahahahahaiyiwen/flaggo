@@ -40,11 +40,10 @@ request(decision key, runtime context, signal inputs)
   -> verify metric objectives resolve to numeric metrics and obey direction/target invariants
   -> verify policy is present
   -> verify expected contract digest/revision when supplied
-  -> resolve target chain
   -> load decision definition
-  -> fetch telemetry evidence
+  -> resolve the definition-owned target chain
   -> fetch governed state
-  -> assess uncertainty
+  -> fetch telemetry evidence and assess uncertainty only when required
   -> load active fixed value, strategy, experiment, rollout, override, or fallback
   -> execute the matching approved runtime mechanism
   -> apply deterministic runtime policy checks
@@ -276,20 +275,19 @@ Response:
   ],
   "resolutionChain": [
     "session:game-456",
-    "user:user-123",
     "cohort:new_players",
     "global"
   ],
   "value": 850,
   "valueType": "number",
   "decisionMode": "strategy",
-  "strategyId": "strategy-tetris-new-players-v1",
+  "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
   "confidence": null,
   "fallback": {
     "source": "server",
-    "resolutionFallbackUsed": false,
+    "resolutionFallbackUsed": true,
     "decisionFallbackUsed": false,
-    "reason": null
+    "reason": "no_active_session_authority"
   },
   "policy": {
     "result": "approved",
@@ -331,8 +329,8 @@ This means Flaggo could not use the most specific requested scope, but it still 
   },
   "decisionId": "decision-791",
   "runtimeTarget": {
-    "type": "user",
-    "id": "user-123"
+    "type": "session",
+    "id": "game-456"
   },
   "controlTarget": {
     "type": "cohort",
@@ -347,20 +345,20 @@ This means Flaggo could not use the most specific requested scope, but it still 
     }
   ],
   "resolutionChain": [
-    "user:user-123",
+    "session:game-456",
     "cohort:new_players",
     "global"
   ],
   "value": 750,
   "valueType": "number",
   "decisionMode": "strategy",
-  "strategyId": "strategy-tetris-new-players-v1",
+  "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
   "confidence": null,
   "fallback": {
     "source": "server",
     "resolutionFallbackUsed": true,
     "decisionFallbackUsed": false,
-    "reason": "no_active_user_authority"
+    "reason": "no_active_session_authority"
   },
   "policy": {
     "result": "approved",
@@ -400,23 +398,12 @@ This means Flaggo could not safely make an approved decision at any applicable s
   },
   "decisionId": "decision-790",
   "runtimeTarget": {
-    "type": "user",
-    "id": "user-123"
+    "type": "session",
+    "id": "game-456"
   },
-  "controlTarget": {
-    "type": "global",
-    "id": "global"
-  },
-  "targetProvenance": [
-    {
-      "targetType": "cohort",
-      "claimedId": "new_players",
-      "resolvedId": "new_players",
-      "source": "client-verified"
-    }
-  ],
+  "targetProvenance": [],
   "resolutionChain": [
-    "user:user-123",
+    "session:game-456",
     "cohort:new_players",
     "global"
   ],
@@ -426,7 +413,7 @@ This means Flaggo could not safely make an approved decision at any applicable s
   "confidence": null,
   "fallback": {
     "source": "server",
-    "resolutionFallbackUsed": true,
+    "resolutionFallbackUsed": false,
     "decisionFallbackUsed": true,
     "reason": "missing_state"
   },
@@ -444,13 +431,17 @@ This means Flaggo could not safely make an approved decision at any applicable s
     "compatibility": "identical"
   },
   "exposure": {
-    "confirmationRequired": true,
-    "confirmToken": "confirm-790"
+    "confirmationRequired": false
   },
-  "reason": "No scope in the resolution chain had sufficient evidence for a safe decision.",
+  "reason": "No permitted target had compatible active authority; returned the registered fallback.",
   "auditId": "audit-790"
 }
 ```
+
+This fallback selected no authority. It therefore omits `controlTarget`,
+`strategyId`, state lineage, and exposure confirmation. The ordered
+`resolutionChain` records which permitted targets were attempted; it does not
+fabricate a global authority or evidence claim.
 
 ## Request responsibilities
 
@@ -479,7 +470,7 @@ The response should provide:
 - decision mode,
 - strategy ID when an approved strategy produced the value,
 - fallback status separated into resolution fallback and decision fallback,
-- resolved scope,
+- resolved control scope when active authority produced the result,
 - verified target provenance,
 - policy result,
 - contract integrity status,
@@ -507,15 +498,18 @@ For Tetris:
 
 ```text
 runtime target: session:game-456
-resolution chain: session:game-456 -> user:user-123 -> cohort:new_players -> global
+resolution chain: session:game-456 -> cohort:new_players -> global
 ```
 
-The runtime target, control target, target provenance, and resolution chain should be included in the response. Full evidence-view detail belongs in the audit record rather than the latency-sensitive runtime response.
+The runtime target and resolution chain should be included in the response.
+The control target and its provenance are present only when an active authority
+was selected. Full evidence-view detail belongs in the audit record rather than
+the latency-sensitive runtime response.
 
 Client-supplied cohort or segment IDs are claims, not authority. The service verifies the claim or replaces it using trusted server-side attributes and records `client-verified`, `server-derived`, or `server-replaced` provenance in the result.
 
 Resolution fallback should not be treated as a failed decision. If Flaggo
-resolves from a requested `user` target to approved `cohort` authority, the
+resolves from a requested `session` target to approved `cohort` authority, the
 response is still approved. Confidence is present only when that authority
 makes an evidence-backed claim.
 
@@ -527,7 +521,7 @@ Policy may block or force fallback because of:
 
 - out-of-range value,
 - max delta violation,
-- missing or incompatible state,
+- no compatible active state at any permitted target,
 - applicable evidence, uncertainty, guardrail, temporal, or operator
   constraints.
 
@@ -538,9 +532,18 @@ runtime context are rejected during request validation with Problem Details;
 they do not enter policy evaluation or become fallback. Contract identity and
 registration-readiness failures likewise remain contract errors.
 
+A pending activation, failed readiness check, corrupt/torn persisted state, or
+state that violates `DecisionState` invariants is a service/readiness error.
+Those failures must not be converted into `missing_state` fallback.
+
 ## Contract integrity
 
-The Decision API should compare the request's expected contract identity with registry state before approving a decision. It must support rolling deployments where several builds of the same service call the API concurrently with different known definition IDs or revisions.
+The Decision API should compare the request's expected contract identity with
+registry state before approving a decision. It must accept concurrent rolling-
+deployment requests for different known identities without substituting
+revisions. Because one stable authority head serializes each decision key and
+control target, an older accepted identity receives server fallback when that
+head no longer contains compatible state.
 
 Success and error states:
 
@@ -639,7 +642,9 @@ Fallback provenance must be explicit:
 
 ## Exposure confirmation
 
-Returning a value creates a decision record, not an exposure. The server response may include a confirm token or decision handle:
+Returning a value creates a decision record, not an exposure. An approved
+authority result includes a confirm token or decision handle; a server fallback
+returns `confirmationRequired: false`:
 
 This distinction matters because an application can request a decision without using it. The game may end, the relevant component may unmount, local state may change, or a newer decision may supersede the response before the value is applied. Treating every returned value as an exposure would associate outcomes with behavior the user never experienced and bias later evidence, evaluation, and optimization.
 

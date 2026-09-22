@@ -197,10 +197,11 @@ tetris.recentPlacementTimeMs = 1420
 tetris.recoveryFailures = 2
 ```
 
-The target resolver uses these facts with the decision definition's target hierarchy:
+The target resolver uses these facts with the definition's primary inference
+target and explicit `fallbackOrder`:
 
 ```text
-session:game-456 -> user:user-123 -> cohort:new_players -> global
+session:game-456 -> cohort:new_players -> global
 ```
 
 ## Reuse across definition revisions

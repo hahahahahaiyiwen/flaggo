@@ -275,10 +275,11 @@ Target resolution should define:
 | Supersession | A state can replace another only through explicit `supersedesStateId`, a unique-active-state invariant, or policy-mediated conflict resolution. |
 | Conflict result | If two applicable states cannot be ordered safely, policy should force fallback or operator review. |
 
-Resolution may still produce chains such as:
+For the Tetris definition whose explicit fallback order is
+`cohort -> global`, resolution produces:
 
 ```text
-session:game-456 -> user:user-123 -> cohort:new_players -> global
+session:game-456 -> cohort:new_players -> global
 ```
 
 But the chain is used differently by different layers:
@@ -441,7 +442,15 @@ Different decision definitions should not automatically share active decision au
 | --- | --- |
 | Raw telemetry observations | Reusable when event and field semantics match. |
 | Evidence views/signals | Reusable only when signal definitions and aggregation semantics are compatible. |
-| GovernedDecisionState | Isolated by decision definition revision/hash and control target unless explicitly declared compatible. |
+| Authority head | Stable by application, environment, decision key, and control target so every semantic revision participates in one ordered CAS lineage. |
+| GovernedDecisionState | Immutable and bound to the exact definition revision/hash that was approved. |
 | RuntimeDecisionResult, decision records, and confirmed exposures | Bound to the exact definition revision/hash used by the request. |
 
-Runtime requests should bind to an expected decision definition revision or contract hash. `GovernedDecisionState` should declare which revisions or contract hashes it is compatible with. New definitions can start partially warm only through semantic compatibility: unchanged signals and evidence may be reused, while new or changed signals warm up before policy allows them to influence proposals or runtime execution.
+Runtime requests should bind to an expected decision definition revision or
+contract hash. The active authority head may point to only one immutable state;
+runtime uses it only when that state matches the request's exact definition
+identity. An older registered request receives server fallback after a newer
+revision replaces the head rather than consuming the new strategy. New
+definitions can start partially warm only through semantic compatibility:
+unchanged signals and evidence may be reused, while new or changed signals warm
+up before policy allows them to influence proposals or runtime execution.

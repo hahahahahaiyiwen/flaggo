@@ -33,7 +33,7 @@ The first implementation should include:
 | Decision API | Runtime endpoint that validates request, resolves targets, executes active value or active strategy, applies governance, audits, and returns a value. |
 | Definition registry | Minimal in-memory or simple persistent definition lookup for registered decision keys. |
 | Evidence | Optional runtime evidence abstraction retained for authorities that explicitly require it; the bundle-approved Tetris rule does not. |
-| State | Active value or active strategy plus activation identity, generation, predecessor, and approval lineage per decision definition and target. |
+| State | One stable authority head per application/environment/decision key/control target, with immutable exact-definition state records carrying the active value or strategy, activation identity, generation, predecessor, and approval lineage. |
 | Policy | Deterministic bounds, step, max delta, fallback, and conditional evidence/model handling. Temporal stabilization remains separately specified. |
 | Audit | Structured audit record with correlation ID. |
 | Async intelligence | Deferred to Phase 4; it must produce proposals for the same governed activation boundary. |

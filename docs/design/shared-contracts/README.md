@@ -269,7 +269,7 @@ type NumericRuleDeclaration = {
 MVP rule: `tetris.dropInterval` uses
 `lifecycle.authorityMode = "bundle-approved"` with a numeric rule whose signal
 references are a subset of `inference.inputs`. The bundle supplies no trusted
-proposal, activation, state, or approval identities.
+proposal, activation, strategy, state, or approval identities.
 
 `NumericRuleDeclaration.weightedInputs` must be non-empty. Each input must
 reference one declared inference input, use finite `minimum < maximum`, and
@@ -360,23 +360,29 @@ Rules:
 ## Decision strategy
 
 ```ts
+type DecisionStrategyDeclaration =
+  | FixedValueStrategyDeclaration
+  | NumericRuleStrategyDeclaration;
+
+type FixedValueStrategyDeclaration = {
+  kind: "fixed-value";
+  value: DecisionValue;
+};
+
+type NumericRuleStrategyDeclaration = {
+  kind: "numeric-rule";
+} & NumericRuleDeclaration;
+
 type DecisionStrategy =
   | FixedValueStrategy
   | NumericRuleStrategy;
 
-type FixedValueStrategy = {
-  kind: "fixed-value";
+type FixedValueStrategy = FixedValueStrategyDeclaration & {
   id: string;
-  value: DecisionValue;
 };
 
-type NumericRuleStrategy = {
-  kind: "numeric-rule";
+type NumericRuleStrategy = NumericRuleStrategyDeclaration & {
   id: string;
-  threshold: number;
-  valueAtOrAbove: number;
-  valueBelow: number;
-  weightedInputs: NumericRuleInput[];
 };
 
 type NumericRuleInput = {
@@ -391,8 +397,14 @@ Rules:
 
 - Strategy execution must be bounded and deterministic in the online runtime path.
 - Strategies must not produce values outside the contract action space.
+- Candidates and proposals carry `DecisionStrategyDeclaration`, never a
+  trusted strategy ID. Activation derives the opaque materialized
+  `DecisionStrategy.id` in a distinct namespace from the activation ID and
+  canonical strategy declaration, persists it in state, and returns the same
+  ID on exact replay.
 - `NumericRuleStrategy` is the only adaptive strategy required for the MVP.
-- Future strategy types should extend `DecisionStrategy` without changing `DecideResponse`.
+- Future strategy types should extend both the declaration and materialized
+  strategy unions without changing `DecideResponse`.
 
 ## Decision state
 
@@ -419,8 +431,13 @@ Rules:
 - `DecisionState` owns live runtime authority; `DecisionDefinition` owns declared semantics.
 - Bundle-approved and proposal-managed authority converge on this same state
   shape and activation boundary.
-- Governed control state is keyed by decision definition plus control target.
-- Activation uses expected-baseline compare-and-swap and idempotent replay.
+- Each state's authority payload and definition binding are immutable.
+  `lifecycle` is a read projection: the record at the current head is active
+  and retained predecessor records are superseded.
+- The mutable authority head is keyed by stable application, environment,
+  decision key, and control target, not by semantic revision.
+- Activation compare-and-swaps that stable head across revisions, increments
+  its generation, supersedes the predecessor, and supports idempotent replay.
 - Pause, override, completion, expiry, rollback, and temporal state require
   explicit follow-up contracts.
 
@@ -595,9 +612,17 @@ Rules:
 - Resolution fallback preserves the returned authority's confidence semantics:
   an evidence-backed broader-target decision retains its confidence, while a
   deterministic broader-target strategy returns `null`.
+- `fallback.resolutionFallbackUsed` is true only when an active authority was
+  selected from a broader permitted target. It is false when no authority was
+  selected and the server returned the registered fallback.
+- A `missing_state` fallback that selected no authority omits
+  `controlTarget` and `strategyId`, returns no authority target provenance,
+  and may retain the attempted permitted targets in `resolutionChain`.
 - Client target/cohort claims are context, not authority. `targetProvenance` records whether each effective target was client-claimed, verified, server-derived, or replaced.
 - Default runtime responses contain compact confidence and target provenance; full evidence-view references remain in audit records.
 - `exposure.confirmToken` is required exactly when `confirmationRequired` is true and forbidden otherwise. The initial `RuntimeDecisionResult` must not include an `exposureId`; exposure identity is created by confirmation.
+- A server decision fallback is not exposure-eligible and therefore returns
+  `confirmationRequired: false`.
 - `definitionStatus.integrity` indicates whether the client expectation matched a registered known contract definition.
 - The full definition bundle is not sent with each request; only compact identity is sent.
 - Exposure confirmation is idempotent for the same decision/token and creates the first `exposureId` under accepted decision A4.
@@ -700,7 +725,10 @@ Rules:
 - Metadata-only edits are retained in registry/audit history without changing runtime identity.
 - Semantic approval creates a new revision and digest under the same definition lineage. A new definition ID is reserved for a new lineage or explicit fork.
 - `bundleDigest` identifies the full submitted bundle. `buildId`, `deploymentId`, and `artifactDigest` identify the workload instance or release that carries the contract expectation.
-- Older revisions are served only when the request identifies that exact registered tuple and lifecycle permits it. The runtime never substitutes another revision.
+- Older revisions are accepted only when the request identifies that exact
+  registered tuple and lifecycle permits it. Runtime never substitutes another
+  revision; if the stable authority head no longer contains compatible state,
+  the accepted older request receives the audited server fallback.
 
 ## Contract, telemetry, evidence, and state reuse
 
@@ -710,7 +738,7 @@ Flaggo should avoid sharing unsafe learned decision behavior across different co
 | --- | --- | --- |
 | Raw telemetry observations | Share across definitions with the same application, signal key, and target semantics. | Observations are historical facts, not learned policy. |
 | Evidence views | Share only when signal key, target, window, and filters match. | A metric can be reused if it is the same immutable signal viewed the same way. |
-| Decision state or active strategy | Isolate by definition identity and control target. | Authority approved for one contract may be unsafe for another. |
+| Decision state or active strategy | Bind each immutable record to one exact definition identity; serialize replacement through the stable authority head for the decision key and control target. | Authority approved for one contract must not execute under another, while one CAS order must prevent stale revisions from replacing newer authority. |
 
 Rules:
 
@@ -719,10 +747,11 @@ Rules:
 - A new proposal-managed definition may start in partial-warm mode: reused
   evidence can contribute immediately, while new signals collect data until
   policy marks them sufficient.
-- Decision state and active strategies are keyed by definition identity plus
-  resolved control target. Future temporal or operator state follows its own
-  explicitly approved address contract. None is inherited automatically
-  across definitions.
+- The authority head is keyed by application, environment, decision key, and
+  resolved control target. Immutable state and strategy payloads remain bound
+  to one exact definition identity and are never inherited by another
+  revision. Future temporal or operator state follows its own explicitly
+  approved address contract.
 - State migration between definition IDs should be an explicit operator or registry action, not an implicit compatibility rule.
 
 ## Proposal contracts (provisional Phase 4 design)
@@ -755,7 +784,7 @@ type StrategyProposal = {
   proposalType: "strategy";
   decisionKey: string;
   target: DecisionTargetRef;
-  strategy: DecisionStrategy;
+  strategy: DecisionStrategyDeclaration;
   confidence: ConfidenceReport | null;
   evidenceStatus: string;
   rationale: string;
@@ -950,6 +979,7 @@ type AcceptedDefinition = {
 type ActivatedAuthorityReceipt = {
   proposalId: string;
   activationId: string;
+  strategyId: string;
   stateId: string;
   generation: number;
   controlTarget: DecisionTargetRef;
@@ -1088,6 +1118,10 @@ Rules:
   approval request ID, decision key, contract digest, and canonical initial
   authority. Exact replay returns those IDs and the original state identity;
   callers cannot supply or recompute them as authority.
+- Activation derives the strategy ID in a third namespace from the activation
+  ID and canonical ID-free strategy declaration. It persists that identity in
+  the active state and ready receipt; exact replay returns the same strategy
+  ID.
 - `activation-failed` with `retryability: "retryable"` represents interruption
   or outcome uncertainty. Exact apply resumes the same activation and first
   resolves any already-published state before attempting publication again.

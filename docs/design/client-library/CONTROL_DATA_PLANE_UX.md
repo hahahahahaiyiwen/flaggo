@@ -155,7 +155,11 @@ The data plane never:
 - silently selects the latest or previous revision,
 - treats contract/configuration failure as a fallback decision.
 
-Known older revisions can continue operating during rolling deployments only when the exact revision remains registered and allowed.
+Known older revisions can continue issuing requests during rolling deployments
+only when the exact revision remains registered and allowed. If a newer
+revision has replaced the stable authority head, the older request receives
+server fallback unless another permitted target has exact compatible state; it
+never consumes the newer strategy.
 
 ## Runtime error behavior
 

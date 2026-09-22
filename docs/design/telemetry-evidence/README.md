@@ -73,13 +73,18 @@ Missing evidence should not crash runtime. It should produce `quality = "missing
 
 ## Reuse across definition changes
 
-Different decision definitions should not share active decision state by default, but they can reuse telemetry and evidence when the meaning is stable. This reduces cold start without letting a strategy trained for one definition control another definition.
+Different definition revisions serialize authority replacement through one
+stable decision/control-target head, but an immutable active state record can
+execute only for its exact definition identity. Telemetry and evidence may be
+reused when meaning is stable. This reduces cold start without letting a
+strategy approved for one definition control another definition.
 
 | Layer | Reuse rule |
 | --- | --- |
 | Raw observations | Reusable across definitions when application, signal key, and target semantics match. |
 | Evidence views | Reusable when signal key, target, window, and filters match. |
-| Decision state/strategy | Not reusable by default; keyed by decision definition and control/runtime target. |
+| Authority head | Stable by application, environment, decision key, and control target across semantic revisions. |
+| Decision state/strategy | Not reusable; bound to the exact approved definition identity. |
 
 Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
 

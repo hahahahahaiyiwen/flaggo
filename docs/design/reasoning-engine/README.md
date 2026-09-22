@@ -50,6 +50,7 @@ interface IStrategyExecutor {
 type StrategyExecutionRequest = {
   definition: DecisionDefinition;
   state: DecisionState;
+  inputs: SignalInput[];
   evidence?: EvidenceSnapshot;
   runtimeContext: RuntimeContext;
   now: string;
@@ -67,12 +68,16 @@ type StrategyExecutionResult = {
 Bundle-authored strategies return `confidence: null`; authored rationale and
 authenticated approval are provenance, not learned confidence.
 
-`IStrategyExecutor` should only be called after the Decision API has found an active `DecisionState` with an active value or active strategy. Missing state should be handled before strategy execution and should resolve to contract fallback or policy fallback.
+`IStrategyExecutor` should only be called after the Decision API has found an
+active `DecisionState` with an active value or active strategy. No compatible
+active state at any permitted target is handled before strategy execution and
+may resolve to the registered server fallback. Corrupt or incoherent state and
+non-ready registration are readiness failures, not fallback decisions.
 
 ## Numeric rule strategy behavior
 
 ```text
-read each declared inference input from runtimeContext
+read each declared rule input from validated inputs by signal key
   -> normalize each value to [0, 1] using declared minimum/maximum
   -> multiply by its declared weight
   -> divide the weighted sum by total weight
@@ -86,6 +91,9 @@ Rules:
   positive total weight.
 - Missing, duplicate, nonnumeric, or nonfinite required inputs make the
   strategy result invalid; they do not silently become zero.
+- Numeric rule operands come only from `StrategyExecutionRequest.inputs`.
+  `runtimeContext` supplies target and declared contextual facts; it must not
+  substitute for a missing signal input.
 - Normalized input values are clamped to `[0, 1]`.
 - Strategy execution should not apply fallback directly unless no candidate can be produced.
 - Policy remains responsible for output bounds, step, applicable max delta, and
@@ -111,7 +119,9 @@ Phase 4 can implement `IDecisionIntelligence` as:
 - a script that creates a replacement proposal,
 - a simple heuristic that returns a fixed `StrategyProposal`.
 
-The important point is that proposal output uses the same `DecisionProposal` and `DecisionStrategy` contracts future AI agents will use.
+The important point is that proposal output uses the same `DecisionProposal`
+and ID-free strategy declaration contracts future AI agents will use.
+Activation materializes the server-owned strategy identity.
 
 ## Tetris MVP strategy
 

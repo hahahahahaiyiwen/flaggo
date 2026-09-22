@@ -53,16 +53,18 @@ bundle apply
   -> validate definition and candidate
   -> approval request
   -> authenticated approval of the exact snapshot
-  -> deterministic proposal and activation identities
+  -> deterministic proposal, activation, and strategy identities
   -> expected-baseline compare-and-swap
   -> active governed state
   -> ready registration receipt
 ```
 
-The bundle cannot provide trusted proposal, activation, state, or approval
-identities. Exact retry resumes the same activation. Changed authority requires
-a new semantic revision and approval. A stale expected baseline conflicts
-rather than replacing newer authority.
+The bundle cannot provide trusted proposal, activation, strategy, state, or
+approval identities. Exact retry resumes the same activation. Changed
+authority requires a new semantic revision and approval. A stale expected
+baseline conflicts at the stable authority head identified by application,
+environment, decision key, and control target rather than replacing newer
+authority through another revision namespace.
 
 For each definition in an approved bundle, the server derives proposal and
 activation identities from one canonical tuple:
@@ -77,9 +79,11 @@ activation identities from one canonical tuple:
 Proposal and activation identities use distinct namespaces over that tuple.
 The decision key and canonical authority content make the identities unique per
 definition in a multi-definition approval. The IDs remain opaque to clients.
-Exact retry with the same tuple returns the same identities; finding either ID
-bound to different content is a conflict. The activation creates a state ID
-once, and replay returns that original state ID and generation.
+Activation derives the strategy identity in a third namespace from the
+activation ID and canonical ID-free strategy declaration. Exact retry with the
+same tuple returns the same identities; finding any ID bound to different
+content is a conflict. The activation creates a state ID once, and replay
+returns that original strategy ID, state ID, and generation.
 
 An interrupted or outcome-unknown activation is retryable with the same
 approval, proposal, and activation identities. Stale expected baseline,
