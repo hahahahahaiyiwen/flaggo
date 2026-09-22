@@ -159,6 +159,9 @@ type SignalRef = {
 // Serialized as SignalRef; registry validation resolves and verifies the numeric metric declaration.
 type NumericMetricRef = SignalRef;
 
+// Serialized as SignalRef; registry validation additionally requires source = "app-emitted".
+type AppEmittedNumericMetricRef = NumericMetricRef;
+
 type EventSignalDeclaration = {
   kind: "event";
   key: string;
@@ -272,9 +275,12 @@ references are a subset of `inference.inputs`. The bundle supplies no trusted
 proposal, activation, strategy, state, or approval identities.
 
 `NumericRuleDeclaration.weightedInputs` must be non-empty. Each input must
-reference one declared inference input, use finite `minimum < maximum`, and
-have a finite nonnegative weight; total weight must be positive. Both branch
-values must satisfy the numeric action space and applicable runtime policy.
+reference one declared inference input that resolves to an app-emitted numeric
+metric, use finite `minimum < maximum`, and have a finite nonnegative weight;
+total weight must be positive. Both branch values must satisfy the numeric
+action space and applicable runtime policy. SDK authoring uses a branded
+numeric metric handle; registry and activation validation enforce the same
+numeric-source rule.
 
 `clientFallback.requiredEvidenceUnavailable` is independent from governed server fallback. Omission means `forbid`. The server projects the evaluated permission into the `required-evidence-unavailable` Problem Details extension; an SDK also requires its own local availability-fallback configuration before using a local value.
 
@@ -353,6 +359,9 @@ type PolicyEvaluationResult = {
 Rules:
 
 - Policy reason codes should be stable strings.
+- `appliedConstraints` reports every enforced action-space and policy check.
+  Labels such as `number-bounds` and `step` may therefore appear even when
+  bounds and step come from the output contract rather than `InlinePolicy`.
 - Runtime should return fallback when policy result is `fallback`.
 - Runtime should not return a candidate value as approved when policy result is `blocked`; a governed fallback response may preserve `blocked` as the policy result.
 - Omitted client-fallback permission means `forbid`. A `required-evidence-unavailable` error may advertise client fallback only when effective policy explicitly returns `allow`.
@@ -360,33 +369,20 @@ Rules:
 ## Decision strategy
 
 ```ts
-type DecisionStrategyDeclaration =
-  | FixedValueStrategyDeclaration
-  | NumericRuleStrategyDeclaration;
-
-type FixedValueStrategyDeclaration = {
-  kind: "fixed-value";
-  value: DecisionValue;
-};
-
 type NumericRuleStrategyDeclaration = {
   kind: "numeric-rule";
 } & NumericRuleDeclaration;
 
-type DecisionStrategy =
-  | FixedValueStrategy
-  | NumericRuleStrategy;
-
-type FixedValueStrategy = FixedValueStrategyDeclaration & {
-  id: string;
-};
+type DecisionStrategyDeclaration = NumericRuleStrategyDeclaration;
 
 type NumericRuleStrategy = NumericRuleStrategyDeclaration & {
   id: string;
 };
 
+type DecisionStrategy = NumericRuleStrategy;
+
 type NumericRuleInput = {
-  signal: SignalRef;
+  signal: AppEmittedNumericMetricRef;
   minimum: number;
   maximum: number;
   weight: number;
@@ -402,14 +398,16 @@ Rules:
   `DecisionStrategy.id` in a distinct namespace from the activation ID and
   canonical strategy declaration, persists it in state, and returns the same
   ID on exact replay.
+- Fixed authority is represented only by `DecisionState.activeValue`; it is
+  not wrapped in a strategy.
 - `NumericRuleStrategy` is the only adaptive strategy required for the MVP.
 - Future strategy types should extend both the declaration and materialized
-  strategy unions without changing `DecideResponse`.
+  strategy types without changing `DecideResponse`.
 
 ## Decision state
 
 ```ts
-type DecisionState = {
+type DecisionStateCommon = {
   stateId: string;
   proposalId: string;
   activationId: string;
@@ -421,9 +419,19 @@ type DecisionState = {
   approvalReference: string;
   activatedAt: string;
   lifecycle: "active" | "superseded";
-  activeValue?: DecisionValue;
-  activeStrategy?: DecisionStrategy;
 };
+
+type DecisionState =
+  | (DecisionStateCommon & {
+      authorityKind: "active-value";
+      activeValue: DecisionValue;
+      activeStrategy?: never;
+    })
+  | (DecisionStateCommon & {
+      authorityKind: "numeric-rule";
+      activeValue?: never;
+      activeStrategy: NumericRuleStrategy;
+    });
 ```
 
 Rules:
@@ -434,6 +442,9 @@ Rules:
 - Each state's authority payload and definition binding are immutable.
   `lifecycle` is a read projection: the record at the current head is active
   and retained predecessor records are superseded.
+- Exactly one authority payload is valid. `active-value` requires
+  `activeValue`; `numeric-rule` requires `activeStrategy`; both-present,
+  neither-present, or discriminator/payload mismatch fails readiness.
 - The mutable authority head is keyed by stable application, environment,
   decision key, and control target, not by semantic revision.
 - Activation compare-and-swaps that stable head across revisions, increments
@@ -677,6 +688,11 @@ Definition metadata such as `definitionId` and `owner`, plus generated `revision
 
 Runtime wire `inputs` are also key-sorted for deterministic transport and audit comparison. Duplicate signal keys are invalid; clients and servers must reject them rather than applying first-wins or last-wins behavior.
 
+`output.range` and `output.step` are enforced directly as action-space
+invariants. Canonicalization does not synthesize a `number-bounds` policy
+constraint from them. An explicitly authored `number-bounds` constraint is
+additional semantic policy and therefore changes the digest.
+
 ## Contract identity and integrity
 
 ```ts
@@ -716,7 +732,11 @@ type ContractCompatibility =
 Rules:
 
 - Every server `200` repeats the exact accepted `definitionId + revision + contractDigest` and reports only `integrity: "verified"`. Unknown, conflicting, or retired identities are Problem Details errors rather than alternate success states.
-- Stable contract/configuration error codes are `missing-contract-identity`, `contract-not-registered`, `contract-conflict`, `unknown-decision-key`, and `retired-definition`. They cannot become server or SDK-local fallback.
+- Stable contract/configuration error codes are `missing-contract-identity`,
+  `contract-not-registered`, `contract-conflict`, `unknown-decision-key`, and
+  `retired-definition`. Stable readiness/integrity codes are
+  `definition-not-ready`, `decision-service-not-ready`, and
+  `invalid-decision-state`. None can become server or SDK-local fallback.
 - Browser-provided definition identity is useful for drift detection, not as a security boundary.
 - Multiple builds of the same service may be deployed at the same time. Runtime integrity must be evaluated against the expected definition identity carried by the calling build, not a singular environment-wide bundle.
 - `definitionId` is an opaque registry-issued lineage ID and remains stable across approved semantic revisions. It is never a semantic version and clients must not parse it.
@@ -1209,8 +1229,7 @@ The decision definition references those signal identities without redefining th
   "runtimeContextSchema": {
     "userId": { "type": "string", "target": "user" },
     "sessionId": { "type": "string", "target": "session" },
-    "cohort": { "type": "string", "target": "cohort" },
-    "deviceType": { "type": "string" }
+    "cohort": { "type": "string", "target": "cohort" }
   },
   "targetHierarchy": ["session", "user", "cohort", "global"],
   "signals": {
@@ -1289,8 +1308,7 @@ The decision definition references those signal identities without redefining th
   "policy": {
     "kind": "inline",
     "constraints": [
-      { "kind": "max-delta", "value": 50 },
-      { "kind": "number-bounds", "min": 200, "max": 1500 }
+      { "kind": "max-delta", "value": 50 }
     ]
   }
 }
@@ -1309,7 +1327,8 @@ Retain these provider-neutral domain boundaries:
 - action space shapes,
 - `DecisionTargetRef`,
 - `DecisionDefinition`,
-- `DecisionStrategy` with `fixed-value` and `numeric-rule`,
+- fixed authority through `DecisionState.activeValue`,
+- `DecisionStrategy` for the `numeric-rule` runtime mechanism,
 - `DecisionState`,
 - `PolicyEvaluationResult`,
 - `AuditRecord`,

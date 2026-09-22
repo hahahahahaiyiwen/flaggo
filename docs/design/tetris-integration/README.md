@@ -48,8 +48,12 @@ trusted registration behavior in browser code.
 ## Acceptance criteria
 
 - SDK and direct REST serialization produce contract-equivalent decisions.
+- Code-first extraction and the canonical bundle fixture produce byte-identical
+  normalized Tetris definitions and the same `contractDigest`; output range
+  validation is not duplicated as a synthesized policy constraint.
 - The bundle is rejected if the initial rule references undeclared inference
-  inputs or violates target, action-space, fallback, or policy constraints.
+  inputs, references a nonnumeric or non-app-emitted metric, or violates
+  target, action-space, fallback, or policy constraints.
 - The completed registration receipt identifies the proposal, activation,
   server-derived strategy, active state, generation, control target, and
   numeric-rule kind.
@@ -76,6 +80,8 @@ trusted registration behavior in browser code.
   or a runtime-policy block, returns the audited server fallback of `800ms`.
 - Pending activation, failed readiness, corrupt persistence, and incoherent
   state fail initialization/readiness rather than returning `800ms`.
+  `definition-not-ready`, `decision-service-not-ready`, and
+  `invalid-decision-state` are explicitly ineligible for SDK fallback.
 - Data-plane unavailability produces an SDK-local `800ms` fallback whose
   provenance remains distinct from server-policy fallback.
 - Applying and confirming an approved authority decision creates a
@@ -87,7 +93,8 @@ trusted registration behavior in browser code.
   but does not claim learned evidence quality, model uncertainty, expected
   outcome, or sample size.
 - Invalid persisted modes, incoherent strategy fields, nonnumeric strategy
-  values, and nonfinite numeric-rule parameters make state readiness fail.
+  values, both/neither authority payloads, discriminator mismatches, and
+  nonfinite numeric-rule parameters make state readiness fail.
 - Malformed or torn audit files fail readiness. Audit append failure leaves a
   receipt unconfirmed, while replay after recovery reuses one exposure record.
 - Failed activation publication is atomic: readers see either the complete old

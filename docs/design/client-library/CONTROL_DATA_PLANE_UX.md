@@ -170,11 +170,16 @@ never consumes the newer strategy.
 | Unknown definition ID/revision | `409 contract-not-registered` | Forbidden |
 | Digest conflicts with registered definition | `409 contract-conflict` | Forbidden |
 | Definition is retired | `409 retired-definition` | Forbidden |
+| Required activation is pending or failed | `409 definition-not-ready` | Forbidden |
 | Invalid context or inference input | `400` or `422` Problem Details | Forbidden |
+| A required state, policy, or audit readiness check failed | `503 decision-service-not-ready` with `clientFallback.eligible: false` | Forbidden |
+| Persisted state violates canonical invariants | `500 invalid-decision-state` with `clientFallback.eligible: false` | Forbidden |
 | Registered definition evaluates but applicable state, policy, or evidence blocks adaptation | `200` audited server fallback | Not applicable |
-| Data plane is unavailable, unreachable, or times out | Transport/availability failure | Explicitly configurable |
+| Data plane is genuinely unavailable, unreachable, or times out after readiness passed | Transport failure or `503 service-unavailable` with `clientFallback.eligible: true` | Explicitly configurable |
 
-Contract errors are actionable deployment or control-plane mistakes. Converting them into local values would hide drift and make an unregistered build appear healthy.
+Contract and readiness errors are actionable deployment, control-plane, or
+operator failures. Converting them into local values would hide drift or
+corruption and make an unhealthy deployment appear healthy.
 
 ## Three distinct outcomes
 

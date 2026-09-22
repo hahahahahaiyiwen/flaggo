@@ -176,8 +176,7 @@ Example shape:
       "policy": {
         "kind": "inline",
         "constraints": [
-          { "kind": "max-delta", "value": 50 },
-          { "kind": "number-bounds", "min": 200, "max": 1500 }
+          { "kind": "max-delta", "value": 50 }
         ]
       }
     }
@@ -317,8 +316,10 @@ Tooling extracts signal identities and target schemas from the bindings above, d
 - Unsupported or runtime-dependent extraction is invalid. Production runtime returns 4xx Problem Details for an unknown or conflicting identity; it never derives management state from an executed branch, selects another revision, or invokes local fallback.
 - Every `inference.inputs` key must resolve to a registered app-emitted primitive metric. Event signals and service-derived metrics are rejected even if a non-TypeScript client submits them.
 - Every bundle numeric-rule input must be one of those declared inference
-  inputs, and its values, threshold, ranges, and weights must be finite and
-  valid for the definition action space and policy.
+  inputs, resolve to an app-emitted numeric metric, and have finite values,
+  threshold, ranges, and weights valid for the definition action space and
+  policy. Boolean, string, event, and derived metric references are rejected
+  before approval.
 - Every metric-objective signal must resolve to a registered numeric metric. App-emitted and derived numeric metrics are valid; events and boolean/string metrics are rejected.
 - A metric objective with `direction: "target"` must include a finite numeric `target`; `minimize` and `maximize` objectives must not include `target`.
 - Every canonical decision definition must contain `policy: PolicyReference | InlinePolicy`. Missing policy is a validation error; the registry does not insert an implicit environment/default reference.

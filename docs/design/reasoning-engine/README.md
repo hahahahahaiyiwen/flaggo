@@ -87,8 +87,8 @@ read each declared rule input from validated inputs by signal key
 
 Rules:
 
-- Weighted inputs must be declared inference inputs with finite ranges and
-  positive total weight.
+- Weighted inputs must be declared inference inputs that resolve to
+  app-emitted numeric metrics, with finite ranges and positive total weight.
 - Missing, duplicate, nonnumeric, or nonfinite required inputs make the
   strategy result invalid; they do not silently become zero.
 - Numeric rule operands come only from `StrategyExecutionRequest.inputs`.

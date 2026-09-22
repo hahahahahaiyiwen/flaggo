@@ -235,8 +235,7 @@ Proposed request body:
   "runtimeContext": {
     "sessionId": "game-456",
     "userId": "user-123",
-    "cohort": "new_players",
-    "deviceType": "mobile"
+    "cohort": "new_players"
   },
   "inputs": [
     {
@@ -388,6 +387,20 @@ Availability fallback is disabled by default. When enabled, it is eligible only 
 
 It is forbidden for TLS/certificate validation failures, proxy/authentication configuration failures, cancellation requested by application code, malformed responses, every HTTP `503` without explicit `clientFallback.eligible: true`, HTTP `4xx` including `408` and `429`, HTTP `500`, `501`, or `505`, every contract/configuration error, and every valid Flaggo Problem Details response whose eligibility is false or absent.
 
+Definition and authority readiness failures have dedicated outcomes and never
+reuse fallback-eligible `service-unavailable`:
+
+- `409 definition-not-ready` means the exact contract is known but its required
+  initial activation is pending or failed;
+- `503 decision-service-not-ready` means a required state, policy, or audit
+  readiness check failed or cannot be read safely;
+- `500 invalid-decision-state` means a persisted state violates canonical
+  invariants.
+
+`definition-not-ready` is a contract/readiness error. The two `5xx`
+readiness/integrity errors include `clientFallback.eligible: false`; the SDK
+surfaces all three without a server or local fallback.
+
 `required-evidence-unavailable` is forbidden by default even though its status is `503`. A definition policy must separately set `clientFallback.requiredEvidenceUnavailable = "allow"` before the server may return:
 
 ```json
@@ -403,7 +416,14 @@ It is forbidden for TLS/certificate validation failures, proxy/authentication co
 }
 ```
 
-Without that permission, the same error carries `eligible: false`; the SDK surfaces it after retries and must not return a local value. `service-unavailable` sets `eligible: true` when the server can emit Problem Details. The SDK's own availability-fallback configuration is still required in every eligible case, so server permission cannot enable fallback by itself.
+Without that permission, the same error carries `eligible: false`; the SDK
+surfaces it after retries and must not return a local value.
+`service-unavailable` sets `eligible: true` only for genuine transient
+data-plane transport, capacity, or dependency availability failure after all
+required readiness checks passed. It must not represent pending activation,
+corrupt/incoherent state, or failed state/audit readiness. The SDK's own
+availability-fallback configuration is still required in every eligible case,
+so server permission cannot enable fallback by itself.
 
 The Phase 1 SDK default is one retry after the initial attempt, using the same `Idempotency-Key`. It honors `Retry-After` up to one second; otherwise it waits a randomized 50–150 ms. Applications may configure zero, one, or two retries, but fallback cannot occur before the configured attempts are exhausted.
 
@@ -729,8 +749,11 @@ Proposed baseline:
 | Unknown definition ID/revision | `409 contract-not-registered` Problem Details |
 | Contract digest conflict | `409 contract-conflict` Problem Details |
 | Retired definition | `409 retired-definition` Problem Details |
+| Known definition whose required activation is pending or failed | `409 definition-not-ready` Problem Details; client fallback forbidden |
 | Invalid runtime context | `422 invalid-runtime-context` Problem Details |
 | Invalid declared input/value | `422 invalid-inference-input` Problem Details |
+| A required state, policy, or audit readiness check failed | `503 decision-service-not-ready` Problem Details with `clientFallback.eligible: false` |
+| Persisted state violates canonical invariants | `500 invalid-decision-state` Problem Details with `clientFallback.eligible: false` |
 | Missing or invalid credentials | `401 authentication-required` Problem Details |
 | Missing operation scope | `403 insufficient-scope` Problem Details |
 | Credential/body application or environment mismatch | `403 scope-mismatch` Problem Details |
@@ -738,9 +761,14 @@ Proposed baseline:
 | Matching decide request still executing after wait budget | `409 idempotency-in-progress` Problem Details plus `Retry-After` |
 | Rate limit | `429 rate-limited` Problem Details |
 | Definition requires evidence that is currently unavailable and policy forbids governed fallback | `503 required-evidence-unavailable`; client fallback is forbidden unless separately policy-authorized in the Problem Details extension |
-| Runtime unavailable before an audited decision exists | `503 service-unavailable` Problem Details; SDK may use explicitly configured availability fallback |
+| Genuine transient data-plane availability failure after readiness passed and before an audited decision exists | `503 service-unavailable` Problem Details with `clientFallback.eligible: true`; SDK may use explicitly configured availability fallback |
 
-The key distinction is whether the server completed an audited evaluation of a valid registered definition. A completed governed fallback is a decision result. Contract/configuration rejection is an actionable error and forbids local fallback. Transport or data-plane availability failure may use explicitly configured local fallback.
+The key distinction is whether the server completed an audited evaluation of a
+valid registered definition. A completed governed fallback is a decision
+result. Contract, activation, state-integrity, and readiness rejections are
+actionable errors and forbid local fallback. Only genuine transient transport
+or data-plane availability failure may use explicitly configured local
+fallback.
 
 ### Stable management and exposure errors
 
@@ -798,7 +826,7 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 15. Invalid bundle with structured issues and no mutations.
 16. New definition or semantic bundle change returns `202 requires-approval` with no mutation.
 17. Idempotent bundle apply and key/body conflict.
-18. Eligible `503 service-unavailable` SDK-local fallback after retry exhaustion when explicitly enabled.
+18. Eligible post-readiness `503 service-unavailable` SDK-local fallback for genuine transient availability after retry exhaustion when explicitly enabled.
 19. Concurrent startup registration of the same bundle returns one accepted identity.
 20. Invalid or approval-pending startup registration does not initialize the data-plane client.
 21. Optional decide idempotency replay returns the original decision.
@@ -824,6 +852,11 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 41. Missing or mismatched local call-site binding forbids both remote decide and availability fallback.
 42. `required-evidence-unavailable` defaults to client fallback forbidden; explicit effective policy allow plus SDK configuration makes it eligible.
 43. Approval snapshot emits quoted `ETag` and RFC 9530 `Content-Digest` over the same canonical bytes.
+44. Code-first and canonical bundle Tetris definitions normalize to the same bytes and `contractDigest`.
+45. `definition-not-ready`, `decision-service-not-ready`, and `invalid-decision-state` never produce server or SDK fallback.
+46. `service-unavailable` is fallback-eligible only for genuine transient data-plane availability after required readiness passed.
+47. Boolean, string, event, or derived metrics referenced by a numeric rule fail bundle validation before approval.
+48. Both-present, neither-present, or mismatched state authority payloads fail readiness before lookup.
 
 ## Contract decision log
 

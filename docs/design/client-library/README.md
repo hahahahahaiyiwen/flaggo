@@ -315,19 +315,18 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   context: {
     sessionId: flaggo.target.session(sessionId),
     userId: flaggo.target.user(userId),
-    cohort: flaggo.target.cohort(playerCohort),
-    deviceType: device.type
+    cohort: flaggo.target.cohort(playerCohort)
   }
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
 if (
   dropIntervalDecision.source === "server" &&
-  dropIntervalDecision.confirmToken
+  dropIntervalDecision.exposure.confirmationRequired
 ) {
   await flaggo.exposures.confirm(
     dropIntervalDecision.decisionId,
-    dropIntervalDecision.confirmToken
+    dropIntervalDecision.exposure.confirmToken
   );
 }
 ```
@@ -349,6 +348,10 @@ The shorthand `policy` object is authoring syntax, not the canonical policy cont
 | `paused` | `{ kind: "pause", paused }` |
 
 The result is `InlinePolicy { kind: "inline", constraints }`; constraints are duplicate-free and canonically sorted by `kind`. The explicit advanced form accepts canonical `PolicyReference | InlinePolicy` directly.
+
+`output.range` and `output.step` remain action-space semantics. Extraction does
+not duplicate them into synthesized policy constraints, so the code-first
+Tetris declaration and its canonical bundle form hash identically.
 
 ### Extractable code-first subset
 
@@ -472,15 +475,13 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     context: {
       sessionId: { type: "string", target: "session" },
       userId: { type: "string", target: "user" },
-      cohort: { type: "string", target: "cohort" },
-      deviceType: "string"
+      cohort: { type: "string", target: "cohort" }
     }
   },
   context: {
     sessionId,
     userId,
-    cohort: playerCohort,
-    deviceType: device.type
+    cohort: playerCohort
   },
   inputs: [
     boardPressureSignal.input(boardPressure),
@@ -614,7 +615,7 @@ type AdvancedNumberTuneDefinition = {
   inference?: InferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
-  lifecycle: AuthorityLifecycleDeclaration;
+  lifecycle: AuthorityLifecycleAuthoring;
   policy: PolicyReference | InlinePolicy;
   context: RuntimeContextSchema;
 };
@@ -628,9 +629,17 @@ type BundleApprovedAuthorityAuthoring = {
   initialAuthority: {
     controlTarget: DecisionTargetRef;
     kind: "numeric-rule";
-    rule: NumericRuleDeclaration;
+    rule: NumericRuleAuthoring;
     rationale: string;
   };
+};
+
+type NumericRuleAuthoring = Omit<NumericRuleDeclaration, "weightedInputs"> & {
+  weightedInputs: Array<
+    Omit<NumericRuleInput, "signal"> & {
+      signal: InferenceSignalHandle<number>;
+    }
+  >;
 };
 
 type PolicyAuthoring = {
@@ -651,10 +660,7 @@ type NumberOutputContract = {
 
 type RuntimeContextSchema = Record<
   string,
-  | "string"
-  | "number"
-  | "boolean"
-  | { type: "string" | "number" | "boolean"; target?: string }
+  { type: "string" | "number" | "boolean"; target?: string }
 >;
 
 type RuntimeContextValue = string | number | boolean | null;
@@ -803,6 +809,10 @@ const unexpectedTarget: MetricObjective = {
   target: 0.5 // TypeScript error
 };
 ```
+
+`NumericRuleAuthoring.weightedInputs[].signal` accepts only
+`InferenceSignalHandle<number>`, so boolean/string metrics, derived metrics,
+and events fail at authoring time before registry validation repeats the check.
 
 The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are definition extraction from static request fields, telemetry, optional definition bundle export, runtime request, compact definition identity propagation, typed response, and explicitly configured local fallback for data-plane availability failures.
 

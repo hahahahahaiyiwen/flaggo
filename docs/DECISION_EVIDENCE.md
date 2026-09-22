@@ -186,7 +186,6 @@ Runtime context is evidence for the current request. It can contain:
 sessionId = game-456
 userId = user-123
 cohort = new_players
-deviceType = mobile
 ```
 
 Runtime signal inputs are separate from ordinary context:

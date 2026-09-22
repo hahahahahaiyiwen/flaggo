@@ -143,7 +143,15 @@ Useful metrics:
 - `earlyGameOverRate`,
 - `recoveryFailureRate`.
 
-Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` can come from runtime context only after they are declared as metrics and selected as inference inputs. The same metrics can be emitted over time, captured in decision records when Flaggo returns a decision, and copied into exposure records only after the client confirms application/rendering. Aggregated evidence can provide broader confidence and sample-size context.
+Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and
+`recoveryFailures` travel exclusively through `DecideRequest.inputs` and
+`StrategyExecutionRequest.inputs` after they are declared as metrics and
+selected as inference inputs. `runtimeContext` remains reserved for target
+bindings and other declared contextual facts. The same metrics can be emitted
+over time, captured in decision records when Flaggo returns a decision, and
+copied into exposure records only after the client confirms
+application/rendering. Aggregated evidence can provide broader confidence and
+sample-size context.
 
 In revised Phase 3, the bundle-approved rule consumes the declared live inputs
 directly and returns no learned confidence. Outcome telemetry is linked but is

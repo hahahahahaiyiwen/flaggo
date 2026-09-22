@@ -82,8 +82,9 @@ hierarchy, add implicit fallback targets, or parse registry definitions. It
 reads the stable authority head for each requested target in order and returns
 the first state whose definition identity exactly matches the request. A
 well-formed head for another semantic revision is incompatible and may be
-skipped. A malformed, torn, or internally incoherent state is a readiness
-failure, not an absent-state result.
+skipped. `getActiveState` never returns a `superseded` projection. A
+superseded return, malformed/torn state, or internally incoherent payload is a
+readiness failure, not an absent-state result.
 
 The activation port, not a proposal producer or runtime caller, constructs the
 durable state and derives the opaque strategy identity from the activation ID
@@ -122,6 +123,11 @@ Pending activation, a failed readiness check, corrupt persistence, or a state
 that violates `DecisionState` invariants is a contract/readiness error. It must
 not be recast as `missing_state` fallback.
 
+`DecisionState` is an exactly-one discriminated union. `authorityKind:
+"active-value"` requires only `activeValue`; `authorityKind: "numeric-rule"`
+requires only `activeStrategy`. Both-present, neither-present, fixed-value
+strategy, or discriminator/payload mismatch fails readiness before lookup.
+
 Pause, override, cooldown, previous-result delta, hysteresis, and other
 temporal behavior require explicit follow-up contracts rather than implicit
 state-store mutation.
@@ -151,6 +157,7 @@ Example active state:
   "approvalReference": "approval_01...",
   "activatedAt": "2026-07-25T12:00:00Z",
   "lifecycle": "active",
+  "authorityKind": "numeric-rule",
   "activeStrategy": {
     "kind": "numeric-rule",
     "id": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",

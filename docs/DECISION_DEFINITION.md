@@ -225,16 +225,23 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   context: {
     sessionId: flaggo.target.session(sessionId),
     userId: flaggo.target.user(userId),
-    cohort: flaggo.target.cohort(playerCohort),
-    deviceType: device.type
+    cohort: flaggo.target.cohort(playerCohort)
   }
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
-await flaggo.exposures.confirm(dropIntervalDecision.decisionId);
+if (
+  dropIntervalDecision.source === "server" &&
+  dropIntervalDecision.exposure.confirmationRequired
+) {
+  await flaggo.exposures.confirm(
+    dropIntervalDecision.decisionId,
+    dropIntervalDecision.exposure.confirmToken
+  );
+}
 ```
 
-The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Plain values remain runtime metadata. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while `.decisionId` supports exposure confirmation.
+The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while its server exposure directive authorizes confirmation.
 
 The code-first `policy` shorthand is normalized to canonical `InlinePolicy` constraints before hashing. For example, `maxDelta: 50` becomes `{ kind: "max-delta", value: 50 }`, and `cooldown: "20s"` becomes `{ kind: "cooldown", seconds: 20 }`. The explicit form may provide `PolicyReference | InlinePolicy` directly; equivalent shorthand and canonical policies produce the same definition digest.
 
@@ -405,9 +412,6 @@ DecisionDefinition
   policy:
     kind: inline
     constraints:
-      - kind: number-bounds
-        min: 200
-        max: 1500
       - kind: max-delta
         value: 50
 ```

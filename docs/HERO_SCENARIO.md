@@ -36,10 +36,12 @@ The scenario uses the concepts from [Mental Model](MENTAL_MODEL.md), [Decision D
 | Decision definition | Opaque registry identity such as `def_01JQ... / rev_01JQ...` |
 | Runtime target | `session:game-456` |
 | Control target | `cohort:new_players` or `global` |
-| Runtime context | `userId`, `sessionId`, `cohort`, `currentLevel`, `deviceType`, `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures` |
+| Runtime context | `userId`, `sessionId`, `cohort` |
+| Inference inputs | `currentLevel`, `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures` |
 | Evidence views | hard-drop rate, placement time, early game-over rate by session/cohort/global windows |
 | Goals | keep hard-drop rate near target; reduce early losses |
-| Policy constraints | min/max value and max delta; temporal stabilization is clarified separately |
+| Action-space constraints | min/max value and `50ms` step |
+| Policy constraints | max delta; temporal stabilization is clarified separately |
 | Initial authority | bundle-declared numeric rule for `cohort:new_players` |
 | Governed state | approved strategy, state identity, generation, predecessor, and approval reference |
 | Uncertainty | not claimed for the bundle-authored Phase 3 rule |
@@ -240,26 +242,25 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   context: {
     sessionId: flaggo.target.session(sessionId),
     userId: flaggo.target.user(userId),
-    cohort: flaggo.target.cohort(playerCohort),
-    deviceType: device.type
+    cohort: flaggo.target.cohort(playerCohort)
   }
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
 if (
   dropIntervalDecision.source === "server" &&
-  dropIntervalDecision.confirmToken
+  dropIntervalDecision.exposure.confirmationRequired
 ) {
   await flaggo.exposures.confirm(
     dropIntervalDecision.decisionId,
-    dropIntervalDecision.confirmToken
+    dropIntervalDecision.exposure.confirmToken
   );
 }
 ```
 
 In this shape, `flaggo.tune.number(...)` keeps the original SDK surface but returns a number decision object. The application still applies a plain numeric value through `dropIntervalDecision.value`, while the SDK exposes the decision receipt needed for attribution. If a value-only convenience is needed later, it should be a separate helper or projection that intentionally opts out of closed-loop exposure attribution.
 
-The code-first object combines authoring and invocation without conflating their persisted forms. A bound input such as `boardPressureSignal.input(boardPressure)` contributes the immutable signal reference to the extracted definition and the current value to the runtime request. A typed target such as `flaggo.target.session(sessionId)` contributes the target kind to the extracted context schema and the current ID to the runtime request. Plain context values such as `deviceType` remain runtime metadata. Flaggo excludes bound runtime values from definition digests and revisions.
+The code-first object combines authoring and invocation without conflating their persisted forms. A bound input such as `boardPressureSignal.input(boardPressure)` contributes the immutable signal reference to the extracted definition and the current value to the runtime request. A typed target such as `flaggo.target.session(sessionId)` contributes the target kind to the extracted context schema and the current ID to the runtime request. Flaggo excludes bound runtime values from definition digests and revisions.
 
 `signals.evidence` declares emitted or derived signals that this decision may use for evidence and learning; emitting a signal does not associate it with every decision. `inference.target` declares the desired target kind, and `inference.fallbackOrder` keeps resolution explicit. Derived signals such as `earlyLossRateSignal` declare their typed source and aggregation separately. The registry can still govern behavior at a broader control target such as `cohort:new_players`. For a valid registered definition, `output.default` is the governed fallback when evidence, policy, or state prevents an approved adaptive value; contract/configuration errors remain errors.
 
@@ -347,6 +348,9 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
       range: [200, 1500],
       step: 50
     },
+    lifecycle: {
+      authorityMode: "proposal-managed"
+    },
     policy: {
       kind: "inline",
       constraints: [
@@ -360,15 +364,13 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     context: {
       sessionId: { type: "string", target: "session" },
       userId: { type: "string", target: "user" },
-      cohort: { type: "string", target: "cohort" },
-      deviceType: "string"
+      cohort: { type: "string", target: "cohort" }
     }
   },
   context: {
     sessionId,
     userId,
-    cohort: playerCohort,
-    deviceType: device.type
+    cohort: playerCohort
   },
   inputs: [
     boardPressureSignal.input(boardPressure),
@@ -448,7 +450,8 @@ For `tetris.dropInterval`, the operator should see:
 - the declared goal: keep gameplay challenging but playable,
 - the action space: `200ms` to `1500ms` in `50ms` steps,
 - the fallback contract: `800ms`,
-- the active Phase 3 policy constraints: bounds, step, max delta, and guardrail limits,
+- the enforced action-space bounds/step and active Phase 3 policy constraints,
+  including max delta and any declared guardrails,
 - the current governed state: state ID, generation, active rule, predecessor, and approval reference,
 - recent decisions and explanations,
 - the active decision strategy and why its exact bundle snapshot was approved.

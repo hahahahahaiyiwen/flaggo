@@ -216,8 +216,7 @@ Example:
   "runtimeContext": {
     "userId": "user-123",
     "sessionId": "game-456",
-    "cohort": "new_players",
-    "deviceType": "mobile"
+    "cohort": "new_players"
   },
   "inputs": [
     { "signal": { "key": "tetris.boardPressure" }, "value": 0.82 },
@@ -555,10 +554,17 @@ Success and error states:
 | `contract-conflict` | The digest does not match the registered revision; return `409` Problem Details. |
 | `unknown-decision-key` | Decision key is not registered; return `404` Problem Details. |
 | `retired-definition` | The exact revision is retired; return `409` Problem Details. |
+| `definition-not-ready` | Required initial activation is pending or failed; return `409` Problem Details and forbid client fallback. |
+| `decision-service-not-ready` | A required state, policy, or audit readiness check failed; return `503` Problem Details with `clientFallback.eligible: false`. |
+| `invalid-decision-state` | Persisted state violates canonical invariants; return `500` Problem Details with `clientFallback.eligible: false`. |
 
 The full contract bundle should not be sent on each runtime request.
 
-Contract/configuration failures are not decision fallback. The service does not execute an older revision, and the SDK must not convert the 4xx response into local fallback.
+Contract/configuration and readiness failures are not decision fallback. The
+service does not execute an older revision, and the SDK must not convert these
+responses into local fallback. Fallback-eligible `503 service-unavailable` is
+reserved for genuine transient data-plane availability after required
+readiness checks passed.
 
 ## Authentication and retry identity
 

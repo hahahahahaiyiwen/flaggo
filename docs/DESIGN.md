@@ -150,10 +150,12 @@ Decision key: tetris.dropInterval
 Decision definition: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A / rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
 Runtime target: session:game-456
 Control target: cohort:new_players or global
-Runtime context: userId, sessionId, cohort, currentLevel, deviceType, boardPressure, recentPlacementTimeMs, recoveryFailures
+Runtime context: userId, sessionId, cohort
+Inference inputs: currentLevel, boardPressure, recentPlacementTimeMs, recoveryFailures
 Evidence views: hard-drop rate, placement time, early game-over rate by session/cohort/global windows
 Goals: keep gameplay challenging but playable
-Policy constraints: min/max interval and max delta; temporal semantics are clarified separately
+Action-space constraints: min/max interval and 50ms step
+Policy constraints: max delta; temporal semantics are clarified separately
 Initial authority: bundle-declared numeric rule for cohort:new_players
 Governed state: approved active strategy, predecessor, generation, and approval reference
 Action space: numeric interval from 200ms to 1500ms

@@ -252,7 +252,10 @@ Fallback has explicit provenance:
   target, state lineage, strategy identity, or exposure confirmation.
 - **Client fallback** is permitted only for explicitly configured data-plane availability failures and cannot claim server decision, policy, audit, or exposure identity.
 - **Contract/readiness errors**, including corrupt or incoherent persisted
-  state, never become fallback.
+  state, never become fallback. Pending required activation returns
+  `definition-not-ready`; failed persistence readiness returns
+  `decision-service-not-ready`; invalid persisted authority returns
+  `invalid-decision-state`. None is client-fallback eligible.
 
 Fallback remains inside the registered decision definition and effective policy.
 
