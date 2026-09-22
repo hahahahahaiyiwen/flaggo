@@ -228,38 +228,12 @@ Evaluation should consider:
 
 ### Produce proposal
 
-Example strategy proposal:
-
-```json
-{
-  "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-  "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-  "learningTarget": "cohort:new_players",
-  "controlTarget": "cohort:new_players",
-  "proposalType": "activate_strategy",
-  "strategy": {
-    "kind": "numeric-rule",
-    "threshold": 0.55,
-    "valueAtOrAbove": 850,
-    "valueBelow": 750,
-    "weightedInputs": [
-      {
-        "signal": { "key": "tetris.boardPressure" },
-        "minimum": 0,
-        "maximum": 1,
-        "weight": 0.45
-      }
-    ]
-  },
-  "confidence": {
-    "evidenceQuality": 0.82,
-    "modelUncertainty": 0.31,
-    "expectedOutcome": 0.72
-  },
-  "analysisMode": "qualitative_plus_metric_threshold_strategy",
-  "rationale": "Cohort evidence supports bounded adaptation while one fixed value cannot respond to live pressure."
-}
-```
+Phase 4 will define the concrete proposal DTO under issue #25. This document
+keeps only the required boundary: a proposal identifies the exact definition
+and target, describes one bounded candidate plus its rationale and supporting
+evidence claims, and carries no trusted activation, state, approval, or
+strategy identity. Proposal kinds and governance dispositions remain separate
+concepts.
 
 ## Relationship to policy
 

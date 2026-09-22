@@ -253,7 +253,7 @@ DecideRequest
   -> ITargetResolver
   -> IEvidenceProvider
   -> IStateStore
-  -> IStrategyExecutor or fixed active value
+  -> fixed active value directly or IStrategyExecutor for numeric-rule authority
   -> IPolicyEvaluator
   -> IAuditSink
   -> RuntimeDecisionResult
@@ -296,7 +296,9 @@ and [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
    policy result, fallback provenance, reason, and auditId.
 
 7. Exposure
-   Game applies the value and confirms exposure with decisionId.
+   Game narrows to a server receipt, checks
+   exposure.confirmationRequired, then confirms with decisionId and
+   exposure.confirmToken.
 
 8. Feedback
    Client emits outcome telemetry linked to the confirmed exposure. Phase 3
@@ -362,7 +364,8 @@ Validation:
 - same-key decide retry returns the original decision and conflicting reuse returns `409`,
 - concurrent decide retries, TTL expiry, and tracing-field exclusion follow the fingerprint contract,
 - availability fallback occurs only for the exact eligible classifier after binding verification and retry exhaustion,
-- `required-evidence-unavailable` requires both explicit effective-policy permission and SDK configuration before client fallback,
+- `required-evidence-unavailable` produces audited server fallback when
+  permitted and otherwise remains fallback-ineligible,
 - global health readiness fails for required dependencies and remains degraded for evidence loss regardless of per-definition evidence requirements,
 - full evidence detail remains in audit rather than runtime results,
 - direct REST clients can implement the flow without the TypeScript SDK.
@@ -419,7 +422,7 @@ Deliverables:
 - `ITargetResolver`,
 - `IStateStore` local implementation,
 - `IEvidenceProvider` local implementation,
-- `IStrategyExecutor` for fixed and numeric-rule strategies,
+- `IStrategyExecutor` for numeric-rule strategies,
 - `IPolicyEvaluator` for bounds, step, max delta, cooldown, evidence/model constraints, pause, and fallback,
 - `IAuditSink` local implementation,
 - exposure record linkage,

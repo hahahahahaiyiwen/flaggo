@@ -113,6 +113,24 @@ Example shape:
         "cohort": { "type": "string", "target": "cohort" }
       },
       "targetHierarchy": ["session", "user", "cohort", "global"],
+      "signals": {
+        "allowed": [
+          { "key": "tetris.boardPressure" },
+          { "key": "tetris.currentLevel" },
+          { "key": "tetris.earlyLossRate24h" },
+          { "key": "tetris.hardDropRate24h" },
+          { "key": "tetris.piecePlaced" },
+          { "key": "tetris.recentPlacementTimeMs" },
+          { "key": "tetris.recoveryFailures" },
+          { "key": "tetris.sessionEnded" }
+        ],
+        "evidence": [
+          { "key": "tetris.earlyLossRate24h" },
+          { "key": "tetris.hardDropRate24h" },
+          { "key": "tetris.piecePlaced" },
+          { "key": "tetris.sessionEnded" }
+        ]
+      },
       "inference": {
         "target": "session",
         "inputs": [
@@ -128,8 +146,7 @@ Example shape:
         "primary": { "signal": { "key": "tetris.earlyLossRate24h" }, "direction": "minimize" }
       },
       "fallback": {
-        "value": 800,
-        "reason": "safe_default_drop_interval"
+        "value": 800
       },
       "lifecycle": {
         "authorityMode": "bundle-approved",
@@ -225,7 +242,8 @@ flaggo.tune.number("tetris.dropInterval", {
     evidence: [
       piecePlacedEvent,
       sessionEndedEvent,
-      earlyLossRateSignal
+      earlyLossRateSignal,
+      hardDropRateSignal
     ]
   },
   intent: {

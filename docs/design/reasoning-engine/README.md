@@ -48,31 +48,41 @@ interface IStrategyExecutor {
 }
 
 type StrategyExecutionRequest = {
-  definition: DecisionDefinition;
-  state: DecisionState;
+  definition: RuntimeDefinitionProjection;
+  strategy: NumericRuleStrategy;
   inputs: SignalInput[];
-  evidence?: EvidenceSnapshot;
-  runtimeContext: RuntimeContext;
-  now: string;
 };
 
-type StrategyExecutionResult = {
-  value: DecisionValue;
-  decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
-  strategyId?: string;
-  confidence: ConfidenceReport | null;
-  reason: string;
-};
+type StrategyExecutionResult =
+  | {
+      result: "candidate";
+      value: number;
+      strategyId: string;
+      confidence: null;
+      reason: string;
+    }
+  | {
+      result: "error";
+      code:
+        | "invalid-strategy"
+        | "missing-input"
+        | "duplicate-input"
+        | "invalid-input";
+      reason: string;
+    };
 ```
 
 Bundle-authored strategies return `confidence: null`; authored rationale and
 authenticated approval are provenance, not learned confidence.
 
-`IStrategyExecutor` should only be called after the Decision API has found an
-active `DecisionState` with an active value or active strategy. No compatible
+The Decision API resolves `active-value` authority directly. It calls
+`IStrategyExecutor` only after finding coherent `numeric-rule` authority and
+passes the materialized rule rather than the whole state union. No compatible
 active state at any permitted target is handled before strategy execution and
-may resolve to the registered server fallback. Corrupt or incoherent state and
-non-ready registration are readiness failures, not fallback decisions.
+may resolve to the registered server fallback. Policy evaluation and fallback
+selection occur after candidate production. Corrupt or incoherent state,
+invalid strategy input, and non-ready registration are errors, not executor
+fallback decisions.
 
 ## Numeric rule strategy behavior
 
@@ -92,10 +102,9 @@ Rules:
 - Missing, duplicate, nonnumeric, or nonfinite required inputs make the
   strategy result invalid; they do not silently become zero.
 - Numeric rule operands come only from `StrategyExecutionRequest.inputs`.
-  `runtimeContext` supplies target and declared contextual facts; it must not
-  substitute for a missing signal input.
 - Normalized input values are clamped to `[0, 1]`.
-- Strategy execution should not apply fallback directly unless no candidate can be produced.
+- Strategy execution never applies fallback directly; it returns a candidate
+  or a typed execution error.
 - Policy remains responsible for output bounds, step, applicable max delta, and
   fallback.
 
@@ -107,21 +116,10 @@ part of this rule contract.
 
 ## Phase 4 async proposal source
 
-```ts
-interface IDecisionIntelligence {
-  propose(input: IntelligenceRequest): Promise<DecisionProposal>;
-}
-```
-
-Phase 4 can implement `IDecisionIntelligence` as:
-
-- a fixture loader,
-- a script that creates a replacement proposal,
-- a simple heuristic that returns a fixed `StrategyProposal`.
-
-The important point is that proposal output uses the same `DecisionProposal`
-and ID-free strategy declaration contracts future AI agents will use.
-Activation materializes the server-owned strategy identity.
+Phase 4 may begin with a scripted or fixture-backed proposal source. Its
+producer port and proposal DTO are intentionally deferred until the Phase 4
+contract is designed. Any future producer remains outside the online executor
+and cannot write active state directly.
 
 ## Tetris MVP strategy
 

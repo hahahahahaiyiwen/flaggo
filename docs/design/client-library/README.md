@@ -352,6 +352,9 @@ The result is `InlinePolicy { kind: "inline", constraints }`; constraints are du
 `output.range` and `output.step` remain action-space semantics. Extraction does
 not duplicate them into synthesized policy constraints, so the code-first
 Tetris declaration and its canonical bundle form hash identically.
+Extraction also preserves `signals.evidence` as canonical signal-role
+references and maps `output.default` to `fallback.value` without inventing a
+fallback reason.
 
 ### Extractable code-first subset
 
@@ -932,7 +935,10 @@ Production credentials use OAuth 2.0/OIDC scopes. The SDK keeps management crede
 
 The exact availability classifier and retry defaults are defined in the [API Contract Proposal](../API_CONTRACT_PROPOSAL.md#sdk-availability-fallback-classifier). The SDK must compare each generated call-site digest with `RegistrationReceipt.acceptedDefinitions[decisionKey]` before a remote attempt or local fallback. Availability fallback is forbidden until that accepted binding exists and matches.
 
-For valid Flaggo Problem Details, the SDK requires `clientFallback.eligible: true`; status `503` alone does not authorize a local value. In particular, `required-evidence-unavailable` is forbidden unless the registered policy separately permits it and the server projects that permission into the error.
+For valid Flaggo Problem Details, the SDK requires
+`clientFallback.eligible: true`; status `503` alone does not authorize a local
+value. `required-evidence-unavailable` is always ineligible because missing
+evidence is a server evaluation outcome, not data-plane unavailability.
 
 ## Telemetry behavior
 

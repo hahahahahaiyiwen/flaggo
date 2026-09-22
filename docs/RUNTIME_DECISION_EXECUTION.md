@@ -235,7 +235,9 @@ Runtime execution creates a decision record before returning:
 RuntimeDecisionResult
   -> decisionId
   -> application applies or renders value
-  -> confirmExposure(decisionId)
+  -> narrow to ServerDecisionReceipt
+  -> require exposure.confirmationRequired
+  -> confirmExposure(decisionId, exposure.confirmToken)
   -> exposureId
   -> attributed outcome telemetry
 ```

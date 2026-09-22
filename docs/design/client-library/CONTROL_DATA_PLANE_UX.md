@@ -175,6 +175,7 @@ never consumes the newer strategy.
 | A required state, policy, or audit readiness check failed | `503 decision-service-not-ready` with `clientFallback.eligible: false` | Forbidden |
 | Persisted state violates canonical invariants | `500 invalid-decision-state` with `clientFallback.eligible: false` | Forbidden |
 | Registered definition evaluates but applicable state, policy, or evidence blocks adaptation | `200` audited server fallback | Not applicable |
+| Required evidence is unavailable and governed fallback is forbidden | `503 required-evidence-unavailable` with `clientFallback.eligible: false` | Forbidden |
 | Data plane is genuinely unavailable, unreachable, or times out after readiness passed | Transport failure or `503 service-unavailable` with `clientFallback.eligible: true` | Explicitly configurable |
 
 Contract and readiness errors are actionable deployment, control-plane, or
@@ -201,7 +202,9 @@ An availability fallback has no server `decisionId`, `auditId`, policy result, d
 
 Availability fallback is disabled by default. It is eligible only after configured retries for DNS/connection failure, connection/read timeout before a complete response, intermediary `502`/`504`, or a valid Flaggo `5xx` Problem Details response with `clientFallback.eligible: true`. It is forbidden for TLS, certificate, proxy/authentication configuration, caller cancellation, malformed responses, every `503` without explicit eligibility, every `4xx`, `500`/`501`/`505`, and Flaggo problems where eligibility is false or absent.
 
-`required-evidence-unavailable` is forbidden by default. It becomes eligible only when the registered definition policy separately allows that client fallback and the server returns the explicit eligibility extension. HTTP `503` alone is not sufficient.
+`required-evidence-unavailable` is always ineligible for SDK-local fallback.
+When governed fallback is permitted, the server returns an audited fallback
+decision. Otherwise the SDK surfaces fallback-ineligible Problem Details.
 
 The default is one retry after the initial attempt with the same decide
 idempotency key. Before any remote attempt or local fallback, the generated

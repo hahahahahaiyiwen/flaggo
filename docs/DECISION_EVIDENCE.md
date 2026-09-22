@@ -58,8 +58,13 @@ Decision definitions reference signal handles by role. Tooling can derive an exp
 ```text
 derived allowed signals:
   - tetris.piecePlaced
+  - tetris.sessionEnded
   - tetris.boardPressure
+  - tetris.recentPlacementTimeMs
+  - tetris.recoveryFailures
+  - tetris.currentLevel
   - tetris.earlyLossRate24h
+  - tetris.hardDropRate24h
 ```
 
 Evidence views are derived from immutable signal keys, target hierarchy, and time/window/filter needs:
@@ -84,6 +89,7 @@ Some values are useful both as durable evidence and as inference inputs:
 boardPressure
 recentPlacementTimeMs
 recoveryFailures
+currentLevel
 ```
 
 They should be declared as immutable keyed metrics first, then optionally selected as inference inputs:
@@ -124,6 +130,7 @@ inference inputs:
   tetris.boardPressure = 0.82
   tetris.recentPlacementTimeMs = 1420
   tetris.recoveryFailures = 2
+  tetris.currentLevel = 3
 auditId: audit-789
 ```
 
@@ -194,6 +201,7 @@ Runtime signal inputs are separate from ordinary context:
 tetris.boardPressure = 0.82
 tetris.recentPlacementTimeMs = 1420
 tetris.recoveryFailures = 2
+tetris.currentLevel = 3
 ```
 
 The target resolver uses these facts with the definition's primary inference

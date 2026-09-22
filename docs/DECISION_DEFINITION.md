@@ -271,7 +271,7 @@ Signal handles are the single declaration surface for facts Flaggo may understan
 | Derived signal | Metric declared from other signal handles and an aggregation expression. | Async learning, evidence views, validation, policy. | `earlyLossRateSignal` |
 | Inference input | App-emitted metric bound to its current value inside the inference declaration. | Runtime strategy evaluation. | `boardPressureSignal.input(boardPressure)` |
 | Decision-record input | Inference input value captured when a value is returned. | Auditing what Flaggo decided for the request. | `decision.boardPressure` when `850ms` was returned |
-| Exposure-captured input | Inference input value copied to an exposure only after the client confirms the value was applied or rendered. | Later learning and outcome correlation. | `exposure.boardPressure` after `confirmExposure(decisionId)` |
+| Exposure-captured input | Inference input value copied to an exposure only after the client narrows to a server receipt, verifies `exposure.confirmationRequired`, and confirms the value was applied or rendered. | Later learning and outcome correlation. | `exposure.boardPressure` after `confirmExposure(decisionId, exposure.confirmToken)` |
 
 If runtime strategy evaluation should branch on a value, it must be declared once as an app-emitted metric handle and selected as `inference.inputs`. The application should provide the pre-aggregated value with the request through that handle; the runtime service should not aggregate it on the hot path. Aggregated metrics must be declared as derived signal handles with their source signals and aggregation expression. Evidence views can be derived internally from the definition revision, referenced signal definitions, target hierarchy, and requested windows. Decision records capture returned values; exposure capture is still useful because it records the exact input values present when the application actually applied or rendered a decision.
 
@@ -362,6 +362,8 @@ DecisionDefinition
       - tetris.sessionEnded
       - tetris.boardPressure
       - tetris.recentPlacementTimeMs
+      - tetris.recoveryFailures
+      - tetris.currentLevel
       - tetris.earlyLossRate24h
       - tetris.hardDropRate24h
   intent:

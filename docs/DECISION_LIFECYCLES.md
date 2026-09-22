@@ -188,6 +188,8 @@ Less-trusted layers may narrow behavior but cannot widen it.
 ## Governance dispositions
 
 Proposal type and governance disposition are different concepts. An experiment is a proposal type, not an approval result.
+The following terms are conceptual Phase 4 outcomes, not a frozen wire enum;
+issue #25 owns the concrete proposal and governance contract.
 
 | Disposition | Meaning |
 | --- | --- |

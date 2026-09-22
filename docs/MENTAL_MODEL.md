@@ -85,6 +85,8 @@ DecisionDefinition
     allow:
       - tetris.boardPressure
       - tetris.recentPlacementTimeMs
+      - tetris.recoveryFailures
+      - tetris.currentLevel
       - tetris.piecePlaced
       - tetris.sessionEnded
       - tetris.earlyLossRate24h
@@ -104,6 +106,8 @@ DecisionDefinition
       inputs:
         - tetris.boardPressure
         - tetris.recentPlacementTimeMs
+        - tetris.recoveryFailures
+        - tetris.currentLevel
       fallbackOrder: cohort -> global
   output:
       type: number
@@ -161,13 +165,12 @@ Runtime context:
   sessionId = game-456
   userId = user-123
   cohort = new_players
-  boardPressure = 0.82
-  recentPlacementTimeMs = 1420
-  currentLevel = 3
 
 Inference inputs used by runtime strategy evaluation:
-  boardPressure <- declared metric boardPressure
-  recentPlacementTimeMs <- declared metric recentPlacementTimeMs
+  tetris.boardPressure = 0.82
+  tetris.recentPlacementTimeMs = 1420
+  tetris.recoveryFailures = 2
+  tetris.currentLevel = 3
 
 Runtime target resolved from context:
   session:game-456
@@ -425,7 +428,9 @@ Adaptive learning needs explicit attribution. A runtime result should create a d
 RuntimeDecisionResult
   -> decisionId
   -> application applies or renders value
-  -> confirmExposure(decisionId)
+  -> narrow to ServerDecisionReceipt
+  -> require exposure.confirmationRequired
+  -> confirmExposure(decisionId, exposure.confirmToken)
   -> client-applied exposureId
   -> outcome events within attribution window
   -> attributed evidence

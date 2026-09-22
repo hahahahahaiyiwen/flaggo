@@ -401,7 +401,10 @@ reuse fallback-eligible `service-unavailable`:
 readiness/integrity errors include `clientFallback.eligible: false`; the SDK
 surfaces all three without a server or local fallback.
 
-`required-evidence-unavailable` is forbidden by default even though its status is `503`. A definition policy must separately set `clientFallback.requiredEvidenceUnavailable = "allow"` before the server may return:
+`required-evidence-unavailable` is an evaluation or policy outcome, not an
+availability failure. When governed fallback is permitted, the service returns
+the registered fallback as an audited `200` server decision. Otherwise it
+returns fallback-ineligible Problem Details:
 
 ```json
 {
@@ -410,14 +413,12 @@ surfaces all three without a server or local fallback.
   "status": 503,
   "code": "required-evidence-unavailable",
   "clientFallback": {
-    "eligible": true,
-    "reason": "policy-permitted-required-evidence-unavailable"
+    "eligible": false
   }
 }
 ```
 
-Without that permission, the same error carries `eligible: false`; the SDK
-surfaces it after retries and must not return a local value.
+The SDK surfaces this problem and must not return a local value.
 `service-unavailable` sets `eligible: true` only for genuine transient
 data-plane transport, capacity, or dependency availability failure after all
 required readiness checks passed. It must not represent pending activation,
@@ -760,7 +761,7 @@ Proposed baseline:
 | Decide key reused with another fingerprint | `409 idempotency-conflict` Problem Details |
 | Matching decide request still executing after wait budget | `409 idempotency-in-progress` Problem Details plus `Retry-After` |
 | Rate limit | `429 rate-limited` Problem Details |
-| Definition requires evidence that is currently unavailable and policy forbids governed fallback | `503 required-evidence-unavailable`; client fallback is forbidden unless separately policy-authorized in the Problem Details extension |
+| Definition requires evidence that is currently unavailable and policy forbids governed fallback | `503 required-evidence-unavailable` with `clientFallback.eligible: false`; SDK-local fallback is forbidden |
 | Genuine transient data-plane availability failure after readiness passed and before an audited decision exists | `503 service-unavailable` Problem Details with `clientFallback.eligible: true`; SDK may use explicitly configured availability fallback |
 
 The key distinction is whether the server completed an audited evaluation of a
@@ -850,7 +851,7 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 39. Evidence-required request behavior does not mutate global readiness classification.
 40. Ineligible transport/status failures never produce client fallback.
 41. Missing or mismatched local call-site binding forbids both remote decide and availability fallback.
-42. `required-evidence-unavailable` defaults to client fallback forbidden; explicit effective policy allow plus SDK configuration makes it eligible.
+42. `required-evidence-unavailable` is always ineligible for SDK-local fallback; policy may permit an audited server fallback instead.
 43. Approval snapshot emits quoted `ETag` and RFC 9530 `Content-Digest` over the same canonical bytes.
 44. Code-first and canonical bundle Tetris definitions normalize to the same bytes and `contractDigest`.
 45. `definition-not-ready`, `decision-service-not-ready`, and `invalid-decision-state` never produce server or SDK fallback.

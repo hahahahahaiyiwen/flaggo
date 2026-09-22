@@ -383,24 +383,35 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
 
 This explicit form remains useful when definitions are generated, reused across call sites, registered outside application execution, or authored independently from runtime values. It maps directly to the separated definition and request contracts. The combined code-first form should remain the default UX.
 
-The bundle may declare the initial authority candidate, but it cannot declare
-that candidate approved. Flaggo owns the generated proposal and activation
-identities, materialized strategy identity, active state, predecessor,
-generation, approval reference, and future replacement transitions.
-Proposal-managed producers may later recommend fixed values, rules,
-experiments, learned strategies, or fallback-only state.
+In `bundle-approved` mode, the bundle declares an initial authority candidate
+but cannot declare it approved. Flaggo owns the generated proposal and
+activation identities, materialized strategy identity, active state,
+predecessor, generation, approval reference, and future replacement
+transitions.
+
+In `proposal-managed` mode, the bundle contains no initial authority. Applying
+it publishes the definition without an initial-authority approval or activation
+step. Until a future Phase 4 producer and governance path activate authority,
+runtime requests use the registered audited fallback. The concrete proposal
+and governance DTOs remain deferred to issue #25.
 
 The declaration can produce or contribute to a canonical contract bundle during build or release:
 
 ```text
-TypeScript declarations, hand-authored YAML/JSON, or registry export
-  -> flaggo.decision-definition-bundle.json
-  -> flaggo contracts validate
-  -> flaggo contracts apply
-  -> authenticated approval
+bundle-approved definition
+  -> validate and apply bundle
+  -> authenticated approval of the exact snapshot
   -> initial authority activation
-  -> registration receipt
-  -> each deployed workload carries its own expected contract/build identity
+  -> ready registration receipt with activated-authority references
+
+proposal-managed definition
+  -> validate and apply bundle
+  -> publish definition without initial authority
+  -> registration receipt without activated-authority references
+  -> future proposal governance may activate replacement authority
+
+both
+  -> each deployed workload carries its exact expected contract/build identity
 ```
 
 ### Software lifecycle experience
@@ -412,7 +423,7 @@ Flaggo should support different owners and systems across the software lifecycle
 | Development | Author decision declaration in TypeScript, JSON/YAML, or registry UI. | Local declaration or draft contract bundle. | SDK provides ergonomic code-first declarations and typed runtime calls. |
 | Build | Optionally extract or assemble a canonical contract bundle. | `flaggo.decision-definition-bundle.json`, `contractDigest`, optional build metadata. | SDK extractor may generate the bundle; bundle-first and registry-first workflows remain valid. |
 | Application deployment | Deploy application code independently. | Extracted bundle may be packaged for trusted startup. | Flaggo does not own or block external deployment. |
-| Application/bootstrap startup | MVP validates the bundle, obtains authenticated approval, and waits for required authority activation before enabling decisions. | Ready registration receipt with definition and activated-authority references. | Trusted startup SDK is the initial control-plane client; it uses management APIs, never the decide endpoint. |
+| Application/bootstrap startup | MVP validates and applies the bundle. Bundle-approved definitions obtain authenticated approval and wait for required initial activation; proposal-managed definitions publish without initial activation. | Registration receipt with exact definition identity and activated-authority references only when initial authority exists. | Trusted startup SDK is the initial control-plane client; it uses management APIs, never the decide endpoint. |
 | Runtime | Ask for decisions and emit telemetry. | Request with exact expected identity; strict server result or Problem Details error. | Data plane evaluates only registered identities. Missing/conflicting identity is surfaced without local fallback; availability fallback remains explicitly configurable. |
 | Observe/operate | Inspect drift, audit, fallback, and strategy behavior. | Audit records, diagnostics, integrity metrics, operator warnings. | SDK exposes response fields; control plane owns audit, strategy, policy, and operator actions. |
 

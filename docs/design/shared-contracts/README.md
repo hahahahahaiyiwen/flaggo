@@ -238,11 +238,6 @@ type PolicyReference = {
 type InlinePolicy = {
   kind: "inline";
   constraints: PolicyConstraint[];
-  clientFallback?: ClientFallbackPolicy;
-};
-
-type ClientFallbackPolicy = {
-  requiredEvidenceUnavailable: "allow" | "forbid";
 };
 
 type AuthorityLifecycleDeclaration =
@@ -282,7 +277,11 @@ action space and applicable runtime policy. SDK authoring uses a branded
 numeric metric handle; registry and activation validation enforce the same
 numeric-source rule.
 
-`clientFallback.requiredEvidenceUnavailable` is independent from governed server fallback. Omission means `forbid`. The server projects the evaluated permission into the `required-evidence-unavailable` Problem Details extension; an SDK also requires its own local availability-fallback configuration before using a local value.
+Missing required evidence is a server evaluation outcome, not a data-plane
+availability failure. When governed fallback is permitted, the server returns
+the registered fallback as an audited decision. Otherwise it returns
+fallback-ineligible `required-evidence-unavailable` Problem Details. Definition
+policy never authorizes an SDK-local value for this outcome.
 
 `InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; registry validation and the Decision API must enforce it again against registered signal declarations.
 
@@ -352,7 +351,6 @@ type PolicyEvaluationResult = {
   result: "approved" | "blocked" | "fallback";
   reasons: string[];
   appliedConstraints: string[];
-  clientFallback?: ClientFallbackPolicy;
 };
 ```
 
@@ -364,7 +362,9 @@ Rules:
   bounds and step come from the output contract rather than `InlinePolicy`.
 - Runtime should return fallback when policy result is `fallback`.
 - Runtime should not return a candidate value as approved when policy result is `blocked`; a governed fallback response may preserve `blocked` as the policy result.
-- Omitted client-fallback permission means `forbid`. A `required-evidence-unavailable` error may advertise client fallback only when effective policy explicitly returns `allow`.
+- Policy and evidence outcomes never authorize SDK-local fallback. The SDK
+  availability fallback classifier is limited to genuine data-plane
+  availability failures after readiness checks pass.
 
 ## Decision strategy
 
@@ -445,6 +445,9 @@ Rules:
 - Exactly one authority payload is valid. `active-value` requires
   `activeValue`; `numeric-rule` requires `activeStrategy`; both-present,
   neither-present, or discriminator/payload mismatch fails readiness.
+- Decision API orchestration resolves `activeValue` directly. Only coherent
+  `numeric-rule` authority crosses the strategy-executor boundary; state
+  absence and policy fallback do not.
 - The mutable authority head is keyed by stable application, environment,
   decision key, and control target, not by semantic revision.
 - Activation compare-and-swaps that stable head across revisions, increments
@@ -656,9 +659,7 @@ Normalization:
 5. Materialize generated fields such as `signals.allowed` exclusively from semantic role references. A supplied generated allowlist is never an identity input; stale or extra entries are discarded during extraction.
 6. Reduce every signal role/reference to immutable `SignalRef { key }`. `schemaDigest` belongs to signal-declaration conflict detection and is excluded from decision-definition identity.
 7. Omit undefined fields and normalize equivalent optional/default forms
-   according to the contract version. In the replacement contract, omitted
-   `clientFallback.requiredEvidenceUnavailable` and explicit `"forbid"` are
-   identical.
+   according to the contract version.
 8. Sort JSON object keys recursively.
 9. Reject duplicate signal keys, duplicate context fields, duplicate policy constraint kinds, or conflicting role/schema declarations.
 10. Serialize with RFC 8785 JSON Canonicalization Scheme.
@@ -692,6 +693,10 @@ Runtime wire `inputs` are also key-sorted for deterministic transport and audit 
 invariants. Canonicalization does not synthesize a `number-bounds` policy
 constraint from them. An explicitly authored `number-bounds` constraint is
 additional semantic policy and therefore changes the digest.
+
+Code-first `output.default` normalizes to canonical `fallback.value`.
+Canonicalization does not synthesize a fallback reason that the authoring
+surface cannot express.
 
 ## Contract identity and integrity
 
@@ -774,79 +779,20 @@ Rules:
   approved address contract.
 - State migration between definition IDs should be an explicit operator or registry action, not an implicit compatibility rule.
 
-## Proposal contracts (provisional Phase 4 design)
+## Proposal-managed authority (Phase 4 extension point)
 
-These shapes describe the existing design space only. They are not part of the
-Phase 3 bundle-contract replacement or activation-core commitment. Phase 4 must
-finalize the smallest proposal contract after the Track B reduction rather
-than preserving this hierarchy for compatibility.
+Phase 4 proposal and governance DTOs are intentionally not frozen by the Phase
+3 contract. Issue #25 must define the smallest concrete wire shapes after the
+activation-core reduction. The current shared invariants are:
 
-```ts
-type DecisionProposal =
-  | ValueProposal
-  | StrategyProposal
-  | ExperimentProposal
-  | HoldProposal
-  | RollbackProposal;
-
-type ValueProposal = {
-  proposalType: "value";
-  decisionKey: string;
-  target: DecisionTargetRef;
-  value: DecisionValue;
-  confidence: ConfidenceReport | null;
-  evidenceStatus: string;
-  rationale: string;
-  risks: string[];
-};
-
-type StrategyProposal = {
-  proposalType: "strategy";
-  decisionKey: string;
-  target: DecisionTargetRef;
-  strategy: DecisionStrategyDeclaration;
-  confidence: ConfidenceReport | null;
-  evidenceStatus: string;
-  rationale: string;
-  risks: string[];
-};
-
-type ExperimentProposal = {
-  proposalType: "experiment";
-  decisionKey: string;
-  target: DecisionTargetRef;
-  candidates: DecisionValue[];
-  rationale: string;
-  risks: string[];
-};
-
-type HoldProposal = {
-  proposalType: "hold";
-  decisionKey: string;
-  target: DecisionTargetRef;
-  reason: string;
-};
-
-type RollbackProposal = {
-  proposalType: "rollback";
-  decisionKey: string;
-  target: DecisionTargetRef;
-  reason: string;
-};
-
-type GovernanceOutcome = {
-  result: "approved" | "limited" | "experiment" | "hold" | "rollback" | "fallback" | "requires-approval" | "rejected";
-  reasons: string[];
-  activatedState?: DecisionState;
-};
-```
-
-Rules:
-
-- A Phase 4 scripted producer emits a typed proposal; it never writes active
-  state directly.
-- Governance activates through the shared expected-baseline boundary.
-- Online runtime consumes `DecisionState`, not raw proposal text.
+- a scripted or future intelligence producer emits a proposal and never writes
+  active state directly;
+- proposal kind is distinct from governance disposition;
+- governance may authorize activation only through the shared
+  expected-baseline boundary;
+- online runtime consumes `DecisionState`, never raw proposal text;
+- Phase 4 audit extensions are added with that contract rather than
+  predeclared here.
 
 ## Audit record
 
@@ -862,7 +808,7 @@ type AuditRecord = {
   auditId?: string;
   timestamp: string;
   decisionKey: string;
-  request?: DecideRequest;
+  request: DecideRequest;
   response?: AuditDecisionResult;
   contractVersion?: string;
   runtimeTarget?: DecisionTargetRef;
@@ -879,8 +825,6 @@ type AuditRecord = {
     approvalReference?: string;
   };
   policy?: PolicyEvaluationResult;
-  proposal?: DecisionProposal;
-  governanceOutcome?: GovernanceOutcome;
   reason: string;
 };
 ```
@@ -888,6 +832,9 @@ type AuditRecord = {
 Rules:
 
 - Audit records may contain more detail than runtime responses.
+- Every server-produced decision audit captures the exact normalized
+  `DecideRequest`, including all inference inputs used by successful strategy
+  execution. SDK-local fallback produces no server audit record.
 - Confirmation tokens are capabilities and must be removed before constructing `AuditRecord`; audit response projections can retain `confirmationRequired` but never `confirmToken`.
 - Audit should be local-first in MVP, such as console, file, or SQLite.
 - Cloud audit sinks should implement `IAuditSink`; they should not change the audit contract.
@@ -1223,8 +1170,7 @@ The decision definition references those signal identities without redefining th
     "default": 800
   },
   "fallback": {
-    "value": 800,
-    "reason": "safe_default_drop_interval"
+    "value": 800
   },
   "runtimeContextSchema": {
     "userId": { "type": "string", "target": "user" },
@@ -1241,6 +1187,12 @@ The decision definition references those signal identities without redefining th
       { "key": "tetris.piecePlaced" },
       { "key": "tetris.recentPlacementTimeMs" },
       { "key": "tetris.recoveryFailures" },
+      { "key": "tetris.sessionEnded" }
+    ],
+    "evidence": [
+      { "key": "tetris.earlyLossRate24h" },
+      { "key": "tetris.hardDropRate24h" },
+      { "key": "tetris.piecePlaced" },
       { "key": "tetris.sessionEnded" }
     ]
   },

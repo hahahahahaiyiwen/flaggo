@@ -83,9 +83,6 @@ type PolicyEvaluationResult = {
   result: "approved" | "blocked" | "fallback";
   reasons: string[];
   appliedConstraints: string[];
-  clientFallback?: {
-    requiredEvidenceUnavailable: "allow" | "forbid";
-  };
 };
 ```
 
@@ -119,9 +116,13 @@ candidate value
   -> return approved, blocked, or fallback
 ```
 
-For runtime decision calls, policy failures should normally produce an HTTP 200 response with `decisionMode = "fallback"` unless the request itself is malformed. If required evidence is unavailable and effective policy forbids governed fallback, the service returns `503 required-evidence-unavailable`.
-
-That `503` does not authorize SDK-local fallback by status alone. Effective policy must separately set `clientFallback.requiredEvidenceUnavailable = "allow"`; omission means `forbid`. The Decision API projects the evaluated permission into the Problem Details `clientFallback.eligible` extension. Environment/operator policy may narrow an application request from allow to forbid, never widen forbid to allow.
+For runtime decision calls, policy failures should normally produce an audited
+HTTP 200 response with `decisionMode = "fallback"` unless the request itself
+is malformed or effective policy forbids governed fallback. If required
+evidence is unavailable and governed fallback is forbidden, the service
+returns `503 required-evidence-unavailable` with
+`clientFallback.eligible: false`. Evidence and policy outcomes never authorize
+SDK-local fallback.
 
 ## Tetris MVP policy
 

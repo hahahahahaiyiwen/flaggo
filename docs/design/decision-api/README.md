@@ -583,21 +583,27 @@ Phase 1 exposes only the singular decide operation. Batch decisions are deferred
 
 ## Strategy execution
 
-For real-time adaptive decisions, the Decision API should execute an active governed strategy rather than run deep analysis in the online request path.
+For real-time decisions, the Decision API resolves fixed authority directly or
+executes an active governed numeric rule rather than running deep analysis in
+the online request path.
 
 MVP strategy execution:
 
 ```text
-active strategy
+numeric-rule authority
   -> evaluate the declared rule against request inputs
-  -> calculate candidate value
-  -> validate action space and strategy contract
-  -> check applicable runtime policy
+  -> executor returns candidate value or typed error
+  -> Decision API validates action space and strategy contract
   -> pass candidate to policy
-  -> return approved value or fallback
+  -> return approved value or governed fallback, or surface the error
 ```
 
-The first strategy executor can support only numeric rule strategies for `tetris.dropInterval`. Future executors can add fixed value, scoring, bandit, model, or experiment strategies behind the same interface.
+The Phase 3 strategy executor supports only numeric-rule authority for
+`tetris.dropInterval`. `active-value` authority is already a candidate and is
+resolved directly by Decision API orchestration. State absence, policy
+fallback, and registered fallback selection also remain outside the executor.
+Future bounded strategy kinds may extend the strategy interface without moving
+those orchestration responsibilities into it.
 
 Intent-level service port:
 

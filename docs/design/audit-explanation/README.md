@@ -86,9 +86,36 @@ The exposure confirm token is an authorization capability, not audit data. The D
 
 ```json
 {
+  "auditId": "audit-789",
+  "timestamp": "2026-07-29T19:20:00Z",
   "decisionKey": "tetris.dropInterval",
-  "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-  "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
+  "request": {
+    "decisionKey": "tetris.dropInterval",
+    "runtimeTarget": {
+      "type": "session",
+      "id": "game-456"
+    },
+    "runtimeContext": {
+      "sessionId": "game-456",
+      "userId": "user-123",
+      "cohort": "new_players"
+    },
+    "inputs": [
+      { "signal": { "key": "tetris.boardPressure" }, "value": 0.82 },
+      { "signal": { "key": "tetris.currentLevel" }, "value": 3 },
+      { "signal": { "key": "tetris.recentPlacementTimeMs" }, "value": 1420 },
+      { "signal": { "key": "tetris.recoveryFailures" }, "value": 2 }
+    ],
+    "expectedContract": {
+      "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+      "contractDigest": "sha256:contract...",
+      "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
+    },
+    "client": {
+      "appId": "tetris-demo",
+      "environment": "dev"
+    }
+  },
   "controlTarget": {
     "type": "cohort",
     "id": "new_players"
