@@ -86,10 +86,11 @@ The client library should support:
    - Treat cohort/segment identifiers as claims that the server may verify or replace.
    - Receive the runtime decision value directly in the basic path.
 
-4. **Decision-linked evidence emission**
-   - Emit typed domain events and metrics through the SDK.
-   - Automatically attach decision, target, value, audit, timestamp, and definition identity when available.
-   - Allow advanced users to define typed events and evidence metrics explicitly.
+4. **Raw signal and exposure-scoped outcome emission**
+   - Emit ordinary typed domain events and metrics as raw, unlinked telemetry.
+   - Never infer or automatically attach decision context to ordinary signal emission.
+   - After applying and confirming a server decision, emit attributed outcomes through an explicit exposure-scoped operation or payload containing the returned `exposureId`.
+   - Allow advanced users to define typed raw events and exposure-scoped outcome metrics explicitly.
 
 5. **Fallback handling**
    - Optionally use the code-declared fallback when the data plane is unavailable.

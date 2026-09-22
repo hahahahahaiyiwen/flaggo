@@ -314,8 +314,8 @@ result:
 ## Design principles
 
 1. **Execute authority; do not create it**.
-2. **Deterministic by default** across retries and replicas.
-3. **Bounded request path** with no unapproved agent loop.
+2. **Deterministic across retries and replicas** for every current runtime mechanism.
+3. **Bounded request path** with no unapproved agent loop. Any future request-time mechanism requires a separately approved bounded contract with enforceable latency and resource budgets.
 4. **Exact contract identity** before execution.
 5. **Explicit current mechanisms** for active-value, numeric-rule, and governed fallback behavior.
 6. **Runtime policy narrows only**.

@@ -149,7 +149,7 @@ DecisionProposal
 
 ## Async analysis path
 
-Decision intelligence normally runs outside the application request path:
+Decision intelligence runs outside the current application request path:
 
 ```text
 telemetry change, schedule, operator request, definition activation,
@@ -303,7 +303,7 @@ Attribution prevents unused decisions, delayed outcomes, and unrelated observati
 ## Design principles
 
 1. **Proposal, not authority**: intelligence recommends; governance authorizes.
-2. **Async by default**: unbounded reasoning does not belong in the request path.
+2. **Asynchronous intelligence**: intelligence does not serve current application requests. Any future request-time intelligence requires a separately approved bounded contract with enforceable latency and resource budgets; unbounded reasoning never belongs in the request path.
 3. **Evidence before confidence**: weak evidence leads to hold, experiment, or conservative proposals.
 4. **Analysis mode is explicit**: heuristics, experiments, models, bandits, and AI synthesis remain distinguishable.
 5. **Reasoning is scoped**: every proposal names its learning and control targets.

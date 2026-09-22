@@ -4,7 +4,11 @@
 
 Audit records make Flaggo decisions reconstructable. Explanation text makes them understandable to operators and developers.
 
-For the MVP, audit should be local-first and simple: console, file, or in-memory records are enough if every decision response receives an `auditId`.
+For the MVP, audit should be local-first and simple, but a ready data plane
+returns a successful decision only after its audit record is durably committed.
+`FileAuditSink` is the minimum local hero-path implementation. Console and
+in-memory records are limited to tests or explicitly non-ready debugging modes;
+they cannot authorize a successful decision response.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
@@ -42,16 +46,19 @@ interface IAuditSink {
 
 The Decision API owns audit identity. It preallocates `auditId`, places the
 same value in the server response and `AuditRecord`, and returns the response
-only after the sink acknowledges persistence. A sink never substitutes another
-identity.
+only after the sink acknowledges a durable commit. Successful completion of
+`IAuditSink.record` in a ready data plane means the record crossed the sink's
+durability boundary and survives process failure. A volatile sink must not
+report that completion in a ready configuration. A sink never substitutes
+another identity.
 
 MVP implementations:
 
 | Implementation | Use |
 | --- | --- |
-| `ConsoleAuditSink` | Local debugging and first demo. |
-| `InMemoryAuditSink` | Tests and operator-view prototypes. |
-| `FileAuditSink` | Local reproducible audit trail. |
+| `ConsoleAuditSink` | Explicitly non-ready local debugging only. |
+| `InMemoryAuditSink` | Tests and explicitly non-ready operator-view prototypes only. |
+| `FileAuditSink` | Minimum durable local sink for the ready hero path. |
 
 Cloud implementations can later write to object storage, event streams, or managed logging behind the same port.
 
@@ -80,7 +87,7 @@ Decision API
   -> preallocates decisionId and auditId
   -> builds response and audit record with the same auditId
   -> writes through IAuditSink
-  -> returns the response only after persistence succeeds
+  -> returns the response only after durable commit succeeds
 ```
 
 If audit writing fails, the MVP should fail safe. For local development, surfacing the error is preferable to silently returning unaudited decisions.

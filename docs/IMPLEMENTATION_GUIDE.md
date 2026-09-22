@@ -122,7 +122,7 @@ Cloud-backed implementations should be additive:
 | `IRuntimeDefinitionReader` / `IIntelligenceDefinitionReader` | in-memory or local JSON/SQLite | PostgreSQL, Azure SQL, DynamoDB, Firestore |
 | `IStateStore` | in-memory or SQLite | Redis, Cosmos DB, DynamoDB, Cloud SQL |
 | `IEvidenceProvider` | in-memory snapshots or local aggregation | OpenTelemetry pipeline, metrics store, data warehouse |
-| `IAuditSink` | console/file/SQLite | object storage, event hub, managed logging |
+| `IAuditSink` | durable file/SQLite; console or in-memory only for tests and explicitly non-ready debugging | object storage, event hub, managed logging |
 | `ISecretProvider` | environment variables | Key Vault, Secrets Manager, Secret Manager |
 | `IConfigProvider` | environment variables/local config | App Configuration, Parameter Store, Config Controller |
 

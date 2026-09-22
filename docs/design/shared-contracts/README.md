@@ -857,7 +857,10 @@ Rules:
   the response records fallback while `stateSummary` preserves the selected
   authority lineage.
 - Confirmation tokens are capabilities and must be removed before constructing `AuditRecord`; audit response projections can retain `confirmationRequired` but never `confirmToken`.
-- Audit should be local-first in MVP, such as console, file, or SQLite.
+- Audit should be local-first in MVP. A ready data plane requires a durable
+  file or SQLite sink whose successful `IAuditSink.record` completion means
+  the record survives process failure. Console and in-memory sinks are limited
+  to tests or explicitly non-ready debugging modes.
 - Cloud audit sinks should implement `IAuditSink`; they should not change the audit contract.
 
 ## Contract bundle and registration receipt

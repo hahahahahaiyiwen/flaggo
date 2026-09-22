@@ -830,6 +830,7 @@ Readiness semantics:
 - Optional checks may be `degraded` or `down` while the endpoint returns `200 degraded`, but only when the runtime can still produce an audited governed fallback.
 - `200 ready` requires every check to be `up`.
 - The Phase 1 required checks are contract registry, decision state, policy evaluation, and durable audit. Evidence is globally optional: its loss always yields `200 degraded` readiness and never dynamically changes the check's `required` flag.
+- A ready data plane binds a durable audit sink. Successful audit completion means the record crossed that sink's durability boundary and survives process failure; console and in-memory sinks are limited to tests or explicitly non-ready debugging modes.
 - Evidence requirements are enforced per decide request. When an exact definition requires unavailable evidence, the server returns an audited governed fallback if its policy permits one; otherwise it returns `503 required-evidence-unavailable`. This request outcome does not change global readiness semantics.
 - Readiness performs no mutation and discloses only stable dependency names and coarse states. It never returns connection strings, exception text, hostnames, credentials, or detailed configuration.
 

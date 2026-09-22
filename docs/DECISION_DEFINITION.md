@@ -230,18 +230,20 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
+let confirmedExposureId: string | undefined;
 if (
   dropIntervalDecision.source === "server" &&
   dropIntervalDecision.exposure.confirmationRequired
 ) {
-  await flaggo.exposures.confirm(
+  const confirmedExposure = await flaggo.exposures.confirm(
     dropIntervalDecision.decisionId,
     dropIntervalDecision.exposure.confirmToken
   );
+  confirmedExposureId = confirmedExposure.exposureId;
 }
 ```
 
-The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while its server exposure directive authorizes confirmation.
+The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while its server exposure directive authorizes confirmation. Ordinary signal emission remains raw and unlinked. Only after confirmation returns `confirmedExposureId` may the application emit attributed outcome telemetry through an explicit exposure-scoped operation or payload containing that ID.
 
 The code-first `policy` shorthand is normalized to canonical `InlinePolicy`
 constraints before hashing. For example, `maxDelta: 50` becomes
