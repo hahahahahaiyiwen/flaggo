@@ -668,8 +668,12 @@ Deliverables:
   `RuntimeDefinitionProjection + NumericRuleStrategy + SignalInput[]` port,
   return `confidence: null`, and keep evidence at policy, audit/explanation,
   and future-proposal boundaries;
+- in #40, compute the numeric-rule score as the normalized weighted average,
+  including conformance coverage whose positive weights do not sum to `1`;
 - in #40, evaluate Phase 3 `max-delta` against the fixed
   `actionSpace.default`, not state value or a previous result;
+- in #40, keep the SDK and wire first slice on explicit canonical policy
+  constraints; do not introduce preset labels;
 - validate active values against the action space and policy, and validate
   numeric rules against the definition target hierarchy, inference inputs,
   action space, fallback, and runtime policy;
@@ -712,8 +716,15 @@ Validation:
   `750ms`, within bounds and step;
 - the numeric-rule executor returns those values from live inputs with no
   `EvidenceSnapshot` and `confidence: null`;
+- a non-unit-weight fixture distinguishes normalized weighted average from an
+  unnormalized sum;
+- runtime returns the exact approved numeric-rule branch to policy; invalid
+  persisted branch/state is a validation or readiness failure, never a value
+  repaired by clamping or step alignment;
 - with fixed default `800ms`, `750ms` followed by `850ms` remains valid because
   each candidate is independently within the `50ms` fixed-baseline delta;
+- SDK shorthand and direct REST explicit policy constraints canonicalize to
+  equivalent `InlinePolicy` content, with no current preset label;
 - bundle-authored rules do not claim model confidence or require fabricated
   evidence quality;
 - every server decision audit distinguishes no-authority fallback from

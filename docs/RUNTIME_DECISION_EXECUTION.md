@@ -122,12 +122,18 @@ threshold branch, and returns one of the two approved numeric values.
 ```text
 active numeric-rule strategy
   + declared inference inputs
-  -> compute weighted score
+  -> compute normalized weighted score
   -> select threshold branch
-  -> clamp and align to action space
-  -> runtime policy validation
+  -> pass the exact selected branch to runtime policy
+  -> approve, return governed fallback, or surface an error
   -> result
 ```
+
+Bundle and activation validation require both branch values to satisfy the
+action space and applicable policy. Runtime execution never clamps, aligns, or
+otherwise rewrites the selected branch. Corrupt or incoherent persisted state
+fails validation or readiness; policy may approve the exact candidate, return
+governed fallback, or reject it, but it does not synthesize a third rule value.
 
 Future strategy kinds or ephemeral runtime candidates require explicit
 governed contracts covering the evaluator, action space, target authority,
@@ -295,7 +301,7 @@ resolved state:
   valueBelow = 750
 
 execution:
-  weighted score = 0.6665
+  normalized weighted score = 0.6665
   score meets threshold
   output remains within bounds, step, and max delta from contract baseline 800
 

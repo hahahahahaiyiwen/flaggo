@@ -101,6 +101,10 @@ read each declared rule input from validated inputs by signal key
   -> return valueAtOrAbove or valueBelow to policy
 ```
 
+The division by finite positive total weight is mandatory; weights are not
+required to sum to `1`. The threshold is compared with the normalized weighted
+average, never the unnormalized sum.
+
 Rules:
 
 - Weighted inputs must be declared inference inputs that resolve to
@@ -146,6 +150,10 @@ if score >= 0.55:
 else:
   return 750
 ```
+
+These Tetris weights total `1`, so the displayed numerator already equals the
+normalized weighted average. The executor still applies the canonical total
+weight denominator.
 
 This proves real-time contextual adaptation without claiming learned evidence
 or building proposal-generation infrastructure.

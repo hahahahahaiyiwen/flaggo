@@ -76,7 +76,7 @@ The client library should support:
    - Define default safe value.
    - Define range or allowed values.
    - Define optimization intent.
-   - Define safety preset or advanced policy.
+   - Define explicit typed policy constraints.
 
 3. **Scoped decision request**
    - Pass runtime context.
@@ -991,7 +991,8 @@ For the Tetris hero scenario, the first client library design should support:
 - TypeScript only.
 - Number decision definitions.
 - Basic `tune.number(...)` call returning a number decision receipt with a plain numeric `.value`.
-- Safety preset support, starting with `gradual`.
+- Explicit typed policy constraints; code-first shorthand normalizes to the
+  canonical `InlinePolicy` representation.
 - Signal declarations plus normal domain event/OpenTelemetry emission.
 - Advanced domain event and metric declarations as optional evidence mode.
 - Runtime context.

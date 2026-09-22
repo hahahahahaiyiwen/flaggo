@@ -168,7 +168,8 @@ Notes:
 - `inference.fallbackOrder` makes broader fallback levels explicit.
 - Intent is typed. Natural-language intent captures product direction; metric-objective intent binds optimization to declared signals.
 - Natural-language intent is advisory metadata unless paired with metric objectives or typed policy constraints.
-- Safety should use typed constraints when behavior must be machine-enforced. Labels such as `gradual` can remain presets only if they expand to concrete constraints.
+- Safety uses typed constraints when behavior must be machine-enforced.
+  Preset labels are not part of the current contract.
 - A bundle-authored initial authority is only a candidate. An authenticated
   control-plane approval grants authority; the definition cannot approve
   itself.

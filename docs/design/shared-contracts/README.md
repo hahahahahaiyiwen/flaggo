@@ -288,10 +288,19 @@ validated below.
 `NumericRuleDeclaration.weightedInputs` must be non-empty. Each input must
 reference one declared inference input that resolves to an app-emitted numeric
 metric, use finite `minimum < maximum`, and have a finite nonnegative weight;
-total weight must be positive. Both branch values must satisfy the numeric
-action space and applicable runtime policy. SDK authoring uses a branded
-numeric metric handle; registry and activation validation enforce the same
-numeric-source rule.
+the finite total weight must be positive, and `threshold` must be finite in
+`[0, 1]`. The executor computes:
+
+```text
+normalizedInput = clamp((value - minimum) / (maximum - minimum), 0, 1)
+score = sum(normalizedInput * weight) / sum(weight)
+```
+
+Division by total weight is required even when authored weights do not sum to
+`1`. `score >= threshold` selects `valueAtOrAbove`; otherwise it selects
+`valueBelow`. Both branch values must satisfy the numeric action space and
+applicable runtime policy. SDK authoring uses a branded numeric metric handle;
+registry and activation validation enforce the same numeric-source rule.
 
 Missing evidence explicitly required by runtime policy is a server evaluation
 outcome, not a numeric-rule executor input or data-plane availability failure.
