@@ -41,7 +41,7 @@ The key identifies the developer-facing decision family. `definitionId` is an op
 | --- | --- | --- |
 | Decision key | Stable application-facing decision family. | `tetris.dropInterval` |
 | Revision | Opaque registry-issued runtime revision; not semantic versioning or a metadata revision. | `rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3` |
-| Signal references | Role references to externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and runtime strategy evaluation. | `boardPressureSignal`, `earlyLossRateSignal` |
+| Signal references | Role references to externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and declared runtime inputs. | `boardPressureSignal`, `earlyLossRateSignal` |
 | Intent | Typed objective: natural-language product direction or metric-driven optimization over declared signals. | natural-language: challenging but playable; metric-objective: minimize early loss |
 | Inference | Runtime inference target, app-emitted metric inputs, and fallback order. | target `session`, inputs `boardPressure`, fallback `cohort -> global` |
 | Output contract | Result type, bounds, allowed values, step, default. | number, `200..1500`, step `50`, default `800` |
@@ -359,7 +359,9 @@ Definition publication is a control-plane operation independent from application
 ```text
 DecisionDefinition
   key: tetris.dropInterval
-  revision: 2
+  definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+  revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+  contractDigest: sha256:contract...
   targetHierarchy: session -> user -> cohort -> global
   signals:
     allow:

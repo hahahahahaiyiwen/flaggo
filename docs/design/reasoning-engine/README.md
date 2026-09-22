@@ -72,6 +72,12 @@ type StrategyExecutionResult =
     };
 ```
 
+`EvidenceSnapshot` is deliberately absent from this Phase 3 port. The executor
+consumes only the resolved definition, the approved numeric rule, and live
+`SignalInput[]` values from the decision request. Evidence may inform runtime
+policy, audit/explanation, and future proposal generation, but it does not
+become an implicit numeric-rule operand.
+
 Bundle-authored strategies return `confidence: null`; authored rationale and
 authenticated approval are provenance, not learned confidence.
 
@@ -112,7 +118,10 @@ Rules:
 
 The Phase 3 numeric rule consumes only the live inputs declared by
 `inference.inputs`. Evidence-backed or stateful condition languages are not
-part of this rule contract.
+part of this rule contract. An evidence-consuming runtime mechanism would
+require a separately approved bounded strategy kind and an explicit
+executor-port extension; it must not be added as an optional evidence
+parameter to the current contract.
 
 ## Phase 4 async proposal source
 

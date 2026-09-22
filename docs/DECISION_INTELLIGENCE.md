@@ -8,7 +8,9 @@ decision definition and decision evidence.
 
 It answers:
 
-> Given the declared objective, available evidence, uncertainty, current governed state, and known policy constraints, what bounded behavior should Flaggo recommend next?
+> Given the declared objective, available evidence, uncertainty, optional
+> current governed state, and known policy constraints, what bounded initial or
+> replacement authority should Flaggo recommend next?
 
 Decision intelligence does not approve its own recommendation and does not serve application requests. It produces a `DecisionProposal` for a [decision lifecycle](DECISION_LIFECYCLES.md) to validate and govern. Approved state is applied per request by [runtime decision execution](RUNTIME_DECISION_EXECUTION.md).
 
@@ -16,7 +18,7 @@ Decision intelligence does not approve its own recommendation and does not serve
 DecisionDefinition
   + DecisionEvidence
   + objectives
-  + current GovernedDecisionState
+  + current GovernedDecisionState when present
   -> Decision Intelligence
   -> DecisionProposal
 
@@ -46,14 +48,21 @@ definition bundle + initial authority candidate
 Phase 4 introduces the proposal-managed path:
 
 ```text
-definition + evidence + current state
+definition + evidence + current state when present
   -> decision intelligence or another authorized producer
   -> DecisionProposal
   -> governance
-  -> governed replacement state
+  -> governed initial or replacement state
 ```
 
 Both paths use the same runtime state and execution boundary.
+
+When a proposal-managed definition has no governed state, the first approved
+activation reuses the shared state boundary with the no-state expected
+baseline: generation `0`, no `stateId`, and no predecessor on the resulting
+state. Later activations compare against the captured current state head and
+create replacement state. This section defines only that lifecycle invariant;
+Phase 4 must design the proposal and governance DTOs.
 
 The remaining sections describe conceptual Phase 4 responsibilities and
 deliverables. They do not define current proposal, experiment, rollout,
@@ -91,7 +100,8 @@ Decision intelligence consumes resolved, typed inputs rather than raw unbounded 
 - **Evidence views**: historical observations and derived evidence sliced by target, time, and filters.
 - **Decision and exposure records**: prior returned values, confirmed application, and attribution metadata.
 - **Outcome evidence**: declared success metrics and guardrails.
-- **Current governed state**: active authority and activation lineage, plus
+- **Current governed state, when present**: active authority and activation
+  lineage, plus
   previous-safe-state, experiment, rollout, cooldown, or override data only
   when those lifecycle contracts exist.
 - **Uncertainty**: evidence quality, sample size, freshness, variance, missingness, and model uncertainty.
@@ -145,7 +155,7 @@ Decision intelligence normally runs outside the application request path:
 telemetry change, schedule, operator request, definition activation,
 experiment review, rollout review, or detected drift
   -> create intelligence work item
-  -> resolve definition, learning target, evidence, and current state
+  -> resolve definition, learning target, evidence, and current state when present
   -> observe and interpret
   -> choose analysis mode
   -> generate and evaluate candidates

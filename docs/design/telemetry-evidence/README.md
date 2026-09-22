@@ -4,8 +4,9 @@
 
 The telemetry/evidence component turns emitted observations into historical
 decision evidence. Live runtime inference inputs travel with the decision
-request; evidence is a separate optional input to authorities or policies that
-explicitly require it.
+request; evidence is a separate optional input to runtime policy,
+audit/explanation, and future proposal generation. It does not cross the
+current strategy executor boundary.
 
 For the MVP, evidence can be simple and local. The design should still preserve a clean `IEvidenceProvider` seam so later implementations can use OpenTelemetry pipelines, metrics stores, or cloud data services.
 
@@ -22,7 +23,7 @@ Evidence should provide:
 - freshness and quality status,
 - sample size when available,
 - confidence when available,
-- numeric metrics used by policy or strategy execution.
+- numeric metrics used by policy, audit, or future proposal generation.
 
 The revised Phase 3 Tetris path does not require an evidence fixture or
 confidence report. It emits linked telemetry for inspection and future
@@ -63,10 +64,14 @@ type EvidenceSnapshot = {
 
 ```text
 Decision API
-  -> determines whether active authority or policy requires evidence
+  -> determines whether runtime policy requires evidence
   -> when required, resolves evidence views and requests snapshots
-  -> passes optional evidence to strategy execution and policy
+  -> passes optional evidence to runtime policy
   -> records an evidence summary only when evidence participated
+
+decision request
+  -> supplies live inference inputs
+  -> passes StrategyExecutionRequest.inputs to IStrategyExecutor
 ```
 
 Missing evidence should not crash runtime. It should produce `quality = "missing"` or `quality = "insufficient"` and allow policy to decide whether fallback is required.
@@ -116,6 +121,15 @@ Design rule:
 ## Declared metrics and inference inputs
 
 Values used by runtime strategy evaluation should be declared metrics first, then selected as inference inputs when the decision definition needs them on the hot path.
+
+The same declared metric may also contribute to an asynchronous
+`EvidenceSnapshot`, but the snapshot and live inference input are distinct
+contracts. Phase 3 does not translate or pass an `EvidenceSnapshot` into
+`IStrategyExecutor`.
+
+A future evidence-consuming runtime strategy requires a separately approved
+bounded strategy kind and executor-port extension. It is not enabled by adding
+an optional snapshot to the current numeric-rule request.
 
 | Concept | Meaning | Example |
 | --- | --- | --- |

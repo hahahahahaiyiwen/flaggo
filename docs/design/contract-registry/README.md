@@ -213,7 +213,9 @@ Production may run multiple builds of the same service at the same time. Each bu
 
 - identical contract definitions,
 - metadata-only differences,
-- semantic contract conflicts that require a new ID or revision,
+- approved semantic contract changes that require a new opaque revision and
+  digest under the existing lineage,
+- explicit forks or new decision lineages that require a new definition ID,
 - different telemetry or outcome declarations,
 - different source commits or container artifacts.
 
@@ -221,17 +223,29 @@ The registry should therefore distinguish:
 
 | Identity | Meaning |
 | --- | --- |
+| `definitionId` | Stable opaque lineage ID across ordinary approved semantic revisions. A new ID represents a new decision lineage or explicit fork. |
+| `revision` | Opaque registry-issued identity for one approved semantic contract under that lineage. Clients must not parse it. |
 | `contractDigest` | Hash of canonical compatibility-critical contract content. Shared by different builds when their executable contract is equivalent. |
 | `bundleDigest` | Hash of the submitted bundle artifact, including non-semantic metadata when appropriate. |
 | `buildId` | Human-readable build/release identifier. |
 | `artifactDigest` | Container, package, or binary digest. |
 | `deploymentId` | Runtime deployment or rollout identifier. |
 
+Runtime identity is always the complete
+`{ definitionId, revision, contractDigest }` tuple. Clients must not substitute
+the decision key or bundle digest for any member of that tuple.
+
 The runtime Decision API should verify the definition identity provided by the calling workload. It should not assume there is only one active definition bundle per application/environment.
 
 Simpler MVP rule:
 
-> A definition ID is a semantic boundary. Metadata-only changes can keep the same ID. Semantic changes that affect output contract, target hierarchy, signal meaning, outcome meaning, or safety policy must produce a new definition revision or ID instead of mutating the old definition in place.
+> A definition ID is the stable boundary for one decision lineage.
+> Metadata-only changes keep the complete runtime identity unchanged.
+> Approved semantic changes that affect output contract, target hierarchy,
+> signal meaning, outcome meaning, or safety policy mint a new opaque revision
+> and contract digest under the same definition ID. A new definition ID is
+> reserved for a new lineage or explicit fork. Historical runtime identities
+> are never mutated in place.
 
 The preferred UX is registry-managed versioning. Developers can keep writing:
 

@@ -276,7 +276,10 @@ Fallback remains inside the registered decision definition and effective policy.
 
 ```text
 request:
-  definition = tetris.dropInterval revision 2
+  decisionKey = tetris.dropInterval
+  expectedContract.definitionId = def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+  expectedContract.revision = rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+  expectedContract.contractDigest = sha256:contract...
   runtimeTarget = session:game-456
   inputs.tetris.boardPressure = 0.82
   inputs.tetris.recentPlacementTimeMs = 1420

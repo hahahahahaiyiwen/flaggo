@@ -47,16 +47,21 @@ bundle-approved:
   -> governed state
 
 proposal-managed (future Phase 4):
-  definition + evidence + current state
+  definition + evidence + current state when present
   -> decision intelligence or another authorized producer
   -> DecisionProposal -> governance
-  -> governed state
+  -> initial or replacement governed state
 ```
 
 Phase 3 implements the bundle-approved workflow. A future proposal-managed
-workflow must converge on the same current governed-state and runtime
-execution path or introduce explicitly approved extensions. The bundle
-contains an initial authority candidate, not self-approved active state.
+workflow must converge on the same governed-state boundary and runtime
+execution path or introduce explicitly approved extensions. Its first
+activation uses the shared no-state expected baseline (generation `0` with no
+`stateId`) and creates a state with no predecessor; later activations compare
+against the current state head and create replacement state. These are
+lifecycle invariants, while the concrete proposal and governance contracts
+remain Phase 4 work. The bundle contains an initial authority candidate, not
+self-approved active state.
 
 Control-plane lifecycles and runtime execution operate at different timescales.
 Phase 3 approves and activates bundle authority; runtime execution applies
@@ -84,7 +89,9 @@ A decision definition is the contract for one semantic revision of a decision ke
 ```text
 DecisionDefinition
   key: tetris.dropInterval
-  revision: 2
+  definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+  revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+  contractDigest: sha256:contract...
   targetHierarchy: session -> user -> cohort -> global
   signals:
     allow:
@@ -225,7 +232,7 @@ Adaptive optimization lifecycle:
   DecisionDefinition + DecisionEvidence + outcomes + typed intent/objectives
   -> DecisionProposal
   -> governance
-  -> GovernedDecisionState
+  -> initial or replacement GovernedDecisionState
 
 Experiment lifecycle:
   declared experiment permission + hypothesis + candidate variants

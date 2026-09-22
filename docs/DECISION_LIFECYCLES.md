@@ -113,14 +113,19 @@ Their authored rationale and approval actor remain lifecycle provenance.
 Phase 4 adds independently generated candidates:
 
 ```text
-definition + evidence + current state
+definition + evidence + current state when present
   -> authorized producer
   -> DecisionProposal
   -> governance
-  -> replacement activation
+  -> initial or replacement activation
 ```
 
-The producer cannot write runtime authority directly.
+The first proposal-managed activation uses the shared no-state expected
+baseline (generation `0` with no `stateId`) and creates a state with no
+predecessor. Later activations compare against the captured current state head
+and create replacement state. These are high-level state invariants, not a
+frozen Phase 4 proposal or governance API. The producer cannot write runtime
+authority directly.
 
 ## Shared authority model
 
@@ -128,20 +133,21 @@ The Phase 3 lifecycle consumes:
 
 - a versioned decision definition;
 - a bundle-declared initial authority candidate;
-- current governed state and expected baseline;
+- current governed state when present and the expected baseline;
 - effective policy;
 - target authority and conflict information.
 
 It produces either:
 
-- an active `GovernedDecisionState` that supersedes its predecessor;
+- an active `GovernedDecisionState` with no predecessor for first authority or
+  a predecessor link for replacement authority;
 - a pending approval disposition;
 - a rejected approval or failed activation with reason codes.
 
 Future proposal-managed contracts may additionally consume typed proposals,
-evidence, uncertainty, operator controls, and lifecycle history. They may add
-hold or broader transition outcomes without changing the Phase 3 state
-contract implicitly.
+evidence, uncertainty, operator controls, and lifecycle history. They may
+activate initial or replacement authority and add hold or broader transition
+outcomes without changing the Phase 3 state contract implicitly.
 
 ## Candidate, proposal, and state lifecycles
 

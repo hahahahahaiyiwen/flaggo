@@ -489,6 +489,7 @@ For a request like:
 ```text
 definitionId = def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
 revision = rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+contractDigest = sha256:contract...
 runtime target = session:game-456
 ```
 

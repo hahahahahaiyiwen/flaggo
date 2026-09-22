@@ -43,7 +43,7 @@ signal: tetris.recentPlacementTimeMs
 | Signal definitions | Immutable keyed schemas for observed measures. |
 | Evidence views | Signal key + target + window + filters + freshness/quality. |
 | Inference inputs | Typed signal values used for runtime strategy evaluation. Code-first SDKs may bind them inside `inference.inputs`; the wire request carries them separately from runtime context. |
-| Decision records | Returned value plus inference input values, target, definition revision, and audit/correlation ID. |
+| Decision records | Returned value plus inference input values, target, complete runtime identity, and audit/correlation ID. |
 | Exposure records | Client-confirmed application/rendering of a returned value, linked to a decision record. |
 | Evidence quality | Freshness, sample size, confidence, missingness, conflict, drift. |
 | Target identifiers | Runtime facts used to resolve target hierarchy levels. |
@@ -124,6 +124,7 @@ The request-time inference input is captured in a decision record when Flaggo re
 decisionId: decision-123
 definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
 revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+contractDigest: sha256:contract...
 runtime target: session:game-456
 returned value: 850
 inference inputs:
@@ -177,13 +178,18 @@ EvidenceView
   filters: {}
 ```
 
-The same immutable signal key can serve async learning and runtime strategy evaluation through different views:
+The same immutable signal key can support evidence workflows and live runtime
+inputs, but those values cross different ports:
 
-| Path | Typical evidence view |
+| Path | Contract |
 | --- | --- |
-| Async learning | Cohort/global views over hours, days, or weeks. |
-| Runtime strategy evaluation | Session/user/request views over seconds or minutes. |
-| Audit/explanation | Immutable snapshot references used by the proposal or decision. |
+| Async learning and future proposal generation | Cohort/global evidence views over hours, days, or weeks. |
+| Phase 3 numeric-rule evaluation | Current app-emitted value serialized as a live `SignalInput`; no `EvidenceSnapshot` crosses the strategy executor port. |
+| Runtime policy and audit/explanation | Immutable evidence snapshot references used by the policy evaluation or decision record. |
+
+An evidence-backed runtime strategy would require a separately approved
+bounded strategy kind and executor contract. It is not an optional extension
+to the Phase 3 numeric-rule executor.
 
 ## Runtime context
 

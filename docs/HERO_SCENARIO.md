@@ -397,6 +397,12 @@ step. Until a future Phase 4 producer and governance path activate authority,
 runtime requests use the registered audited fallback. The concrete proposal
 and governance DTOs remain deferred to issue #25.
 
+Future governance may activate initial authority when no governed state exists
+or replacement authority against the current state head. The first activation
+reuses the shared state boundary with the no-state expected baseline
+(generation `0` and no `stateId`) and creates a state with no predecessor.
+This is a lifecycle invariant, not a concrete Phase 4 DTO design.
+
 The declaration can produce or contribute to a canonical contract bundle during build or release:
 
 ```text
@@ -411,7 +417,7 @@ proposal-managed definition
   -> authenticated approval of the exact snapshot
   -> publish definition without initial authority activation
   -> registration receipt without activated-authority references
-  -> future proposal governance may activate replacement authority
+  -> future proposal governance may activate initial or replacement authority
 
 both
   -> each deployed workload carries its exact expected contract/build identity
@@ -426,7 +432,7 @@ Flaggo should support different owners and systems across the software lifecycle
 | Development | Author decision declaration in TypeScript, JSON/YAML, or registry UI. | Local declaration or draft contract bundle. | SDK provides ergonomic code-first declarations and typed runtime calls. |
 | Build | Optionally extract or assemble a canonical contract bundle. | `flaggo.decision-definition-bundle.json`, `contractDigest`, optional build metadata. | SDK extractor may generate the bundle; bundle-first and registry-first workflows remain valid. |
 | Application deployment | Deploy application code independently. | Extracted bundle may be packaged for trusted startup. | Flaggo does not own or block external deployment. |
-| Application/bootstrap startup | MVP validates and applies the bundle. Every new or semantically changed definition requires authenticated approval. Bundle-approved definitions then wait for required initial activation; proposal-managed definitions become ready after approved publication because they declare no initial authority. | Registration receipt with exact definition identity and activated-authority references only when initial authority exists. | Trusted startup SDK is the initial control-plane client; it uses management APIs, never the decide endpoint. |
+| Application/bootstrap startup | MVP validates and applies the bundle. Every new or semantically changed definition requires authenticated approval. Bundle-approved definitions then wait for required initial activation; proposal-managed definitions become ready after approved publication because they declare no initial authority. | Registration receipt with exact definition identity and activated-authority references only when bundle-approved initial authority exists. | Trusted startup SDK is the initial control-plane client; it uses management APIs, never the decide endpoint. |
 | Runtime | Ask for decisions and emit telemetry. | Request with exact expected identity; strict server result or Problem Details error. | Data plane evaluates only registered identities. Missing/conflicting identity is surfaced without local fallback; availability fallback remains explicitly configurable. |
 | Observe/operate | Inspect drift, audit, fallback, and strategy behavior. | Audit records, diagnostics, integrity metrics, operator warnings. | SDK exposes response fields; control plane owns audit, strategy, policy, and operator actions. |
 
@@ -465,7 +471,8 @@ The operator should be able to inspect and govern the decision without reading a
 For `tetris.dropInterval`, the operator should see:
 
 - the decision key: `tetris.dropInterval`,
-- the stable decision key plus opaque active definition lineage/revision,
+- the stable decision key plus complete active runtime identity:
+  `definitionId`, opaque `revision`, and `contractDigest`,
 - the runtime targets receiving decisions, such as sessions,
 - the control targets where behavior is governed, such as `cohort:new_players`,
 - the declared goal: keep gameplay challenging but playable,
@@ -473,9 +480,12 @@ For `tetris.dropInterval`, the operator should see:
 - the fallback contract: `800ms`,
 - the enforced action-space bounds/step and active Phase 3 policy constraints,
   including max delta and any declared guardrails,
-- the current governed state: state ID, generation, active rule, predecessor, and approval reference,
+- the current governed state when one exists: state ID, generation, active
+  authority, predecessor, and approval reference,
+- the explicit no-authority fallback status before first activation,
 - recent decisions and explanations,
-- the active decision strategy and why its exact bundle snapshot was approved.
+- the active decision strategy when one exists and why its exact snapshot was
+  approved.
 
 Phase 4 adds evidence quality, model uncertainty, proposal inspection, and
 operator actions such as approve, reject, or replace. Pause, override, rollback,

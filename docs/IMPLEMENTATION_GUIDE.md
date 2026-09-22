@@ -705,7 +705,9 @@ Deliverables:
 
 - a scripted or fixture-based proposal producer,
 - independent proposal review and approval,
-- governed replacement activation through the shared state boundary,
+- governed initial or replacement activation through the shared state
+  boundary, using the no-state baseline and no predecessor for first
+  authority,
 - lifecycle audit and an operator-facing inspection path,
 - a documented extension point for future evidence-backed or AI-assisted
   proposal producers.
@@ -743,7 +745,8 @@ Validation:
 8. Implement bundle-approved initial authority and rerun Tetris through
    approval, activation, decide, exposure confirmation, telemetry, and audit.
 9. Clarify temporal stabilization semantics.
-10. Add proposal-managed generation, review, and replacement activation.
+10. Add proposal-managed generation, review, and initial or replacement
+    activation.
 11. Package local startup and publish the contract artifacts and quickstart.
 12. Add optional cloud adapters only after the local MVP is stable.
 
