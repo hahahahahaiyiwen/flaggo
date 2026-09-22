@@ -243,7 +243,8 @@ Policy is authoritative and independently evaluated by the lifecycle layer. Deci
 - lower evidence-quality requirements;
 - exceed rollout or experiment limits;
 - bypass approval;
-- ignore operator pause or override state;
+- ignore operator pause or override state when a separately approved operator
+  contract exists;
 - grant itself authority at a target.
 
 ## Relationship to targets

@@ -101,8 +101,6 @@ Reason-code vocabulary, including future conditional policies:
 | `excessive_model_uncertainty` | Model uncertainty is above policy requirement. |
 | `insufficient_expected_outcome` | Expected outcome estimate is below policy requirement. |
 | `insufficient_sample_size` | Evidence sample size is below policy requirement. |
-| `decision_paused` | Operator pause blocks adaptive decisioning. |
-| `retired_contract` | Contract lifecycle prevents approved decisions. |
 | `missing_state` | No permitted target has compatible active state. |
 | `fallback_required` | No safe candidate can be approved. |
 
@@ -123,7 +121,8 @@ is malformed or effective policy forbids governed fallback. If required
 evidence is unavailable and governed fallback is forbidden, the service
 returns `503 required-evidence-unavailable` with
 `clientFallback.eligible: false`. Evidence and policy outcomes never authorize
-SDK-local fallback.
+SDK-local fallback. A retired definition is rejected before policy evaluation
+with `409 retired-definition`.
 
 ## Tetris MVP policy
 

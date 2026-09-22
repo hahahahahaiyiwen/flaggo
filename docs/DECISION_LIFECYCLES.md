@@ -62,10 +62,10 @@ bundle apply
 
 The bundle cannot provide trusted proposal, activation, strategy, state, or
 approval identities. Exact retry resumes the same activation. Changed
-authority requires a new semantic revision and approval. A stale expected
-baseline conflicts at the stable authority head identified by application,
-environment, decision key, and control target rather than replacing newer
-authority through another revision namespace.
+authority content requires a new semantic revision and approval. A stale
+expected baseline conflicts at the stable authority head identified by
+application, environment, decision key, and control target rather than
+replacing newer authority through another revision namespace.
 
 For each definition in an approved bundle, the server derives proposal and
 activation identities from one canonical tuple:
@@ -94,7 +94,12 @@ An interrupted or outcome-unknown activation is retryable with the same
 approval, proposal, and activation identities. Stale expected baseline,
 changed authority content, or another permanent activation conflict remains
 non-ready and requires bundle revalidation plus a new linked approval request;
-it never overwrites newer authority or silently allocates another state.
+it never overwrites newer authority or silently allocates another state. When
+the accepted bundle content is unchanged, that successor is an
+authority-reauthorization: it reuses the published definition revision and
+successful partial activations, includes only the failed authorities, captures
+their new expected baselines, and receives new approval and activation
+identities. Concurrent exact reapplies converge on the same successor.
 
 Bundle-authored deterministic rules do not require model evidence or confidence.
 Their authored rationale and approval actor remain lifecycle provenance.

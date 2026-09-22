@@ -19,8 +19,9 @@ Audit records should capture:
 - contract version,
 - runtime context summary,
 - evidence snapshot summary when evidence participated,
-- active value or active strategy,
-- state ID, generation, predecessor, proposal, activation, and approval references,
+- whether authority was selected and which current authority kind participated,
+- required state ID, generation, proposal, activation, and approval lineage for
+  every selected authority, plus strategy ID for a numeric rule,
 - candidate value,
 - policy result,
 - returned value,
@@ -121,7 +122,8 @@ The exposure confirm token is an authorization capability, not audit data. The D
     "id": "new_players"
   },
   "stateSummary": {
-    "decisionMode": "strategy",
+    "authoritySelected": true,
+    "authorityKind": "numeric-rule",
     "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
     "stateId": "state_01...",
     "generation": 1,
@@ -137,6 +139,11 @@ The exposure confirm token is an authorization capability, not audit data. The D
   "reason": "The approved weighted numeric rule met its 0.55 threshold."
 }
 ```
+
+No-compatible-authority fallback instead records
+`{ "authoritySelected": false, "resolution": "server-fallback" }`. When policy
+rejects a candidate after authority selection, the response records fallback
+but the audit preserves that selected authority's complete lineage.
 
 ## MVP non-goals
 

@@ -129,7 +129,6 @@ The SDK and service must consume the same fixtures. Generated language types are
 - Enum wire values use `kebab-case`.
 - IDs are opaque strings. Clients must not parse meaning from them.
 - Timestamps use RFC 3339 UTC strings with the `Z` suffix; numeric offsets are rejected.
-- SDK duration shorthand such as `"20s"` is normalized into canonical domain fields such as `{ "seconds": 20 }` before transport or hashing.
 
 ### Runtime identity semantics
 
@@ -478,17 +477,32 @@ Startup registration:
 
 1. submits the statically extracted canonical bundle,
 2. uses a deterministic idempotency key derived from application, environment, and `bundleDigest`,
-3. accepts only an approved registration receipt,
+3. accepts only a ready registration receipt,
 4. initializes the data-plane binding from the receipt,
-5. rejects client initialization with a typed error when validation fails or approval is required; no data-plane client is created.
+5. rejects client initialization with a typed error while approval or
+   activation is pending, failed, or rejected; no data-plane client is created.
 
 The startup caller requires management authorization. A browser or other untrusted runtime must not contain a long-lived control-plane credential.
 
-### Approve a new or semantic revision
+### Approve a new or semantic revision, or reauthorize authority
 
-When apply detects a previously unknown decision key or a semantic change under an existing key, it returns `status: "requires-approval"` plus an `approvalRequestId` and performs no registry mutation.
+When apply detects a previously unknown decision key, a semantic change under
+an existing key, or an exact-bundle retry after permanent activation failure,
+it returns `status: "requires-approval"` plus an `approvalRequestId`. Apply
+persists the immutable request and may reserve a proposed lineage ID, but it
+does not publish an accepted runtime revision or mutate active authority.
 
-Apply returns `200` with `RegistrationReceipt` when immediately approved, `202` with the following result when approval is pending, and `422 invalid-bundle` when validation rejects the write:
+Apply returns the canonical `DefinitionBundleApplyResult` with these HTTP
+mappings:
+
+- `200` for `status: "ready"`;
+- `202` for `requires-approval` or `activation-pending`;
+- `503` plus `Retry-After` for retryable `activation-failed`;
+- `409` for `activation-failed` with `requires-new-approval` or
+  `approval-rejected`;
+- `422 invalid-bundle` when validation rejects the write.
+
+The `202 requires-approval` body is:
 
 ```json
 {
@@ -552,25 +566,41 @@ Reject request:
 }
 ```
 
-Every approval resource variant requires `approvalRequestId`, `application`, `environment`, `bundleDigest`, `createdAt`, `expiresAt`, `changes`, and `snapshotUrl`. `changes` is non-empty, contains at least one `created` or `semantic-change` entry, and every semantic change carries a non-empty canonical `semanticDiff`. A renewed request also carries `supersedesApprovalRequestId`. Its status-specific fields form a discriminated union:
+Every approval resource variant requires `approvalRequestId`, `application`,
+`environment`, `bundleDigest`, `createdAt`, `expiresAt`, `changes`, and
+`snapshotUrl`. `changes` is non-empty and contains at least one `created`,
+`semantic-change`, or `authority-reauthorization` entry; every semantic change
+carries a non-empty canonical `semanticDiff`. A renewed request also carries
+`supersedesApprovalRequestId`. Its status-specific fields form a discriminated
+union:
 
 - `pending` has no receipt or terminal decision.
 - `approved` requires `decidedAt`, approval metadata containing the
   server-derived actor plus optional persisted comment, and the canonical
   activation projection:
-  - `pending` carries the persisted initial-authority activation plans;
+  - `pending` carries only still-pending initial-authority activation plans;
   - `ready` carries the complete `RegistrationReceipt`;
-  - `failed` carries the same plans, retryability, and stable issue.
+  - `failed` carries only failed or unresolved plans, aggregate retryability,
+    and non-empty stable issues keyed by decision.
 - `rejected` requires `decidedAt` and rejection metadata containing the server-derived actor, `reasonCode`, and optional persisted comment.
 - `expired` requires `expiredAt` and has no receipt. Expiration is terminal.
 
 `GET` and a successful terminal action return `200` with that union. Approve
-returns `approved` only after the approval decision, allocated identities, and
-captured expected baselines are durably committed; state activation may still
-be pending or failed. Clients initialize runtime bindings only from
+returns `approved` only after the approval decision, reserved lineage and
+allocated revision identities, and captured expected baselines are durably
+committed; state activation may still be pending or failed. Clients initialize
+runtime bindings only from
 `activation.status = "ready"` and its exact bundle-apply receipt.
 
-`GET .../{approvalRequestId}/bundle` returns the exact canonical `DecisionDefinitionBundle` snapshot used to calculate `bundleDigest`. It is immutable across every approval state and retained with the approval audit record. `changes` contains the previous accepted tuple, proposed lineage/digest, and a canonical semantic diff sorted by JSON Pointer path. The diff uses `add`, `remove`, and `replace` operations over compatibility-critical canonical definition content; it excludes build metadata and other fields outside `contractDigest`.
+`GET .../{approvalRequestId}/bundle` returns the exact canonical
+`DecisionDefinitionBundle` snapshot used to calculate `bundleDigest`. It is
+immutable across every approval state and retained with the approval audit
+record. `changes` contains a proposed identity for creation, previous and
+proposed identities plus canonical semantic diff for semantic change, or the
+exact accepted identity, target, and failed activation reference for authority
+reauthorization. Semantic diffs are sorted by JSON Pointer path and use `add`,
+`remove`, and `replace` over compatibility-critical canonical content; they
+exclude build metadata and other fields outside `contractDigest`.
 
 The snapshot headers represent the same canonical bytes using their protocol-specific syntax:
 
@@ -587,11 +617,14 @@ Approval behavior:
 - Approval actor identity is derived from the authorized token (`sub` plus optional display name), never accepted from the request body. Explicit local bypass records actor subject `local-development`.
 - The MVP default expiration is seven days; every response carries the authoritative `expiresAt`.
 - Approve verifies `expectedBundleDigest`, then atomically transitions
-  `pending -> approved`, persists every server-allocated definition identity,
-  creates the runtime revisions, and stores each required initial-authority
-  activation plan with the stable-head baseline captured at that transition.
-  Activation may complete afterward; only completion stores the ready receipt.
-- Reject verifies `expectedBundleDigest`, then atomically transitions `pending -> rejected` without registry mutation.
+  `pending -> approved`, verifies the reserved proposed lineage identities,
+  allocates and publishes runtime revisions for created or semantic changes,
+  reuses the existing revision for authority reauthorization, and stores each
+  required initial-authority activation plan with the stable-head baseline
+  captured at that transition. Activation may complete afterward; only
+  completion stores the ready receipt.
+- Reject verifies `expectedBundleDigest`, then atomically transitions
+  `pending -> rejected` without runtime publication or authority mutation.
 - Repeating the same terminal action with the same digest is idempotent and returns the stored result. No separate idempotency key is required.
 - Concurrent terminal actions use one compare-and-swap transition. One wins; the same action converges on its result, while the opposite action returns `409 approval-terminal-conflict`.
 - An unknown request returns `404 approval-not-found`. `GET` returns an expired resource as `200`; approve/reject against it return `410 approval-expired`. A digest mismatch returns `409 approval-bundle-conflict`.
@@ -600,6 +633,17 @@ Approval behavior:
   idempotency key returns `requires-approval` before approval,
   `activation-pending` or `activation-failed` while non-ready, and the stored
   ready receipt only after activation succeeds.
+- After `activation-failed` with `requires-new-approval`, the next exact
+  reapply atomically advances that deterministic registration attempt to one
+  linked `requires-approval` resource. Concurrent reapplies converge on it.
+  Its changes reauthorize only failed initial authorities against newly
+  captured baselines, reuse the accepted definition revision and successful
+  partial activations, and do not create another semantic revision. Its ready
+  receipt combines those new activations with every accepted definition and
+  successful activation retained from the original bundle. Because the
+  canonical bundle is unchanged, this request reports
+  `compatibility: "identical"`; approval authorizes a new baseline and
+  activation rather than new contract semantics.
 - After expiration, the next apply of the same canonical body with the same deterministic key revalidates against current registry state and atomically creates one fresh approval request with a new ID and expiry. Concurrent resubmissions converge on that request. The old request remains `expired`, and the new resource links it through `supersedesApprovalRequestId`.
 
 ### Validate a bundle
@@ -632,13 +676,22 @@ Each issue should contain a stable `code`, severity, JSON Pointer `path`, human-
 
 Validation results are a discriminated union. `status: "valid"` requires `bundleDigest`, `compatibility`, a non-empty `validatedDefinitions` map, and `issues`. `status: "invalid"` requires at least one error issue; digest and partial validation fields are optional when canonicalization reached them.
 
-`requires-approval` is also strict: it requires at least one `created` or `semantic-change` entry, every semantic change requires a non-empty `semanticDiff`, and `issues` may contain warnings only. Approval resources preserve that approval-requiring change invariant in every lifecycle state.
+`requires-approval` is also strict: it requires at least one `created`,
+`semantic-change`, or `authority-reauthorization` entry, every semantic change
+requires a non-empty `semanticDiff`, and `issues` may contain warnings only.
+Approval resources preserve that approval-requiring change invariant in every
+lifecycle state. Compatibility is `new-contract-required` when any change is
+`created` or `semantic-change`, and `identical` only when every change is
+`authority-reauthorization`.
 
 Each definition entry is also a discriminated union keyed by `valueType`. Boolean, number, and string entries require matching action-space defaults and fallback value types. Numeric bounds must ascend, defaults and fallbacks must be in range, `step` must be positive, and numeric defaults/fallbacks must align to it. String defaults and fallbacks must belong to `allowedValues` when that set is present.
 
 Optional `definitionId` rules:
 
-- Omission is required for a new decision key. Validation computes its proposed `contractDigest`; apply assigns the new opaque lineage ID and initial revision.
+- Omission is required for a new decision key. Validation computes its
+  proposed `contractDigest`; apply reserves and persists the new opaque lineage
+  ID in the approval request, while approval allocates and publishes the
+  initial runtime revision.
 - Omission is valid for a known key. Validation resolves that key's existing lineage within the declared application/environment and compares semantics against its active revision.
 - A supplied ID is valid only when it is the existing lineage for the same authorized application, environment, and decision key.
 - A supplied unknown registry ID returns `unknown-definition-lineage`. An ID owned by another key or scope returns `definition-lineage-mismatch` without disclosing the other owner.
@@ -691,14 +744,18 @@ Apply invariants:
 - `acceptedDefinitions` is the only source for initializing per-decision runtime bindings; clients must not construct identities from the bundle digest or decision key.
 - A repeated request with the same idempotency key and canonical body returns
   the current result for the same approval and activation plan: pending
-  approval, activation pending/failed, ready, or rejected. Expiration releases
-  that apply attempt for the renewal behavior above.
+  approval, activation pending/failed, ready, or rejected. A permanent
+  activation failure advances to the linked authority-reauthorization request
+  described above; expiration advances to the linked replacement behavior.
 - Reusing an idempotency key with a different canonical body is a conflict.
 - Missing resources become deprecation candidates; apply never hard-deletes them.
 - A semantic conflict never overwrites an immutable definition identity.
 - No management mutation occurs from the runtime decide endpoint.
 - Failed atomic apply leaves all previously registered resources unchanged and produces no accepted identity for the submitted bundle.
-- A newly created definition or semantic change returns `requires-approval` with no mutation. Only the explicit approval operation may authorize and atomically apply that pending canonical bundle.
+- A newly created definition or semantic change returns `requires-approval`
+  without publishing an accepted runtime revision. Only explicit approval may
+  authorize and atomically publish the pending canonical bundle; apply may
+  persist its immutable approval request and proposed lineage identity.
 - Apply failure blocks contract activation, not application deployment. If code is deployed anyway, the data plane rejects its missing or unknown expected identity.
 
 ## Authentication and authorization
@@ -853,7 +910,8 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 13. Invalid exposure token.
 14. Valid bundle with identical compatibility.
 15. Invalid bundle with structured issues and no mutations.
-16. New definition or semantic bundle change returns `202 requires-approval` with no mutation.
+16. New definition or semantic bundle change returns `202 requires-approval`
+    without accepted runtime publication.
 17. Idempotent bundle apply and key/body conflict.
 18. Eligible post-readiness `503 service-unavailable` SDK-local fallback for genuine transient availability after retry exhaustion when explicitly enabled.
 19. Concurrent startup registration of the same bundle returns one accepted identity.
@@ -865,9 +923,9 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 25. OAuth scope denial for each runtime and management operation.
 26. Multi-definition registration receipt initializes each exact accepted runtime tuple.
 27. Metadata-only bundle update preserves the runtime revision and digest.
-28. Approval success atomically creates revisions, allocated identities, and
-    captured-baseline activation plans; the complete stored receipt appears
-    only after required activation succeeds.
+28. Approval success for created or semantic changes atomically publishes
+    allocated revisions and captured-baseline activation plans; the complete
+    stored receipt appears only after required activation succeeds.
 29. Approval rejection, expiration, missing request, digest conflict, idempotent replay, and opposite concurrent action.
 30. Expired approval resubmission with the same deterministic apply key creates one linked replacement request after revalidation.
 31. Approval review exposes old/new digests, canonical semantic diff, immutable snapshot, and persisted actor/comment metadata.
@@ -888,6 +946,15 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 46. `service-unavailable` is fallback-eligible only for genuine transient data-plane availability after required readiness passed.
 47. Boolean, string, event, or derived metrics referenced by a numeric rule fail bundle validation before approval.
 48. Both-present, neither-present, or mismatched state authority payloads fail readiness before lookup.
+49. Ready, approval-pending, activation-pending, retryable activation failure,
+    permanent activation failure, and rejection use the documented apply
+    result variants and HTTP statuses.
+50. Exact reapply after permanent activation failure converges on one linked
+    authority-reauthorization approval, retains successful partial activations,
+    and publishes no additional semantic revision.
+51. Every server decision audit carries either explicit no-authority fallback
+    or complete selected-authority lineage, with `strategyId` required only for
+    numeric-rule authority.
 
 ## Contract decision log
 
@@ -969,12 +1036,22 @@ fixtures, conformance tests, and mock projection are accepted as the baseline.
 **Options**
 
 1. Apply automatically mints semantic revisions when the submitted key changed.
-2. Apply returns `requires-approval` for new definitions and semantic changes and makes no mutation until an explicit approval operation.
+2. Apply returns `requires-approval` for new definitions and semantic changes,
+   persists the approval request and any proposed lineage identity, and makes
+   no accepted runtime publication until explicit approval.
 3. The client must provide a new explicit definition ID before apply.
 
-**Decision:** option 2. Apply returns `requires-approval` for new definitions and semantic changes and makes no mutation. The approval resource records review state; explicit approval atomically creates new opaque runtime revisions under the affected definition lineages, applies the pending canonical bundle, and produces the registration receipt.
+**Decision:** option 2. Apply returns `requires-approval` for new definitions
+and semantic changes and makes no runtime publication. It may reserve a new
+opaque lineage ID in the immutable approval request. Explicit approval
+allocates and publishes new runtime revisions under the affected definition
+lineages and durably creates any required activation plans. Only successful
+required activation produces the ready registration receipt. An
+authority-reauthorization successor reuses the existing revision.
 
-**Consequence:** under MVP startup registration, `requires-approval` rejects initialization. After approval, startup retries or restarts and receives the accepted binding for the same canonical bundle.
+**Consequence:** under MVP startup registration, every non-ready apply result
+rejects initialization. Startup retries or restarts until it receives the
+ready binding for the same canonical bundle.
 
 ### A7. Environment placement
 

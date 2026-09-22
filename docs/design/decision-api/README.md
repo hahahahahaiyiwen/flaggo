@@ -159,11 +159,13 @@ register or validate resources owned by a codebase. Missing resources should
 not be hard-deleted automatically; they should become deprecation candidates
 and require explicit lifecycle transition.
 
-### State and operator APIs
+### Future state and operator APIs
 
-State/operator APIs control live decision behavior.
+State/operator APIs may later control live decision behavior. Phase 3 defines
+no pause, override, rollback, cooldown, or rollout endpoint; each requires its
+own approved contract.
 
-Initial resource groups:
+Candidate resource groups:
 
 ```http
 /v1/state

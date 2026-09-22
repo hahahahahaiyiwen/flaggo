@@ -423,7 +423,7 @@ Deliverables:
 - `IStateStore` local implementation,
 - `IEvidenceProvider` local implementation,
 - `IStrategyExecutor` for numeric-rule strategies,
-- `IPolicyEvaluator` for bounds, step, max delta, evidence/model constraints, pause, and fallback,
+- `IPolicyEvaluator` for bounds, step, max delta, evidence/model constraints, and fallback,
 - `IAuditSink` local implementation,
 - exposure record linkage,
 - OAuth 2.0/OIDC scope enforcement and explicit local-development bypass,
@@ -664,10 +664,17 @@ Validation:
 
 - apply validates the complete definition and initial-authority candidate;
 - a semantic creation or change cannot initialize the SDK before approval;
+- new-definition apply persists one proposed lineage identity, while approval
+  publishes its initial runtime revision;
 - authenticated approval activates the exact bundle-derived authority;
 - registration retry after interruption returns the original activation and
   state identities;
 - exact bundle replay does not create another state;
+- rejected approval and pending, retryable-failed, or permanently failed
+  activation return their canonical non-ready apply outcomes and HTTP status;
+- permanent activation failure advances exact reapply to one linked
+  authority-reauthorization approval, reuses the accepted revision and
+  successful partial activations, and converges under concurrency;
 - changed initial authority requires a new approval;
 - stale expected baseline cannot overwrite newer bundle-approved or
   proposal-managed authority;
@@ -676,6 +683,9 @@ Validation:
   `750ms`, within bounds and step;
 - bundle-authored rules do not claim model confidence or require fabricated
   evidence quality;
+- every server decision audit distinguishes no-authority fallback from
+  selected active-value or numeric-rule authority and requires the applicable
+  activation lineage;
 - exposure is committed only after application confirmation, and unused
   decisions do not create exposure records.
 

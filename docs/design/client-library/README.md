@@ -273,7 +273,7 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   lifecycle: {
     authorityMode: "bundle-approved",
     initialAuthority: {
-      controlTarget: flaggo.target.cohort("new_players"),
+      controlTarget: { type: "cohort", id: "new_players" },
       kind: "numeric-rule",
       rule: {
         threshold: 0.55,
@@ -332,6 +332,9 @@ if (
 ```
 
 The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`. A server receipt carries `decisionId` and confirmation metadata; an SDK-local fallback receipt deliberately does not. Signal schemas are defined once near producers and reused through typed handles. Bound inference inputs combine a signal declaration reference with its current value, while typed target wrappers combine target schema with the current ID. Tooling partitions this object into an immutable extracted definition and a compact runtime request; runtime values never enter the definition digest. Emitting a signal does not associate it with every decision in the program.
+Static lifecycle fields such as `initialAuthority.controlTarget` use a literal
+`DecisionTargetRef`; `flaggo.target.*(...)` wrappers are reserved for runtime
+context binding.
 
 ### Policy authoring normalization
 
@@ -344,7 +347,6 @@ The shorthand `policy` object is authoring syntax, not the canonical policy cont
 | `minEvidenceQuality` | `{ kind: "min-evidence-quality", value }` |
 | `maxModelUncertainty` | `{ kind: "max-model-uncertainty", value }` |
 | `minExpectedOutcome` | `{ kind: "min-expected-outcome", value }` |
-| `paused` | `{ kind: "pause", paused }` |
 
 The result is `InlinePolicy { kind: "inline", constraints }`; constraints are duplicate-free and canonically sorted by `kind`. The explicit advanced form accepts canonical `PolicyReference | InlinePolicy` directly.
 
@@ -654,7 +656,6 @@ type PolicyAuthoring = {
   minEvidenceQuality?: number;
   maxModelUncertainty?: number;
   minExpectedOutcome?: number;
-  paused?: boolean;
 };
 
 type NumberOutputContract = {

@@ -46,7 +46,7 @@ The scenario uses the concepts from [Mental Model](MENTAL_MODEL.md), [Decision D
 | Governed state | approved strategy, state identity, generation, predecessor, and approval reference |
 | Uncertainty | not claimed for the bundle-authored Phase 3 rule |
 | Action space | numeric interval from `200ms` to `1500ms` in `50ms` steps; strategy may further narrow range for a segment |
-| Fallback contract | use `800ms` when decisioning is unavailable or unsafe |
+| Fallback contract | use audited server fallback `800ms` when no compatible authority or policy permits it; optionally configure the same local value only for an eligible data-plane outage |
 | Audit/explanation | returned value, rule inputs, approval/activation lineage, policy result |
 
 ## The user experience we want
@@ -200,7 +200,7 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   lifecycle: {
     authorityMode: "bundle-approved",
     initialAuthority: {
-      controlTarget: flaggo.target.cohort("new_players"),
+      controlTarget: { type: "cohort", id: "new_players" },
       kind: "numeric-rule",
       rule: {
         threshold: 0.55,
@@ -492,8 +492,14 @@ Player is near the top of the board and placing pieces slowly:
 Player stabilizes after recovery:
   return 750ms
 
-State or policy is unavailable:
-  return the governed or client availability fallback of 800ms
+No compatible authority exists, or policy rejects the candidate:
+  return the audited server fallback of 800ms
+
+The ready data plane is unavailable and SDK availability fallback is configured:
+  return the client fallback of 800ms without server audit or exposure identity
+
+Required state or policy dependencies are non-ready:
+  return a typed fallback-ineligible error, not a decision value
 ```
 
 The end user does not need to know Flaggo exists, but they should benefit from behavior that is more contextual than static configuration.

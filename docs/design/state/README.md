@@ -100,6 +100,11 @@ each activation attempt. The control plane atomically persists the observed
 reporting approval. `activate` and every exact retry receive that stored value.
 If another activation advances the stable head afterward, compare-and-swap
 fails stale rather than adopting the newer head as the expected baseline.
+After that permanent failure, an explicitly approved linked
+authority-reauthorization receives a new deterministic activation identity and
+captures the then-current stable head as its own baseline. It reuses the
+accepted definition revision and does not replace successful sibling
+activations from the original bundle.
 
 ## Runtime behavior
 

@@ -300,8 +300,7 @@ type PolicyConstraint =
   | EvidenceQualityConstraint
   | ModelUncertaintyConstraint
   | ExpectedOutcomeConstraint
-  | SampleSizeConstraint
-  | PauseConstraint;
+  | SampleSizeConstraint;
 
 type NumberBoundsConstraint = {
   kind: "number-bounds";
@@ -334,11 +333,6 @@ type SampleSizeConstraint = {
   value: number;
 };
 
-type PauseConstraint = {
-  kind: "pause";
-  paused: boolean;
-};
-
 type PolicyEvaluationResult = {
   result: "approved" | "blocked" | "fallback";
   reasons: string[];
@@ -346,10 +340,10 @@ type PolicyEvaluationResult = {
 };
 ```
 
-The replacement Phase 3 contract intentionally has no generic cooldown
-constraint. Issue #33 must separately define lifecycle activation cooldown and
-request-time previous-result stabilization, including any required state and
-concurrency semantics.
+The replacement Phase 3 contract intentionally has no generic cooldown,
+pause, or other temporal/operator constraint. Follow-up contracts must define
+those semantics, required state, and concurrency behavior before they become
+shared or authorable surfaces. Issue #33 owns the temporal portion.
 
 Rules:
 
@@ -801,26 +795,44 @@ type AuditDecisionResult =
     };
   };
 
+type AuditStateSummary =
+  | {
+      authoritySelected: false;
+      resolution: "server-fallback";
+    }
+  | {
+      authoritySelected: true;
+      authorityKind: "active-value";
+      stateId: string;
+      generation: number;
+      predecessorStateId?: string;
+      proposalId: string;
+      activationId: string;
+      approvalReference: string;
+    }
+  | {
+      authoritySelected: true;
+      authorityKind: "numeric-rule";
+      strategyId: string;
+      stateId: string;
+      generation: number;
+      predecessorStateId?: string;
+      proposalId: string;
+      activationId: string;
+      approvalReference: string;
+    };
+
 type AuditRecord = {
   auditId?: string;
   timestamp: string;
   decisionKey: string;
   request: DecideRequest;
-  response?: AuditDecisionResult;
+  response: AuditDecisionResult;
   contractVersion?: string;
   runtimeTarget?: DecisionTargetRef;
   controlTarget?: DecisionTargetRef;
   evidence?: EvidenceSnapshot;
-  stateSummary?: {
-    decisionMode: DecideResponse["decisionMode"];
-    strategyId?: string;
-    stateId?: string;
-    generation?: number;
-    predecessorStateId?: string;
-    proposalId?: string;
-    activationId?: string;
-    approvalReference?: string;
-  };
+  stateSummary: AuditStateSummary;
   policy?: PolicyEvaluationResult;
   reason: string;
 };
@@ -832,6 +844,13 @@ Rules:
 - Every server-produced decision audit captures the exact normalized
   `DecideRequest`, including all inference inputs used by successful strategy
   execution. SDK-local fallback produces no server audit record.
+- Every server decision carries one `stateSummary`. No-authority fallback
+  carries no lineage. Selecting active-value authority requires the complete
+  state, proposal, activation, and approval lineage; selecting numeric-rule
+  authority requires that lineage plus `strategyId`.
+- If policy replaces a selected authority's candidate with server fallback,
+  the response records fallback while `stateSummary` preserves the selected
+  authority lineage.
 - Confirmation tokens are capabilities and must be removed before constructing `AuditRecord`; audit response projections can retain `confirmationRequired` but never `confirmToken`.
 - Audit should be local-first in MVP, such as console, file, or SQLite.
 - Cloud audit sinks should implement `IAuditSink`; they should not change the audit contract.
@@ -911,6 +930,14 @@ type ContractChange =
   | {
       kind: "metadata-updated" | "deprecation-candidate";
       decisionKey: string;
+    }
+  | {
+      kind: "authority-reauthorization";
+      decisionKey: string;
+      definition: DecisionDefinitionRef;
+      contractDigest: string;
+      controlTarget: DecisionTargetRef;
+      previousActivationId: string;
     }
   | {
       kind: "semantic-change";
@@ -994,7 +1021,7 @@ type DefinitionBundleApplyResult =
       application: string;
       environment: string;
       bundleDigest: string;
-      compatibility: "new-contract-required";
+      compatibility: "identical" | "new-contract-required";
       expiresAt: string;
       snapshotUrl: string;
       supersedesApprovalRequestId?: string;
@@ -1018,7 +1045,16 @@ type DefinitionBundleApplyResult =
       bundleDigest: string;
       activations: InitialAuthorityActivationPlan[];
       retryability: "retryable" | "requires-new-approval";
-      issue: ContractIssue;
+      issues: ContractIssue[];
+    }
+  | {
+      status: "approval-rejected";
+      approvalRequestId: string;
+      application: string;
+      environment: string;
+      bundleDigest: string;
+      reasonCode: string;
+      issues: ContractIssue[];
     };
 
 type ApprovalActor = {
@@ -1064,7 +1100,7 @@ type DefinitionBundleApprovalResult =
               status: "failed";
               activations: InitialAuthorityActivationPlan[];
               retryability: "retryable" | "requires-new-approval";
-              issue: ContractIssue;
+              issues: ContractIssue[];
             };
       }
     | {
@@ -1088,8 +1124,14 @@ Rules:
 
 - `DecisionDefinitionBundle` is the canonical language-neutral sync artifact.
 - SDK-generated declarations, hand-authored JSON/YAML, GitOps workflows, and registry exports should all produce or reference the same bundle shape.
-- Bundle sync creates or validates decision definition revisions.
-- A bundle may omit `definitionId` for a new decision key. The registry assigns an opaque lineage ID; clients never synthesize version-bearing IDs.
+- Bundle sync validates submitted semantics and compares them with accepted
+  revisions.
+- Apply of a new key reserves and persists its proposed lineage ID and
+  contract digest in the approval request. Successful approval allocates and
+  publishes the initial opaque runtime revision.
+- A bundle may omit `definitionId` for a new decision key. Apply reserves the
+  registry-assigned opaque lineage ID in the approval request; clients never
+  synthesize version-bearing IDs.
 - When an approval request creates a definition, its `created` change persists
   the server-allocated `definitionId` and `contractDigest`. Exact retry reuses
   that proposed identity and never allocates another lineage for the same
@@ -1130,9 +1172,32 @@ Rules:
   or outcome uncertainty. Exact apply resumes the same activation and first
   resolves any already-published state before attempting publication again.
   `requires-new-approval` represents a stale expected baseline or permanent
-  conflict. The failed approval remains non-ready; reapply revalidates against
-  current authority and creates one linked approval request rather than
-  overwriting state or reusing the failed activation.
+  conflict. The failed approval remains non-ready. The next exact reapply
+  atomically advances the same deterministic registration attempt to one
+  linked `requires-approval` result; concurrent reapplies converge on that
+  successor.
+- `activation-pending.activations` contains only still-pending plans.
+  `activation-failed.activations` contains only failed or unresolved plans,
+  and its non-empty `issues` identify those plans by `decisionKey`; successful
+  partial activations remain durable but are not runtime bindings until the
+  complete ready receipt exists. `requires-new-approval` dominates the
+  aggregate retryability when any failed plan requires reauthorization.
+- A permanent-failure successor contains `authority-reauthorization` changes
+  only for failed initial authorities. It reuses the already published
+  definition revision and every successful partial activation, but allocates a
+  new approval request and deterministic activation identity whose baseline is
+  captured from the current stable head. It never fabricates another semantic
+  revision for the unchanged bundle. Its ready receipt contains the complete
+  bundle binding, combining retained successful entries with reauthorized
+  entries.
+- That successor has `compatibility: "identical"` because canonical semantics
+  did not change; its approval requirement authorizes the new captured
+  baseline and activation, not a contract revision.
+- A `requires-approval` result uses `new-contract-required` when any change is
+  `created` or `semantic-change`; it uses `identical` only when every change is
+  `authority-reauthorization`.
+- Replaying a rejected approval returns `approval-rejected`; rejection never
+  produces a ready receipt or SDK/runtime binding.
 - Approval requests are immutable snapshots with an authoritative expiration.
   The approval decision transitions once to approved, rejected, or expired and
   never changes. Retryable activation progress may continue under the same

@@ -372,6 +372,9 @@ apply to proposal-managed authority:
 | Human approval | New strategy classes, high-impact changes, insufficient evidence quality, excessive model uncertainty, weak expected outcome, overlapping target conflicts, policy exceptions, or regulated/business-critical decisions. |
 | Operator override | Emergency pause, forced fallback, rollback, or manually pinned value. |
 
+The operator-override row is conceptual. Phase 3 exposes no pause or override
+authoring/evaluation surface; later work must approve those contracts first.
+
 Effective policy is the intersection of definition constraints, environment policy, and operator controls. Less-trusted or narrower layers may restrict behavior but never widen it; an application-authored definition cannot override environment approval requirements, relax mandatory evidence-quality floors, or bypass an operator pause.
 
 Active `GovernedDecisionState` is then consumed by runtime decision execution:

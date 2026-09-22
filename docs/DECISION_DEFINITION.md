@@ -183,7 +183,7 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
   lifecycle: {
     authorityMode: "bundle-approved",
     initialAuthority: {
-      controlTarget: flaggo.target.cohort("new_players"),
+      controlTarget: { type: "cohort", id: "new_players" },
       kind: "numeric-rule",
       rule: {
         threshold: 0.55,

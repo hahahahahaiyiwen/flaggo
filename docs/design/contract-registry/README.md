@@ -268,7 +268,7 @@ flaggo.tune.number("tetris.dropInterval", {
   lifecycle: {
     authorityMode: "bundle-approved",
     initialAuthority: {
-      controlTarget: flaggo.target.cohort("new_players"),
+      controlTarget: { type: "cohort", id: "new_players" },
       kind: "numeric-rule",
       rule: {
         threshold: 0.55,
@@ -319,6 +319,8 @@ Tooling extracts signal identities and target schemas from the bindings above, d
 
 - If semantics are unchanged, it returns the existing definition ID/revision.
 - If only metadata changed, it records registry/audit metadata history without changing runtime revision or digest.
+- For a new key, apply reserves the proposed lineage ID and digest in the
+  approval request; approval publishes the initial runtime revision.
 - If semantics changed, apply returns `requires-approval` with an approval
   request and performs no active-authority mutation. Explicit approval records
   the immutable revision and authorizes expected-baseline activation.
@@ -459,6 +461,7 @@ Recommended behavior:
 | New decision key | Return `requires-approval`; approval creates the initial revision and authorizes required initial-authority activation. |
 | Compatible metadata change | Update registry/audit metadata without changing runtime identity. |
 | Semantic definition change | Return `requires-approval`; approval creates a new opaque revision/digest and authorizes required initial-authority activation under the same definition lineage. |
+| Permanent initial-authority activation conflict | Return one linked `requires-approval` authority-reauthorization request for failed definitions; reuse the accepted revision and successful partial activations. |
 | Resource missing from bundle | Mark as deprecation candidate; do not delete. |
 | Deprecated resource with no active clients | Allow explicit retirement. |
 | Active runtime usage exists | Block retirement unless forced by operator policy. |
@@ -516,7 +519,8 @@ The important design is:
 - sync is bundle-driven,
 - validation is read-only and returns structured issues,
 - apply repeats validation and is atomic and idempotent,
-- semantic change returns `requires-approval` plus a stable `approvalRequestId` without mutation,
+- semantic change returns `requires-approval` plus a stable
+  `approvalRequestId` without accepted runtime publication,
 - approval durably authorizes the immutable pending canonical bundle before
   derived authority activation,
 - approval review exposes previous/proposed digests, canonical semantic diff, and immutable canonical bundle snapshot,
@@ -543,8 +547,9 @@ The important design is:
   authority, including authority from another semantic revision,
 - retryable interruption or outcome-unknown failure resumes the same approval
   and activation identities, while stale-baseline or permanent conflicts
-  return `activation-failed` with `requires-new-approval`; reapply revalidates
-  current authority and creates one new linked approval request,
+  return `activation-failed` with `requires-new-approval`; concurrent exact
+  reapplies converge on one linked authority-reauthorization request that
+  reuses the accepted revision and successful partial activations,
 - semantic updates create revisions,
 - deprecation/retirement are lifecycle transitions,
 - hard delete is not part of the normal lifecycle.
