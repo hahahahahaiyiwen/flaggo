@@ -26,9 +26,6 @@ This is an additive OpenAPI response declaration. It does not make confirmation
 audit failures eligible for SDK-local fallback: `500` has no eligibility
 extension, while the generic I/O `503` is explicitly ineligible and carries
 matching `Retry-After`/`retryAfterSeconds` metadata.
-The frozen v1 cooldown shape remains compatible with every finite nonnegative
-value. Runtime evaluation avoids timestamp addition so huge cooldowns remain
-overflow-safe without a new schema or persistence bound.
 
 ## Goals
 
@@ -558,11 +555,20 @@ Reject request:
 Every approval resource variant requires `approvalRequestId`, `application`, `environment`, `bundleDigest`, `createdAt`, `expiresAt`, `changes`, and `snapshotUrl`. `changes` is non-empty, contains at least one `created` or `semantic-change` entry, and every semantic change carries a non-empty canonical `semanticDiff`. A renewed request also carries `supersedesApprovalRequestId`. Its status-specific fields form a discriminated union:
 
 - `pending` has no receipt or terminal decision.
-- `approved` requires `decidedAt`, the complete `RegistrationReceipt`, and approval metadata containing the server-derived actor plus optional persisted comment.
+- `approved` requires `decidedAt`, approval metadata containing the
+  server-derived actor plus optional persisted comment, and the canonical
+  activation projection:
+  - `pending` carries the persisted initial-authority activation plans;
+  - `ready` carries the complete `RegistrationReceipt`;
+  - `failed` carries the same plans, retryability, and stable issue.
 - `rejected` requires `decidedAt` and rejection metadata containing the server-derived actor, `reasonCode`, and optional persisted comment.
 - `expired` requires `expiredAt` and has no receipt. Expiration is terminal.
 
-`GET` and a successful terminal action return `200` with that union. Approve/reject never return an approval-shaped success before the compare-and-swap transition has committed. The approved variant embeds the exact receipt shape from bundle apply; clients initialize runtime bindings only from that receipt.
+`GET` and a successful terminal action return `200` with that union. Approve
+returns `approved` only after the approval decision, allocated identities, and
+captured expected baselines are durably committed; state activation may still
+be pending or failed. Clients initialize runtime bindings only from
+`activation.status = "ready"` and its exact bundle-apply receipt.
 
 `GET .../{approvalRequestId}/bundle` returns the exact canonical `DecisionDefinitionBundle` snapshot used to calculate `bundleDigest`. It is immutable across every approval state and retained with the approval audit record. `changes` contains the previous accepted tuple, proposed lineage/digest, and a canonical semantic diff sorted by JSON Pointer path. The diff uses `add`, `remove`, and `replace` operations over compatibility-critical canonical definition content; it excludes build metadata and other fields outside `contractDigest`.
 
@@ -580,13 +586,20 @@ Approval behavior:
 - Apply stores an immutable canonical bundle snapshot behind the approval request. Approval never re-reads mutable client content.
 - Approval actor identity is derived from the authorized token (`sub` plus optional display name), never accepted from the request body. Explicit local bypass records actor subject `local-development`.
 - The MVP default expiration is seven days; every response carries the authoritative `expiresAt`.
-- Approve verifies `expectedBundleDigest`, then atomically transitions `pending -> approved`, creates the new runtime revisions, applies the whole pending bundle, and stores the receipt.
+- Approve verifies `expectedBundleDigest`, then atomically transitions
+  `pending -> approved`, persists every server-allocated definition identity,
+  creates the runtime revisions, and stores each required initial-authority
+  activation plan with the stable-head baseline captured at that transition.
+  Activation may complete afterward; only completion stores the ready receipt.
 - Reject verifies `expectedBundleDigest`, then atomically transitions `pending -> rejected` without registry mutation.
 - Repeating the same terminal action with the same digest is idempotent and returns the stored result. No separate idempotency key is required.
 - Concurrent terminal actions use one compare-and-swap transition. One wins; the same action converges on its result, while the opposite action returns `409 approval-terminal-conflict`.
 - An unknown request returns `404 approval-not-found`. `GET` returns an expired resource as `200`; approve/reject against it return `410 approval-expired`. A digest mismatch returns `409 approval-bundle-conflict`.
 - Terminal states never transition again. Approval/rejection authorization and application/environment scope are checked on every action.
-- A startup retry using the same canonical bundle and deterministic apply idempotency key returns the approved receipt after approval; before approval it returns the same `requires-approval` result.
+- A startup retry using the same canonical bundle and deterministic apply
+  idempotency key returns `requires-approval` before approval,
+  `activation-pending` or `activation-failed` while non-ready, and the stored
+  ready receipt only after activation succeeds.
 - After expiration, the next apply of the same canonical body with the same deterministic key revalidates against current registry state and atomically creates one fresh approval request with a new ID and expiry. Concurrent resubmissions converge on that request. The old request remains `expired`, and the new resource links it through `supersedesApprovalRequestId`.
 
 ### Validate a bundle
@@ -646,13 +659,25 @@ Proposed response:
   "application": "tetris-demo",
   "environment": "dev",
   "bundleDigest": "sha256:bundle...",
-  "status": "approved",
+  "status": "ready",
   "compatibility": "identical",
   "acceptedDefinitions": {
     "tetris.dropInterval": {
       "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
       "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-      "contractDigest": "sha256:contract..."
+      "contractDigest": "sha256:contract...",
+      "activatedAuthority": {
+        "proposalId": "proposal_01...",
+        "activationId": "activation_01...",
+        "strategyId": "strategy_01...",
+        "stateId": "state_01...",
+        "generation": 1,
+        "controlTarget": {
+          "type": "cohort",
+          "id": "new_players"
+        },
+        "kind": "numeric-rule"
+      }
     }
   },
   "changes": [],
@@ -664,7 +689,10 @@ Apply invariants:
 
 - The bundle is the management write unit.
 - `acceptedDefinitions` is the only source for initializing per-decision runtime bindings; clients must not construct identities from the bundle digest or decision key.
-- A repeated request with the same idempotency key and canonical body returns the original result while its approval is pending or terminally approved/rejected. Expiration releases that apply attempt for the renewal behavior above.
+- A repeated request with the same idempotency key and canonical body returns
+  the current result for the same approval and activation plan: pending
+  approval, activation pending/failed, ready, or rejected. Expiration releases
+  that apply attempt for the renewal behavior above.
 - Reusing an idempotency key with a different canonical body is a conflict.
 - Missing resources become deprecation candidates; apply never hard-deletes them.
 - A semantic conflict never overwrites an immutable definition identity.
@@ -837,7 +865,9 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 25. OAuth scope denial for each runtime and management operation.
 26. Multi-definition registration receipt initializes each exact accepted runtime tuple.
 27. Metadata-only bundle update preserves the runtime revision and digest.
-28. Approval success atomically creates revisions and returns the complete stored receipt.
+28. Approval success atomically creates revisions, allocated identities, and
+    captured-baseline activation plans; the complete stored receipt appears
+    only after required activation succeeds.
 29. Approval rejection, expiration, missing request, digest conflict, idempotent replay, and opposite concurrent action.
 30. Expired approval resubmission with the same deterministic apply key creates one linked replacement request after revalidation.
 31. Approval review exposes old/new digests, canonical semantic diff, immutable snapshot, and persisted actor/comment metadata.

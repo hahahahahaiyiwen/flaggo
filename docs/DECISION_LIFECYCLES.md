@@ -53,6 +53,7 @@ bundle apply
   -> validate definition and candidate
   -> approval request
   -> authenticated approval of the exact snapshot
+  -> atomically persist allocated identities and captured authority-head baseline
   -> deterministic proposal, activation, and strategy identities
   -> expected-baseline compare-and-swap
   -> active governed state
@@ -79,6 +80,10 @@ activation identities from one canonical tuple:
 Proposal and activation identities use distinct namespaces over that tuple.
 The decision key and canonical authority content make the identities unique per
 definition in a multi-definition approval. The IDs remain opaque to clients.
+At the same approval transition, the control plane reads each stable authority
+head once and persists that exact expected baseline with its activation ID.
+Every retry reuses the stored baseline; it never substitutes the head visible
+at retry time.
 Activation derives the strategy identity in a third namespace from the
 activation ID and canonical ID-free strategy declaration. Exact retry with the
 same tuple returns the same identities; finding any ID bound to different
@@ -172,7 +177,7 @@ DecisionProposal
   -> target authority and conflict resolution
   -> evidence and uncertainty requirements
   -> safety and environment policy
-  -> cooldown and blast-radius limits
+  -> approved temporal and blast-radius limits when their contracts exist
   -> approval and operator controls
   -> activation, limitation, hold, rejection, or pending approval
 ```

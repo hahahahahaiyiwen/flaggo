@@ -25,12 +25,14 @@ Conditional proposal-managed or evidence-backed constraints include:
 - minimum evidence quality when evidence-backed decisioning is required,
 - maximum model uncertainty when model-backed decisioning is required,
 - minimum expected outcome when optimization estimates are used,
-- minimum sample size when configured,
-- explicit client-fallback permission for required-evidence unavailability.
+- minimum sample size when configured.
 
 Cooldown, previous-result delta, hysteresis, pause, and other temporal/operator
 semantics require their separately approved contracts; they are not implied by
 the Phase 3 bundle rule.
+
+Evidence-backed constraints may produce an audited server fallback or a
+fallback-ineligible error. They never authorize SDK-local fallback.
 
 Policy must be provider-neutral and deterministic. It should not call an AI model in the MVP runtime path.
 
@@ -95,7 +97,6 @@ Reason-code vocabulary, including future conditional policies:
 | `value_out_of_range` | Candidate is outside action-space or strategy bounds. |
 | `invalid_step` | Numeric value does not align to configured step. |
 | `max_delta_exceeded` | Candidate changes too much from the explicit contract baseline. |
-| `cooldown_active` | A future temporal policy says the candidate change is too soon. |
 | `insufficient_evidence_quality` | Evidence quality is below policy requirement. |
 | `excessive_model_uncertainty` | Model uncertainty is above policy requirement. |
 | `insufficient_expected_outcome` | Expected outcome estimate is below policy requirement. |

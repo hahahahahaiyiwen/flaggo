@@ -340,7 +340,6 @@ The shorthand `policy` object is authoring syntax, not the canonical policy cont
 | `PolicyAuthoring` field | Canonical constraint |
 | --- | --- |
 | `maxDelta` | `{ kind: "max-delta", value }` |
-| `cooldown: "20s"` | `{ kind: "cooldown", seconds: 20 }` |
 | `minSampleSize` | `{ kind: "min-sample-size", value }` |
 | `minEvidenceQuality` | `{ kind: "min-evidence-quality", value }` |
 | `maxModelUncertainty` | `{ kind: "max-model-uncertainty", value }` |
@@ -348,6 +347,9 @@ The shorthand `policy` object is authoring syntax, not the canonical policy cont
 | `paused` | `{ kind: "pause", paused }` |
 
 The result is `InlinePolicy { kind: "inline", constraints }`; constraints are duplicate-free and canonically sorted by `kind`. The explicit advanced form accepts canonical `PolicyReference | InlinePolicy` directly.
+
+Cooldown authoring is intentionally unavailable until issue #33 defines the
+separate activation and request-time temporal contracts.
 
 `output.range` and `output.step` remain action-space semantics. Extraction does
 not duplicate them into synthesized policy constraints, so the code-first
@@ -390,7 +392,9 @@ Rules:
 - two call sites in one build that use the same decision key with different canonical definitions fail the build with `contract-conflict`,
 - development runtime extraction may memoize by decision key, but must reject a second digest for that key,
 - different deployed builds may carry different registered revisions for the same stable key,
-- the server returns governed fallback for unknown or conflicting identities rather than registering runtime-dependent semantics.
+- the server returns typed Problem Details with no server or SDK fallback for
+  unknown or conflicting identities rather than registering
+  runtime-dependent semantics.
 
 ### Basic evidence emission
 
@@ -469,7 +473,6 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
       kind: "inline",
       constraints: [
         { kind: "max-delta", value: 50 },
-        { kind: "cooldown", seconds: 20 },
         { kind: "min-sample-size", value: 30 },
         { kind: "min-evidence-quality", value: 0.7 },
         { kind: "max-model-uncertainty", value: 0.35 }
@@ -647,7 +650,6 @@ type NumericRuleAuthoring = Omit<NumericRuleDeclaration, "weightedInputs"> & {
 
 type PolicyAuthoring = {
   maxDelta?: number;
-  cooldown?: `${number}s`;
   minSampleSize?: number;
   minEvidenceQuality?: number;
   maxModelUncertainty?: number;

@@ -206,13 +206,16 @@ A result should include:
 - decision mode;
 - fallback status and provenance;
 - definition identity;
-- governed state ID;
 - runtime and control targets;
 - strategy ID when applicable;
 - policy result;
 - confidence fields when applicable;
 - decision and audit IDs;
 - explanation summary.
+
+Governed state identity and activation lineage remain in
+`AuditRecord.stateSummary`; the Phase 3 runtime response does not expose a
+`stateId`.
 
 Experiment assignment must additionally include:
 

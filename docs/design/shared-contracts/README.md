@@ -297,7 +297,6 @@ Metric objective direction is discriminated: `target` requires a finite numeric 
 type PolicyConstraint =
   | NumberBoundsConstraint
   | MaxDeltaConstraint
-  | CooldownConstraint
   | EvidenceQualityConstraint
   | ModelUncertaintyConstraint
   | ExpectedOutcomeConstraint
@@ -314,13 +313,6 @@ type MaxDeltaConstraint = {
   kind: "max-delta";
   value: number;
 };
-
-type CooldownConstraint = {
-  kind: "cooldown";
-  seconds: number;
-};
-
-// seconds is finite and nonnegative.
 
 type EvidenceQualityConstraint = {
   kind: "min-evidence-quality";
@@ -353,6 +345,11 @@ type PolicyEvaluationResult = {
   appliedConstraints: string[];
 };
 ```
+
+The replacement Phase 3 contract intentionally has no generic cooldown
+constraint. Issue #33 must separately define lifecycle activation cooldown and
+request-time previous-result stabilization, including any required state and
+concurrency semantics.
 
 Rules:
 
@@ -904,7 +901,15 @@ type ContractIssue = {
 
 type ContractChange =
   | {
-      kind: "created" | "metadata-updated" | "deprecation-candidate";
+      kind: "created";
+      decisionKey: string;
+      proposed: {
+        definitionId: string;
+        contractDigest: string;
+      };
+    }
+  | {
+      kind: "metadata-updated" | "deprecation-candidate";
       decisionKey: string;
     }
   | {
@@ -953,6 +958,21 @@ type ActivatedAuthorityReceipt = {
   kind: "numeric-rule";
 };
 
+type ExpectedAuthorityBaseline = {
+  stateId?: string;
+  generation: number;
+};
+
+type InitialAuthorityActivationPlan = {
+  decisionKey: string;
+  definition: DecisionDefinitionRef;
+  contractDigest: string;
+  proposalId: string;
+  activationId: string;
+  controlTarget: DecisionTargetRef;
+  expectedBaseline: ExpectedAuthorityBaseline;
+};
+
 type RegistrationReceipt = {
   application: string;
   environment: string;
@@ -987,6 +1007,7 @@ type DefinitionBundleApplyResult =
       application: string;
       environment: string;
       bundleDigest: string;
+      activations: InitialAuthorityActivationPlan[];
       issues: ContractIssue[];
     }
   | {
@@ -995,6 +1016,7 @@ type DefinitionBundleApplyResult =
       application: string;
       environment: string;
       bundleDigest: string;
+      activations: InitialAuthorityActivationPlan[];
       retryability: "retryable" | "requires-new-approval";
       issue: ContractIssue;
     };
@@ -1032,6 +1054,7 @@ type DefinitionBundleApprovalResult =
         activation:
           | {
               status: "pending";
+              activations: InitialAuthorityActivationPlan[];
             }
           | {
               status: "ready";
@@ -1039,6 +1062,7 @@ type DefinitionBundleApprovalResult =
             }
           | {
               status: "failed";
+              activations: InitialAuthorityActivationPlan[];
               retryability: "retryable" | "requires-new-approval";
               issue: ContractIssue;
             };
@@ -1066,6 +1090,10 @@ Rules:
 - SDK-generated declarations, hand-authored JSON/YAML, GitOps workflows, and registry exports should all produce or reference the same bundle shape.
 - Bundle sync creates or validates decision definition revisions.
 - A bundle may omit `definitionId` for a new decision key. The registry assigns an opaque lineage ID; clients never synthesize version-bearing IDs.
+- When an approval request creates a definition, its `created` change persists
+  the server-allocated `definitionId` and `contractDigest`. Exact retry reuses
+  that proposed identity and never allocates another lineage for the same
+  approval snapshot.
 - Omitted `definitionId` resolves the existing lineage for a known key. A supplied ID must already belong to that same authorized application/environment/key; unknown or mismatched IDs are validation errors.
 - Missing bundle resources become deprecation candidates, not deletes.
 - Bundle data must remain provider-neutral.
@@ -1080,6 +1108,15 @@ Rules:
   semantic change returns `requires-approval` without active-authority
   mutation. Explicit approval is durably recorded before expected-baseline
   activation, and no ready receipt exists until activation succeeds.
+- The `pending -> approved` transition atomically persists one
+  `InitialAuthorityActivationPlan` per required bundle-approved authority.
+  Each plan binds the deterministic proposal and activation IDs to the stable
+  authority-head baseline observed at that transition. No-state baselines use
+  generation `0` with no `stateId`.
+- Activation and every exact retry use the persisted `expectedBaseline`; they
+  never re-read the head and substitute a later baseline. A head advanced
+  after approval therefore produces a stale-baseline conflict and
+  `requires-new-approval` rather than overwriting newer authority.
 - For each bundle-approved definition, proposal and activation IDs are
   server-derived in distinct namespaces from application, environment,
   approval request ID, decision key, contract digest, and canonical initial
@@ -1100,7 +1137,10 @@ Rules:
   The approval decision transitions once to approved, rejected, or expired and
   never changes. Retryable activation progress may continue under the same
   approved snapshot until it is ready or requires a new approval.
-- Approval changes include previous/proposed contract digests and a canonical semantic diff. `snapshotUrl` retrieves the immutable canonical bundle under review.
+- Approval changes include the server-allocated proposed identity for created
+  definitions, previous/proposed contract digests for semantic changes, and a
+  canonical semantic diff. `snapshotUrl` retrieves the immutable canonical
+  bundle under review.
 - Snapshot HTTP responses quote the project `sha256:<hex>` value as an opaque `ETag` and separately encode the raw SHA-256 bytes using RFC 9530 `Content-Digest: sha-256=:<base64>:` syntax.
 - Approval/rejection records persist the server-derived actor and submitted comment. Expired apply attempts may be resubmitted with the same deterministic key; revalidation creates one linked replacement request.
 

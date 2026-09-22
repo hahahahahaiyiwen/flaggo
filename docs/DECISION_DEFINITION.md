@@ -243,7 +243,12 @@ if (
 
 The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while its server exposure directive authorizes confirmation.
 
-The code-first `policy` shorthand is normalized to canonical `InlinePolicy` constraints before hashing. For example, `maxDelta: 50` becomes `{ kind: "max-delta", value: 50 }`, and `cooldown: "20s"` becomes `{ kind: "cooldown", seconds: 20 }`. The explicit form may provide `PolicyReference | InlinePolicy` directly; equivalent shorthand and canonical policies produce the same definition digest.
+The code-first `policy` shorthand is normalized to canonical `InlinePolicy`
+constraints before hashing. For example, `maxDelta: 50` becomes
+`{ kind: "max-delta", value: 50 }`. The explicit form may provide
+`PolicyReference | InlinePolicy` directly; equivalent shorthand and canonical
+policies produce the same definition digest. Cooldown authoring remains
+deferred to #33.
 
 Only app-emitted primitive metric handles may appear in `inference.inputs`. Events and service-derived metrics may contribute to evidence; numeric derived metrics may also serve as objectives, but neither events nor derived metrics can be supplied as online request values. SDK typing enforces this for code-first authoring, while extraction, registry validation, and the Decision API enforce it at trust boundaries.
 

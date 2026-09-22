@@ -355,7 +355,6 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
       kind: "inline",
       constraints: [
         { kind: "max-delta", value: 50 },
-        { kind: "cooldown", seconds: 20 },
         { kind: "min-sample-size", value: 30 },
         { kind: "min-evidence-quality", value: 0.7 },
         { kind: "max-model-uncertainty", value: 0.35 }

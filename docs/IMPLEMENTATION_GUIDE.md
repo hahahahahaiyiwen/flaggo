@@ -423,7 +423,7 @@ Deliverables:
 - `IStateStore` local implementation,
 - `IEvidenceProvider` local implementation,
 - `IStrategyExecutor` for numeric-rule strategies,
-- `IPolicyEvaluator` for bounds, step, max delta, cooldown, evidence/model constraints, pause, and fallback,
+- `IPolicyEvaluator` for bounds, step, max delta, evidence/model constraints, pause, and fallback,
 - `IAuditSink` local implementation,
 - exposure record linkage,
 - OAuth 2.0/OIDC scope enforcement and explicit local-development bypass,
@@ -435,7 +435,7 @@ Validation:
 - service contract tests pass against every shared fixture,
 - fixed fallback works when no governed state exists,
 - active numeric-rule strategy returns bounded adaptive values,
-- policy blocks invalid or cooldown-violating candidates,
+- policy blocks invalid candidates under the currently defined non-temporal constraints,
 - invalid inference signals, objectives, policies, and definition identities fail closed,
 - every server result contains the required decision/audit/fallback/contract-integrity fields,
 - exposure confirmation creates attribution identity only after a decision is applied,
@@ -527,7 +527,8 @@ Deliverables:
 - numeric action space from `1` to `10` with step `1` and fallback `3`,
 - deterministic rule that returns batch size `3` below pressure `0.7` and `6`
   at or above pressure `0.7`,
-- policy bounds, maximum delta `3`, and a short cooldown,
+- policy bounds and maximum delta `3`; temporal cooldown remains deferred to
+  #33,
 - application of each returned batch size before exposure confirmation,
 - telemetry sink that exposes emitted signals locally, preferably through the
   OpenTelemetry-compatible SDK adapter,
@@ -541,7 +542,8 @@ Validation:
   extracted contract digest,
 - steady load selects and applies batch size `3`,
 - burst load selects and applies batch size `6` within policy,
-- recovery returns toward batch size `3` without violating cooldown,
+- recovery returns toward batch size `3` within the current non-temporal
+  policy,
 - queue pressure is calculated from real queued items rather than generated as
   an independent random input,
 - exposure confirmation occurs only after the selected batch size is applied,

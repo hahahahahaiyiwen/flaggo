@@ -59,10 +59,7 @@ type ActivationRequest = {
   definition: DecisionDefinitionRef;
   contractDigest: string;
   address: StateAddress;
-  expectedBaseline: {
-    stateId?: string;
-    generation: number;
-  };
+  expectedBaseline: ExpectedAuthorityBaseline;
   candidate: {
     kind: "numeric-rule";
     rule: NumericRuleDeclaration;
@@ -96,6 +93,13 @@ and generation, idempotent replay, predecessor and approval references,
 validation conflicts, and atomic publication. Broader completion, expiry,
 rollback, evidence, confidence, and generic proposal-source surfaces are
 deferred until a concrete lifecycle requires them.
+
+`getBaseline` is used while preparing an approval transition, not afresh on
+each activation attempt. The control plane atomically persists the observed
+`ExpectedAuthorityBaseline` with the deterministic activation ID before
+reporting approval. `activate` and every exact retry receive that stored value.
+If another activation advances the stable head afterward, compare-and-swap
+fails stale rather than adopting the newer head as the expected baseline.
 
 ## Runtime behavior
 
