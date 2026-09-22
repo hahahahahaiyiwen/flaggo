@@ -325,14 +325,16 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
+let confirmedExposureId: string | undefined;
 if (
   dropIntervalDecision.source === "server" &&
   dropIntervalDecision.exposure.confirmationRequired
 ) {
-  await flaggo.exposures.confirm(
+  const confirmedExposure = await flaggo.exposures.confirm(
     dropIntervalDecision.decisionId,
     dropIntervalDecision.exposure.confirmToken
   );
+  confirmedExposureId = confirmedExposure.exposureId;
 }
 ```
 
@@ -421,19 +423,18 @@ sessionEndedEvent.emit({
 });
 ```
 
-The SDK and telemetry pipeline should attach decision context automatically when possible:
+The emissions above are raw domain telemetry unless the application identifies
+them as outcomes of an applied decision. The SDK must not infer exposure from
+timing, `decisionId`, revision, or digest alone.
 
-- decision key,
-- decision definition revision,
-- returned value,
-- runtime target,
-- resolved control target when known,
-- decision/audit correlation ID,
-- timestamp,
-- definition revision or digest,
-- application/build identity.
-
-An explicit decision-scoped observation helper can exist as shorthand for advanced users, but it should not be required in the hero path.
+After applying a server decision that requires confirmation, the client uses
+the opaque confirm token and retains the returned `exposureId`, as shown by
+`confirmedExposureId` above. Later attributed outcome telemetry correlates to
+that `exposureId`. The server joins the exposure to the audited decision record
+containing the complete `{ definitionId, revision, contractDigest }` identity,
+returned value, targets, decision-time inputs, audit ID, timestamp, and
+application/build provenance. An ergonomic outcome helper may wrap this flow,
+but it must not omit confirmation or substitute an incomplete identity.
 
 ### Advanced evidence and governance
 

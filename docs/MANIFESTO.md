@@ -85,7 +85,13 @@ It should mean:
 - human intent remains encoded in goals and boundaries,
 - fallback behavior exists when confidence, evidence, or safety is insufficient.
 
-AI should primarily participate in asynchronous analysis: interpreting evidence, detecting drift, comparing strategies, generating `DecisionProposal` objects, and explaining tradeoffs. Online execution should normally be deterministic, bounded, compatible with approved `GovernedDecisionState`, and policy-gated.
+AI should primarily participate in asynchronous analysis: interpreting
+evidence, detecting drift, comparing strategies, generating
+`DecisionProposal` objects, and explaining tradeoffs. Online execution is
+deterministic, bounded, compatible with approved `GovernedDecisionState`, and
+policy-gated. It never invokes an unbounded request-time agent loop; any future
+request-time mechanism requires a separately approved bounded contract with
+enforceable latency and resource budgets.
 
 This is the standard Flaggo should hold itself to: not "AI makes choices" but "software gains a policy-gated decision interface that can use AI where AI is appropriate."
 

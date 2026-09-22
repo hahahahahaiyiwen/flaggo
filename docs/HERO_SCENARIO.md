@@ -19,9 +19,12 @@ A Tetris frontend emits gameplay telemetry. Instead of hard-coding one global dr
 - which initial runtime rule should become authority after explicit approval.
 
 At runtime, the game asks Flaggo for the current `dropInterval` decision for a
-runtime target such as the current session. Flaggo uses the versioned decision
-definition, runtime context, approved governed state, and runtime policy to
-return a governed value. The game applies the value and emits linked outcomes.
+runtime target such as the current session. The request carries the complete
+registered `{ definitionId, revision, contractDigest }` identity. Flaggo uses
+that exact definition, runtime context, approved governed state, and runtime
+policy to return a governed value after durable audit. The game applies the
+value and, when confirmation is required, confirms exposure before emitting
+attributed outcomes linked to the returned `exposureId`.
 
 Phase 3 demonstrates real-time contextual adaptation from an explicitly
 approved, bundle-authored numeric rule. It does not claim telemetry ingestion,
@@ -247,14 +250,16 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
+let confirmedExposureId: string | undefined;
 if (
   dropIntervalDecision.source === "server" &&
   dropIntervalDecision.exposure.confirmationRequired
 ) {
-  await flaggo.exposures.confirm(
+  const confirmedExposure = await flaggo.exposures.confirm(
     dropIntervalDecision.decisionId,
     dropIntervalDecision.exposure.confirmToken
   );
+  confirmedExposureId = confirmedExposure.exposureId;
 }
 ```
 
@@ -284,7 +289,13 @@ sessionEndedEvent.emit({
 });
 ```
 
-The SDK and telemetry pipeline automatically associate matching observations with the decision key, definition revision, returned value, runtime target, decision correlation ID, timestamp, and application/build provenance. The developer does not need a separate decision-scoped observe step in the hero path unless they want an explicit shorthand.
+These emissions are raw domain telemetry unless the application identifies
+them as outcomes of an applied decision. The SDK must not infer treatment from
+timing or a returned `decisionId`. After application and exposure confirmation,
+attributed outcome telemetry uses `confirmedExposureId`; the server joins that
+`exposureId` to the decision and audit records containing the complete
+`{ definitionId, revision, contractDigest }` identity, returned value, targets,
+decision-time inputs, timestamp, and application/build provenance.
 
 The important design principle is that the decision is declared directly and explicitly. The application does not hide adaptive behavior behind scattered `if/else` branches. It names or references the decision key, output contract, target hierarchy, safety policy, and initial authority candidate. The control plane validates the declaration, records authenticated approval, activates governed state, and preserves audit linkage.
 
@@ -661,15 +672,17 @@ Developer declares a decision key, target, action space, initial authority, safe
         ↓
 Trusted control-plane client obtains approval and active state
         ↓
-Application asks Flaggo for runtime decision with runtime context
+Application asks Flaggo with runtime context and the complete expected identity
         ↓
 Flaggo evaluates runtime context, governed state, and runtime policy
         ↓
-Flaggo returns value + explanation + audit record
+Flaggo durably records audit, then returns value + explanation
         ↓
 Application applies value or fallback
         ↓
-Telemetry records outcome
+When required, application confirms exposure and receives exposureId
+        ↓
+Outcome telemetry links to exposureId
 ```
 
 Phase 4 adds the separate evidence-to-proposal loop that may replace authority

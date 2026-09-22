@@ -55,13 +55,19 @@ work; they are not prerequisites for the Phase 3 hero path.
 At runtime:
 
 ```text
-game emits telemetry
-  -> game asks Flaggo for tetris.dropInterval
-  -> Flaggo executes an approved adaptive strategy against live game context
-  -> Flaggo applies governance and fallback rules
-  -> Flaggo returns a governed value or fallback
+game emits raw domain telemetry
+  -> game asks Flaggo for tetris.dropInterval with its complete expected identity
+  -> Flaggo evaluates the approved numeric rule against live inputs
+  -> Flaggo applies policy and durably records the decision audit
+  -> Flaggo returns a governed value or fallback after audit succeeds
   -> game applies the value
+  -> when confirmation is required, game confirms exposure and receives exposureId
+  -> after confirmation, game emits decision outcomes linked to exposureId
 ```
+
+Raw domain telemetry that is not caused by an applied decision remains
+independent of exposure attribution. A returned `decisionId` alone never proves
+that the application used the value.
 
 ## Design principles
 

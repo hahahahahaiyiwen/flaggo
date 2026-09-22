@@ -387,24 +387,37 @@ The **runtime decision execution path** serves application requests:
 
 ```text
 Application code
-  -> emits domain telemetry through client library
-  -> asks Decision API for decision(definition, runtime target, runtime context)
+  -> emits raw domain telemetry through client library
+  -> asks Decision API for decision(
+       decision key,
+       complete { definitionId, revision, contractDigest } expectation,
+       runtime target,
+       runtime context,
+       signal inputs)
 
 Decision API
-  -> loads decision definition
+  -> resolves the exact accepted definition binding
   -> resolves runtime target, control target, policy, and fallback
-  -> fetches evidence snapshots only when active authority or policy requires them
+  -> fetches evidence snapshots only when runtime policy requires them
   -> fetches compatible GovernedDecisionState
   -> resolves active-value authority, evaluates numeric-rule authority,
      or produces governed fallback
   -> applies deterministic runtime policy checks
-  -> records audit/explanation
-  -> returns RuntimeDecisionResult, possibly containing fallback
+  -> durably records audit/explanation
+  -> returns RuntimeDecisionResult only after audit persistence succeeds
 
 Application code
   -> applies returned value/action
-  -> emits outcome telemetry
+  -> when confirmation is required, confirms exposure with the server receipt
+  -> receives exposureId
+  -> emits attributed outcome telemetry linked to exposureId
 ```
+
+Raw domain telemetry can be emitted without a decision or exposure. Outcome
+attribution begins only after confirmed application; the exposure record joins
+`exposureId` to the audited decision's complete
+`{ definitionId, revision, contractDigest }` identity, inputs, targets, and
+returned value.
 
 The future **decision intelligence path** analyzes evidence outside the
 application's request/response path:
