@@ -46,7 +46,8 @@ Instead of hard-coding one global speed or manually tuning a feature flag, the d
 - the output contract, target hierarchy, live inputs, safety, and fallback,
 - a bounded numeric rule for the initial authority candidate,
 - authenticated approval that activates governed authority,
-- runtime decisions followed by exposure confirmation, telemetry, and audit.
+- runtime policy and durable decision audit before response, followed by
+  exposure confirmation and linked telemetry.
 
 Independent proposal generation and proposal-managed authority are Phase 4
 work; they are not prerequisites for the Phase 3 hero path.

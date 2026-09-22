@@ -470,10 +470,11 @@ RuntimeDecisionResult
   -> future DecisionProposal
 ```
 
-Decision records should capture definition revision/hash, runtime target,
-resolved control target, governed state ID, returned value, decision mode,
-fallback status, inference input values, policy result, audit ID, and
-timestamp. A future experiment contract must additionally define the
+Decision records should capture the complete runtime identity
+`{ definitionId, revision, contractDigest }`, runtime target, resolved control
+target, governed state ID, returned value, decision mode, fallback status,
+inference input values, policy result, audit ID, and timestamp. A future
+experiment contract must additionally define the
 experiment ID, variant ID, allocation version, and assignment unit recorded
 for experiment decisions. Exposure records should link to decision records and
 capture the fact that the application actually applied or rendered the value.
@@ -490,14 +491,15 @@ Different decision definitions should not automatically share active decision au
 | Raw telemetry observations | Reusable when event and field semantics match. |
 | Evidence views/signals | Reusable only when signal definitions and aggregation semantics are compatible. |
 | Authority head | Stable by application, environment, decision key, and control target so every semantic revision participates in one ordered CAS lineage. |
-| GovernedDecisionState | Immutable and bound to the exact definition revision/hash that was approved. |
-| RuntimeDecisionResult, decision records, and confirmed exposures | Bound to the exact definition revision/hash used by the request. |
+| GovernedDecisionState | Immutable and bound to the exact approved `{ definitionId, revision, contractDigest }` tuple. |
+| RuntimeDecisionResult, decision records, and confirmed exposures | Bound to the complete `{ definitionId, revision, contractDigest }` tuple used by the request. |
 
-Runtime requests should bind to an expected decision definition revision or
-contract hash. The active authority head may point to only one immutable state;
-runtime uses it only when that state matches the request's exact definition
-identity. An older registered request receives server fallback after a newer
-revision replaces the head rather than consuming the new strategy. New
+Runtime requests must bind to the complete expected
+`{ definitionId, revision, contractDigest }` tuple. The active authority head
+may point to only one immutable state; runtime uses it only when that state
+matches the request's complete identity. An older registered request receives
+server fallback after a newer revision replaces the head rather than consuming
+the new strategy. New
 definitions can start partially warm only through semantic compatibility:
 unchanged signals and evidence may be reused, while new or changed signals warm
 up before policy allows them to influence proposals or runtime execution.

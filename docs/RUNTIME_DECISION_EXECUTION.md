@@ -131,8 +131,9 @@ active numeric-rule strategy
 
 Future strategy kinds or ephemeral runtime candidates require explicit
 governed contracts covering the evaluator, action space, target authority,
-fallback, audit requirements, and latency budget. Most online requests must
-not run an unbounded agentic loop.
+fallback, audit requirements, and enforceable latency and resource budgets.
+Online execution must always be bounded and must never run an unbounded
+agentic loop.
 
 ## Future experiment variant assignment
 

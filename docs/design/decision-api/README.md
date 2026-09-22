@@ -619,7 +619,10 @@ interface IStrategyExecutor {
 }
 ```
 
-The Decision API should treat strategy execution as a bounded operation. It should not call an unbounded agent loop in the normal online path unless a specific decision definition is explicitly configured for that behavior.
+The Decision API must keep online strategy execution bounded and must never
+call an unbounded agent loop. Any future request-time mechanism requires a
+separately approved bounded strategy kind, explicit executor port, and
+enforceable latency and resource budgets.
 
 ## Fallback and confidence semantics
 
