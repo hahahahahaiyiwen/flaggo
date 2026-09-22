@@ -42,11 +42,14 @@ The first product experience uses a Tetris game:
 
 Instead of hard-coding one global speed or manually tuning a feature flag, the developer declares:
 
-- a decision key: `tetris.dropInterval`,
-- a decision definition with output contract, target hierarchy, intent, safety, and fallback,
-- decision evidence such as hard-drop rate, placement time, and early-loss rate,
-- async intelligence that can learn a governed strategy,
-- online inference that returns one safe value for the current game session.
+- a bundle candidate for `tetris.dropInterval`,
+- the output contract, target hierarchy, live inputs, safety, and fallback,
+- a bounded numeric rule for the initial authority candidate,
+- authenticated approval that activates governed authority,
+- runtime decisions followed by exposure confirmation, telemetry, and audit.
+
+Independent proposal generation and proposal-managed authority are Phase 4
+work; they are not prerequisites for the Phase 3 hero path.
 
 At runtime:
 

@@ -4,12 +4,16 @@
 
 The Decision API is the runtime service applications call when they need a `RuntimeDecisionResult` from flaggo.
 
-It receives a decision key, runtime target/context, application identity, and
-optional request metadata. It resolves the applicable decision definition,
-control target, governed state, policy, and evidence only when required,
-records audit context, and returns a value or fallback guidance.
+It receives a decision key, the complete expected runtime identity, runtime
+target/context, live inputs, application identity, and optional request
+metadata. It resolves the exact accepted definition binding, control target,
+governed state, policy, and evidence only when required, records audit context,
+and returns a value or governed fallback.
 
-The runtime API should also verify compact definition identity when the client or deployment provides it. A decision must not be returned as approved when the caller's definition ID or revision is unknown, retired, or semantically conflicting.
+Production requests must provide the complete
+`{ definitionId, revision, contractDigest }` tuple from an accepted
+registration binding. The runtime API must not return an approved decision
+when that exact tuple is absent, unknown, retired, or semantically conflicting.
 
 ## Design goals
 
@@ -33,13 +37,13 @@ Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXE
 At a high level:
 
 ```text
-request(decision key, runtime context, signal inputs)
-  -> validate decision key and definition identity
+request(decision key, expected contract, runtime context, signal inputs)
+  -> require complete definitionId/revision/contractDigest tuple
+  -> resolve the exact accepted registration binding
   -> reject duplicate input keys
   -> verify every input resolves to an allowed app-emitted primitive metric
   -> verify metric objectives resolve to numeric metrics and obey direction/target invariants
   -> verify policy is present
-  -> verify expected contract digest/revision when supplied
   -> load decision definition
   -> resolve the definition-owned target chain
   -> fetch governed state

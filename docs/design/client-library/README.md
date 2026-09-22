@@ -989,7 +989,11 @@ For the Tetris hero scenario, the first client library design should support:
 - Singular default/fallback value.
 - DecisionDefinitionBundle generation or reference.
 - Trusted startup registration through the control-plane validate/apply API.
-- Expected definition digest/revision propagation.
+- Complete accepted `{ definitionId, revision, contractDigest }` propagation
+  for production requests.
+- Local data-plane initialization remains disabled when apply fails or remains
+  pending because no accepted binding exists. A direct request that bypasses
+  this precondition may receive `409 contract-not-registered`.
 - Decision API call with a typed response.
 - Runtime API path versioning through `/v1`.
 - OpenTelemetry telemetry mode.

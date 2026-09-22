@@ -240,19 +240,17 @@ Contract errors expose the server Problem Details payload, including stable `cod
 
 The SDK must not catch a contract error and return a success-shaped local value. Direct REST clients receive the same Problem Details contract without SDK-specific fallback behavior.
 
-## Failed control-plane apply
+## Failed or pending control-plane apply
 
-Atomic bundle apply means a failed bundle produces no registry mutations. Existing registered definitions continue serving clients that explicitly reference them.
+An apply that fails or remains pending produces no accepted runtime binding
+for the requested new or changed definition. Existing registered definitions
+continue serving only callers that explicitly reference their complete accepted
+`{ definitionId, revision, contractDigest }` tuple.
 
-If code expecting a failed or unapplied new definition is deployed:
-
-```text
-new build sends new definitionId/revision/digest
-  -> data plane cannot resolve exact identity
-  -> 409 contract-not-registered
-  -> SDK surfaces the contract error
-  -> no old revision and no local fallback are selected
-```
+Until the requested binding is accepted, client data-plane calls remain
+disabled locally. A direct request that bypasses this client precondition may
+receive `409 contract-not-registered`; it must not fabricate a new identity,
+select an older revision, or use local fallback.
 
 This preserves runtime correctness across every control-plane client experience.
 
