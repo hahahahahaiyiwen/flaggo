@@ -823,7 +823,7 @@ type AuditStateSummary =
     };
 
 type AuditRecord = {
-  auditId?: string;
+  auditId: string;
   timestamp: string;
   decisionKey: string;
   request: DecideRequest;
@@ -844,6 +844,10 @@ Rules:
 - Every server-produced decision audit captures the exact normalized
   `DecideRequest`, including all inference inputs used by successful strategy
   execution. SDK-local fallback produces no server audit record.
+- The Decision API preallocates one `auditId` before constructing the response
+  or audit record. `AuditRecord.auditId` and `AuditRecord.response.auditId`
+  must be identical, and the returned server response uses that same ID.
+  `IAuditSink` persists the supplied identity and never mints or replaces it.
 - Every server decision carries one `stateSummary`. No-authority fallback
   carries no lineage. Selecting active-value authority requires the complete
   state, proposal, activation, and approval lineage; selecting numeric-rule
@@ -1148,8 +1152,10 @@ Rules:
 - Bundle validation issues use stable machine-readable codes and JSON Pointer paths; clients must not parse prose messages.
 - Bundle validation and immutable definition publication are atomic. A
   semantic change returns `requires-approval` without active-authority
-  mutation. Explicit approval is durably recorded before expected-baseline
-  activation, and no ready receipt exists until activation succeeds.
+  mutation. Explicit approval is durably recorded before any required
+  expected-baseline activation. Bundle-approved registration remains non-ready
+  until all required activation succeeds; proposal-managed approval publishes
+  no initial activation plan and can store the ready receipt immediately.
 - The `pending -> approved` transition atomically persists one
   `InitialAuthorityActivationPlan` per required bundle-approved authority.
   Each plan binds the deterministic proposal and activation IDs to the stable

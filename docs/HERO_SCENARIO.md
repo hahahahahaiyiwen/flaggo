@@ -388,8 +388,11 @@ activation identities, materialized strategy identity, active state,
 predecessor, generation, approval reference, and future replacement
 transitions.
 
-In `proposal-managed` mode, the bundle contains no initial authority. Applying
-it publishes the definition without an initial-authority approval or activation
+In `proposal-managed` mode, the bundle contains no initial authority. A new or
+semantically changed definition still requires authenticated approval of the
+exact bundle snapshot before its runtime revision is published. Because that
+workflow has no bundle-derived initial authority, approved definition
+publication can produce the ready registration receipt without an activation
 step. Until a future Phase 4 producer and governance path activate authority,
 runtime requests use the registered audited fallback. The concrete proposal
 and governance DTOs remain deferred to issue #25.
@@ -405,7 +408,8 @@ bundle-approved definition
 
 proposal-managed definition
   -> validate and apply bundle
-  -> publish definition without initial authority
+  -> authenticated approval of the exact snapshot
+  -> publish definition without initial authority activation
   -> registration receipt without activated-authority references
   -> future proposal governance may activate replacement authority
 
@@ -422,11 +426,18 @@ Flaggo should support different owners and systems across the software lifecycle
 | Development | Author decision declaration in TypeScript, JSON/YAML, or registry UI. | Local declaration or draft contract bundle. | SDK provides ergonomic code-first declarations and typed runtime calls. |
 | Build | Optionally extract or assemble a canonical contract bundle. | `flaggo.decision-definition-bundle.json`, `contractDigest`, optional build metadata. | SDK extractor may generate the bundle; bundle-first and registry-first workflows remain valid. |
 | Application deployment | Deploy application code independently. | Extracted bundle may be packaged for trusted startup. | Flaggo does not own or block external deployment. |
-| Application/bootstrap startup | MVP validates and applies the bundle. Bundle-approved definitions obtain authenticated approval and wait for required initial activation; proposal-managed definitions publish without initial activation. | Registration receipt with exact definition identity and activated-authority references only when initial authority exists. | Trusted startup SDK is the initial control-plane client; it uses management APIs, never the decide endpoint. |
+| Application/bootstrap startup | MVP validates and applies the bundle. Every new or semantically changed definition requires authenticated approval. Bundle-approved definitions then wait for required initial activation; proposal-managed definitions become ready after approved publication because they declare no initial authority. | Registration receipt with exact definition identity and activated-authority references only when initial authority exists. | Trusted startup SDK is the initial control-plane client; it uses management APIs, never the decide endpoint. |
 | Runtime | Ask for decisions and emit telemetry. | Request with exact expected identity; strict server result or Problem Details error. | Data plane evaluates only registered identities. Missing/conflicting identity is surfaced without local fallback; availability fallback remains explicitly configurable. |
 | Observe/operate | Inspect drift, audit, fallback, and strategy behavior. | Audit records, diagnostics, integrity metrics, operator warnings. | SDK exposes response fields; control plane owns audit, strategy, policy, and operator actions. |
 
-This lifecycle supports TypeScript-first development without making CI/CD integration a requirement. For MVP, trusted startup publishes the extracted bundle; future clients can move that operation to CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first tooling. Code can deploy even when startup registration later fails, but its Polari calls remain disabled. Rolling deployments remain safe because each successful startup receives and uses its exact immutable identity.
+This lifecycle supports TypeScript-first development without making CI/CD
+integration a requirement. For MVP, trusted startup submits the extracted
+bundle and initializes runtime bindings only after required definition approval
+and any initial activation complete. Future clients can move that operation to
+CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first
+tooling. Code can deploy even when startup registration later fails, but its
+Polari calls remain disabled. Rolling deployments remain safe because each
+successful startup receives and uses its exact immutable identity.
 
 When a definition changes semantically, Flaggo replaces authority through the
 same stable application/environment/decision-key/control-target head. The new

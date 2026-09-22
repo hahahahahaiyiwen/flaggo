@@ -146,8 +146,13 @@ The SDK and service must consume the same fixtures. Generated language types are
 
 ### Media types
 
-- Success payloads use `application/json`.
+- Domain result payloads use `application/json`, including non-ready
+  lifecycle results returned by bundle apply on `409` or `503`.
 - Errors use `application/problem+json` following RFC 9457 Problem Details.
+- When one operation can return either a lifecycle result or an error at the
+  same status, its OpenAPI response must declare both media types. Clients
+  select the schema from `Content-Type` before inspecting the body
+  discriminator or Problem Details `code`.
 - Unknown JSON fields are rejected on management write APIs and ignored only where the OpenAPI contract explicitly permits forward-compatible extension.
 
 ### Correlation and retries
@@ -500,7 +505,12 @@ mappings:
 - `503` plus `Retry-After` for retryable `activation-failed`;
 - `409` for `activation-failed` with `requires-new-approval` or
   `approval-rejected`;
-- `422 invalid-bundle` when validation rejects the write.
+- `422 invalid-bundle` Problem Details when validation rejects the write.
+
+Every listed `DefinitionBundleApplyResult` body uses `application/json`,
+including the typed `409` and `503` outcomes. Authentication, idempotency,
+validation, and infrastructure failures use `application/problem+json`; the
+apply operation must declare both media types on shared statuses.
 
 The `202 requires-approval` body is:
 
@@ -579,7 +589,9 @@ union:
   server-derived actor plus optional persisted comment, and the canonical
   activation projection:
   - `pending` carries only still-pending initial-authority activation plans;
-  - `ready` carries the complete `RegistrationReceipt`;
+  - `ready` carries the complete `RegistrationReceipt`, either immediately
+    after approved proposal-managed publication or after every required
+    bundle-approved activation succeeds;
   - `failed` carries only failed or unresolved plans, aggregate retryability,
     and non-empty stable issues keyed by decision.
 - `rejected` requires `decidedAt` and rejection metadata containing the server-derived actor, `reasonCode`, and optional persisted comment.
@@ -621,8 +633,9 @@ Approval behavior:
   allocates and publishes runtime revisions for created or semantic changes,
   reuses the existing revision for authority reauthorization, and stores each
   required initial-authority activation plan with the stable-head baseline
-  captured at that transition. Activation may complete afterward; only
-  completion stores the ready receipt.
+  captured at that transition. If no initial authority is declared, approved
+  publication stores the ready receipt immediately. Otherwise activation may
+  complete afterward, and only completion stores the ready receipt.
 - Reject verifies `expectedBundleDigest`, then atomically transitions
   `pending -> rejected` without runtime publication or authority mutation.
 - Repeating the same terminal action with the same digest is idempotent and returns the stored result. No separate idempotency key is required.
@@ -632,7 +645,8 @@ Approval behavior:
 - A startup retry using the same canonical bundle and deterministic apply
   idempotency key returns `requires-approval` before approval,
   `activation-pending` or `activation-failed` while non-ready, and the stored
-  ready receipt only after activation succeeds.
+  ready receipt after approved publication when no activation is required or
+  after every required activation succeeds.
 - After `activation-failed` with `requires-new-approval`, the next exact
   reapply atomically advances that deterministic registration attempt to one
   linked `requires-approval` resource. Concurrent reapplies converge on it.
@@ -924,8 +938,9 @@ New issue codes may be added compatibly, but existing meanings and HTTP mappings
 26. Multi-definition registration receipt initializes each exact accepted runtime tuple.
 27. Metadata-only bundle update preserves the runtime revision and digest.
 28. Approval success for created or semantic changes atomically publishes
-    allocated revisions and captured-baseline activation plans; the complete
-    stored receipt appears only after required activation succeeds.
+    allocated revisions and any captured-baseline activation plans; the
+    complete stored receipt appears immediately when no activation is required
+    or after every required activation succeeds.
 29. Approval rejection, expiration, missing request, digest conflict, idempotent replay, and opposite concurrent action.
 30. Expired approval resubmission with the same deterministic apply key creates one linked replacement request after revalidation.
 31. Approval review exposes old/new digests, canonical semantic diff, immutable snapshot, and persisted actor/comment metadata.
@@ -1045,8 +1060,9 @@ fixtures, conformance tests, and mock projection are accepted as the baseline.
 and semantic changes and makes no runtime publication. It may reserve a new
 opaque lineage ID in the immutable approval request. Explicit approval
 allocates and publishes new runtime revisions under the affected definition
-lineages and durably creates any required activation plans. Only successful
-required activation produces the ready registration receipt. An
+lineages and durably creates any required activation plans. With no initial
+authority, approved publication produces the ready registration receipt;
+otherwise every required activation must succeed first. An
 authority-reauthorization successor reuses the existing revision.
 
 **Consequence:** under MVP startup registration, every non-ready apply result

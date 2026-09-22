@@ -143,10 +143,11 @@ default only for recognized data-plane availability failures.
 
 If apply returns `requires-approval`, startup raises a typed error containing
 the `approvalRequestId` and does not initialize the data-plane client. After an
-authorized reviewer approves the exact bundle snapshot, the service derives
-the activation request and publishes state through expected-baseline
-compare-and-swap. Retrying startup with the same bundle receives the original
-ready receipt once activation succeeds.
+authorized reviewer approves the exact bundle snapshot, a proposal-managed
+definition publishes without an initial activation plan and can become ready
+immediately. For bundle-approved authority, the service derives the activation
+request and publishes state through expected-baseline compare-and-swap;
+retrying startup receives the original ready receipt once activation succeeds.
 
 If approval expires, retrying the same startup apply and deterministic key causes the server to revalidate and create one fresh linked approval request. Concurrent replicas receive that replacement request rather than minting independent approvals.
 

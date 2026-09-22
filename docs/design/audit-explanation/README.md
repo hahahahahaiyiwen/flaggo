@@ -36,9 +36,14 @@ The runtime response should stay compact. The audit record can contain richer ev
 
 ```ts
 interface IAuditSink {
-  record(input: AuditRecord): Promise<{ auditId: string }>;
+  record(input: AuditRecord): Promise<void>;
 }
 ```
+
+The Decision API owns audit identity. It preallocates `auditId`, places the
+same value in the server response and `AuditRecord`, and returns the response
+only after the sink acknowledges persistence. A sink never substitutes another
+identity.
 
 MVP implementations:
 
@@ -72,9 +77,10 @@ Explanation inputs:
 
 ```text
 Decision API
-  -> builds audit record from request, state, optional evidence, candidate, policy, response
+  -> preallocates decisionId and auditId
+  -> builds response and audit record with the same auditId
   -> writes through IAuditSink
-  -> includes auditId in DecideResponse
+  -> returns the response only after persistence succeeds
 ```
 
 If audit writing fails, the MVP should fail safe. For local development, surfacing the error is preferable to silently returning unaudited decisions.
@@ -117,6 +123,69 @@ The exposure confirm token is an authorization capability, not audit data. The D
       "environment": "dev"
     }
   },
+  "response": {
+    "decisionKey": "tetris.dropInterval",
+    "definition": {
+      "appId": "tetris-demo",
+      "environment": "dev",
+      "key": "tetris.dropInterval",
+      "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+      "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
+    },
+    "decisionId": "decision-123",
+    "value": 850,
+    "valueType": "number",
+    "decisionMode": "strategy",
+    "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
+    "runtimeTarget": {
+      "type": "session",
+      "id": "game-456"
+    },
+    "controlTarget": {
+      "type": "cohort",
+      "id": "new_players"
+    },
+    "targetProvenance": [
+      {
+        "targetType": "cohort",
+        "claimedId": "new_players",
+        "resolvedId": "new_players",
+        "source": "client-verified"
+      }
+    ],
+    "resolutionChain": [
+      "session:game-456",
+      "cohort:new_players",
+      "global"
+    ],
+    "confidence": null,
+    "fallback": {
+      "source": "server",
+      "resolutionFallbackUsed": true,
+      "decisionFallbackUsed": false,
+      "reason": "no_active_session_authority"
+    },
+    "policy": {
+      "result": "approved",
+      "reasons": [],
+      "appliedConstraints": ["number-bounds", "step", "max-delta"]
+    },
+    "definitionStatus": {
+      "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
+      "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
+      "contractDigest": "sha256:contract...",
+      "bundleDigest": "sha256:bundle...",
+      "buildId": "tetris-web-2026-07-25.1",
+      "deploymentId": "tetris-web-dev-a",
+      "integrity": "verified",
+      "compatibility": "identical"
+    },
+    "exposure": {
+      "confirmationRequired": true
+    },
+    "reason": "The approved weighted numeric rule met its 0.55 threshold.",
+    "auditId": "audit-789"
+  },
   "controlTarget": {
     "type": "cohort",
     "id": "new_players"
@@ -139,6 +208,10 @@ The exposure confirm token is an authorization capability, not audit data. The D
   "reason": "The approved weighted numeric rule met its 0.55 threshold."
 }
 ```
+
+The top-level and response `auditId` values are intentionally identical. The
+audit response projection omits the exposure confirmation token while
+retaining whether confirmation was required.
 
 No-compatible-authority fallback instead records
 `{ "authoritySelected": false, "resolution": "server-fallback" }`. When policy

@@ -240,9 +240,14 @@ observe attributed outcomes and drift
 
 Optimization changes behavior because existing evidence supports a better candidate. It does not intentionally split comparable targets merely to create evidence.
 
-## Experiment lifecycle
+## Future experiment lifecycle
 
 Experimentation intentionally creates controlled variation when evidence cannot yet identify a winner.
+
+This section is a conceptual Phase 4 direction, not a current contract.
+Experiment pause, resume, duration, allocation changes, and other temporal or
+operator transitions remain unavailable until separately approved lifecycle
+and concurrency contracts define them.
 
 ### Definition permission
 
@@ -291,9 +296,10 @@ Promotion creates replacement governed state, commonly a fixed value or strategy
 
 Experiment analysis may be performed by decision intelligence, an external statistical service, or an operator. Governance owns the resulting transition.
 
-## Progressive rollout lifecycle
+## Future progressive rollout lifecycle
 
-Rollout safely delivers a change that has already been selected:
+A future rollout contract may safely deliver a change that has already been
+selected:
 
 ```text
 propose selected value or strategy
@@ -311,9 +317,9 @@ Rollout and experimentation may both divide traffic, but their intent differs:
 
 Rollout state should identify stages, eligibility, current allocation, advancement criteria, pause conditions, and rollback authority.
 
-## Operator intervention
+## Future operator intervention
 
-Operators can:
+Under a separately approved operator-control contract, operators may:
 
 - approve or reject pending proposals;
 - pause or resume a lifecycle;
@@ -324,7 +330,9 @@ Operators can:
 - promote a result;
 - roll back active state.
 
-Operator action must be explicit governed state or a recorded lifecycle transition, never a hidden exception.
+Phase 3 exposes none of these pause, override, rollout, or rollback authoring
+surfaces. When introduced, operator action must be explicit governed state or a
+recorded lifecycle transition, never a hidden exception.
 
 ## Audit and explanation
 
