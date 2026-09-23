@@ -1,5 +1,11 @@
 # Client Library Design
 
+> **Ownership note:** Issue #44 owns the manifest-first client redesign. The
+> current code-first and Policy-named examples below describe the executable
+> baseline being replaced; they do not override #44's hand-authored manifest,
+> key-plus-runtime-data SDK boundary, or the
+> [shared-contract migration map](../shared-contracts/README.md#executable-migration-map).
+
 ## Purpose
 
 The client library is the developer-facing integration point for flaggo. It lets application code declare decision keys and definitions, emit decision evidence, pass runtime context, request `RuntimeDecisionResult` values, and safely apply returned values or fallbacks.

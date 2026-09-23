@@ -17,6 +17,21 @@ The mapping of these domain contracts to HTTP is the accepted baseline in the
 [Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md) and its executable
 artifacts under `contracts/`.
 
+## Executable migration map
+
+This document uses the accepted target architecture. Issue #40 must replace the
+current executable names atomically across schemas, OpenAPI, generated types,
+SDKs, services, fixtures, and conformance:
+
+| Current executable name | Canonical target |
+| --- | --- |
+| `policy`, `InlinePolicy`, `PolicyConstraint` | `constraints`, `DecisionConstraints`, `DecisionConstraint` |
+| `PolicyEvaluationResult` | `ConstraintEvaluationResult` |
+| `PolicyReference` | Removed; Phase 3 constraints are definition-owned data in Contract Store. |
+| `auditId`, `AuditRecord`, `IAuditSink` | `decisionRecordId`, `DecisionRecord`, Evidence Store append port |
+
+These old names are migration inputs, not parallel canonical contracts.
+
 These contracts are open-source native:
 
 - no cloud-provider-specific fields,
@@ -69,7 +84,7 @@ Rules:
 - `key` uses stable domain naming such as `tetris.dropInterval`.
 - `environment` is provider-neutral, such as `dev`, `test`, `prod`.
 - `DecisionTargetRef.type` is extensible, but MVP built-ins are `session`, `user`, `cohort`, and `global`.
-- Runtime context must stay primitive and JSON-serializable for audit and policy evaluation.
+- Runtime context must stay primitive and JSON-serializable for durable decision records and constraint evaluation.
 - A signal `key` is its immutable semantic identity. Any schema or meaning change requires a new key; schema digests detect conflicting definitions under the same key.
 - `schemaDigest` is `sha256:<lowercase-hex>` over the RFC 8785 canonical signal declaration with `schemaDigest` omitted. Tooling recomputes and verifies it when supplied; a mismatch is invalid. Reusing one signal key with a different computed digest is a contract conflict. Signal references contain only `key`, so digest metadata cannot change decision-definition identity.
 - A decision may only use signals referenced by explicit roles such as objectives, inference inputs, evidence, or guardrails. Tooling may materialize an associated-signal set in the extracted contract for governance, but authored definitions should not duplicate role references by hand.
@@ -127,7 +142,7 @@ type DecisionDefinition = {
   inference?: InferenceDeclaration;
   intent?: DecisionIntent;
   lifecycle: AuthorityLifecycleDeclaration;
-  policy: PolicyReference | InlinePolicy;
+  constraints: DecisionConstraints;
   metadata?: Record<string, string>;
 };
 
@@ -234,14 +249,8 @@ type MetricObjective =
       target: number;
     };
 
-type PolicyReference = {
-  kind: "reference";
-  policyId: string;
-};
-
-type InlinePolicy = {
-  kind: "inline";
-  constraints: PolicyConstraint[];
+type DecisionConstraints = {
+  rules: DecisionConstraint[];
 };
 
 type AuthorityLifecycleDeclaration =
@@ -286,7 +295,7 @@ proposal, activation, strategy, state, or approval identities.
 
 Both current Phase 3 authority kinds are valid initial candidates.
 `active-value` carries one value that must satisfy the definition action space
-and applicable runtime policy. `numeric-rule` carries the deterministic rule
+and applicable decision constraints. `numeric-rule` carries the deterministic rule
 validated below.
 
 `NumericRuleDeclaration.weightedInputs` must be non-empty. Each input must
@@ -303,14 +312,14 @@ score = sum(normalizedInput * weight) / sum(weight)
 Division by total weight is required even when authored weights do not sum to
 `1`. `score >= threshold` selects `valueAtOrAbove`; otherwise it selects
 `valueBelow`. Both branch values must satisfy the numeric action space and
-applicable runtime policy. SDK authoring uses a branded numeric metric handle;
+applicable decision constraints. SDK authoring uses a branded numeric metric handle;
 registry and activation validation enforce the same numeric-source rule.
 
-Missing evidence explicitly required by runtime policy is a server evaluation
+Missing evidence explicitly required by decision constraints is a server evaluation
 outcome, not a numeric-rule executor input or data-plane availability failure.
 When governed fallback is permitted, the server returns the registered
-fallback as an audited decision. Otherwise it returns fallback-ineligible
-`required-evidence-unavailable` Problem Details. Definition policy never
+fallback as a durably recorded decision. Otherwise it returns fallback-ineligible
+`required-evidence-unavailable` Problem Details. Definition constraints never
 authorizes an SDK-local value for this outcome.
 
 `InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; Contract Service and Decision Service must enforce it again against registered signal declarations.
@@ -319,12 +328,15 @@ authorizes an SDK-local value for this outcome.
 
 Metric objective direction is discriminated: `target` requires a finite numeric `target`, while `minimize` and `maximize` must not carry a `target` field. Canonical validation rejects both missing-target and unexpected-target forms.
 
-`DecisionDefinition.policy` is required. Canonicalization never inserts an implicit environment or default policy when it is absent. Code-first shorthand must normalize to `InlinePolicy`; explicit definitions must supply either `PolicyReference` or `InlinePolicy`.
+`DecisionDefinition.constraints` is required. Canonicalization never inserts
+implicit environment or default constraints when it is absent. Phase 3
+definitions carry the complete `DecisionConstraints` value; there is no
+separately owned or resolved constraint reference.
 
-## Policy contract
+## Decision constraint contract
 
 ```ts
-type PolicyConstraint =
+type DecisionConstraint =
   | NumberBoundsConstraint
   | MaxDeltaConstraint
   | EvidenceQualityConstraint
@@ -363,7 +375,7 @@ type SampleSizeConstraint = {
   value: number;
 };
 
-type PolicyEvaluationResult = {
+type ConstraintEvaluationResult = {
   result: "approved" | "blocked" | "fallback";
   reasons: string[];
   appliedConstraints: string[];
@@ -377,13 +389,13 @@ shared or authorable surfaces. Issue #33 owns the temporal portion.
 
 Rules:
 
-- Policy reason codes should be stable strings.
-- `appliedConstraints` reports every enforced action-space and policy check.
+- Constraint reason codes should be stable strings.
+- `appliedConstraints` reports every enforced action-space and decision-constraint check.
   Labels such as `number-bounds` and `step` may therefore appear even when
-  bounds and step come from the output contract rather than `InlinePolicy`.
-- Runtime should return fallback when policy result is `fallback`.
-- Runtime should not return a candidate value as approved when policy result is `blocked`; a governed fallback response may preserve `blocked` as the policy result.
-- Policy and evidence outcomes never authorize SDK-local fallback. The SDK
+  bounds and step come from the output contract rather than `DecisionConstraints`.
+- Runtime should return fallback when constraint result is `fallback`.
+- Runtime should not return a candidate value as approved when constraint result is `blocked`; a governed fallback response may preserve `blocked` as the constraint result.
+- Constraint and evidence outcomes never authorize SDK-local fallback. The SDK
   availability fallback classifier is limited to genuine data-plane
   availability failures after readiness checks pass.
 
@@ -468,7 +480,7 @@ Rules:
   neither-present, or discriminator/payload mismatch fails readiness.
 - Decision Service orchestration resolves `activeValue` directly. Only coherent
   `numeric-rule` authority crosses the strategy-executor boundary; state
-  absence and policy fallback do not.
+  absence and constraint fallback do not.
 - The mutable authority head is keyed by stable application, environment,
   decision key, and control target, not by semantic revision.
 - Activation compare-and-swaps that stable head across revisions, increments
@@ -507,8 +519,8 @@ type EvidenceViewRef = {
 Rules:
 
 - The MVP can use in-memory or fixture evidence.
-- Evidence details should be available to audit, but runtime responses should stay compact.
-- Missing evidence should not crash runtime; it should flow into policy and fallback semantics.
+- Evidence details should be available to durable decision records, but runtime responses should stay compact.
+- Missing evidence should not crash runtime; it should flow into constraint and fallback semantics.
 - Every confidence field is a finite number in the inclusive range `[0, 1]`.
 - `evidenceQuality` is required, so an empty confidence object is invalid.
 - Higher `evidenceQuality` and `expectedOutcome` are better; higher `modelUncertainty` means less certainty.
@@ -574,7 +586,7 @@ type ServerDecisionCommon = {
   strategyId?: string;
   confidence: ConfidenceReport | null;
   reason: string;
-  auditId: string;
+  decisionRecordId: string;
   runtimeTarget?: DecisionTargetRef;
   controlTarget?: DecisionTargetRef;
   targetProvenance: TargetResolutionProvenance[];
@@ -586,7 +598,7 @@ type ServerDecisionCommon = {
     reason: string | null;
   };
   exposure: ExposureDirective;
-  policy: PolicyEvaluationResult;
+  constraints: ConstraintEvaluationResult;
   definitionStatus: ContractRuntimeStatus;
 };
 
@@ -638,8 +650,13 @@ Rules:
 - `decisionMode` explains how the current Phase 3 value was produced without
   exposing internals. Future mechanisms such as experiment assignment require
   a separately approved response-contract extension.
-- The server wire response always contains `definition`, `decisionId`, `auditId`, `policy`, verified `definitionStatus`, and `exposure`.
-- A local client fallback caused by data-plane unavailability is an SDK-produced `ClientFallbackResult`; it is disabled unless explicitly configured and cannot claim server policy, definition status, decision, audit, or exposure identity.
+- The server wire response always contains `definition`, `decisionId`,
+  `decisionRecordId`, `constraints`, verified `definitionStatus`, and
+  `exposure`.
+- A local client fallback caused by Decision Service unavailability is an
+  SDK-produced `ClientFallbackResult`; it is disabled unless explicitly
+  configured and cannot claim server constraints, definition status, decision
+  record, or exposure identity.
 - A client fallback carries only `expectedContract` as client provenance, after the local call-site digest has matched the accepted runtime binding.
 - A 4xx contract/configuration response can never produce `ClientFallbackResult`.
 - `confidence` is non-null only when the returned authority makes an
@@ -656,7 +673,7 @@ Rules:
   `controlTarget` and `strategyId`, returns no authority target provenance,
   and may retain the attempted permitted targets in `resolutionChain`.
 - Client target/cohort claims are context, not authority. `targetProvenance` records whether each effective target was client-claimed, verified, server-derived, or replaced.
-- Default runtime responses contain compact confidence and target provenance; full evidence-view references remain in audit records.
+- Default runtime responses contain compact confidence and target provenance; full evidence-view references remain in decision records.
 - `exposure.confirmToken` is required exactly when `confirmationRequired` is true and forbidden otherwise. The initial `RuntimeDecisionResult` must not include an `exposureId`; exposure identity is created by confirmation.
 - A server decision fallback is not exposure-eligible and therefore returns
   `confirmationRequired: false`.
@@ -678,13 +695,14 @@ Normalization:
 1. Remove all bound runtime values.
 2. Convert each bound signal input into its immutable `SignalRef`.
 3. Convert each typed target binding into a runtime-context schema entry. The original object property name is the canonical context field name; for example, `sessionId: flaggo.target.session(value)` becomes `sessionId: { type: "string", target: "session" }`.
-4. Normalize SDK-specific policy shorthand, such as client-library [`PolicyAuthoring`](../client-library/README.md#policy-authoring-normalization), into canonical `InlinePolicy` constraints.
+4. Normalize the current SDK-specific `PolicyAuthoring` migration surface into
+   canonical `DecisionConstraints`.
 5. Materialize generated fields such as `signals.allowed` exclusively from semantic role references. A supplied generated allowlist is never an identity input; stale or extra entries are discarded during extraction.
 6. Reduce every signal role/reference to immutable `SignalRef { key }`. `schemaDigest` belongs to signal-declaration conflict detection and is excluded from decision-definition identity.
 7. Omit undefined fields and normalize equivalent optional/default forms
    according to the contract version.
 8. Sort JSON object keys recursively.
-9. Reject duplicate signal keys, duplicate context fields, duplicate policy constraint kinds, or conflicting role/schema declarations.
+9. Reject duplicate signal keys, duplicate context fields, duplicate decision-constraint kinds, or conflicting role/schema declarations.
 10. Serialize with RFC 8785 JSON Canonicalization Scheme.
 11. Compute SHA-256 over the canonical UTF-8 bytes and encode the identity as `sha256:<lowercase-hex>`.
 
@@ -703,18 +721,20 @@ Order-insensitive collections are duplicate-free sets and are sorted by immutabl
 - canonical `inference.inputs`,
 - `lifecycle.initialAuthority.rule.weightedInputs`, sorted by signal key,
 - signal declarations in a bundle,
-- `InlinePolicy.constraints`, sorted by constraint kind.
+- `DecisionConstraints.rules`, sorted by constraint kind.
 
 For `bundleDigest`, decision definitions are sorted by stable decision key after each definition has been normalized. Duplicate decision keys with different definition digests are a `contract-conflict`; byte-identical duplicates are deduplicated. Duplicates with equal semantic digests but conflicting lineage or owner metadata are rejected rather than selecting the first entry.
 
 Definition metadata such as `definitionId` and `owner`, plus generated `revision`, `contractDigest`, and `schemaDigest` fields, is excluded from `contractDigest`. Bundle-level build/source metadata remains part of `bundleDigest` so the immutable bundle artifact stays distinguishable, while generated signal digests, set ordering, and definition ordering cannot create accidental differences.
 
-Runtime wire `inputs` are also key-sorted for deterministic transport and audit comparison. Duplicate signal keys are invalid; clients and servers must reject them rather than applying first-wins or last-wins behavior.
+Runtime wire `inputs` are also key-sorted for deterministic transport and
+decision-record comparison. Duplicate signal keys are invalid; clients and
+servers must reject them rather than applying first-wins or last-wins behavior.
 
 `output.range` and `output.step` are enforced directly as action-space
-invariants. Canonicalization does not synthesize a `number-bounds` policy
+invariants. Canonicalization does not synthesize a `number-bounds` decision
 constraint from them. An explicitly authored `number-bounds` constraint is
-additional semantic policy and therefore changes the digest.
+additional semantic constraint data and therefore changes the digest.
 
 Code-first `output.default` normalizes to canonical `fallback.value`.
 Canonicalization does not synthesize a fallback reason that the authoring
@@ -769,13 +789,13 @@ Rules:
 - `definitionId` is an opaque registry-issued lineage ID and remains stable across approved semantic revisions. It is never a semantic version and clients must not parse it.
 - `revision` is an opaque registry-issued runtime revision ID, not semantic versioning or a metadata revision.
 - `contractDigest` identifies canonical semantic content. The immutable runtime identity is the complete `{ definitionId, revision, contractDigest }` tuple.
-- Metadata-only edits are retained in registry/audit history without changing runtime identity.
+- Metadata-only edits are retained in Contract Store lifecycle history without changing runtime identity.
 - Semantic approval creates a new revision and digest under the same definition lineage. A new definition ID is reserved for a new lineage or explicit fork.
 - `bundleDigest` identifies the full submitted bundle. `buildId`, `deploymentId`, and `artifactDigest` identify the workload instance or release that carries the contract expectation.
 - Older revisions are accepted only when the request identifies that exact
   registered tuple and lifecycle permits it. Runtime never substitutes another
   revision; if the stable authority head no longer contains compatible state,
-  the accepted older request receives the audited server fallback.
+  the accepted older request receives the durably recorded server fallback.
 
 ## Contract, telemetry, evidence, and state reuse
 
@@ -783,7 +803,7 @@ Flaggo should avoid sharing unsafe learned decision behavior across different co
 
 | Layer | Default sharing behavior | Reason |
 | --- | --- | --- |
-| Raw telemetry observations | Share across definitions with the same application, signal key, and target semantics. | Observations are historical facts, not learned policy. |
+| Raw telemetry observations | Share across definitions with the same application, signal key, and target semantics. | Observations are historical facts, not authority or constraints. |
 | Evidence views | Share only when signal key, target, window, and filters match. | A metric can be reused if it is the same immutable signal viewed the same way. |
 | Decision state or active strategy | Bind each immutable record to one exact definition identity; serialize replacement through the stable authority head for the decision key and control target. | Authority approved for one contract must not execute under another, while one CAS order must prevent stale revisions from replacing newer authority. |
 
@@ -793,13 +813,13 @@ Rules:
 - Evidence views should be identified by immutable signal key plus target, window, and filters.
 - A new proposal-managed definition may start in partial-warm mode: reused
   evidence can contribute immediately, while new signals collect data until
-  policy marks them sufficient.
+  decision constraints mark them sufficient.
 - The authority head is keyed by application, environment, decision key, and
   resolved control target. Immutable state and strategy payloads remain bound
   to one exact definition identity and are never inherited by another
   revision. Future temporal or operator state follows its own explicitly
   approved address contract.
-- State migration between definition IDs should be an explicit operator or registry action, not an implicit compatibility rule.
+- State migration between definition IDs should be an explicit Contract Service action, not an implicit compatibility rule.
 
 ## Proposal-managed authority (Phase 4 extension point)
 
@@ -813,20 +833,20 @@ activation-core reduction. The current shared invariants are:
 - governance may authorize activation only through the shared
   expected-baseline boundary;
 - online runtime consumes `DecisionState`, never raw proposal text;
-- Phase 4 audit extensions are added with that contract rather than
+- Phase 4 decision-record extensions are added with that contract rather than
   predeclared here.
 
-## Audit record
+## Decision record
 
 ```ts
-type AuditDecisionResult =
+type RecordedDecisionResult =
   Omit<ServerDecisionResult, "exposure"> & {
     exposure?: {
       confirmationRequired: boolean;
     };
   };
 
-type AuditStateSummary =
+type DecisionStateSummary =
   | {
       authoritySelected: false;
       resolution: "server-fallback";
@@ -853,45 +873,49 @@ type AuditStateSummary =
       approvalReference: string;
     };
 
-type AuditRecord = {
-  auditId: string;
+type DecisionRecord = {
+  decisionRecordId: string;
   timestamp: string;
   decisionKey: string;
   request: DecideRequest;
-  response: AuditDecisionResult;
+  response: RecordedDecisionResult;
   contractVersion?: string;
   runtimeTarget?: DecisionTargetRef;
   controlTarget?: DecisionTargetRef;
   evidence?: EvidenceSnapshot;
-  stateSummary: AuditStateSummary;
-  policy?: PolicyEvaluationResult;
+  stateSummary: DecisionStateSummary;
+  constraints: ConstraintEvaluationResult;
   reason: string;
 };
 ```
 
 Rules:
 
-- Audit records may contain more detail than runtime responses.
-- Every server-produced decision audit captures the exact normalized
+- Decision records may contain more detail than runtime responses.
+- Every server-produced decision record captures the exact normalized
   `DecideRequest`, including all inference inputs used by successful strategy
-  execution. SDK-local fallback produces no server audit record.
-- Decision Service preallocates one durable record identity before constructing the response
-  or audit record. `AuditRecord.auditId` and `AuditRecord.response.auditId`
-  must be identical, and the returned server response uses that same ID.
-  `IAuditSink` persists the supplied identity and never mints or replaces it.
+  execution. SDK-local fallback produces no server decision record.
+- Decision Service preallocates one durable record identity before constructing
+  the response or record. `DecisionRecord.decisionRecordId` and
+  `DecisionRecord.response.decisionRecordId` must be identical, and the
+  returned server response uses that same ID. The Evidence Store append port
+  persists the supplied identity and never mints or replaces it.
 - Every server decision carries one `stateSummary`. No-authority fallback
   carries no lineage. Selecting active-value authority requires the complete
   state, proposal, activation, and approval lineage; selecting numeric-rule
   authority requires that lineage plus `strategyId`.
-- If policy replaces a selected authority's candidate with server fallback,
+- If constraints replace a selected authority's candidate with server fallback,
   the response records fallback while `stateSummary` preserves the selected
   authority lineage.
-- Confirmation tokens are capabilities and must be removed before constructing `AuditRecord`; audit response projections can retain `confirmationRequired` but never `confirmToken`.
-- Audit should be local-first in MVP. A ready data plane requires a durable
-  file or SQLite sink whose successful `IAuditSink.record` completion means
+- Confirmation tokens are capabilities and must be removed before constructing
+  `DecisionRecord`; stored response projections can retain
+  `confirmationRequired` but never `confirmToken`.
+- Evidence Store should be local-first in MVP. A ready Decision Service
+  requires a durable file or SQLite append adapter whose successful completion means
   the record survives process failure. Console and in-memory sinks are limited
   to tests or explicitly non-ready debugging modes.
-- Cloud audit sinks should implement `IAuditSink`; they should not change the audit contract.
+- Cloud Evidence Store adapters should implement the same append contract; they
+  should not change the decision-record contract.
 
 ## Contract bundle and registration receipt
 
@@ -928,7 +952,7 @@ type DecisionDefinitionBundleEntry = {
   inference?: InferenceDeclaration;
   intent?: DecisionIntent;
   fallback: FallbackContract;
-  policy: PolicyReference | InlinePolicy;
+  constraints: DecisionConstraints;
   lifecycle: AuthorityLifecycleDeclaration;
 };
 
@@ -1412,9 +1436,8 @@ The decision definition references those signal identities without redefining th
       "rationale": "Initial deterministic Tetris behavior."
     }
   },
-  "policy": {
-    "kind": "inline",
-    "constraints": [
+  "constraints": {
+    "rules": [
       { "kind": "max-delta", "value": 50 }
     ]
   }
@@ -1437,8 +1460,8 @@ Retain these provider-neutral domain boundaries:
 - fixed authority through `DecisionState.activeValue`,
 - `DecisionStrategy` for the `numeric-rule` runtime mechanism,
 - `DecisionState`,
-- `PolicyEvaluationResult`,
-- `AuditRecord`,
+- `ConstraintEvaluationResult`,
+- `DecisionRecord`,
 - `DecisionDefinitionBundle`,
 - `ContractIdentity`,
 - `ContractRuntimeStatus`,

@@ -29,11 +29,11 @@ record, fallback, and attribution boundary.
 ## End-to-end flow
 
 ```text
-Client SDK submits definition + initial rule
+trusted deployment/control-plane client submits canonical manifest
   -> Contract Service approval and readiness
   -> State Store activation
 
-game requests decision with live inputs
+game Client SDK requests decision by key with live inputs
   -> Decision Service loads contract and state
   -> evaluates approved numeric rule
   -> evaluates decision constraints

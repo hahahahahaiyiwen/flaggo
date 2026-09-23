@@ -10,9 +10,11 @@ This document defines the shared vocabulary and ownership model.
 
 ```text
 application
-  Client SDK --------------------------> Contract Service
   Client SDK --------------------------> Decision Service
   application OTel pipeline ----------> OTel Ingestion
+
+trusted deployment/control-plane client
+  canonical manifest -----------------> Contract Service
 
 Contract Service
   -> Contract Store
@@ -184,6 +186,16 @@ does not require one assembly per boundary:
 
 Issue #40 owns executable migration. Issue #41 verifies the integrated Phase 3
 path.
+
+## Delivery impact map
+
+| Follow-up | Required outcome |
+| --- | --- |
+| #40 | Compose Contract Service and Decision Service against the three stores; migrate `policy`/`InlinePolicy`/`PolicyEvaluationResult` to definition-owned `constraints`/`DecisionConstraints`/`ConstraintEvaluationResult`; remove `PolicyReference`; migrate `auditId`/`AuditRecord`/`IAuditSink` to `decisionRecordId`/`DecisionRecord`/Evidence Store append; preserve approval, CAS, replay, readiness, fallback, and exposure behavior. |
+| #41 | Run the real Tetris path using a trusted manifest publisher plus key-based runtime SDK; verify the seven logical boundaries, deterministic constraints without standalone Policy, durable records without standalone Audit, application-owned OTel export, and preserved authority/fallback/exposure invariants. |
+
+The operative issue contracts for #40 and #41 use these target names. They do
+not preserve compatibility aliases for the executable migration.
 
 ## Related documents
 

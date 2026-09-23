@@ -7,6 +7,11 @@ baseline under [`contracts/`](../../contracts/README.md) encodes it and passes
 the conformance gate. Later behavior changes require an explicit contract
 revision with aligned schemas, OpenAPI, fixtures, and compatibility notes.
 
+This document retains current executable field examples where needed to
+describe the frozen Phase 1 API. The canonical target names are defined in the
+[Shared Contracts executable migration map](shared-contracts/README.md#executable-migration-map);
+issue #40 replaces those names atomically rather than supporting both.
+
 It does not introduce a second domain model. Canonical domain types remain owned by [Shared Contracts](shared-contracts/README.md); this document defines how those types cross HTTP and build/release boundaries.
 
 Roadmap note: the runtime decision and exposure endpoint shapes remain the

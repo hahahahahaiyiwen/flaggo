@@ -1,5 +1,10 @@
 # Control Plane and Data Plane UX
 
+> **Ownership note:** Issue #44 owns the manifest-first client and trusted
+> deployment-tooling split. Any extraction/startup-registration examples below
+> describe the current executable baseline, not the target runtime Client SDK
+> boundary in the [architecture overview](../../architecture/OVERVIEW.md).
+
 ## Purpose
 
 Flaggo follows a cloud-service control-plane/data-plane model while preserving code-first authoring.
