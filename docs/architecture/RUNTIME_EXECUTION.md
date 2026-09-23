@@ -118,7 +118,7 @@ Explanation text is derived from these stored facts.
 
 | Outcome | Meaning |
 | --- | --- |
-| Governed server fallback | Ready server request returned an audited safe fallback. |
+| Governed server fallback | Ready server request returned a durably recorded safe fallback. |
 | SDK availability fallback | Client-local response to a recognized outage; no server decision or exposure identity. |
 | Contract error | Missing, conflicting, unknown, or retired exact identity. |
 | Readiness error | Required contract, state, or durable store is unavailable or non-ready. |

@@ -69,10 +69,10 @@ A definition declares deterministic decision constraints such as output type,
 range, allowed values, step, fixed-baseline delta, target eligibility, required
 inputs, and fallback.
 
-Contract Service validates constraints and candidate compatibility before
-approval and activation. Environment or operator controls may narrow declared
-constraints only through separately approved contracts. There is no standalone
-Policy service.
+Contract Service validates complete definition-owned constraints and candidate
+compatibility before approval and activation. Phase 3 has no separately
+resolved environment/operator constraint layer and no standalone Policy
+service.
 
 ## Runtime projection
 

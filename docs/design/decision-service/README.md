@@ -46,8 +46,8 @@ analysis loop never runs inside it.
 
 ## Decision constraints
 
-Decision Service evaluates only constraints declared by the accepted runtime
-projection or a separately approved narrowing layer. Current checks include:
+Decision Service evaluates only the complete constraints declared by the
+accepted runtime projection. Current checks include:
 
 - value type, bounds, allowed values, and numeric step;
 - fixed-default `max-delta`;
