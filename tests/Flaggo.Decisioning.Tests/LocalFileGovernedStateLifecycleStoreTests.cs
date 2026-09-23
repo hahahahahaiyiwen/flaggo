@@ -386,6 +386,151 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
     }
 
     [Theory]
+    [InlineData("missing-replay")]
+    [InlineData("proposal-mismatch")]
+    [InlineData("duplicate-state-reference")]
+    public async Task ReadersRejectActivationReplayThatDoesNotBindToState(
+        string corruption)
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            $"state-invalid-replay-binding-{corruption}");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                new(null, 0),
+                800),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        var activations = document["activations"]!.AsArray();
+        switch (corruption)
+        {
+            case "missing-replay":
+                activations.Clear();
+                break;
+            case "proposal-mismatch":
+                activations[0]!["proposalId"] = "proposal-other";
+                break;
+            case "duplicate-state-reference":
+                var duplicate = activations[0]!.DeepClone().AsObject();
+                duplicate["activationId"] = "activation-2";
+                duplicate["proposalId"] = "proposal-2";
+                activations.Add(duplicate);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown corruption case '{corruption}'.");
+        }
+
+        await file.WriteAsync(document.ToJsonString());
+
+        await AssertInvalidLifecycleDocument(file.Path);
+    }
+
+    [Fact]
+    public async Task ReadersRejectStrategyIdentityThatDoesNotMatchActivation()
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            "state-invalid-strategy-identity");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            NumericRuleRequest(
+                "activation-1",
+                "proposal-1",
+                new(null, 0)),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        document["states"]![0]!["strategyId"] = "strategy_tampered";
+        await file.WriteAsync(document.ToJsonString());
+
+        await AssertInvalidLifecycleDocument(file.Path);
+    }
+
+    [Theory]
+    [InlineData("first-predecessor")]
+    [InlineData("dangling-predecessor")]
+    [InlineData("generation-gap")]
+    public async Task ReadersRejectInvalidPredecessorLineage(
+        string corruption)
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            $"state-invalid-lineage-{corruption}");
+        var lifecycle = Store(file.Path, "state-1", "state-2");
+        var first = await lifecycle.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                new(null, 0),
+                800),
+            CancellationToken.None);
+        await lifecycle.ActivateAsync(
+            Request(
+                "activation-2",
+                "proposal-2",
+                new(first.StateId, first.Generation),
+                850),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        var states = document["states"]!.AsArray();
+        switch (corruption)
+        {
+            case "first-predecessor":
+                states[0]!["predecessorStateId"] = "state-unexpected";
+                break;
+            case "dangling-predecessor":
+                states[1]!["predecessorStateId"] = "state-missing";
+                break;
+            case "generation-gap":
+                states[1]!["generation"] = 3;
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown corruption case '{corruption}'.");
+        }
+
+        await file.WriteAsync(document.ToJsonString());
+
+        await AssertInvalidLifecycleDocument(file.Path);
+    }
+
+    [Fact]
+    public async Task ReadersRejectNoncanonicalNumericRuleNumber()
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            "state-noncanonical-rule-number");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            NumericRuleRequest(
+                "activation-1",
+                "proposal-1",
+                new(null, 0)),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        document["states"]![0]!["numericRule"]!["threshold"] =
+            9_007_199_254_740_993L;
+        await file.WriteAsync(document.ToJsonString());
+
+        await AssertInvalidLifecycleDocument(file.Path);
+    }
+
+    [Theory]
     [InlineData("pending")]
     [InlineData("completed")]
     [InlineData("expired")]
@@ -476,6 +621,29 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
             new LocalFileGovernedStateLifecycleStoreOptions(path),
             new FixedTimeProvider(),
             new SequenceStateIdentityGenerator(stateIds));
+
+    private static async Task AssertInvalidLifecycleDocument(string path)
+    {
+        var runtime = new LocalFileStateStore(
+            new LocalFileStateStoreOptions(path));
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => runtime.GetActiveAsync(
+                "decision",
+                "definition",
+                "revision",
+                [null],
+                CancellationToken.None));
+        Assert.False(await runtime.IsAvailableAsync(
+            CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => Store(path, "state-unexpected").GetBaselineAsync(
+                new GovernedStateAddress(
+                    "app",
+                    "dev",
+                    "decision",
+                    null),
+                CancellationToken.None));
+    }
 
     private static GovernedStateActivationRequest Request(
         string activationId,

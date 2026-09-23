@@ -291,7 +291,7 @@ internal static partial class GovernedStatePersistence
             state.ControlTarget,
             state.Mode,
             state.StrategyId,
-            state.NumericRule,
+            Map(state.NumericRule),
             FormatTimestamp(state.LastChangedAt),
             state.StateId,
             state.ProposalId,
@@ -324,7 +324,8 @@ internal static partial class GovernedStatePersistence
         }
 
         ValidateTarget(persisted.ControlTarget);
-        ValidateValueAndMode(persisted, value);
+        var numericRule = Map(persisted.NumericRule);
+        ValidateValueAndMode(persisted, value, numericRule);
         var activatedAt = ParseTimestamp(
             persisted.ActivatedAt,
             "activatedAt",
@@ -342,7 +343,7 @@ internal static partial class GovernedStatePersistence
             persisted.ControlTarget,
             persisted.Mode,
             persisted.StrategyId,
-            CloneStrategy(persisted.NumericRule),
+            numericRule,
             lastChangedAt,
             persisted.StateId,
             persisted.ProposalId,
@@ -401,7 +402,8 @@ internal static partial class GovernedStatePersistence
 
     private static void ValidateValueAndMode(
         PersistedState state,
-        JsonElement value)
+        JsonElement value,
+        NumericRuleStrategy? numericRule)
     {
         var validValue =
             value.ValueKind is
@@ -420,13 +422,13 @@ internal static partial class GovernedStatePersistence
         {
             case "active-value" when
                 state.StrategyId is null &&
-                state.NumericRule is null:
+                numericRule is null:
                 return;
             case "numeric-rule" when
                 !string.IsNullOrWhiteSpace(state.StrategyId) &&
-                state.NumericRule is not null &&
+                numericRule is not null &&
                 value.ValueKind == JsonValueKind.Number:
-                ValidateNumericRule(state.NumericRule);
+                ValidateNumericRule(numericRule);
                 return;
             case "active-value":
             case "numeric-rule":
@@ -436,6 +438,95 @@ internal static partial class GovernedStatePersistence
                 throw new InvalidDataException(
                     $"Lifecycle governed-state mode '{state.Mode}' is unsupported.");
         }
+    }
+
+    private static PersistedNumericRule? Map(
+        NumericRuleStrategy? rule) =>
+        rule is null
+            ? null
+            : new PersistedNumericRule(
+                rule.InputSignalKey,
+                JsonSerializer.SerializeToElement(rule.Threshold),
+                JsonSerializer.SerializeToElement(rule.ValueAtOrAbove),
+                JsonSerializer.SerializeToElement(rule.ValueBelow),
+                rule.WeightedInputs?.Select(input =>
+                    new PersistedNumericRuleInput(
+                        input.SignalKey,
+                        JsonSerializer.SerializeToElement(input.Minimum),
+                        JsonSerializer.SerializeToElement(input.Maximum),
+                        JsonSerializer.SerializeToElement(input.Weight)))
+                    .ToArray());
+
+    private static NumericRuleStrategy? Map(
+        PersistedNumericRule? rule)
+    {
+        if (rule is null)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(rule.InputSignalKey) ||
+            !TryGetCanonicalDouble(rule.Threshold, out var threshold) ||
+            !TryGetCanonicalDouble(
+                rule.ValueAtOrAbove,
+                out var valueAtOrAbove) ||
+            !TryGetCanonicalDouble(rule.ValueBelow, out var valueBelow))
+        {
+            throw new InvalidDataException(
+                "A lifecycle numeric rule contains invalid scalar configuration.");
+        }
+
+        if (rule.WeightedInputs is not { Count: > 0 } inputs)
+        {
+            return new NumericRuleStrategy(
+                rule.InputSignalKey,
+                threshold,
+                valueAtOrAbove,
+                valueBelow,
+                rule.WeightedInputs is null ? null : []);
+        }
+
+        var mappedInputs = new List<NumericRuleInput>(inputs.Count);
+        foreach (var input in inputs)
+        {
+            if (input is null ||
+                !TryGetCanonicalDouble(input.Minimum, out var minimum) ||
+                !TryGetCanonicalDouble(input.Maximum, out var maximum) ||
+                !TryGetCanonicalDouble(input.Weight, out var weight))
+            {
+                throw new InvalidDataException(
+                    "A lifecycle numeric rule contains invalid weighted input configuration.");
+            }
+
+            mappedInputs.Add(
+                new NumericRuleInput(
+                    input.SignalKey ?? string.Empty,
+                    minimum,
+                    maximum,
+                    weight));
+        }
+
+        return new NumericRuleStrategy(
+            rule.InputSignalKey,
+            threshold,
+            valueAtOrAbove,
+            valueBelow,
+            mappedInputs);
+    }
+
+    private static bool TryGetCanonicalDouble(
+        JsonElement? value,
+        out double number)
+    {
+        if (value is JsonElement element &&
+            CanonicalJson.IsIeee754CompatibleNumber(element))
+        {
+            number = element.GetDouble();
+            return true;
+        }
+
+        number = default;
+        return false;
     }
 
     private static void ValidateNumericRule(NumericRuleStrategy rule)
@@ -479,15 +570,6 @@ internal static partial class GovernedStatePersistence
                 "A lifecycle numeric rule must have positive total weight.");
         }
     }
-
-    private static NumericRuleStrategy? CloneStrategy(
-        NumericRuleStrategy? strategy) =>
-        strategy is null
-            ? null
-            : strategy with
-            {
-                WeightedInputs = strategy.WeightedInputs?.ToArray()
-            };
 
     private static void ValidateTarget(DecisionTargetRef? target)
     {
@@ -578,7 +660,7 @@ internal static partial class GovernedStatePersistence
         DecisionTargetRef? ControlTarget,
         string? Mode,
         string? StrategyId,
-        NumericRuleStrategy? NumericRule,
+        PersistedNumericRule? NumericRule,
         string? LastChangedAt,
         string? StateId,
         string? ProposalId,
@@ -587,6 +669,19 @@ internal static partial class GovernedStatePersistence
         string? ApprovalReference,
         string? ActivatedAt,
         string? LifecycleStatus);
+
+    private sealed record PersistedNumericRule(
+        string? InputSignalKey,
+        JsonElement? Threshold,
+        JsonElement? ValueAtOrAbove,
+        JsonElement? ValueBelow,
+        IReadOnlyList<PersistedNumericRuleInput?>? WeightedInputs);
+
+    private sealed record PersistedNumericRuleInput(
+        string? SignalKey,
+        JsonElement? Minimum,
+        JsonElement? Maximum,
+        JsonElement? Weight);
 
     private sealed record PersistedActivation(
         string? ActivationId,

@@ -217,17 +217,70 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
             }
         }
 
+        foreach (var addressStates in snapshot.States.GroupBy(
+                     entry => entry.Address))
+        {
+            var ordered = addressStates
+                .OrderBy(entry => entry.State.Generation)
+                .ToArray();
+            if (ordered[0].State.Generation != 1 ||
+                ordered[0].State.PredecessorStateId is not null)
+            {
+                throw new InvalidDataException(
+                    "Governed state lineage must begin at generation one without a predecessor.");
+            }
+
+            for (var index = 1; index < ordered.Length; index++)
+            {
+                var predecessor = ordered[index - 1].State;
+                var current = ordered[index].State;
+                if (current.Generation != predecessor.Generation + 1 ||
+                    !string.Equals(
+                        current.PredecessorStateId,
+                        predecessor.StateId,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        "Governed state lineage must be contiguous within one authority address.");
+                }
+            }
+        }
+
+        var referencedStateIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var replay in snapshot.Activations)
         {
-            if (!_states.ContainsKey(replay.StateId) ||
+            if (!_states.TryGetValue(replay.StateId, out var entry) ||
+                !referencedStateIds.Add(replay.StateId) ||
                 !_activations.TryAdd(replay.ActivationId, replay) ||
                 !_proposalFingerprints.TryAdd(
                     replay.ProposalId,
-                    replay.ProposalFingerprint))
+                    replay.ProposalFingerprint) ||
+                !string.Equals(
+                    replay.ProposalId,
+                    entry.State.ProposalId,
+                    StringComparison.Ordinal))
             {
                 throw new InvalidDataException(
-                    "Governed activation identities must be unique and reference stored state.");
+                    "Governed activation identities must uniquely bind to their stored state.");
             }
+
+            if (entry.State.Mode == "numeric-rule" &&
+                !string.Equals(
+                    entry.State.StrategyId,
+                    CreateStrategyId(
+                        replay.ActivationId,
+                        entry.State.NumericRule!),
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "A governed numeric-rule strategy identity must match its activation.");
+            }
+        }
+
+        if (referencedStateIds.Count != _states.Count)
+        {
+            throw new InvalidDataException(
+                "Every governed state must have exactly one activation replay.");
         }
     }
 
