@@ -20,7 +20,7 @@ For the hero scenario, the first client library target is TypeScript for the Tet
   generate a definition bundle, but the control plane must also support
   bundle-first, registry-first, and direct REST-client workflows.
 
-MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
+Roadmap context: [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
 Control-plane/data-plane developer experience: [Control Plane and Data Plane UX](CONTROL_DATA_PLANE_UX.md).

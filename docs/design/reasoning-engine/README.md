@@ -11,8 +11,8 @@ bundle-approved state. Phase 4 may add a scripted or fixture-based proposal
 source; it is not required to establish the Tetris authority.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
-Decision intelligence model: [Decision Intelligence](../../DECISION_INTELLIGENCE.md).
-Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXECUTION.md).
+Future proposal boundary: [Decision authority](../../architecture/AUTHORITY.md#proposal-managed-authority-phase-4).
+Runtime execution model: [Runtime execution](../../architecture/RUNTIME_EXECUTION.md).
 
 ## MVP split
 

@@ -1,102 +1,48 @@
 # Flaggo
 
-Flaggo is an exploration of **AI-native runtime decisioning**: a governed way for running software to ask for contextual decisions when static code, feature flags, and manual tuning are too rigid.
+Flaggo is a policy-first decisioning control plane with a runtime decision
+provider. It gives application code an explicit, governed way to request
+bounded runtime values when static branches, remote configuration, and manual
+tuning are too rigid.
 
-This repository is the modular monorepo for Flaggo's open-source core. It owns
-the executable contracts, SDK packages, deployable applications, domain
-modules, documentation, tests, and local development tooling. External showcase
-applications may remain in separate repositories.
+The application still owns execution. Flaggo owns the versioned decision
+contract, approved authority, deterministic evaluation, policy, durable audit,
+and exposure attribution around selected runtime variables.
 
-The core question is:
+## Current product slice
 
-> Given a decision definition, decision evidence, and governed state when available, what should happen now?
-
-## Why this exists
-
-AI is increasingly used to write, review, test, and ship code. But once code is running, most behavior is still governed by static `if/else` branches, fixed thresholds, configuration values, and manually operated feature flags.
-
-Flaggo starts from the belief that AI should not only participate in software creation. It should also become a governed runtime decision primitive where appropriate.
-
-## Beyond feature flags
-
-Feature flags externalize values:
+The current Phase 3 contract uses authenticated bundle approval:
 
 ```text
-Is flag X enabled?
-What is config value Y?
+definition + initial authority candidate
+  -> approval
+  -> governed state
+  -> deterministic runtime decision
+  -> policy + durable audit
+  -> confirmed exposure
+  -> attributed outcome
 ```
 
-Flaggo aims to externalize governed runtime judgment:
+Current authority is either an approved fixed value or an approved numeric
+rule. Proposal generation, learned evidence, experiments, rollouts, and other
+proposal-managed workflows remain future Phase 4 work.
 
-```text
-Given current context, evidence, goals, policies, and uncertainty, what safe behavior should this system choose?
-```
+The first scenario governs `tetris.dropInterval`, returning an approved
+`750ms` or `850ms` value from live game inputs with an `800ms` fallback.
 
-The application still owns execution. Flaggo owns the decisioning control plane around selected runtime choices.
+## Start here
 
-## Hero scenario: Tetris drop speed
-
-The first product experience uses a Tetris game:
-
-> The game should adapt `dropInterval` so each player gets a challenging but playable experience.
-
-Instead of hard-coding one global speed or manually tuning a feature flag, the developer declares:
-
-- a bundle candidate for `tetris.dropInterval`,
-- the output contract, target hierarchy, live inputs, safety, and fallback,
-- a bounded numeric rule for the initial authority candidate,
-- authenticated approval that activates governed authority,
-- runtime policy and durable decision audit before response, followed by
-  exposure confirmation and linked telemetry.
-
-Independent proposal generation and proposal-managed authority are Phase 4
-work; they are not prerequisites for the Phase 3 hero path.
-
-At runtime:
-
-```text
-game emits raw domain telemetry
-  -> game asks Flaggo for tetris.dropInterval with its complete expected identity
-  -> Flaggo evaluates the approved numeric rule against live inputs
-  -> Flaggo applies policy and durably records the decision audit
-  -> Flaggo returns a governed value or fallback after audit succeeds
-  -> game applies the value
-  -> when confirmation is required, game confirms exposure and receives exposureId
-  -> after confirmation, game emits decision outcomes linked to exposureId
-```
-
-Raw domain telemetry that is not caused by an applied decision remains
-independent of exposure attribution. A returned `decisionId` alone never proves
-that the application used the value.
-
-## Design principles
-
-- **Explicit decisions** over hidden scattered logic.
-- **Runtime context and telemetry evidence** over static assumptions.
-- **Policy-first governance** over unbounded autonomy.
-- **Uncertainty-aware decisions** over false precision.
-- **Auditable explanations** over opaque automation.
-- **Human intent encoded as goals and boundaries**.
-- **Fallback behavior** when confidence, evidence, or safety is insufficient.
-
-## Current documentation
-
-- [Manifesto](docs/MANIFESTO.md)
-- [Hero Scenario](docs/HERO_SCENARIO.md)
-- [High-Level Design](docs/DESIGN.md)
-- [Mental Model](docs/MENTAL_MODEL.md)
-- [Decision Definition](docs/DECISION_DEFINITION.md)
-- [Decision Evidence](docs/DECISION_EVIDENCE.md)
-- [Decision Intelligence](docs/DECISION_INTELLIGENCE.md)
-- [MVP Implementation Guide](docs/IMPLEMENTATION_GUIDE.md)
-- [Component Design Index](docs/design/README.md)
-- [Phase 1 Executable Contracts](contracts/README.md)
-- [Repository Architecture](docs/REPOSITORY_ARCHITECTURE.md)
-- [Contributing](CONTRIBUTING.md)
+- [Documentation home](docs/README.md) - product explanation, sources of truth,
+  and reading paths.
+- [Manifesto](docs/MANIFESTO.md) - project purpose and implementation
+  principles.
+- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3) -
+  authoritative phase status and issue contracts.
+- [Contributing](CONTRIBUTING.md) - development setup and repository rules.
 
 ## Quickstart
 
-Install the current contract-tooling dependency and run the repository gate:
+Install the contract-validation dependency and run the repository gate:
 
 ```powershell
 python -m pip install -r contracts\conformance\requirements.txt
@@ -118,24 +64,19 @@ docker compose up --build mock-api
 List available fixtures at `http://127.0.0.1:8080/_fixtures`. No cloud account
 is required.
 
-The `Contracts` GitHub Actions workflow keeps contract conformance, SDK, .NET,
-and the local Tetris integration harness as separately visible jobs. The
-`tetris-integration` job runs `npm run test:tetris-integration` with Node 20
-and .NET 10 and does not require cloud services or secrets. A focused
-`windows-durability` job builds the checked-in directory-flush helper and
-exercises committed snapshots, durable JSON, audit persistence, and the
-integration publication path on Windows without duplicating the full suite.
-
 ## Repository layout
 
 ```text
-apps/          Independently runnable services and user interfaces
+apps/          Runnable services and user interfaces
 modules/       Business capabilities and module-owned ports
-packages/      Reusable and publishable SDK/contract packages
-contracts/     OpenAPI, JSON Schema, fixtures, conformance, and mock server
+packages/      Reusable SDK and contract packages
+contracts/     OpenAPI, JSON Schema, fixtures, and conformance
 tests/         Cross-module and end-to-end verification
-examples/      Small integrations and external showcase links
+examples/      Small integrations and showcase links
 deploy/        Container and deployment assets
 tools/         Repository development commands
-docs/          Product, architecture, and component design documents
+docs/          Product, architecture, scenarios, and component designs
 ```
+
+Flaggo is early-stage. Prefer the smallest complete end-to-end behavior over
+speculative platform breadth.

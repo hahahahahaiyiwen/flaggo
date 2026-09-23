@@ -1,21 +1,14 @@
-# Decision Definition
+# Decision definition
 
 ## Purpose
 
-A decision definition is the versioned contract for a Flaggo decision. It
-declares what may be decided, which target levels matter, which evidence may be
-used, what "better" means, which safety/fallback rules constrain the system,
-and how initial or future authority may be supplied.
+A decision definition is the versioned semantic contract for one Flaggo
+decision. It declares what may be decided, which target levels and signals
+matter, what "better" means, which safety and fallback rules constrain the
+system, and how authority may be supplied.
 
-It participates in Flaggo's top-level mental model:
-
-```text
-Decision Definition
-Decision Evidence
-Decision Intelligence
-Decision Lifecycles
-Runtime Decision Execution
-```
+See the [architecture overview](OVERVIEW.md) for the system map. This document
+owns the detailed definition boundary.
 
 ## Definition
 
@@ -63,7 +56,9 @@ A decision definition does not own:
 - concrete runtime decision results,
 - audit records.
 
-Those belong to [Decision Evidence](DECISION_EVIDENCE.md), [Decision Intelligence](DECISION_INTELLIGENCE.md), [Decision Lifecycles](DECISION_LIFECYCLES.md), [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md), governed state, and audit/explanation components.
+Those belong to [Evidence](EVIDENCE.md), [Authority](AUTHORITY.md),
+[Runtime execution](RUNTIME_EXECUTION.md), governed state, and the owning
+audit/explanation components.
 
 A bundle-approved definition may contain an initial authority candidate. That
 candidate participates in semantic identity, but it is not active authority
@@ -262,12 +257,12 @@ Policy is required in both combined and explicit definitions. Code-first `Policy
 
 Code-first extraction is fail-closed. Static semantics must use the SDK's extractable literal subset; spreads, conditional definition fields, computed keys, dynamic signal arrays, helper-returned fragments, and post-construction mutation are invalid for MVP extraction. Runtime expressions are permitted only where the extractor can separate them from static semantics, such as signal/target bindings or statically typed context values. Unsupported syntax fails build/CI instead of producing a runtime-dependent definition.
 
-Tooling extracts and hashes each call site's static descriptor once. Repeated runtime calls rebuild only bound values and attach the cached identity. Identical canonical definitions for the same decision key within one build are deduplicated; different canonical digests for the same key are a `contract-conflict` build error. Combined and explicit authoring forms use the same [canonical normalization and digest rules](design/shared-contracts/README.md#canonical-definition-normalization-and-digest).
+Tooling extracts and hashes each call site's static descriptor once. Repeated runtime calls rebuild only bound values and attach the cached identity. Identical canonical definitions for the same decision key within one build are deduplicated; different canonical digests for the same key are a `contract-conflict` build error. Combined and explicit authoring forms use the same [canonical normalization and digest rules](../design/shared-contracts/README.md#canonical-definition-normalization-and-digest).
 
 The bundle cannot request trusted authority for itself. A control-plane actor
-approves the exact semantic snapshot. Proposal-managed automatic approval, when
-introduced later, still requires executable objectives, typed policy
-constraints, and environment authority.
+approves the exact semantic snapshot. Proposal-managed governance remains
+deferred to GitHub issue #25 and cannot bypass executable objectives, typed
+policy constraints, or environment authority.
 
 Signal handles are the single declaration surface for facts Flaggo may understand:
 

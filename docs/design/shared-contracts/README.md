@@ -2,12 +2,16 @@
 
 ## Purpose
 
-This document defines the shared MVP contract shapes used across the Flaggo
-TypeScript SDK, Decision API, local adapters, tests, manifests, and future cloud
-adapters. The approved Phase 3 re-baseline replaces the original bundle v1
-authority declaration rather than adding a compatibility layer.
+This document defines the shared MVP domain, data, and wire-contract shapes
+used across the Flaggo TypeScript SDK, Decision API, local adapters, tests,
+manifests, and future cloud adapters. Module service and infrastructure ports
+remain beside the behavior that consumes them. The approved Phase 3
+re-baseline replaces the original bundle v1 authority declaration rather than
+adding a compatibility layer.
 
-The goal is not to finalize every future field. The goal is to define a small, stable set of provider-neutral interfaces that can serve the Tetris MVP while leaving clear extension seams.
+The goal is not to finalize every future field. The goal is to define a small,
+stable set of provider-neutral cross-component shapes that can serve the
+Tetris MVP while leaving clear extension seams.
 
 The mapping of these domain contracts to HTTP is the accepted baseline in the
 [Phase 1 API Contract Proposal](../API_CONTRACT_PROPOSAL.md) and its executable
