@@ -215,8 +215,26 @@ type DerivedMetricSignalDeclaration = {
 
 type InferenceDeclaration = {
   target: TargetType;
-  inputs?: SignalRef[];
+  inputs?: DecisionInputDeclaration[];
   fallbackOrder?: string[];
+};
+
+type DecisionInputDeclaration = {
+  key: string;
+  valueType: ValueType;
+  source:
+    | {
+        kind: "request";
+        field: string;
+      }
+    | {
+        kind: "evidence";
+        binding: string;
+      };
+};
+
+type DecisionInputRef = {
+  key: string;
 };
 
 type DecisionIntent =
@@ -296,8 +314,8 @@ and applicable decision constraints. `numeric-rule` carries the deterministic ru
 validated below.
 
 `NumericRuleDeclaration.weightedInputs` must be non-empty. Each input must
-reference one declared inference input that resolves to an app-emitted numeric
-metric, use finite `minimum < maximum`, and have a finite nonnegative weight;
+reference one declared numeric resolved input, use finite
+`minimum < maximum`, and have a finite nonnegative weight;
 the finite total weight must be positive, and `threshold` must be finite in
 `[0, 1]`. The executor computes:
 
@@ -309,8 +327,9 @@ score = sum(normalizedInput * weight) / sum(weight)
 Division by total weight is required even when authored weights do not sum to
 `1`. `score >= threshold` selects `valueAtOrAbove`; otherwise it selects
 `valueBelow`. Both branch values must satisfy the numeric action space and
-applicable decision constraints. SDK authoring uses a branded numeric metric handle;
-registry and activation validation enforce the same numeric-source rule.
+applicable decision constraints. Contract Service validates that every rule
+reference names a numeric input declaration. Decision Service supplies the
+resolved value regardless of whether #44 declared a request or evidence source.
 
 Missing evidence explicitly required by decision constraints is a server evaluation
 outcome, not a numeric-rule executor input or data-plane availability failure.
@@ -416,7 +435,7 @@ type NumericRuleStrategy = NumericRuleStrategyDeclaration & {
 type DecisionStrategy = NumericRuleStrategy;
 
 type NumericRuleInput = {
-  signal: AppEmittedNumericMetricRef;
+  input: DecisionInputRef;
   minimum: number;
   maximum: number;
   weight: number;
@@ -734,7 +753,7 @@ Order-insensitive collections are duplicate-free sets and are sorted by immutabl
 - `signals.guardrails`,
 - generated `signals.allowed`,
 - canonical `inference.inputs`,
-- `lifecycle.initialAuthority.rule.weightedInputs`, sorted by signal key,
+- `lifecycle.initialAuthority.rule.weightedInputs`, sorted by input key,
 - signal declarations in a bundle,
 - `DecisionConstraints.rules`, sorted by constraint kind.
 
@@ -1395,10 +1414,10 @@ The decision definition references those signal identities without redefining th
   "inference": {
     "target": "session",
     "inputs": [
-      { "key": "tetris.boardPressure" },
-      { "key": "tetris.currentLevel" },
-      { "key": "tetris.recentPlacementTimeMs" },
-      { "key": "tetris.recoveryFailures" }
+      { "key": "tetris.boardPressure", "valueType": "number", "source": { "kind": "request", "field": "boardPressure" } },
+      { "key": "tetris.currentLevel", "valueType": "number", "source": { "kind": "request", "field": "currentLevel" } },
+      { "key": "tetris.recentPlacementTimeMs", "valueType": "number", "source": { "kind": "request", "field": "recentPlacementTimeMs" } },
+      { "key": "tetris.recoveryFailures", "valueType": "number", "source": { "kind": "request", "field": "recoveryFailures" } }
     ],
     "fallbackOrder": ["cohort", "global"]
   },
@@ -1425,25 +1444,25 @@ The decision definition references those signal identities without redefining th
         "valueBelow": 750,
         "weightedInputs": [
           {
-            "signal": { "key": "tetris.boardPressure" },
+            "input": { "key": "tetris.boardPressure" },
             "minimum": 0,
             "maximum": 1,
             "weight": 0.45
           },
           {
-            "signal": { "key": "tetris.recentPlacementTimeMs" },
+            "input": { "key": "tetris.recentPlacementTimeMs" },
             "minimum": 0,
             "maximum": 2000,
             "weight": 0.25
           },
           {
-            "signal": { "key": "tetris.recoveryFailures" },
+            "input": { "key": "tetris.recoveryFailures" },
             "minimum": 0,
             "maximum": 5,
             "weight": 0.2
           },
           {
-            "signal": { "key": "tetris.currentLevel" },
+            "input": { "key": "tetris.currentLevel" },
             "minimum": 0,
             "maximum": 20,
             "weight": 0.1

@@ -1,5 +1,11 @@
 # Adaptive Worker Example
 
+> **Historical executable baseline:** This completed Phase 2.5 example uses
+> static extraction and Policy-named contracts from the current executable
+> baseline. It is not the target authoring or server architecture. #44 replaces
+> extraction with a hand-authored manifest and key-based SDK; #40 migrates
+> Policy/Audit names to decision constraints and Evidence Store records.
+
 This example owns the Phase 2.5 local SDK-to-service acceptance boundary. It
 is a TypeScript console application that processes real items from an
 in-memory queue while Flaggo decides `demo.workerBatchSize`.

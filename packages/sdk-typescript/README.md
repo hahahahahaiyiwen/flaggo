@@ -1,5 +1,14 @@
 # TypeScript SDK
 
+> **Current executable baseline:** The implementation below predates #44's
+> manifest-first client redesign and #40's server contract migration. The
+> target runtime SDK consumes generated decision-key/input/result bindings and
+> live data only; trusted deployment tooling publishes the hand-authored
+> manifest to Contract Service, and the application owns OTel instrumentation
+> and export. Static extraction, SDK-owned registration, typed signal producers,
+> and Policy/Audit-named fields are removed by those issues without
+> compatibility aliases.
+
 `@flaggo/sdk` owns the TypeScript application boundary for Flaggo decisions:
 canonical bundle registration, accepted runtime bindings, numeric decision
 calls, exposure confirmation, typed signals, and telemetry emission. It does
