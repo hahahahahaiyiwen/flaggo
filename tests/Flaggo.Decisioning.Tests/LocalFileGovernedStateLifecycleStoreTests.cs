@@ -273,7 +273,9 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
                 [null],
                 CancellationToken.None));
 
-        Assert.Contains("duplicate active authority", error.Message);
+        Assert.Contains(
+            "Only one governed state may be active",
+            error.Message);
     }
 
     [Fact]
@@ -313,6 +315,74 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
                     new(null, 0),
                     850),
                 CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("missing-collection")]
+    [InlineData("null-collection")]
+    [InlineData("invalid-fingerprint")]
+    [InlineData("duplicate-activation")]
+    [InlineData("duplicate-proposal")]
+    [InlineData("missing-state")]
+    public async Task RuntimeRejectsInvalidActivationReplay(
+        string corruption)
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            $"state-invalid-activation-{corruption}");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                new(null, 0),
+                800),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        var activations = document["activations"]!.AsArray();
+        switch (corruption)
+        {
+            case "missing-collection":
+                document.Remove("activations");
+                break;
+            case "null-collection":
+                document["activations"] = null;
+                break;
+            case "invalid-fingerprint":
+                activations[0]!["fingerprint"] = "invalid";
+                break;
+            case "duplicate-activation":
+                activations.Add(activations[0]!.DeepClone());
+                break;
+            case "duplicate-proposal":
+                var duplicate = activations[0]!.DeepClone().AsObject();
+                duplicate["activationId"] = "activation-2";
+                activations.Add(duplicate);
+                break;
+            case "missing-state":
+                activations[0]!["stateId"] = "state-missing";
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown corruption case '{corruption}'.");
+        }
+
+        await file.WriteAsync(document.ToJsonString());
+        var runtime = new LocalFileStateStore(
+            new LocalFileStateStoreOptions(file.Path));
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => runtime.GetActiveAsync(
+                "decision",
+                "definition",
+                "revision",
+                [null],
+                CancellationToken.None));
+        Assert.False(await runtime.IsAvailableAsync(
+            CancellationToken.None));
     }
 
     [Theory]

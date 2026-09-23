@@ -127,6 +127,16 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 throw new InvalidDataException("The local governed-state file is empty.");
             }
 
+            if (document.Version == LifecycleFormatVersion)
+            {
+                var lifecycleSnapshot =
+                    GovernedStatePersistence.Deserialize(json);
+                _ = new InMemoryGovernedStateLifecycleStore(
+                    lifecycleSnapshot,
+                    TimeProvider.System,
+                    new GuidGovernedStateIdentityGenerator());
+            }
+
             return ValidateAndMap(document);
         }
         catch (JsonException error)
