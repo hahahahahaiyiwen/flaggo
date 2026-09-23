@@ -395,7 +395,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
             threshold,
             valueAtOrAbove,
             valueBelow,
-            mappedInputs);
+            Array.AsReadOnly(mappedInputs.ToArray()));
     }
 
     private static bool IsDecisionValue(JsonElement value) =>
