@@ -240,20 +240,24 @@ if (
 
 The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while its server exposure directive authorizes confirmation. Ordinary signal emission remains raw and unlinked. Only after confirmation returns `confirmedExposureId` may the application emit attributed outcome telemetry through an explicit exposure-scoped operation or payload containing that ID.
 
-The code-first `policy` shorthand is normalized to canonical `InlinePolicy`
-constraints before hashing. For example, `maxDelta: 50` becomes
+The executable code-first `policy` field is the current wire name for decision
+constraints and is normalized to canonical `InlinePolicy` data before hashing.
+For example, `maxDelta: 50` becomes
 `{ kind: "max-delta", value: 50 }`. The explicit form may provide
 `PolicyReference | InlinePolicy` directly; equivalent shorthand and canonical
-policies produce the same definition digest. Cooldown authoring remains
+constraint data produce the same definition digest. Cooldown authoring remains
 deferred to #33.
 
-Only app-emitted primitive metric handles may appear in `inference.inputs`. Events and service-derived metrics may contribute to evidence; numeric derived metrics may also serve as objectives, but neither events nor derived metrics can be supplied as online request values. SDK typing enforces this for code-first authoring, while extraction, registry validation, and the Decision API enforce it at trust boundaries.
+Only app-emitted primitive metric handles may appear in `inference.inputs`. Events and service-derived metrics may contribute to evidence; numeric derived metrics may also serve as objectives, but neither events nor derived metrics can be supplied as online request values. SDK typing enforces this for code-first authoring, while extraction, Contract Service validation, and Decision Service enforce it at trust boundaries.
 
-Metric objectives are narrower than general signal roles: objective signals must be numeric metrics. They may be app-emitted or derived, but events and boolean/string metrics are invalid because `minimize`, `maximize`, and numeric `target` require a numeric domain. SDKs expose a branded numeric metric identity; the registry and Decision API resolve the key and validate its registered declaration.
+Metric objectives are narrower than general signal roles: objective signals must be numeric metrics. They may be app-emitted or derived, but events and boolean/string metrics are invalid because `minimize`, `maximize`, and numeric `target` require a numeric domain. SDKs expose a branded numeric metric identity; Contract Service resolves the key and validates its registered declaration.
 
-Objective direction is a discriminated contract. `direction: "target"` requires a finite numeric `target`; `minimize` and `maximize` forbid `target`. SDK typing catches this during authoring, and canonical, registry, and Decision API validation enforce it for language-neutral clients.
+Objective direction is a discriminated contract. `direction: "target"` requires a finite numeric `target`; `minimize` and `maximize` forbid `target`. SDK typing catches this during authoring, and canonical, Contract Service, and Decision Service validation enforce it for language-neutral clients.
 
-Policy is required in both combined and explicit definitions. Code-first `PolicyAuthoring` normalizes to `InlinePolicy`; the explicit form must supply `PolicyReference | InlinePolicy`. No implicit environment/default policy is inserted when policy is omitted.
+Decision constraints are required in both combined and explicit definitions.
+Current executable types retain the `PolicyAuthoring`, `InlinePolicy`, and
+`PolicyReference` names until issue #40 changes the wire contract. No implicit
+environment/default constraints are inserted when the field is omitted.
 
 Code-first extraction is fail-closed. Static semantics must use the SDK's extractable literal subset; spreads, conditional definition fields, computed keys, dynamic signal arrays, helper-returned fragments, and post-construction mutation are invalid for MVP extraction. Runtime expressions are permitted only where the extractor can separate them from static semantics, such as signal/target bindings or statically typed context values. Unsupported syntax fails build/CI instead of producing a runtime-dependent definition.
 
@@ -261,8 +265,7 @@ Tooling extracts and hashes each call site's static descriptor once. Repeated ru
 
 The bundle cannot request trusted authority for itself. A control-plane actor
 approves the exact semantic snapshot. Proposal-managed governance remains
-deferred to GitHub issue #25 and cannot bypass executable objectives, typed
-policy constraints, or environment authority.
+deferred to GitHub issue #25 and cannot bypass executable objectives, typed decision constraints, or environment authority.
 
 Signal handles are the single declaration surface for facts Flaggo may understand:
 
@@ -270,7 +273,7 @@ Signal handles are the single declaration surface for facts Flaggo may understan
 | --- | --- | --- | --- |
 | Declared event | Domain event emitted through a typed signal handle. | Async learning, evidence views, validation, audit. | `piecePlacedEvent` |
 | App-emitted metric | Application-computed metric with stable semantics. | Async learning and, if selected, runtime strategy evaluation. | `boardPressureSignal` |
-| Derived signal | Metric declared from other signal handles and an aggregation expression. | Async learning, evidence views, validation, policy. | `earlyLossRateSignal` |
+| Derived signal | Metric declared from other signal handles and an aggregation expression. | Async learning, evidence views, validation, constraints. | `earlyLossRateSignal` |
 | Inference input | App-emitted metric bound to its current value inside the inference declaration. | Runtime strategy evaluation. | `boardPressureSignal.input(boardPressure)` |
 | Decision-record input | Inference input value captured when a value is returned. | Auditing what Flaggo decided for the request. | `decision.boardPressure` when `850ms` was returned |
 | Exposure-captured input | Inference input value copied to an exposure only after the client narrows to a server receipt, verifies `exposure.confirmationRequired`, and confirms the value was applied or rendered. | Later learning and outcome correlation. | `exposure.boardPressure` after `confirmExposure(decisionId, exposure.confirmToken)` |

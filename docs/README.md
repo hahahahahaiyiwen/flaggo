@@ -1,127 +1,83 @@
 # Flaggo documentation
 
-Flaggo is a policy-first decisioning control plane with a runtime decision
-provider. It lets application code delegate selected runtime variables to an
-explicit, versioned, policy-gated contract instead of burying those choices in
-scattered branches, dashboards, and manual tuning.
+Flaggo lets applications delegate selected runtime variables to explicit,
+versioned decision definitions with approved authority, deterministic
+constraints, durable records, and exposure-linked outcomes.
 
-The application still owns execution. Flaggo owns the contract, authority,
-runtime evaluation, policy, audit, and attribution around the delegated
-decision.
+The application owns execution and telemetry export. Flaggo owns server-side
+registration, authority, runtime evaluation, ingestion, and durable stores.
 
 ## Product model
 
-Feature flags and remote configuration externalize values. Flaggo adds a
-governed decision loop around variables whose safe value depends on runtime
-context, declared constraints, and eventually accumulated outcomes.
-
-The current contract boundary is deliberately smaller than the long-term
-vision:
-
 ```text
 current bundle-approved path:
-definition + initial authority candidate
-  -> authenticated approval
-  -> governed state
-  -> deterministic runtime evaluation
-  -> policy + durable audit
-  -> decision result
+decision definition + initial authority candidate
+  -> Contract Service approval
+  -> State Store activation
+  -> Decision Service execution
+  -> decision constraints + durable decision record
   -> confirmed exposure
   -> attributed outcome
 
 future proposal-managed extension:
-definition + evidence + outcomes + objectives
-  -> bounded proposal
-  -> governance
-  -> the same governed-state activation boundary
+contracts + Evidence Store + current state
+  -> Async Analysis Pipeline candidate
+  -> the same Contract Service approval and activation boundary
 ```
 
-Phase 3 does not claim learned evidence, proposal generation, experiments,
-rollouts, or request-time AI. Its Tetris path executes an explicitly approved
-`active-value` or `numeric-rule` authority. Phase 4 remains a high-level
-extension until its proposal and governance contracts are accepted.
-
-## Current state
-
-The repository contains the accepted Phase 1 executable contracts, the
-TypeScript SDK and .NET service boundaries developed against them, and a
-cloud-free adaptive-worker integration path. The Phase 3 roadmap is
-re-baselined around authenticated bundle approval and the shared activation
-boundary; the implementation is not considered complete until the state,
-bundle, durable-audit, and Tetris integration follow-ups converge.
-
-[Project #3](https://github.com/users/hahahahahaiyiwen/projects/3), native issue
-dependencies, and self-contained issue contracts are the authoritative roadmap
-and status source. This page is orientation, not a second roadmap.
+Phase 3 does not claim learned proposal generation, experiments, rollouts, or
+request-time AI.
 
 ## Sources of truth
 
 | Question | Source |
 | --- | --- |
-| Why does Flaggo exist, and how should contributors build it? | [Manifesto](MANIFESTO.md) |
-| How do the concepts and system boundaries fit together? | [Architecture overview](architecture/OVERVIEW.md) |
+| Why does Flaggo exist? | [Manifesto](MANIFESTO.md) |
+| How do services, stores, clients, and workers fit together? | [Architecture overview](architecture/OVERVIEW.md) |
 | What does a decision definition own? | [Decision definition](architecture/DECISION_DEFINITION.md) |
-| How do context, signals, evidence, exposure, and outcomes differ? | [Evidence](architecture/EVIDENCE.md) |
-| How does declared or proposed behavior become runtime authority? | [Authority](architecture/AUTHORITY.md) |
-| How does the data plane produce one decision result? | [Runtime execution](architecture/RUNTIME_EXECUTION.md) |
-| What exact behavior should the first product slice demonstrate? | [Tetris scenario](scenarios/TETRIS.md) |
-| What is implemented next and in what order? | [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3) and its issue contracts |
-| Which component owns each detailed responsibility? | [Component design index](design/README.md) |
-| What are the exact executable wire contracts? | [Contracts](../contracts/README.md) |
-| How is the repository organized and changed? | [Contributing](../CONTRIBUTING.md) |
+| How do observations, evidence, decisions, exposures, and outcomes differ? | [Evidence](architecture/EVIDENCE.md) |
+| How does a candidate become active authority? | [Authority](architecture/AUTHORITY.md) |
+| How does one online request produce a result? | [Runtime execution](architecture/RUNTIME_EXECUTION.md) |
+| What should the first product slice demonstrate? | [Tetris scenario](scenarios/TETRIS.md) |
+| Which boundary owns detailed behavior? | [Design index](design/README.md) |
+| What is implemented next? | [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3) |
+| What are the executable wire contracts? | [Contracts](../contracts/README.md) |
 
-The OpenAPI documents, JSON Schemas, fixtures, and conformance tests under
-[`contracts/`](../contracts/README.md) are authoritative for executable wire
-behavior. Architecture documents explain intent and boundaries; they do not
-override executable contracts.
+Executable OpenAPI, schemas, fixtures, and conformance tests remain
+authoritative for current wire behavior. Architecture documents define target
+ownership and guide issue-scoped migrations.
 
 ## Reading paths
 
 ### New teammate
 
-1. Read the [manifesto](MANIFESTO.md) for the project purpose and implementation
-   principles.
-2. Read the [architecture overview](architecture/OVERVIEW.md) for the shared
-   vocabulary and system map.
-3. Walk through the [Tetris scenario](scenarios/TETRIS.md) for the concrete
-   `750ms` / `850ms` / `800ms` behavior.
-4. Use [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3) and
-   the linked issue contracts to understand current phase boundaries.
+1. [Manifesto](MANIFESTO.md)
+2. [Architecture overview](architecture/OVERVIEW.md)
+3. [Tetris scenario](scenarios/TETRIS.md)
+4. [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3)
 
-### Implementer
+### Server contributor
 
-1. Start with the accepted issue for the relevant phase on
-   [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3).
-2. Follow the [component design index](design/README.md) to the owning module.
-3. Check the [executable contracts](../contracts/README.md) before changing a
-   wire shape.
-4. Follow the repository rules in [CONTRIBUTING.md](../CONTRIBUTING.md).
+1. Start from the accepted issue.
+2. Read the relevant service or store in the [design index](design/README.md).
+3. Read [Authority](architecture/AUTHORITY.md) and
+   [Runtime execution](architecture/RUNTIME_EXECUTION.md).
+4. Check [executable contracts](../contracts/README.md).
 
 ### Contract or SDK contributor
 
-1. Read the [Phase 1 API contract proposal](design/API_CONTRACT_PROPOSAL.md).
-2. Read the [shared contracts design](design/shared-contracts/README.md).
-3. Inspect the OpenAPI, schema, fixtures, and conformance gate under
-   [`contracts/`](../contracts/README.md).
-4. Use the [client-library design](design/client-library/README.md) or
-   [Decision API design](design/decision-api/README.md) for the owning
-   implementation boundary.
-
-### Authority or runtime contributor
-
-1. Read [Authority](architecture/AUTHORITY.md).
-2. Read [Runtime execution](architecture/RUNTIME_EXECUTION.md).
-3. Follow the state, policy, reasoning, audit, registry, and Decision API links
-   from the [component design index](design/README.md).
+1. Read [Decision definition](architecture/DECISION_DEFINITION.md).
+2. Read [shared contracts](design/shared-contracts/README.md).
+3. Read [client library](design/client-library/README.md).
+4. Read [Contract Service](design/contract-service/README.md) and
+   [Decision Service](design/decision-service/README.md).
 
 ## Documentation rules
 
 - Keep one primary question per canonical document.
-- Keep Project #3, native dependencies, and issue contracts authoritative for
-  roadmap status.
-- Keep exact wire behavior in executable contracts and their owning component
-  designs.
-- Mark future behavior explicitly; do not describe deferred proposal,
-  experiment, rollout, override, or rollback contracts as current.
-- Remove obsolete documentation paths instead of maintaining compatibility
-  copies.
+- Use one canonical name for each concept.
+- Describe logical services and stores independently from current assembly
+  names.
+- Keep Project #3 and issue contracts authoritative for roadmap status.
+- Mark deferred behavior explicitly.
+- Remove obsolete paths instead of preserving compatibility copies.

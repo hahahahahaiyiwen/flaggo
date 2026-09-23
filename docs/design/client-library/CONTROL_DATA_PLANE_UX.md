@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Polari follows a cloud-service control-plane/data-plane model while preserving code-first authoring.
+Flaggo follows a cloud-service control-plane/data-plane model while preserving code-first authoring.
 
-Code-first means application code can be the source of decision definitions. Control-plane and data-plane APIs remain separate even when one SDK coordinates both during application bootstrap. Polari does not become responsible for deploying application code.
+Code-first means application code can be the source of decision definitions. Control-plane and data-plane APIs remain separate even when one SDK coordinates both during application bootstrap. Flaggo does not become responsible for deploying application code.
 
 ## Responsibility boundary
 
@@ -14,9 +14,13 @@ Code-first means application code can be the source of decision definitions. Con
 | Data plane | Evaluate a pre-registered expected definition and confirm exposure. | Running application or direct REST client |
 | Application deployment | Build and deploy application code. | Developer-owned deployment system |
 
-Application deployment and definition registration are independent operations. For the MVP, the default code-first experience registers during trusted application/bootstrap startup after deployment and before data-plane use. If startup registration is skipped or fails, the application can still run, but Polari decision calls cannot.
+Application deployment and definition registration are independent operations.
+For the MVP, the default code-first experience registers during trusted
+application/bootstrap startup after deployment and before data-plane use. If
+startup registration is skipped or fails, the application can still run, but
+Flaggo decision calls cannot.
 
-Polari can later provide manual, CI/CD, GitOps, init-container, sidecar, and registry-first control-plane clients without changing the service boundary.
+Flaggo can later provide manual, CI/CD, GitOps, init-container, sidecar, and contract-first control-plane clients without changing the service boundary.
 
 ## Code-first lifecycle
 
@@ -40,7 +44,7 @@ application/bootstrap startup (MVP)
 
 data plane
   application calls decide with the exact expected contract identity
-  Decision API evaluates only registered definitions
+  Decision Service evaluates only registered definitions
 ```
 
 ## Control-plane client experiences
@@ -55,7 +59,7 @@ The architecture supports several experiences:
 | CI/CD or release integration | Pipeline publishes definitions independently from runtime startup. | Future integration |
 | Init container, sidecar, or deployment hook | Platform bootstrap owns management credentials and publishes before the app becomes ready. | Future integration |
 | Pull reconciler or GitOps | Controller observes desired bundles and reconciles registry state. | Future integration |
-| Registry-first | Operator tooling owns definitions; application references an existing binding. | Supported architecture |
+| Contract-first | Operator tooling owns definitions; application references an existing binding. | Supported architecture |
 
 These are control-plane clients, not alternate service architectures. None may register through the data-plane decide endpoint.
 
@@ -99,7 +103,10 @@ Startup registration does not bypass lifecycle or approval:
 - concurrent identical startup: idempotent replay returns the same receipt,
 - conflicting bundle: startup registration fails; no previous revision is selected.
 
-The Flaggo client initialization rejects on validation failure, apply failure, conflict, or `requires-approval`. The host application decides whether to stop startup or continue without Polari, but it cannot turn that failure into a local decision fallback.
+The Flaggo client initialization rejects on validation failure, apply failure,
+conflict, or `requires-approval`. The host application decides whether to stop
+startup or continue without Flaggo, but it cannot turn that failure into a
+local decision fallback.
 
 The typed approval error includes the stable `approvalRequestId`. Approval
 authorizes the exact pending canonical bundle snapshot. For a proposal-managed

@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the shared MVP domain, data, and wire-contract shapes
-used across the Flaggo TypeScript SDK, Decision API, local adapters, tests,
+used across the Flaggo TypeScript SDK, Decision Service, local adapters, tests,
 manifests, and future cloud adapters. Module service and infrastructure ports
 remain beside the behavior that consumes them. The approved Phase 3
 re-baseline replaces the original bundle v1 authority declaration rather than
@@ -34,8 +34,8 @@ These contracts are open-source native:
 5. Authenticated bundle approval may activate a declared initial authority;
    later async intelligence or another authorized producer creates independent
    proposals for governance.
-6. Runtime responses must include target, fallback, policy, and audit metadata.
-7. New strategy types, storage backends, evidence sources, and policy rules must extend explicit interfaces instead of changing the runtime response shape.
+6. Runtime responses must include target, fallback, constraint, and durable-record metadata.
+7. New strategy types, storage backends, evidence sources, and decision constraints must extend explicit interfaces instead of changing the runtime response shape.
 
 ## Primitive types
 
@@ -313,7 +313,7 @@ fallback as an audited decision. Otherwise it returns fallback-ineligible
 `required-evidence-unavailable` Problem Details. Definition policy never
 authorizes an SDK-local value for this outcome.
 
-`InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; registry validation and the Decision API must enforce it again against registered signal declarations.
+`InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; Contract Service and Decision Service must enforce it again against registered signal declarations.
 
 `MetricObjective.signal` is structurally serialized as a signal key, but it must resolve to a numeric metric declaration. The metric may be app-emitted or derived; events and boolean/string metrics are invalid objectives. SDKs should expose a branded numeric metric identity, and registry/API validation must enforce the same rule.
 
@@ -466,7 +466,7 @@ Rules:
 - Exactly one authority payload is valid. `active-value` requires
   `activeValue`; `numeric-rule` requires `activeStrategy`; both-present,
   neither-present, or discriminator/payload mismatch fails readiness.
-- Decision API orchestration resolves `activeValue` directly. Only coherent
+- Decision Service orchestration resolves `activeValue` directly. Only coherent
   `numeric-rule` authority crosses the strategy-executor boundary; state
   absence and policy fallback do not.
 - The mutable authority head is keyed by stable application, environment,
@@ -875,7 +875,7 @@ Rules:
 - Every server-produced decision audit captures the exact normalized
   `DecideRequest`, including all inference inputs used by successful strategy
   execution. SDK-local fallback produces no server audit record.
-- The Decision API preallocates one `auditId` before constructing the response
+- Decision Service preallocates one durable record identity before constructing the response
   or audit record. `AuditRecord.auditId` and `AuditRecord.response.auditId`
   must be identical, and the returned server response uses that same ID.
   `IAuditSink` persists the supplied identity and never mints or replaces it.

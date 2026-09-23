@@ -2,8 +2,9 @@
 
 ## Goal
 
-Prove `tetris.dropInterval` end to end with the real control plane, data plane,
-TypeScript SDK, exposure flow, local telemetry, and inspectable audit output.
+Prove `tetris.dropInterval` end to end with Contract Service, Decision Service,
+the TypeScript SDK, exposure flow, application-owned telemetry, and inspectable
+Evidence Store records.
 The integration remains cloud-free, obtains authenticated approval for the
 bundle-declared initial authority, and does not place management credentials or
 trusted registration behavior in browser code.
@@ -15,33 +16,34 @@ trusted registration behavior in browser code.
 - The bundle owns the `bundle-approved` initial authority candidate, including
   the `cohort:new_players` target, weighted numeric rule, and rationale. It
   does not own trusted proposal, activation, state, or approval identities.
-- The control plane validates the exact candidate, records authenticated
+- Contract Service validates the exact candidate, records authenticated
   approval, derives proposal and activation identities, and publishes state
   through expected-baseline compare-and-swap.
-- The state module owns durable activation and read-only runtime projection.
-  The data-plane host selects it through configuration and does not encode
+- State Store owns durable activation and read-only runtime projection.
+  Decision Service selects it through configuration and does not encode
   Tetris strategy behavior in `Program.cs`.
-- The reasoning module executes an explicit weighted numeric rule. The rule
+- Decision Service executes an explicit weighted numeric rule. The rule
   requires `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, and
   `currentLevel`; application code does not reproduce its decision logic.
-- The audit module owns local decision and confirmed-exposure records. Local
+- Evidence Store owns local decision and confirmed-exposure records. Local
   inspection uses an explicit file/tool boundary rather than production
   runtime debug routes. Existing JSON Lines records must pass strict readiness
   parsing, and exposure audit append precedes confirmation commit.
-- Outcome linkage uses the existing SDK `TelemetrySink`: after exposure
+- Outcome linkage uses the application's telemetry pipeline: after exposure
   confirmation, the caller emits `tetris.outcomeObserved` with the returned
-  `decisionId` and `exposureId`. Phase 3 adds no new runtime wire operation.
+  `decisionId` and `exposureId`. OTel Ingestion appends it to Evidence Store.
+  Phase 3 adds no new runtime wire operation.
 
 ## Local lifecycle
 
-1. Start the control plane against an isolated registry path.
+1. Start Contract Service against an isolated Contract Store path.
 2. Run the trusted bootstrap command with the canonical bundle.
 3. If the SDK returns typed `RequiresApprovalError`, bootstrap approves the
    immutable snapshot through the management API and retries registration.
 4. The service derives and durably activates the approved rule. Registration
    remains non-ready until the required authority is active.
-5. Start the data plane against the same registry, state root, and audit path.
-   Hosting resolves active state through the state module.
+5. Start Decision Service against the same Contract Store, State Store, and
+   Evidence Store paths.
 6. Drive SDK and direct REST decisions, confirm only applied receipts, emit
    linked outcome telemetry, and inspect the local JSON Lines records.
 
@@ -50,10 +52,10 @@ trusted registration behavior in browser code.
 - SDK and direct REST serialization produce contract-equivalent decisions.
 - Code-first extraction and the canonical bundle fixture produce byte-identical
   normalized Tetris definitions and the same `contractDigest`; output range
-  validation is not duplicated as a synthesized policy constraint.
+  validation is not duplicated as a synthesized decision constraint.
 - The bundle is rejected if the initial rule references undeclared inference
   inputs, references a nonnumeric or non-app-emitted metric, or violates
-  target, action-space, fallback, or policy constraints.
+  target, action-space, fallback, or decision constraints.
 - The completed registration receipt identifies the proposal, activation,
   server-derived strategy, active state, generation, control target, and
   numeric-rule kind.
@@ -77,17 +79,18 @@ trusted registration behavior in browser code.
   reason, and persisted audit inputs for every vector.
 - Recovery selects `750ms`, exactly one allowed delta below the baseline.
 - A ready definition with no compatible active state at any permitted target,
-  or a runtime-policy block, returns the audited server fallback of `800ms`.
+  or a runtime-constraint block, returns the durably recorded server fallback
+  of `800ms`.
 - Pending activation, failed readiness, corrupt persistence, and incoherent
   state fail initialization/readiness rather than returning `800ms`.
   `definition-not-ready`, `decision-service-not-ready`, and
   `invalid-decision-state` are explicitly ineligible for SDK fallback.
 - Data-plane unavailability produces an SDK-local `800ms` fallback whose
-  provenance remains distinct from server-policy fallback.
+  provenance remains distinct from server-governed fallback.
 - Applying and confirming an approved authority decision creates a
   confirmed-exposure audit record and permits linked outcome telemetry; an
   unused receipt or server fallback creates neither.
-- Audit output records strategy ID, all four inputs, policy result, fallback
+- Evidence Store output records strategy ID, all four inputs, constraint result, fallback
   provenance, and confirmation linkage.
 - Bundle-authored authority records authored rationale and approval provenance,
   but does not claim learned evidence quality, model uncertainty, expected

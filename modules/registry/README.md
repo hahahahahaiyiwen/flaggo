@@ -1,7 +1,10 @@
 # Registry Module
 
-Owns decision definitions, signal schemas, semantic identity, compatibility,
-registration receipts, and approval snapshots.
+This current internal library implements Contract Service and Contract Store
+capabilities. It is not a separate first-class server component.
+
+It owns decision definitions, signal schemas, semantic identity, compatibility,
+registration receipts, and approval snapshots behind service-owned ports.
 
 The module exposes async ports for validation and immutable lookup. It must
 recompute canonical digests, reject conflicting lineage or signal identity, and
