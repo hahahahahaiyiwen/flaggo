@@ -155,5 +155,5 @@ owned by later accepted designs.
 - [Decision definition](../architecture/DECISION_DEFINITION.md)
 - [Authority](../architecture/AUTHORITY.md)
 - [Runtime execution](../architecture/RUNTIME_EXECUTION.md)
-- [MVP implementation guide](../IMPLEMENTATION_GUIDE.md)
+- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
 - [Tetris integration design](../design/tetris-integration/README.md)

@@ -255,6 +255,6 @@ separately approved.
 - [Authority](AUTHORITY.md)
 - [Runtime execution](RUNTIME_EXECUTION.md)
 - [Tetris scenario](../scenarios/TETRIS.md)
-- [MVP implementation guide](../IMPLEMENTATION_GUIDE.md)
+- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
 - [Component design index](../design/README.md)
 - [Executable contracts](../../contracts/README.md)

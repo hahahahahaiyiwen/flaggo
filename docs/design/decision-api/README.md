@@ -27,7 +27,7 @@ when that exact tuple is absent, unknown, retired, or semantically conflicting.
 - Avoid assuming every decision requires an LLM.
 - Execute approved strategies quickly for real-time adaptive decisions.
 
-MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
+Roadmap context: [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
 Runtime execution model: [Runtime execution](../../architecture/RUNTIME_EXECUTION.md).

@@ -50,8 +50,9 @@ re-baselined around authenticated bundle approval and the shared activation
 boundary; the implementation is not considered complete until the state,
 bundle, durable-audit, and Tetris integration follow-ups converge.
 
-[The MVP implementation guide](IMPLEMENTATION_GUIDE.md) is the authoritative
-roadmap and status source. This page is orientation, not a second roadmap.
+[Project #3](https://github.com/users/hahahahahaiyiwen/projects/3), native issue
+dependencies, and self-contained issue contracts are the authoritative roadmap
+and status source. This page is orientation, not a second roadmap.
 
 ## Sources of truth
 
@@ -64,7 +65,7 @@ roadmap and status source. This page is orientation, not a second roadmap.
 | How does declared or proposed behavior become runtime authority? | [Authority](architecture/AUTHORITY.md) |
 | How does the data plane produce one decision result? | [Runtime execution](architecture/RUNTIME_EXECUTION.md) |
 | What exact behavior should the first product slice demonstrate? | [Tetris scenario](scenarios/TETRIS.md) |
-| What is implemented next and in what order? | [MVP implementation guide](IMPLEMENTATION_GUIDE.md) |
+| What is implemented next and in what order? | [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3) and its issue contracts |
 | Which component owns each detailed responsibility? | [Component design index](design/README.md) |
 | What are the exact executable wire contracts? | [Contracts](../contracts/README.md) |
 | How is the repository organized and changed? | [Contributing](../CONTRIBUTING.md) |
@@ -84,13 +85,13 @@ override executable contracts.
    vocabulary and system map.
 3. Walk through the [Tetris scenario](scenarios/TETRIS.md) for the concrete
    `750ms` / `850ms` / `800ms` behavior.
-4. Use the [implementation guide](IMPLEMENTATION_GUIDE.md) to understand the
-   current roadmap and phase boundaries.
+4. Use [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3) and
+   the linked issue contracts to understand current phase boundaries.
 
 ### Implementer
 
-1. Start with the relevant phase in the
-   [implementation guide](IMPLEMENTATION_GUIDE.md).
+1. Start with the accepted issue for the relevant phase on
+   [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3).
 2. Follow the [component design index](design/README.md) to the owning module.
 3. Check the [executable contracts](../contracts/README.md) before changing a
    wire shape.
@@ -116,7 +117,8 @@ override executable contracts.
 ## Documentation rules
 
 - Keep one primary question per canonical document.
-- Keep the implementation guide authoritative for roadmap status.
+- Keep Project #3, native dependencies, and issue contracts authoritative for
+  roadmap status.
 - Keep exact wire behavior in executable contracts and their owning component
   designs.
 - Mark future behavior explicitly; do not describe deferred proposal,

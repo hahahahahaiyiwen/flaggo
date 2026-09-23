@@ -13,7 +13,7 @@ Canonical context:
 - [Authority](../architecture/AUTHORITY.md)
 - [Runtime execution](../architecture/RUNTIME_EXECUTION.md)
 - [Tetris scenario](../scenarios/TETRIS.md)
-- [MVP implementation guide](../IMPLEMENTATION_GUIDE.md)
+- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
 - [Phase 1 API contract proposal](API_CONTRACT_PROPOSAL.md)
 - [Phase 3 Tetris integration](tetris-integration/README.md)
 - [Shared contracts](shared-contracts/README.md)

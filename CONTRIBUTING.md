@@ -3,8 +3,8 @@
 Flaggo is early-stage. Design clarity, executable contracts, and a portable
 local workflow take priority over implementation volume.
 
-Start with the [documentation home](docs/README.md) and the authoritative
-[MVP implementation guide](docs/IMPLEMENTATION_GUIDE.md).
+Start with the [documentation home](docs/README.md) and select accepted work
+from [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3).
 
 ## Development setup
 

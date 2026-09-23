@@ -36,8 +36,8 @@ The first scenario governs `tetris.dropInterval`, returning an approved
   and reading paths.
 - [Manifesto](docs/MANIFESTO.md) - project purpose and implementation
   principles.
-- [MVP implementation guide](docs/IMPLEMENTATION_GUIDE.md) - authoritative
-  roadmap and phase status.
+- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3) -
+  authoritative phase status and issue contracts.
 - [Contributing](CONTRIBUTING.md) - development setup and repository rules.
 
 ## Quickstart
