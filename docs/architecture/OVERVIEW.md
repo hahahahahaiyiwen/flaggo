@@ -26,7 +26,7 @@ Decision Service
   -> Evidence Store (decision and exposure records)
 
 OTel Ingestion
-  -> Evidence Store (observations)
+  -> Evidence Store (observations and validated attributed outcomes)
 
 Async Analysis Pipeline
   <- Contract Store
@@ -144,7 +144,10 @@ decision result
   -> application applies value
   -> explicit exposure confirmation
   -> Evidence Store exposure
-  -> exposure-linked outcomes
+
+application emits exposure-linked outcome through its OTel pipeline
+  -> OTel Ingestion validates binding and confirmed exposure
+  -> Evidence Store observation + attributed Outcome
 
 contracts + evidence + current state
   -> Async Analysis Pipeline candidate

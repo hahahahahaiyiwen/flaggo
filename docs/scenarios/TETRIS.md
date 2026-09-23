@@ -43,7 +43,9 @@ game Client SDK requests decision by key with live inputs
 game applies value
   -> confirms exposure
   -> emits exposure-linked outcomes through its OTel pipeline
-  -> OTel Ingestion appends observations to Evidence Store
+  -> OTel Ingestion appends the observation
+  -> validates the declared binding and confirmed exposure
+  -> appends a distinct attributed Outcome to Evidence Store
 ```
 
 ## Approved numeric rule

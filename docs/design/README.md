@@ -17,7 +17,7 @@ only when it owns a domain or external-system contract.
 | --- | --- | --- |
 | Contract Service | Definition lifecycle, approval, readiness, and authority activation orchestration. | [Contract Service](contract-service/README.md) |
 | Decision Service | Online decision and exposure APIs, deterministic execution, constraints, fallback, and durable record append. | [Decision Service](decision-service/README.md) |
-| OTel Ingestion | OTLP intake, binding validation, normalization, and observation append. | [OTel Ingestion](otel-ingestion/README.md) |
+| OTel Ingestion | OTLP intake, binding validation, normalization, observation append, and confirmed-exposure outcome attribution. | [OTel Ingestion](otel-ingestion/README.md) |
 | Async Analysis Pipeline | Offline candidate production using contracts, evidence, and current state. | [Async Analysis Pipeline](async-analysis/README.md) |
 
 ## Durable stores
