@@ -126,15 +126,21 @@ signals:
 A semantic schema change requires a new key. A derived metric's aggregation and
 window are part of that immutable meaning.
 
-Runtime inputs are a narrower role:
+Runtime inputs are a narrower role. Every input has an explicit source owned by
+#44's manifest/input contract:
 
-- only declared primitive inputs may be sent to Decision Service;
-- their current values arrive with the decision request;
-- they do not depend on OTel export or Evidence Store materialization; and
-- Decision Service records the values used for a successful server result.
+- request-sourced values arrive with the decision request;
+- evidence-sourced values are resolved from an authorized, materialized,
+  target-specific Evidence Store view;
+- Decision Service receives the same typed resolved-input collection regardless
+  of source; and
+- Decision Service records values plus source provenance used for a successful
+  server result.
 
-Events and derived metrics may inform evidence or objectives but are not live
-numeric-rule inputs unless a future contract explicitly defines that boundary.
+The bounded numeric-rule executor never queries raw telemetry, waits for OTel
+export, or consumes an `EvidenceSnapshot`. The Tetris Phase 3 rule uses only
+request-sourced inputs. Exact input-source syntax and supported evidence
+projections remain owned by #44.
 
 ## Intent
 

@@ -27,9 +27,10 @@ generic event.
 ## Writers
 
 - OTel Ingestion appends observations.
+- OTel Ingestion validates declared outcome bindings and confirmed exposure
+  identity, then appends exposure-linked outcomes.
 - Decision Service appends decision records before server success.
 - Decision Service appends exposure records after explicit confirmation.
-- Outcome ingestion appends exposure-linked outcomes.
 - Async Analysis Pipeline may persist derived views through an owned projection
   port.
 

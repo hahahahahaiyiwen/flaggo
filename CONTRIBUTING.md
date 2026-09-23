@@ -128,13 +128,14 @@ boundaries. Assembly count does not define product components or deployments.
 ### Parallel contract implementation
 
 Executable API artifacts merge before client and service implementations
-diverge. The client track owns typed authoring, static extraction, canonical
-normalization and digesting, bundle output, request serialization, runtime
-identity propagation, exposure confirmation, configured availability fallback,
-and telemetry emission. The service track owns runtime and management
-endpoints, contract-integrity verification, target and input resolution,
-authority and strategy execution, decision constraints, durable decision
-records, exposure and attribution linkage, local adapters, and health.
+diverge. The client track owns manifest-derived key/input/result typing, request
+serialization, runtime identity propagation, exposure confirmation, and
+configured availability fallback. Trusted deployment tooling owns manifest
+publication. The application owns OTel instrumentation and export. The service
+track owns management/runtime endpoints, contract-integrity verification,
+resolved-input delivery, authority and strategy execution, decision
+constraints, durable decision records, exposure/outcome attribution, local
+adapters, and health.
 
 Both tracks test against the same OpenAPI documents, schemas, fixtures, and
 conformance suites. Each implementation branch records the contract revision

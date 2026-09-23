@@ -178,9 +178,6 @@ type SignalRef = {
 // Serialized as SignalRef; registry validation resolves and verifies the numeric metric declaration.
 type NumericMetricRef = SignalRef;
 
-// Serialized as SignalRef; registry validation additionally requires source = "app-emitted".
-type AppEmittedNumericMetricRef = NumericMetricRef;
-
 type EventSignalDeclaration = {
   kind: "event";
   key: string;
@@ -322,7 +319,11 @@ fallback as a durably recorded decision. Otherwise it returns fallback-ineligibl
 `required-evidence-unavailable` Problem Details. Definition constraints never
 authorizes an SDK-local value for this outcome.
 
-`InferenceDeclaration.inputs` is structurally serialized as `SignalRef[]`, but every referenced key must resolve to an app-emitted primitive metric declaration. Events and service-derived metrics are invalid inference inputs. SDK type systems should enforce this before extraction; Contract Service and Decision Service must enforce it again against registered signal declarations.
+`InferenceDeclaration.inputs` identifies typed resolved inputs. #44 owns each
+input's explicit request or evidence source and the supported projection
+contract. Contract Service validates declarations; Decision Service resolves
+or accepts typed values before invoking the executor and records source
+provenance. The executor never consumes raw telemetry or `EvidenceSnapshot`.
 
 `MetricObjective.signal` is structurally serialized as a signal key, but it must resolve to a numeric metric declaration. The metric may be app-emitted or derived; events and boolean/string metrics are invalid objectives. SDKs should expose a branded numeric metric identity, and registry/API validation must enforce the same rule.
 
@@ -528,7 +529,12 @@ Rules:
 
 ## Runtime API contracts
 
-Code-first SDKs may combine definition authoring and runtime binding in one ergonomic object. Before hashing or transport, the SDK/tooling must partition that object into the immutable `DecisionDefinition` and the runtime `DecideRequest` below. Bound values must never affect definition identity.
+The hand-authored manifest is the sole static definition source. Generated
+client bindings provide decision-key, input, and result typing. Runtime
+requests contain only live target/context/request-sourced values plus the exact
+accepted identity; they never carry or reconstruct a definition. Evidence-
+sourced inputs are resolved before bounded execution through #44's input
+resolution contract.
 
 ```ts
 type DecideRequest = {
@@ -683,7 +689,10 @@ Rules:
 
 ## Canonical definition normalization and digest
 
-Every authoring surface must normalize into the same language-neutral `DecisionDefinition` before compatibility comparison or hashing. Combined code-first and explicit forms that express the same semantics must produce byte-identical canonical definitions and therefore the same digest.
+Every submitted manifest must normalize into the same language-neutral
+`DecisionDefinition` before compatibility comparison or hashing. Equivalent
+JSON/YAML serializations produce byte-identical canonical definitions and
+therefore the same digest.
 
 The complete authority workflow declaration is semantic content. For
 bundle-approved definitions, the control target, numeric rule, weighted inputs,
@@ -692,19 +701,25 @@ digest.
 
 Normalization:
 
-1. Remove all bound runtime values.
-2. Convert each bound signal input into its immutable `SignalRef`.
-3. Convert each typed target binding into a runtime-context schema entry. The original object property name is the canonical context field name; for example, `sessionId: flaggo.target.session(value)` becomes `sessionId: { type: "string", target: "session" }`.
-4. Normalize the current SDK-specific `PolicyAuthoring` migration surface into
+1. Reject runtime values in the submitted static manifest.
+2. Normalize explicit context, input-source, and evidence-binding declarations
+   according to #44's accepted contract.
+3. Normalize the current SDK-specific `PolicyAuthoring` migration surface into
    canonical `DecisionConstraints`.
-5. Materialize generated fields such as `signals.allowed` exclusively from semantic role references. A supplied generated allowlist is never an identity input; stale or extra entries are discarded during extraction.
-6. Reduce every signal role/reference to immutable `SignalRef { key }`. `schemaDigest` belongs to signal-declaration conflict detection and is excluded from decision-definition identity.
-7. Omit undefined fields and normalize equivalent optional/default forms
+4. Materialize generated fields such as `signals.allowed` exclusively from
+   semantic role references. A supplied generated allowlist is never an
+   independent identity input.
+5. Reduce every signal role/reference to immutable `SignalRef { key }`.
+   `schemaDigest` belongs to signal-declaration conflict detection and is
+   excluded from decision-definition identity.
+6. Omit undefined fields and normalize equivalent optional/default forms
    according to the contract version.
-8. Sort JSON object keys recursively.
-9. Reject duplicate signal keys, duplicate context fields, duplicate decision-constraint kinds, or conflicting role/schema declarations.
-10. Serialize with RFC 8785 JSON Canonicalization Scheme.
-11. Compute SHA-256 over the canonical UTF-8 bytes and encode the identity as `sha256:<lowercase-hex>`.
+7. Sort JSON object keys recursively.
+8. Reject duplicate signal keys, duplicate context fields, duplicate
+   decision-constraint kinds, or conflicting role/schema declarations.
+9. Serialize with RFC 8785 JSON Canonicalization Scheme.
+10. Compute SHA-256 over the canonical UTF-8 bytes and encode the identity as
+    `sha256:<lowercase-hex>`.
 
 Order-sensitive arrays retain authored order because order changes behavior:
 
@@ -736,7 +751,7 @@ invariants. Canonicalization does not synthesize a `number-bounds` decision
 constraint from them. An explicitly authored `number-bounds` constraint is
 additional semantic constraint data and therefore changes the digest.
 
-Code-first `output.default` normalizes to canonical `fallback.value`.
+`actionSpace.default` normalizes consistently with canonical `fallback.value`.
 Canonicalization does not synthesize a fallback reason that the authoring
 surface cannot express.
 
@@ -1194,7 +1209,9 @@ type DefinitionBundleApprovalResult =
 Rules:
 
 - `DecisionDefinitionBundle` is the canonical language-neutral sync artifact.
-- SDK-generated declarations, hand-authored JSON/YAML, GitOps workflows, and registry exports should all produce or reference the same bundle shape.
+- The hand-authored manifest is the sole static source. Generated SDK bindings,
+  GitOps workflows, and Contract Store exports reference that same bundle
+  shape rather than producing competing definitions.
 - Bundle sync validates submitted semantics and compares them with accepted
   revisions.
 - Apply of a new key reserves and persists its proposed lineage ID and
@@ -1285,7 +1302,7 @@ Rules:
 
 ## Tetris MVP contract example
 
-Signal declarations are extracted from producer-owned typed handles:
+Signal declarations are authored in the canonical manifest:
 
 ```json
 [

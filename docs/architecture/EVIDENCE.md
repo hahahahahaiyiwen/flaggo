@@ -27,16 +27,18 @@ They do not require hot-path aggregation from Evidence Store.
 
 Decision definitions declare immutable keyed signals:
 
-- app-emitted primitive metrics may also be selected as online inference
-  inputs;
+- manifest input declarations may select request or evidence sources through
+  #44's typed resolution contract;
 - events and derived metrics may inform evidence and objectives;
 - objective signals must be numeric; and
 - derived signal semantics include their aggregation expression and fixed
   window where applicable.
 
-Only app-emitted primitive metrics may be provided as online inputs. Contract
-Service validates this relationship when registering a definition. Decision
-Service validates supplied values against the ready runtime projection.
+Every online input declares a request or evidence source through #44's
+manifest contract. Request-sourced primitive values arrive with the call.
+Evidence-sourced values are resolved from authorized materialized views before
+bounded execution. Contract Service validates the declaration; Decision
+Service consumes and records typed resolved values plus provenance.
 
 ## Evidence views
 

@@ -17,12 +17,21 @@ OTel Ingestion:
 - authenticates the application and environment scope;
 - resolves declared evidence bindings from Contract Store;
 - validates signal kind, selected fields, type, unit, target mapping, and scope;
+- recognizes declared outcome bindings carrying a confirmed `exposureId`;
+- validates that exposure through an Evidence Store read port for the same
+  application/environment and permitted decision identity;
 - records provenance, timestamps, sampling/coverage metadata, and rejection
   reasons; and
-- appends normalized immutable observations to Evidence Store.
+- appends normalized immutable observations and, only for a valid declared
+  outcome binding plus confirmed exposure, a distinct attributed Outcome
+  record to Evidence Store.
 
 It does not execute online decisions, activate authority, invent missing values,
 or reinterpret unsupported projections as valid evidence.
+
+Ordinary observations remain observations even when no attribution applies. An
+unknown, unconfirmed, cross-scope, or mismatched exposure never creates an
+Outcome record; attribution failure is explicit and does not fabricate a link.
 
 ## Flow
 
@@ -31,11 +40,15 @@ application-owned OTel pipeline
   -> OTLP transport
   -> scope and binding validation
   -> normalized observation
+  -> optional confirmed-exposure validation
+  -> optional attributed Outcome
   -> Evidence Store
 ```
 
-Live runtime inputs still travel with a decision request. Asynchronous
-telemetry export is not a substitute for current request state.
+Request-sourced runtime inputs travel with a decision request. Evidence-sourced
+inputs use authorized materialized views and are resolved before bounded
+execution. Asynchronous telemetry export is not a substitute for current
+request state.
 
 ## Failure behavior
 
