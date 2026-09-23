@@ -13,15 +13,17 @@ Pipeline candidates. It never creates or activates authority.
 
 | Kind | Meaning |
 | --- | --- |
-| Runtime inputs | Live typed values supplied with one decision request. |
+| Runtime inputs | Typed values resolved for one execution from request or authorized evidence sources. |
 | Observation | Event, metric, trace, log, span, or domain fact received through OTel Ingestion or another explicit adapter. |
 | Evidence view | Target/window/filter projection over observations with freshness and quality. |
 | Decision record | Reconstructable result appended by Decision Service before success. |
 | Exposure record | Confirmation that the application applied or rendered a returned result. |
 | Outcome | Observation attributed to a confirmed exposure. |
 
-Runtime inputs travel with a request and are copied into its decision record.
-They do not require hot-path aggregation from Evidence Store.
+RequestDecisionInput values travel with a request. Evidence-sourced values are
+resolved from authorized materialized views. Decision Service combines both
+into `ResolvedDecisionInput` values and copies their source provenance into the
+decision record. Resolution never performs hot-path raw telemetry aggregation.
 
 ## Signal model
 

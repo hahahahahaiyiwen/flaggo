@@ -40,9 +40,10 @@ or explicitly non-ready debugging.
 
 ## Readers
 
-- Decision Service may read only evidence explicitly required by accepted
-  runtime constraints; current bundle-authored numeric rules need no evidence
-  snapshot.
+- Decision Service input resolution may read authorized materialized views for
+  accepted evidence-sourced input declarations. Constraint evaluation may read
+  evidence explicitly required by accepted runtime constraints. The bounded
+  executor receives resolved typed values, never an EvidenceSnapshot.
 - Async Analysis Pipeline reads observations, views, decisions, exposures, and
   outcomes for future candidate production.
 - Query tools and future operator clients read records through bounded query

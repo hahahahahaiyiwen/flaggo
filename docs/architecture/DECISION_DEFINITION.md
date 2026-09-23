@@ -52,6 +52,13 @@ decision records, exposures, outcomes, or app/build provenance.
 The manifest declares static semantics without runtime values:
 
 ```yaml
+format: flaggo.decision-definition-bundle/v2
+application:
+  id: tetris-demo
+  environment: dev
+source:
+  repository: hahahahahaiyiwen/flaggo
+  path: examples/tetris-integration/tetris-manifest.yaml
 definitions:
   - key: tetris.dropInterval
     valueType: number

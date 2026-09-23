@@ -192,9 +192,9 @@ never consumes the newer strategy.
 | Definition is retired | `409 retired-definition` | Forbidden |
 | Required activation is pending or failed | `409 definition-not-ready` | Forbidden |
 | Invalid context or inference input | `400` or `422` Problem Details | Forbidden |
-| A required state, policy, or audit readiness check failed | `503 decision-service-not-ready` with `clientFallback.eligible: false` | Forbidden |
+| A required State Store, constraint evaluator, or Evidence Store append readiness check failed | `503 decision-service-not-ready` with `clientFallback.eligible: false` | Forbidden |
 | Persisted state violates canonical invariants | `500 invalid-decision-state` with `clientFallback.eligible: false` | Forbidden |
-| Registered definition evaluates but applicable state, policy, or evidence blocks adaptation | `200` audited server fallback | Not applicable |
+| Registered definition evaluates but applicable state, constraints, or evidence blocks adaptation | `200` durably recorded server fallback | Not applicable |
 | Required evidence is unavailable and governed fallback is forbidden | `503 required-evidence-unavailable` with `clientFallback.eligible: false` | Forbidden |
 | Data plane is genuinely unavailable, unreachable, or times out after readiness passed | Transport failure or `503 service-unavailable` with `clientFallback.eligible: true` | Explicitly configurable |
 
@@ -206,24 +206,31 @@ corruption and make an unhealthy deployment appear healthy.
 
 ### Approved server decision
 
-The registered definition is evaluated and produces an approved value or strategy result. The response contains server decision, policy, definition, audit, and exposure-confirmation identity.
+The registered definition is evaluated and produces an approved value or
+strategy result. The response contains decision, constraint result, definition,
+decision-record, and exposure-confirmation identity.
 
 ### Governed server fallback
 
-The registered definition is valid, but governed state, policy, safety, or
+The registered definition is valid, but governed state, constraints, or
 explicitly required evidence prevents adaptation. The server returns the
-definition's registered fallback as an audited `200` decision result.
+definition's registered fallback as a durably recorded `200` decision result.
 
 ### SDK availability fallback
 
-The data plane cannot be reached or cannot complete a request because of an explicitly recognized availability failure. If application configuration enables it, the SDK may return the code-declared local default with `source: "client-fallback"`.
+Decision Service cannot be reached or cannot complete a request because of an
+explicitly recognized availability failure. If application configuration
+enables it, the SDK may return its configured local default with
+`source: "client-fallback"`.
 
-An availability fallback has no server `decisionId`, `auditId`, policy result, definition status, or exposure token. It carries only the accepted expected contract tuple as client provenance.
+An availability fallback has no server `decisionId`, `decisionRecordId`,
+constraint result, definition status, or exposure token. It carries only the
+accepted expected contract tuple as client provenance.
 
 Availability fallback is disabled by default. It is eligible only after configured retries for DNS/connection failure, connection/read timeout before a complete response, intermediary `502`/`504`, or a valid Flaggo `5xx` Problem Details response with `clientFallback.eligible: true`. It is forbidden for TLS, certificate, proxy/authentication configuration, caller cancellation, malformed responses, every `503` without explicit eligibility, every `4xx`, `500`/`501`/`505`, and Flaggo problems where eligibility is false or absent.
 
 `required-evidence-unavailable` is always ineligible for SDK-local fallback.
-When governed fallback is permitted, the server returns an audited fallback
+When governed fallback is permitted, the server returns a durably recorded fallback
 decision. Otherwise the SDK surfaces fallback-ineligible Problem Details.
 
 The default is one retry after the initial attempt with the same decide

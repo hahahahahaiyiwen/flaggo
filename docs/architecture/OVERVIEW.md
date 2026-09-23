@@ -48,7 +48,7 @@ Adapters may expose ports or service APIs while preserving the same boundary.
 | Decision constraints | Deterministic limits that validate candidates or runtime results. | Declared in definitions; evaluated by owning service |
 | Authority candidate | Bounded behavior awaiting authenticated approval. | Bundle or Async Analysis Pipeline |
 | Decision state | Immutable activated `active-value` or `numeric-rule` authority. | State Store |
-| Runtime inputs | Live typed values supplied for one decision request. | Application request |
+| Runtime inputs | Typed values resolved for one execution from request or authorized evidence sources. | Decision Service input resolution from application request / Evidence Store |
 | Evidence | Durable observed or derived knowledge. | Evidence Store |
 | Decision record | Reconstructable record of one server result. | Decision Service -> Evidence Store |
 | Exposure | Confirmation that the application applied or rendered a result. | Decision Service -> Evidence Store |
