@@ -75,6 +75,39 @@ public sealed class DecisionPortTests
     }
 
     [Fact]
+    public async Task NumericRuleExecutor_NormalizesWeightsBeforeThreshold()
+    {
+        var executor = new DeterministicStrategyExecutor();
+        var state = State() with
+        {
+            Mode = "strategy",
+            StrategyId = "strategy-normalized",
+            NumericRule = new NumericRuleStrategy(
+                "unused",
+                0.6,
+                1,
+                0,
+                [
+                    new NumericRuleInput("first", 0, 1, 1),
+                    new NumericRuleInput("second", 0, 1, 1)
+                ])
+        };
+
+        var result = await executor.ExecuteAsync(
+            new StrategyExecutionRequest(
+                state,
+                [
+                    Input("first", 0.4),
+                    Input("second", 0.4)
+                ],
+                Evidence(0.82)),
+            CancellationToken.None);
+
+        Assert.Equal(0, result.Candidate!.Value.GetInt32());
+        Assert.Null(result.FailureReason);
+    }
+
+    [Fact]
     public async Task NumericRuleExecutor_FailsClosedWithoutConfidenceEvidence()
     {
         var executor = new DeterministicStrategyExecutor();

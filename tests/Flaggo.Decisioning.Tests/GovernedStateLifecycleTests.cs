@@ -10,18 +10,18 @@ public sealed class GovernedStateLifecycleTests
         new(2026, 8, 21, 20, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task ActivateAsync_FixedProposalPublishesCompleteStateThroughReadOnlyProjection()
+    public async Task ActivateAsync_ActiveValuePublishesThroughReadOnlyProjection()
     {
         var store = Store("state-1");
-        var proposal = FixedProposal("proposal-1", EmptyBaseline(), 800);
-
         var state = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-1",
-                "approval-1",
-                proposal),
+                "proposal-1",
+                EmptyBaseline(),
+                800),
             CancellationToken.None);
         var runtime = new GovernedStateRuntimeProjection(store, "app", "dev");
+
         var projected = await runtime.GetActiveAsync(
             "decision",
             "definition",
@@ -34,47 +34,94 @@ public sealed class GovernedStateLifecycleTests
         Assert.Equal("proposal-1", state.ProposalId);
         Assert.Equal(1, state.Generation);
         Assert.Null(state.PredecessorStateId);
-        Assert.Equal("approval-1", state.ApprovalReference);
+        Assert.Equal("approval-activation-1", state.ApprovalReference);
         Assert.Equal(Now, state.ActivatedAt);
         Assert.Equal(Now, state.LastChangedAt);
         Assert.Equal(GovernedDecisionStateStatus.Active, state.LifecycleStatus);
         Assert.Equal("active-value", state.Mode);
+        Assert.Null(state.StrategyId);
+        Assert.Null(state.NumericRule);
         Assert.Equal(800, state.Value.GetInt32());
     }
 
     [Fact]
-    public async Task ActivateAsync_NumericStrategyCreatesSupportedStrategyState()
+    public async Task ActivateAsync_NumericRuleDerivesStableStrategyIdentity()
     {
-        var store = Store("state-1");
-        var proposal = StrategyProposal("proposal-1", EmptyBaseline());
+        var first = Store("state-1");
+        var second = Store("state-2");
+        var request = NumericRuleRequest(
+            "activation-1",
+            "proposal-1",
+            EmptyBaseline());
 
-        var state = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-1",
-                "approval-1",
-                proposal),
+        var firstState = await first.ActivateAsync(
+            request,
+            CancellationToken.None);
+        var secondState = await second.ActivateAsync(
+            request,
             CancellationToken.None);
 
-        Assert.Equal("strategy", state.Mode);
-        Assert.Equal("strategy-1", state.StrategyId);
-        Assert.Equal(800, state.Value.GetInt32());
-        Assert.Equal("pressure", state.NumericRule!.InputSignalKey);
+        Assert.Equal("numeric-rule", firstState.Mode);
+        Assert.StartsWith("strategy_", firstState.StrategyId);
+        Assert.Equal(firstState.StrategyId, secondState.StrategyId);
+        Assert.Equal(800, firstState.Value.GetInt32());
+        Assert.Equal("pressure", firstState.NumericRule!.InputSignalKey);
     }
 
     [Fact]
-    public async Task ActivateAsync_ReplayReturnsOriginalStateIdentity()
+    public async Task ActivateAsync_ReplayReturnsOriginalStateAndStrategyIdentity()
     {
         var store = Store("state-1", "state-unexpected");
-        var request = new GovernedStateActivationRequest(
+        var request = NumericRuleRequest(
             "activation-1",
-            "approval-1",
-            FixedProposal("proposal-1", EmptyBaseline(), 800));
+            "proposal-1",
+            EmptyBaseline());
 
-        var first = await store.ActivateAsync(request, CancellationToken.None);
-        var replay = await store.ActivateAsync(request, CancellationToken.None);
+        var first = await store.ActivateAsync(
+            request,
+            CancellationToken.None);
+        var replay = await store.ActivateAsync(
+            request,
+            CancellationToken.None);
 
-        Assert.Equal("state-1", first.StateId);
         Assert.Same(first, replay);
+        Assert.Equal("state-1", replay.StateId);
+        Assert.Equal(first.Generation, replay.Generation);
+        Assert.Equal(first.StrategyId, replay.StrategyId);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_ReplayAfterReplacementReturnsOriginalLineage()
+    {
+        var store = Store("state-1", "state-2");
+        var originalRequest = NumericRuleRequest(
+            "activation-1",
+            "proposal-1",
+            EmptyBaseline());
+        var original = await store.ActivateAsync(
+            originalRequest,
+            CancellationToken.None);
+        var replacement = await store.ActivateAsync(
+            ActiveValueRequest(
+                "activation-2",
+                "proposal-2",
+                new GovernedStateBaseline(
+                    original.StateId,
+                    original.Generation),
+                850),
+            CancellationToken.None);
+
+        var replay = await store.ActivateAsync(
+            originalRequest,
+            CancellationToken.None);
+
+        Assert.Equal(original.StateId, replay.StateId);
+        Assert.Equal(original.Generation, replay.Generation);
+        Assert.Equal(original.StrategyId, replay.StrategyId);
+        Assert.Equal(
+            GovernedDecisionStateStatus.Superseded,
+            replay.LifecycleStatus);
+        Assert.NotEqual(replacement.StateId, replay.StateId);
     }
 
     [Fact]
@@ -82,18 +129,20 @@ public sealed class GovernedStateLifecycleTests
     {
         var store = Store("state-1");
         await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
+                "proposal-1",
+                EmptyBaseline(),
+                800),
             CancellationToken.None);
 
         var error = await Assert.ThrowsAsync<GovernedStateConflictException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                ActiveValueRequest(
                     "activation-1",
-                    "approval-2",
-                    FixedProposal("proposal-1", EmptyBaseline(), 800)),
+                    "proposal-1",
+                    EmptyBaseline(),
+                    850),
                 CancellationToken.None));
 
         Assert.Equal("activation-conflict", error.Code);
@@ -103,20 +152,21 @@ public sealed class GovernedStateLifecycleTests
     public async Task ActivateAsync_ReusedProposalWithDifferentActivationConflicts()
     {
         var store = Store("state-1");
-        var proposal = FixedProposal("proposal-1", EmptyBaseline(), 800);
         await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-1",
-                "approval-1",
-                proposal),
+                "proposal-1",
+                EmptyBaseline(),
+                800),
             CancellationToken.None);
 
         var error = await Assert.ThrowsAsync<GovernedStateConflictException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                ActiveValueRequest(
                     "activation-2",
-                    "approval-1",
-                    proposal),
+                    "proposal-1",
+                    EmptyBaseline(),
+                    800),
                 CancellationToken.None));
 
         Assert.Equal("duplicate-proposal", error.Code);
@@ -127,25 +177,54 @@ public sealed class GovernedStateLifecycleTests
     {
         var store = Store("state-1", "state-2");
         var first = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
+                "proposal-1",
+                EmptyBaseline(),
+                800),
             CancellationToken.None);
-        var stale = new GovernedStateBaseline(first.StateId, first.Generation);
+        var stale = new GovernedStateBaseline(
+            first.StateId,
+            first.Generation);
         await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-2",
-                "approval-2",
-                FixedProposal("proposal-2", stale, 850)),
+                "proposal-2",
+                stale,
+                850),
             CancellationToken.None);
 
         var error = await Assert.ThrowsAsync<GovernedStateConflictException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                ActiveValueRequest(
                     "activation-3",
-                    "approval-3",
-                    FixedProposal("proposal-3", stale, 750)),
+                    "proposal-3",
+                    stale,
+                    750),
+                CancellationToken.None));
+
+        Assert.Equal("stale-baseline", error.Code);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_NoStateBaselineConflictsWhenAuthorityExists()
+    {
+        var store = Store("state-1");
+        await store.ActivateAsync(
+            ActiveValueRequest(
+                "activation-1",
+                "proposal-1",
+                EmptyBaseline(),
+                800),
+            CancellationToken.None);
+
+        var error = await Assert.ThrowsAsync<GovernedStateConflictException>(
+            () => store.ActivateAsync(
+                ActiveValueRequest(
+                    "activation-2",
+                    "proposal-2",
+                    EmptyBaseline(),
+                    850),
                 CancellationToken.None));
 
         Assert.Equal("stale-baseline", error.Code);
@@ -156,28 +235,24 @@ public sealed class GovernedStateLifecycleTests
     {
         var store = Store("state-1");
         var first = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-1",
-                "approval-1",
-                FixedProposal(
-                    "proposal-1",
-                    EmptyBaseline(),
-                    800,
-                    new DecisionTargetRef("cohort", "first"))),
+                "proposal-1",
+                EmptyBaseline(),
+                800,
+                new DecisionTargetRef("cohort", "first")),
             CancellationToken.None);
 
         var error = await Assert.ThrowsAsync<GovernedStateConflictException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                ActiveValueRequest(
                     "activation-2",
-                    "approval-2",
-                    FixedProposal(
-                        "proposal-2",
-                        new GovernedStateBaseline(
-                            first.StateId,
-                            first.Generation),
-                        850,
-                        new DecisionTargetRef("cohort", "second"))),
+                    "proposal-2",
+                    new GovernedStateBaseline(
+                        first.StateId,
+                        first.Generation),
+                    850,
+                    new DecisionTargetRef("cohort", "second")),
                 CancellationToken.None));
 
         Assert.Equal("target-conflict", error.Code);
@@ -188,24 +263,23 @@ public sealed class GovernedStateLifecycleTests
     {
         var store = Store("state-1");
         var first = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
+                "proposal-1",
+                EmptyBaseline(),
+                800),
             CancellationToken.None);
 
         var error = await Assert.ThrowsAsync<GovernedStateConflictException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                ActiveValueRequest(
                     "activation-2",
-                    "approval-2",
-                    FixedProposal(
-                        "proposal-2",
-                        new GovernedStateBaseline(
-                            first.StateId,
-                            first.Generation),
-                        850,
-                        contractDigest: Digest('b'))),
+                    "proposal-2",
+                    new GovernedStateBaseline(
+                        first.StateId,
+                        first.Generation),
+                    850,
+                    contractDigest: Digest('b')),
                 CancellationToken.None));
 
         Assert.Equal("incompatible-definition", error.Code);
@@ -216,24 +290,27 @@ public sealed class GovernedStateLifecycleTests
     {
         var store = Store("state-1", "state-2", "state-3");
         var first = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
+                "proposal-1",
+                EmptyBaseline(),
+                800),
             CancellationToken.None);
         var baseline = new GovernedStateBaseline(
             first.StateId,
             first.Generation);
         var requests = new[]
         {
-            new GovernedStateActivationRequest(
+            ActiveValueRequest(
                 "activation-2",
-                "approval-2",
-                FixedProposal("proposal-2", baseline, 850)),
-            new GovernedStateActivationRequest(
+                "proposal-2",
+                baseline,
+                850),
+            ActiveValueRequest(
                 "activation-3",
-                "approval-3",
-                FixedProposal("proposal-3", baseline, 750))
+                "proposal-3",
+                baseline,
+                750)
         };
 
         var outcomes = await Task.WhenAll(
@@ -255,24 +332,59 @@ public sealed class GovernedStateLifecycleTests
         var conflict = Assert.IsType<GovernedStateConflictException>(
             Assert.Single(outcomes.Where(outcome => outcome.Error is not null)).Error);
         Assert.Equal("stale-baseline", conflict.Code);
-        var active = await store.GetBaselineAsync(
-            Address(),
-            CancellationToken.None);
-        Assert.Equal(2, active!.Generation);
+        Assert.Equal(
+            2,
+            (await store.GetBaselineAsync(
+                Address(),
+                CancellationToken.None))!.Generation);
     }
 
     [Fact]
-    public async Task ActivateAsync_UnsupportedProposalFailsBeforePublication()
+    public async Task ActivateAsync_ReplacementSupersedesPredecessor()
+    {
+        var store = Store("state-1", "state-2");
+        var first = await store.ActivateAsync(
+            ActiveValueRequest(
+                "activation-1",
+                "proposal-1",
+                EmptyBaseline(),
+                800),
+            CancellationToken.None);
+        var replacement = await store.ActivateAsync(
+            ActiveValueRequest(
+                "activation-2",
+                "proposal-2",
+                new GovernedStateBaseline(
+                    first.StateId,
+                    first.Generation),
+                850),
+            CancellationToken.None);
+
+        var snapshot = store.CapturePersistenceSnapshot();
+        var predecessor = Assert.Single(
+            snapshot.States,
+            entry => entry.State.StateId == first.StateId);
+        Assert.Equal(
+            GovernedDecisionStateStatus.Superseded,
+            predecessor.State.LifecycleStatus);
+        Assert.Equal(first.StateId, replacement.PredecessorStateId);
+        Assert.Equal(
+            GovernedDecisionStateStatus.Active,
+            replacement.LifecycleStatus);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_UnsupportedCandidateFailsBeforePublication()
     {
         var store = Store("state-unexpected");
 
         var error = await Assert.ThrowsAsync<GovernedStateValidationException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                Request(
                     "activation-1",
-                    "approval-1",
-                    new UnsupportedProposal(
-                        Context("proposal-1", EmptyBaseline(), null))),
+                    "proposal-1",
+                    EmptyBaseline(),
+                    new UnsupportedCandidate("unsupported")),
                 CancellationToken.None));
 
         Assert.Equal("unsupported-state-kind", error.Code);
@@ -288,19 +400,100 @@ public sealed class GovernedStateLifecycleTests
 
         var error = await Assert.ThrowsAsync<GovernedStateValidationException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                Request(
                     "activation-1",
-                    "approval-1",
-                    new FixedValueDecisionProposal(
-                        Context("proposal-1", EmptyBaseline(), null),
+                    "proposal-1",
+                    EmptyBaseline(),
+                    new ActiveValueActivationCandidate(
+                        "Improve the governed value.",
                         JsonSerializer.SerializeToElement(
                             new { unsupported = true }))),
                 CancellationToken.None));
 
-        Assert.Equal("invalid-proposal", error.Code);
+        Assert.Equal("invalid-activation", error.Code);
         Assert.Null(await store.GetBaselineAsync(
             Address(),
             CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("empty-inputs")]
+    [InlineData("threshold-below-range")]
+    [InlineData("threshold-above-range")]
+    public async Task ActivateAsync_InvalidWeightedRuleFailsBeforePublication(
+        string invalidRule)
+    {
+        var store = Store("state-unexpected");
+        var threshold = invalidRule switch
+        {
+            "threshold-below-range" => -0.1,
+            "threshold-above-range" => 1.1,
+            _ => 0.5
+        };
+        IReadOnlyList<NumericRuleInput> inputs = invalidRule == "empty-inputs"
+            ? []
+            : [new NumericRuleInput("pressure", 0, 1, 1)];
+
+        var error = await Assert.ThrowsAsync<GovernedStateValidationException>(
+            () => store.ActivateAsync(
+                Request(
+                    "activation-1",
+                    "proposal-1",
+                    EmptyBaseline(),
+                    new NumericRuleActivationCandidate(
+                        "Adapt the governed value.",
+                        JsonSerializer.SerializeToElement(800),
+                        new NumericRuleStrategy(
+                            "pressure",
+                            threshold,
+                            750,
+                            850,
+                            inputs))),
+                CancellationToken.None));
+
+        Assert.Equal("invalid-activation", error.Code);
+        Assert.Null(await store.GetBaselineAsync(
+            Address(),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ActivateAsync_FreezesWeightedRuleAuthority()
+    {
+        var store = Store("state-1");
+        var inputs = new[]
+        {
+            new NumericRuleInput("pressure", 0, 1, 1)
+        };
+        var activated = await store.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                EmptyBaseline(),
+                new NumericRuleActivationCandidate(
+                    "Adapt the governed value.",
+                    JsonSerializer.SerializeToElement(800),
+                    new NumericRuleStrategy(
+                        "pressure",
+                        0.5,
+                        750,
+                        850,
+                        inputs))),
+            CancellationToken.None);
+
+        inputs[0] = new NumericRuleInput("tampered", 0, 1, 1);
+        var baseline = await store.GetBaselineAsync(
+            Address(),
+            CancellationToken.None);
+        var storedInputs = baseline!.NumericRule!.WeightedInputs!;
+
+        Assert.Equal("pressure", Assert.Single(storedInputs).SignalKey);
+        var exposedList =
+            Assert.IsAssignableFrom<IList<NumericRuleInput>>(storedInputs);
+        Assert.Throws<NotSupportedException>(
+            () => exposedList[0] =
+                new NumericRuleInput("tampered-again", 0, 1, 1));
+        Assert.Equal(activated.StrategyId, baseline.StrategyId);
     }
 
     [Fact]
@@ -312,197 +505,16 @@ public sealed class GovernedStateLifecycleTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => store.ActivateAsync(
-                new GovernedStateActivationRequest(
+                ActiveValueRequest(
                     "activation-1",
-                    "approval-1",
-                    FixedProposal("proposal-1", EmptyBaseline(), 800)),
+                    "proposal-1",
+                    EmptyBaseline(),
+                    800),
                 cancellation.Token));
 
         Assert.Null(await store.GetBaselineAsync(
             Address(),
             CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task TransitionAsync_CompletesAuthorityAndRemovesRuntimeProjection()
-    {
-        var store = Store("state-1");
-        var state = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
-            CancellationToken.None);
-        var transitioned = await store.TransitionAsync(
-            new GovernedStateTransitionRequest(
-                "transition-1",
-                Address(),
-                state.StateId!,
-                state.Generation,
-                GovernedDecisionStateStatus.Completed),
-            CancellationToken.None);
-        var runtime = new GovernedStateRuntimeProjection(store, "app", "dev");
-
-        Assert.Equal(
-            GovernedDecisionStateStatus.Completed,
-            transitioned.LifecycleStatus);
-        var baseline = await store.GetBaselineAsync(
-            Address(),
-            CancellationToken.None);
-        Assert.Equal(
-            GovernedDecisionStateStatus.Completed,
-            baseline!.LifecycleStatus);
-        Assert.Null(await runtime.GetActiveAsync(
-            "decision",
-            "definition",
-            "revision",
-            [null],
-            CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task ActivateAsync_AfterCompletionContinuesGenerationHistory()
-    {
-        var store = Store("state-1", "state-2");
-        var first = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
-            CancellationToken.None);
-        var completed = await store.TransitionAsync(
-            new GovernedStateTransitionRequest(
-                "transition-1",
-                Address(),
-                first.StateId!,
-                first.Generation,
-                GovernedDecisionStateStatus.Completed),
-            CancellationToken.None);
-
-        var replacement = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-2",
-                "approval-2",
-                FixedProposal(
-                    "proposal-2",
-                    new GovernedStateBaseline(
-                        completed.StateId,
-                        completed.Generation),
-                    850)),
-            CancellationToken.None);
-
-        Assert.Equal(2, replacement.Generation);
-        Assert.Equal(first.StateId, replacement.PredecessorStateId);
-        Assert.Equal(
-            GovernedDecisionStateStatus.Completed,
-            (await store.GetStateAsync(
-                first.StateId!,
-                CancellationToken.None))!.LifecycleStatus);
-    }
-
-    [Fact]
-    public async Task TransitionAsync_ReplayReturnsOriginalStateIdentity()
-    {
-        var store = Store("state-1");
-        var state = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
-            CancellationToken.None);
-        var request = new GovernedStateTransitionRequest(
-            "transition-1",
-            Address(),
-            state.StateId!,
-            state.Generation,
-            GovernedDecisionStateStatus.Completed);
-
-        var first = await store.TransitionAsync(
-            request,
-            CancellationToken.None);
-        var replay = await store.TransitionAsync(
-            request,
-            CancellationToken.None);
-
-        Assert.Same(first, replay);
-        Assert.Equal(state.StateId, replay.StateId);
-    }
-
-    [Theory]
-    [InlineData(
-        GovernedDecisionStateStatus.Completed,
-        GovernedDecisionStateStatus.Expired)]
-    [InlineData(
-        GovernedDecisionStateStatus.Expired,
-        GovernedDecisionStateStatus.Completed)]
-    public async Task TransitionAsync_TerminalStateCannotTransitionAgain(
-        GovernedDecisionStateStatus firstStatus,
-        GovernedDecisionStateStatus secondStatus)
-    {
-        var store = Store("state-1");
-        var state = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
-            CancellationToken.None);
-        await store.TransitionAsync(
-            new GovernedStateTransitionRequest(
-                "transition-1",
-                Address(),
-                state.StateId!,
-                state.Generation,
-                firstStatus),
-            CancellationToken.None);
-
-        var error = await Assert.ThrowsAsync<GovernedStateValidationException>(
-            () => store.TransitionAsync(
-                new GovernedStateTransitionRequest(
-                    "transition-2",
-                    Address(),
-                    state.StateId!,
-                    state.Generation,
-                    secondStatus),
-                CancellationToken.None));
-
-        Assert.Equal("invalid-lifecycle-transition", error.Code);
-        Assert.Equal(
-            firstStatus,
-            (await store.GetBaselineAsync(
-                Address(),
-                CancellationToken.None))!.LifecycleStatus);
-    }
-
-    [Fact]
-    public async Task ActivateAsync_RollbackMarksReplacedStateRolledBack()
-    {
-        var store = Store("state-1", "state-2");
-        var first = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-1",
-                "approval-1",
-                FixedProposal("proposal-1", EmptyBaseline(), 800)),
-            CancellationToken.None);
-        var replacement = await store.ActivateAsync(
-            new GovernedStateActivationRequest(
-                "activation-2",
-                "approval-2",
-                FixedProposal(
-                    "proposal-2",
-                    new GovernedStateBaseline(
-                        first.StateId,
-                        first.Generation),
-                    750),
-                GovernedDecisionStateStatus.RolledBack),
-            CancellationToken.None);
-
-        var predecessor = await store.GetStateAsync(
-            first.StateId!,
-            CancellationToken.None);
-        Assert.Equal(
-            GovernedDecisionStateStatus.RolledBack,
-            predecessor!.LifecycleStatus);
-        Assert.Equal(first.StateId, replacement.PredecessorStateId);
     }
 
     private static InMemoryGovernedStateLifecycleStore Store(
@@ -511,35 +523,47 @@ public sealed class GovernedStateLifecycleTests
             new FixedTimeProvider(),
             new SequenceStateIdentityGenerator(stateIds));
 
-    private static FixedValueDecisionProposal FixedProposal(
+    private static GovernedStateActivationRequest ActiveValueRequest(
+        string activationId,
         string proposalId,
         GovernedStateBaseline baseline,
         int value,
         DecisionTargetRef? target = null,
         string? contractDigest = null) =>
-        new(
-            Context(proposalId, baseline, target, contractDigest),
-            JsonSerializer.SerializeToElement(value));
+        Request(
+            activationId,
+            proposalId,
+            baseline,
+            new ActiveValueActivationCandidate(
+                "Improve the governed value.",
+                JsonSerializer.SerializeToElement(value)),
+            target,
+            contractDigest);
 
-    private static NumericStrategyDecisionProposal StrategyProposal(
+    private static GovernedStateActivationRequest NumericRuleRequest(
+        string activationId,
         string proposalId,
         GovernedStateBaseline baseline) =>
-        new(
-            Context(proposalId, baseline, null),
-            JsonSerializer.SerializeToElement(800),
-            "strategy-1",
-            new NumericRuleStrategy("pressure", 0.5, 750, 850));
+        Request(
+            activationId,
+            proposalId,
+            baseline,
+            new NumericRuleActivationCandidate(
+                "Adapt the governed value.",
+                JsonSerializer.SerializeToElement(800),
+                new NumericRuleStrategy("pressure", 0.5, 750, 850)));
 
-    private static DecisionProposalContext Context(
+    private static GovernedStateActivationRequest Request(
+        string activationId,
         string proposalId,
         GovernedStateBaseline baseline,
-        DecisionTargetRef? target,
+        GovernedStateActivationCandidate candidate,
+        DecisionTargetRef? target = null,
         string? contractDigest = null) =>
         new(
+            activationId,
             proposalId,
-            new DecisionProposalSource(
-                DecisionProposalSourceKind.Scripted,
-                "fixture"),
+            $"approval-{activationId}",
             new GovernedDefinitionIdentity(
                 "app",
                 "dev",
@@ -550,11 +574,7 @@ public sealed class GovernedStateLifecycleTests
                     "revision")),
             target,
             baseline,
-            "Improve the governed value.",
-            ["evidence-1"],
-            ["confidence-1"],
-            Now.AddMinutes(-1),
-            Now.AddHours(1));
+            candidate);
 
     private static GovernedStateAddress Address(
         DecisionTargetRef? target = null) =>
@@ -564,8 +584,8 @@ public sealed class GovernedStateLifecycleTests
 
     private static string Digest(char value) => $"sha256:{new string(value, 64)}";
 
-    private sealed record UnsupportedProposal(DecisionProposalContext Context)
-        : DecisionProposal(Context);
+    private sealed record UnsupportedCandidate(string Rationale)
+        : GovernedStateActivationCandidate(Rationale);
 
     private sealed class FixedTimeProvider : TimeProvider
     {

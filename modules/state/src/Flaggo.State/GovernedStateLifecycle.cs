@@ -9,26 +9,9 @@ namespace Flaggo.State;
 [JsonConverter(typeof(JsonStringEnumConverter<GovernedDecisionStateStatus>))]
 public enum GovernedDecisionStateStatus
 {
-    Pending,
     Active,
-    Superseded,
-    Expired,
-    Completed,
-    RolledBack
+    Superseded
 }
-
-[JsonConverter(typeof(JsonStringEnumConverter<DecisionProposalSourceKind>))]
-public enum DecisionProposalSourceKind
-{
-    Operator,
-    Scripted,
-    Automated,
-    Intelligence
-}
-
-public sealed record DecisionProposalSource(
-    DecisionProposalSourceKind Kind,
-    string Reference);
 
 public sealed record GovernedDefinitionIdentity(
     string AppId,
@@ -46,46 +29,32 @@ public sealed record GovernedStateBaseline(
     string? StateId,
     long Generation);
 
-public sealed record DecisionProposalContext(
-    string ProposalId,
-    DecisionProposalSource Source,
-    GovernedDefinitionIdentity Definition,
-    DecisionTargetRef? ControlTarget,
-    GovernedStateBaseline ExpectedBaseline,
-    string Rationale,
-    IReadOnlyList<string> EvidenceReferences,
-    IReadOnlyList<string> ConfidenceReferences,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt);
-
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
-[JsonDerivedType(typeof(FixedValueDecisionProposal), "fixed-value")]
-[JsonDerivedType(typeof(NumericStrategyDecisionProposal), "numeric-strategy")]
-public abstract record DecisionProposal(DecisionProposalContext Context);
+[JsonDerivedType(
+    typeof(ActiveValueActivationCandidate),
+    "active-value")]
+[JsonDerivedType(
+    typeof(NumericRuleActivationCandidate),
+    "numeric-rule")]
+public abstract record GovernedStateActivationCandidate(string Rationale);
 
-public sealed record FixedValueDecisionProposal(
-    DecisionProposalContext Context,
-    JsonElement Value) : DecisionProposal(Context);
+public sealed record ActiveValueActivationCandidate(
+    string Rationale,
+    JsonElement Value) : GovernedStateActivationCandidate(Rationale);
 
-public sealed record NumericStrategyDecisionProposal(
-    DecisionProposalContext Context,
+public sealed record NumericRuleActivationCandidate(
+    string Rationale,
     JsonElement InitialValue,
-    string StrategyId,
-    NumericRuleStrategy Strategy) : DecisionProposal(Context);
+    NumericRuleStrategy Rule) : GovernedStateActivationCandidate(Rationale);
 
 public sealed record GovernedStateActivationRequest(
     string ActivationId,
+    string ProposalId,
     string ApprovalReference,
-    DecisionProposal Proposal,
-    GovernedDecisionStateStatus ReplacedStateStatus =
-        GovernedDecisionStateStatus.Superseded);
-
-public sealed record GovernedStateTransitionRequest(
-    string TransitionId,
-    GovernedStateAddress Address,
-    string StateId,
-    long ExpectedGeneration,
-    GovernedDecisionStateStatus Status);
+    GovernedDefinitionIdentity Definition,
+    DecisionTargetRef? ControlTarget,
+    GovernedStateBaseline ExpectedBaseline,
+    GovernedStateActivationCandidate Candidate);
 
 public interface IGovernedStateIdentityGenerator
 {
@@ -104,16 +73,8 @@ public interface IGovernedStateLifecycleStore
         GovernedStateAddress address,
         CancellationToken cancellationToken);
 
-    Task<GovernedDecisionState?> GetStateAsync(
-        string stateId,
-        CancellationToken cancellationToken);
-
     Task<GovernedDecisionState> ActivateAsync(
         GovernedStateActivationRequest request,
-        CancellationToken cancellationToken);
-
-    Task<GovernedDecisionState> TransitionAsync(
-        GovernedStateTransitionRequest request,
         CancellationToken cancellationToken);
 }
 
@@ -181,7 +142,6 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
     private readonly Dictionary<GovernedStateAddress, string> _latestStateIds = [];
     private readonly Dictionary<string, GovernedStateEntry> _states = [];
     private readonly Dictionary<string, GovernedStateActivationReplay> _activations = [];
-    private readonly Dictionary<string, GovernedStateTransitionReplay> _transitions = [];
     private readonly Dictionary<string, string> _proposalFingerprints = [];
     private readonly TimeProvider _timeProvider;
     private readonly IGovernedStateIdentityGenerator _identityGenerator;
@@ -190,7 +150,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         TimeProvider? timeProvider = null,
         IGovernedStateIdentityGenerator? identityGenerator = null)
         : this(
-            new GovernedStatePersistenceSnapshot(2, [], [], []),
+            new GovernedStatePersistenceSnapshot(2, [], []),
             timeProvider ?? TimeProvider.System,
             identityGenerator ?? new GuidGovernedStateIdentityGenerator())
     {
@@ -205,8 +165,9 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         _identityGenerator = identityGenerator;
         var activeAddresses = new HashSet<GovernedStateAddress>();
 
-        foreach (var entry in snapshot.States)
+        foreach (var snapshotEntry in snapshot.States)
         {
+            var entry = FreezeEntry(snapshotEntry);
             if (string.IsNullOrWhiteSpace(entry.State.StateId) ||
                 !_states.TryAdd(entry.State.StateId, entry))
             {
@@ -234,36 +195,93 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
             }
         }
 
+        foreach (var (address, latestStateId) in _latestStateIds)
+        {
+            var latestState = _states[latestStateId].State;
+            if (latestState.LifecycleStatus != GovernedDecisionStateStatus.Active)
+            {
+                throw new InvalidDataException(
+                    "The latest governed state for an authority address must be active.");
+            }
+
+            if (_states.Values.Any(entry =>
+                    entry.Address == address &&
+                    !string.Equals(
+                        entry.State.StateId,
+                        latestStateId,
+                        StringComparison.Ordinal) &&
+                    entry.State.LifecycleStatus !=
+                        GovernedDecisionStateStatus.Superseded))
+            {
+                throw new InvalidDataException(
+                    "Every predecessor governed state must be superseded.");
+            }
+        }
+
+        foreach (var addressStates in _states.Values.GroupBy(
+                     entry => entry.Address))
+        {
+            var ordered = addressStates
+                .OrderBy(entry => entry.State.Generation)
+                .ToArray();
+            if (ordered[0].State.Generation != 1 ||
+                ordered[0].State.PredecessorStateId is not null)
+            {
+                throw new InvalidDataException(
+                    "Governed state lineage must begin at generation one without a predecessor.");
+            }
+
+            for (var index = 1; index < ordered.Length; index++)
+            {
+                var predecessor = ordered[index - 1].State;
+                var current = ordered[index].State;
+                if (current.Generation != predecessor.Generation + 1 ||
+                    !string.Equals(
+                        current.PredecessorStateId,
+                        predecessor.StateId,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        "Governed state lineage must be contiguous within one authority address.");
+                }
+            }
+        }
+
+        var referencedStateIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var replay in snapshot.Activations)
         {
-            if (!_activations.TryAdd(replay.ActivationId, replay) ||
+            if (!_states.TryGetValue(replay.StateId, out var entry) ||
+                !referencedStateIds.Add(replay.StateId) ||
+                !_activations.TryAdd(replay.ActivationId, replay) ||
                 !_proposalFingerprints.TryAdd(
                     replay.ProposalId,
-                    replay.ProposalFingerprint))
+                    replay.ProposalFingerprint) ||
+                !string.Equals(
+                    replay.ProposalId,
+                    entry.State.ProposalId,
+                    StringComparison.Ordinal))
             {
                 throw new InvalidDataException(
-                    "Governed activation identities must be unique.");
+                    "Governed activation identities must uniquely bind to their stored state.");
+            }
+
+            if (entry.State.Mode == "numeric-rule" &&
+                !string.Equals(
+                    entry.State.StrategyId,
+                    CreateStrategyId(
+                        replay.ActivationId,
+                        entry.State.NumericRule!),
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "A governed numeric-rule strategy identity must match its activation.");
             }
         }
 
-        foreach (var replay in snapshot.Transitions)
+        if (referencedStateIds.Count != _states.Count)
         {
-            if (!_transitions.TryAdd(replay.TransitionId, replay))
-            {
-                throw new InvalidDataException(
-                    "Governed transition identities must be unique.");
-            }
-        }
-
-        foreach (var address in activeAddresses)
-        {
-            var latestState = _states[_latestStateIds[address]].State;
-            if (latestState.LifecycleStatus !=
-                GovernedDecisionStateStatus.Active)
-            {
-                throw new InvalidDataException(
-                    "An older governed state cannot remain active after a later generation.");
-            }
+            throw new InvalidDataException(
+                "Every governed state must have exactly one activation replay.");
         }
     }
 
@@ -282,29 +300,21 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         }
     }
 
-    public Task<GovernedDecisionState?> GetStateAsync(
-        string stateId,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        ArgumentException.ThrowIfNullOrWhiteSpace(stateId);
-        lock (_gate)
-        {
-            return Task.FromResult(
-                _states.TryGetValue(stateId, out var entry)
-                    ? entry.State
-                    : null);
-        }
-    }
-
     public Task<GovernedDecisionState> ActivateAsync(
         GovernedStateActivationRequest request,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        request = FreezeActivationRequest(request);
         ValidateActivation(request);
         var requestFingerprint = Fingerprint(request);
-        var proposalFingerprint = Fingerprint(request.Proposal);
+        var proposalFingerprint = Fingerprint(
+            new GovernedStateProposalFingerprint(
+                request.ProposalId,
+                request.Definition,
+                request.ControlTarget,
+                request.ExpectedBaseline,
+                request.Candidate));
 
         lock (_gate)
         {
@@ -324,9 +334,8 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                 return Task.FromResult(_states[replay.StateId].State);
             }
 
-            var proposalId = request.Proposal.Context.ProposalId;
             if (_proposalFingerprints.TryGetValue(
-                    proposalId,
+                    request.ProposalId,
                     out var priorProposalFingerprint))
             {
                 throw Conflict(
@@ -339,11 +348,11 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                         : "The proposal identity was reused with different content.");
             }
 
-            var address = Address(request.Proposal.Context);
+            var address = Address(request);
             var current = ResolveExpectedBaseline(
                 address,
-                request.Proposal.Context.ExpectedBaseline);
-            ValidateDefinitionCompatibility(current, request.Proposal.Context);
+                request.ExpectedBaseline);
+            ValidateDefinitionCompatibility(current, request.Definition);
 
             var stateId = _identityGenerator.CreateStateId();
             if (string.IsNullOrWhiteSpace(stateId) ||
@@ -362,106 +371,31 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                 current?.StateId,
                 activatedAt);
 
-            if (current?.LifecycleStatus == GovernedDecisionStateStatus.Active)
+            if (current is not null)
             {
-                var replaced = current with
-                {
-                    LifecycleStatus = request.ReplacedStateStatus
-                };
-                _states[current.StateId!] =
-                    new GovernedStateEntry(address, replaced);
+                _states[current.StateId!] = new GovernedStateEntry(
+                    address,
+                    current with
+                    {
+                        LifecycleStatus =
+                            GovernedDecisionStateStatus.Superseded
+                    });
             }
 
             _states.Add(stateId, new GovernedStateEntry(address, state));
             _latestStateIds[address] = stateId;
-            _proposalFingerprints.Add(proposalId, proposalFingerprint);
+            _proposalFingerprints.Add(
+                request.ProposalId,
+                proposalFingerprint);
             _activations.Add(
                 request.ActivationId,
                 new GovernedStateActivationReplay(
                     request.ActivationId,
                     requestFingerprint,
-                    proposalId,
+                    request.ProposalId,
                     proposalFingerprint,
                     stateId));
             return Task.FromResult(state);
-        }
-    }
-
-    public Task<GovernedDecisionState> TransitionAsync(
-        GovernedStateTransitionRequest request,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        ValidateTransition(request);
-        var fingerprint = Fingerprint(request);
-
-        lock (_gate)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (_transitions.TryGetValue(request.TransitionId, out var replay))
-            {
-                if (!string.Equals(
-                        replay.Fingerprint,
-                        fingerprint,
-                        StringComparison.Ordinal))
-                {
-                    throw Conflict(
-                        "transition-conflict",
-                        "The transition identity was reused with different content.");
-                }
-
-                return Task.FromResult(_states[replay.StateId].State);
-            }
-
-            if (!_states.TryGetValue(request.StateId, out var entry))
-            {
-                throw Conflict(
-                    "stale-baseline",
-                    "The governed state baseline no longer exists.");
-            }
-
-            if (entry.Address != request.Address)
-            {
-                throw Conflict(
-                    "target-conflict",
-                    "The governed state belongs to another authority address.");
-            }
-
-            if (!_latestStateIds.TryGetValue(
-                    request.Address,
-                    out var latestStateId) ||
-                !string.Equals(
-                    latestStateId,
-                    request.StateId,
-                    StringComparison.Ordinal) ||
-                entry.State.Generation != request.ExpectedGeneration)
-            {
-                throw Conflict(
-                    "stale-baseline",
-                    "The governed state baseline was replaced before the transition.");
-            }
-
-            if (entry.State.LifecycleStatus !=
-                GovernedDecisionStateStatus.Active)
-            {
-                throw Validation(
-                    "invalid-lifecycle-transition",
-                    "Only an active governed state may be completed or expired.");
-            }
-
-            var transitioned = entry.State with
-            {
-                LifecycleStatus = request.Status
-            };
-            _states[request.StateId] =
-                new GovernedStateEntry(request.Address, transitioned);
-            _transitions.Add(
-                request.TransitionId,
-                new GovernedStateTransitionReplay(
-                    request.TransitionId,
-                    fingerprint,
-                    request.StateId));
-            return Task.FromResult(transitioned);
         }
     }
 
@@ -472,8 +406,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
             return new GovernedStatePersistenceSnapshot(
                 2,
                 _states.Values.ToArray(),
-                _activations.Values.ToArray(),
-                _transitions.Values.ToArray());
+                _activations.Values.ToArray());
         }
     }
 
@@ -524,14 +457,14 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
 
     private static void ValidateDefinitionCompatibility(
         GovernedDecisionState? current,
-        DecisionProposalContext context)
+        GovernedDefinitionIdentity definition)
     {
         if (current is null)
         {
             return;
         }
 
-        var contract = context.Definition.Contract;
+        var contract = definition.Contract;
         if (string.Equals(
                 current.DefinitionId,
                 contract.DefinitionId,
@@ -547,7 +480,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         {
             throw Conflict(
                 "incompatible-definition",
-                "The proposal changed the digest of an existing definition revision.");
+                "The activation changed the digest of an existing definition revision.");
         }
     }
 
@@ -558,167 +491,111 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         string? predecessorStateId,
         DateTimeOffset activatedAt)
     {
-        var context = request.Proposal.Context;
-        var contract = context.Definition.Contract;
-        return request.Proposal switch
+        var contract = request.Definition.Contract;
+        return request.Candidate switch
         {
-            FixedValueDecisionProposal fixedValue =>
+            ActiveValueActivationCandidate activeValue =>
                 new GovernedDecisionState(
                     contract.DefinitionId,
                     contract.Revision,
                     contract.ContractDigest,
-                    fixedValue.Value.Clone(),
-                    context.ControlTarget,
+                    activeValue.Value.Clone(),
+                    request.ControlTarget,
                     LastChangedAt: activatedAt,
                     StateId: stateId,
-                    ProposalId: context.ProposalId,
+                    ProposalId: request.ProposalId,
                     Generation: generation,
                     PredecessorStateId: predecessorStateId,
                     ApprovalReference: request.ApprovalReference,
                     ActivatedAt: activatedAt),
-            NumericStrategyDecisionProposal strategy =>
+            NumericRuleActivationCandidate numericRule =>
                 new GovernedDecisionState(
                     contract.DefinitionId,
                     contract.Revision,
                     contract.ContractDigest,
-                    strategy.InitialValue.Clone(),
-                    context.ControlTarget,
-                    "strategy",
-                    strategy.StrategyId,
-                    CloneStrategy(strategy.Strategy),
+                    numericRule.InitialValue.Clone(),
+                    request.ControlTarget,
+                    "numeric-rule",
+                    CreateStrategyId(
+                        request.ActivationId,
+                        numericRule.Rule),
+                    CloneStrategy(numericRule.Rule),
                     activatedAt,
                     stateId,
-                    context.ProposalId,
+                    request.ProposalId,
                     generation,
                     predecessorStateId,
                     request.ApprovalReference,
                     activatedAt),
             _ => throw Validation(
                 "unsupported-state-kind",
-                "The decision proposal kind is not supported by this state adapter.")
+                "The activation candidate kind is not supported by this state adapter.")
         };
     }
 
-    private void ValidateActivation(GovernedStateActivationRequest request)
+    private static string CreateStrategyId(
+        string activationId,
+        NumericRuleStrategy rule) =>
+        $"strategy_{Fingerprint(new GovernedStateStrategyIdentity(
+            activationId,
+            rule))}";
+
+    private static void ValidateActivation(
+        GovernedStateActivationRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.ActivationId) ||
+            string.IsNullOrWhiteSpace(request.ProposalId) ||
             string.IsNullOrWhiteSpace(request.ApprovalReference))
         {
             throw Validation(
                 "invalid-activation",
-                "Activation and approval identities are required.");
+                "Activation, proposal, and approval identities are required.");
         }
 
-        if (request.ReplacedStateStatus is not
-            (GovernedDecisionStateStatus.Superseded or
-             GovernedDecisionStateStatus.RolledBack))
-        {
-            throw Validation(
-                "invalid-lifecycle-transition",
-                "A replacement must supersede or roll back the previous state.");
-        }
-
-        ValidateProposal(request.Proposal);
+        ValidateDefinition(request.Definition);
+        ValidateTarget(request.ControlTarget);
+        ValidateBaseline(request.ExpectedBaseline);
+        ValidateCandidate(request.Candidate);
     }
 
-    private void ValidateProposal(DecisionProposal proposal)
+    private static void ValidateCandidate(
+        GovernedStateActivationCandidate candidate)
     {
-        if (proposal is null ||
-            proposal.Context is null ||
-            proposal.Context.Source is null ||
-            proposal.Context.Definition is null ||
-            proposal.Context.ExpectedBaseline is null ||
-            proposal.Context.EvidenceReferences is null ||
-            proposal.Context.ConfidenceReferences is null)
+        if (candidate is null ||
+            string.IsNullOrWhiteSpace(candidate.Rationale))
         {
             throw Validation(
-                "invalid-proposal",
-                "The proposal is missing required typed context.");
+                "invalid-activation",
+                "An activation candidate and rationale are required.");
         }
 
-        var context = proposal.Context;
-        if (string.IsNullOrWhiteSpace(context.ProposalId) ||
-            !Enum.IsDefined(context.Source.Kind) ||
-            string.IsNullOrWhiteSpace(context.Source.Reference) ||
-            string.IsNullOrWhiteSpace(context.Rationale))
+        switch (candidate)
         {
-            throw Validation(
-                "invalid-proposal",
-                "Proposal identity, source, and rationale are required.");
-        }
-
-        ValidateDefinition(context.Definition);
-        ValidateTarget(context.ControlTarget);
-        ValidateBaseline(context.ExpectedBaseline);
-        ValidateReferences(context.EvidenceReferences, "evidence");
-        ValidateReferences(context.ConfidenceReferences, "confidence");
-        if (context.CreatedAt == default ||
-            context.ExpiresAt is { } expiresAt &&
-            expiresAt <= context.CreatedAt)
-        {
-            throw Validation(
-                "invalid-proposal",
-                "Proposal creation and expiry metadata is invalid.");
-        }
-
-        if (context.ExpiresAt is { } expiry &&
-            expiry <= _timeProvider.GetUtcNow())
-        {
-            throw Validation(
-                "expired-proposal",
-                "The proposal expired before activation.");
-        }
-
-        switch (proposal)
-        {
-            case FixedValueDecisionProposal fixedValue:
-                ValidateDecisionValue(fixedValue.Value);
+            case ActiveValueActivationCandidate activeValue:
+                ValidateDecisionValue(activeValue.Value);
                 break;
-            case NumericStrategyDecisionProposal strategy:
-                ValidateDecisionValue(strategy.InitialValue);
-                if (strategy.InitialValue.ValueKind != JsonValueKind.Number ||
-                    string.IsNullOrWhiteSpace(strategy.StrategyId) ||
-                    strategy.Strategy is null)
+            case NumericRuleActivationCandidate numericRule:
+                ValidateDecisionValue(numericRule.InitialValue);
+                if (numericRule.InitialValue.ValueKind != JsonValueKind.Number ||
+                    numericRule.Rule is null)
                 {
                     throw Validation(
-                        "invalid-proposal",
-                        "A numeric strategy proposal requires a numeric initial value and strategy identity.");
+                        "invalid-activation",
+                        "A numeric-rule activation requires a numeric initial value and rule.");
                 }
 
-                ValidateNumericStrategy(strategy.Strategy);
+                ValidateNumericStrategy(numericRule.Rule);
                 break;
             default:
                 throw Validation(
                     "unsupported-state-kind",
-                    "The decision proposal kind is not supported by this state adapter.");
+                    "The activation candidate kind is not supported by this state adapter.");
         }
     }
 
-    private static void ValidateTransition(GovernedStateTransitionRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(request.TransitionId) ||
-            string.IsNullOrWhiteSpace(request.StateId) ||
-            request.ExpectedGeneration <= 0)
-        {
-            throw Validation(
-                "invalid-lifecycle-transition",
-                "Transition identity, state identity, and generation are required.");
-        }
-
-        ValidateAddress(request.Address);
-        if (request.Status is not
-            (GovernedDecisionStateStatus.Expired or
-             GovernedDecisionStateStatus.Completed))
-        {
-            throw Validation(
-                "invalid-lifecycle-transition",
-                "Only completion and expiry may deactivate authority without a replacement.");
-        }
-    }
-
-    private static void ValidateDefinition(GovernedDefinitionIdentity definition)
+    private static void ValidateDefinition(
+        GovernedDefinitionIdentity definition)
     {
         if (definition is null ||
             definition.Contract is null ||
@@ -731,8 +608,8 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                 definition.Contract.ContractDigest ?? string.Empty))
         {
             throw Validation(
-                "invalid-proposal",
-                "The proposal must carry a complete canonical definition identity.");
+                "invalid-activation",
+                "The activation must carry a complete canonical definition identity.");
         }
     }
 
@@ -772,23 +649,8 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
              baseline.Generation <= 0))
         {
             throw Validation(
-                "invalid-proposal",
+                "invalid-activation",
                 "The expected baseline must be empty at generation zero or identify a positive generation.");
-        }
-    }
-
-    private static void ValidateReferences(
-        IReadOnlyList<string> references,
-        string kind)
-    {
-        ArgumentNullException.ThrowIfNull(references);
-        if (references.Any(string.IsNullOrWhiteSpace) ||
-            references.Distinct(StringComparer.Ordinal).Count() !=
-            references.Count)
-        {
-            throw Validation(
-                "invalid-proposal",
-                $"Proposal {kind} references must be nonempty and unique.");
         }
     }
 
@@ -809,7 +671,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         }
 
         throw Validation(
-            "invalid-proposal",
+            "invalid-activation",
             "A governed value must be a canonical primitive decision value.");
     }
 
@@ -822,15 +684,24 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
             !double.IsFinite(strategy.ValueBelow))
         {
             throw Validation(
-                "invalid-proposal",
-                "A numeric strategy contains invalid scalar configuration.");
+                "invalid-activation",
+                "A numeric rule contains invalid scalar configuration.");
         }
 
-        if (strategy.WeightedInputs is not { Count: > 0 } weightedInputs)
+        if (strategy.WeightedInputs is null)
         {
             return;
         }
 
+        if (strategy.WeightedInputs.Count == 0 ||
+            strategy.Threshold is < 0 or > 1)
+        {
+            throw Validation(
+                "invalid-activation",
+                "A weighted numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var weightedInputs = strategy.WeightedInputs;
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var totalWeight = 0d;
         foreach (var input in weightedInputs)
@@ -844,8 +715,8 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                 input.Weight < 0)
             {
                 throw Validation(
-                    "invalid-proposal",
-                    "A numeric strategy contains an invalid weighted input.");
+                    "invalid-activation",
+                    "A numeric rule contains an invalid weighted input.");
             }
 
             totalWeight += input.Weight;
@@ -854,8 +725,8 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         if (!double.IsFinite(totalWeight) || totalWeight <= 0)
         {
             throw Validation(
-                "invalid-proposal",
-                "A numeric strategy must have positive total weight.");
+                "invalid-activation",
+                "A numeric rule must have positive total weight.");
         }
     }
 
@@ -863,15 +734,57 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         NumericRuleStrategy strategy) =>
         strategy with
         {
-            WeightedInputs = strategy.WeightedInputs?.ToArray()
+            WeightedInputs = strategy.WeightedInputs is null
+                ? null
+                : Array.AsReadOnly(strategy.WeightedInputs.ToArray())
         };
 
-    private static GovernedStateAddress Address(DecisionProposalContext context) =>
+    private static GovernedStateActivationRequest FreezeActivationRequest(
+        GovernedStateActivationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return request with
+        {
+            Candidate = request.Candidate switch
+            {
+                ActiveValueActivationCandidate activeValue =>
+                    activeValue with
+                    {
+                        Value = activeValue.Value.Clone()
+                    },
+                NumericRuleActivationCandidate numericRule =>
+                    numericRule with
+                    {
+                        InitialValue = numericRule.InitialValue.Clone(),
+                        Rule = numericRule.Rule is null
+                            ? null!
+                            : CloneStrategy(numericRule.Rule)
+                    },
+                _ => request.Candidate
+            }
+        };
+    }
+
+    private static GovernedStateEntry FreezeEntry(
+        GovernedStateEntry entry) =>
+        entry with
+        {
+            State = entry.State with
+            {
+                Value = entry.State.Value.Clone(),
+                NumericRule = entry.State.NumericRule is null
+                    ? null
+                    : CloneStrategy(entry.State.NumericRule)
+            }
+        };
+
+    private static GovernedStateAddress Address(
+        GovernedStateActivationRequest request) =>
         new(
-            context.Definition.AppId,
-            context.Definition.Environment,
-            context.Definition.DecisionKey,
-            context.ControlTarget);
+            request.Definition.AppId,
+            request.Definition.Environment,
+            request.Definition.DecisionKey,
+            request.ControlTarget);
 
     private static string Fingerprint<T>(T value)
     {
@@ -909,13 +822,18 @@ internal sealed record GovernedStateActivationReplay(
     string ProposalFingerprint,
     string StateId);
 
-internal sealed record GovernedStateTransitionReplay(
-    string TransitionId,
-    string Fingerprint,
-    string StateId);
-
 internal sealed record GovernedStatePersistenceSnapshot(
     int Version,
     IReadOnlyList<GovernedStateEntry> States,
-    IReadOnlyList<GovernedStateActivationReplay> Activations,
-    IReadOnlyList<GovernedStateTransitionReplay> Transitions);
+    IReadOnlyList<GovernedStateActivationReplay> Activations);
+
+internal sealed record GovernedStateProposalFingerprint(
+    string ProposalId,
+    GovernedDefinitionIdentity Definition,
+    DecisionTargetRef? ControlTarget,
+    GovernedStateBaseline ExpectedBaseline,
+    GovernedStateActivationCandidate Candidate);
+
+internal sealed record GovernedStateStrategyIdentity(
+    string ActivationId,
+    NumericRuleStrategy Rule);

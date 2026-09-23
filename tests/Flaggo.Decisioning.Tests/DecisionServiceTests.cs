@@ -365,7 +365,7 @@ public sealed class DecisionServiceTests
             Identity.ContractDigest,
             JsonSerializer.SerializeToElement(750),
             new DecisionTargetRef("cohort", "new_players"),
-            "strategy",
+            "numeric-rule",
             "strategy-test",
             new NumericRuleStrategy(
                 "tetris.boardPressure",
