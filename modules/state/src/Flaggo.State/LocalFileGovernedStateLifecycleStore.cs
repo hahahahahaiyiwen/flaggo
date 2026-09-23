@@ -84,26 +84,11 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         return await store.GetBaselineAsync(address, cancellationToken);
     }
 
-    public async Task<GovernedDecisionState?> GetStateAsync(
-        string stateId,
-        CancellationToken cancellationToken)
-    {
-        var store = await LoadAsync(cancellationToken);
-        return await store.GetStateAsync(stateId, cancellationToken);
-    }
-
     public Task<GovernedDecisionState> ActivateAsync(
         GovernedStateActivationRequest request,
         CancellationToken cancellationToken) =>
         MutateAsync(
             store => store.ActivateAsync(request, cancellationToken),
-            cancellationToken);
-
-    public Task<GovernedDecisionState> TransitionAsync(
-        GovernedStateTransitionRequest request,
-        CancellationToken cancellationToken) =>
-        MutateAsync(
-            store => store.TransitionAsync(request, cancellationToken),
             cancellationToken);
 
     private async Task<GovernedDecisionState> MutateAsync(
@@ -130,7 +115,7 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         GovernedStatePersistenceSnapshot snapshot;
         if (!File.Exists(_commitDescriptorPath))
         {
-            snapshot = new GovernedStatePersistenceSnapshot(2, [], [], []);
+            snapshot = new GovernedStatePersistenceSnapshot(2, [], []);
         }
         else
         {
@@ -252,13 +237,6 @@ internal static partial class GovernedStatePersistence
                     replay.Fingerprint,
                     replay.ProposalId,
                     replay.ProposalFingerprint,
-                    replay.StateId)).ToArray(),
-            snapshot.Transitions
-                .OrderBy(replay => replay.TransitionId, StringComparer.Ordinal)
-                .Select(
-                replay => new PersistedTransition(
-                    replay.TransitionId,
-                    replay.Fingerprint,
                     replay.StateId)).ToArray());
         return JsonSerializer.SerializeToUtf8Bytes(document, WriteOptions);
     }
@@ -275,8 +253,7 @@ internal static partial class GovernedStatePersistence
             if (document is null ||
                 document.Version != CurrentVersion ||
                 document.States is null ||
-                document.Activations is null ||
-                document.Transitions is null)
+                document.Activations is null)
             {
                 throw new InvalidDataException(
                     "A lifecycle governed-state document must use version 2.");
@@ -287,14 +264,10 @@ internal static partial class GovernedStatePersistence
             var activations = document.Activations
                 .Select(Map)
                 .ToArray();
-            var transitions = document.Transitions
-                .Select(Map)
-                .ToArray();
             return new GovernedStatePersistenceSnapshot(
                 CurrentVersion,
                 states,
-                activations,
-                transitions);
+                activations);
         }
         catch (JsonException error)
         {
@@ -318,7 +291,7 @@ internal static partial class GovernedStatePersistence
             state.ControlTarget,
             state.Mode,
             state.StrategyId,
-            state.NumericRule,
+            Map(state.NumericRule),
             FormatTimestamp(state.LastChangedAt),
             state.StateId,
             state.ProposalId,
@@ -351,7 +324,8 @@ internal static partial class GovernedStatePersistence
         }
 
         ValidateTarget(persisted.ControlTarget);
-        ValidateValueAndMode(persisted, value);
+        var numericRule = Map(persisted.NumericRule);
+        ValidateValueAndMode(persisted, value, numericRule);
         var activatedAt = ParseTimestamp(
             persisted.ActivatedAt,
             "activatedAt",
@@ -360,6 +334,12 @@ internal static partial class GovernedStatePersistence
             persisted.LastChangedAt,
             "lastChangedAt",
             required: true);
+        if (lastChangedAt != activatedAt)
+        {
+            throw new InvalidDataException(
+                "Lifecycle governed-state activation and change timestamps must match.");
+        }
+
         var status = ParseStatus(persisted.LifecycleStatus);
         var state = new GovernedDecisionState(
             persisted.DefinitionId,
@@ -369,7 +349,7 @@ internal static partial class GovernedStatePersistence
             persisted.ControlTarget,
             persisted.Mode,
             persisted.StrategyId,
-            CloneStrategy(persisted.NumericRule),
+            numericRule,
             lastChangedAt,
             persisted.StateId,
             persisted.ProposalId,
@@ -426,27 +406,10 @@ internal static partial class GovernedStatePersistence
             replay.StateId);
     }
 
-    private static GovernedStateTransitionReplay Map(
-        PersistedTransition? replay)
-    {
-        if (replay is null ||
-            string.IsNullOrWhiteSpace(replay.TransitionId) ||
-            !FingerprintPattern().IsMatch(replay.Fingerprint ?? string.Empty) ||
-            string.IsNullOrWhiteSpace(replay.StateId))
-        {
-            throw new InvalidDataException(
-                "A governed-state transition replay entry is invalid.");
-        }
-
-        return new GovernedStateTransitionReplay(
-            replay.TransitionId,
-            replay.Fingerprint!,
-            replay.StateId);
-    }
-
     private static void ValidateValueAndMode(
         PersistedState state,
-        JsonElement value)
+        JsonElement value,
+        NumericRuleStrategy? numericRule)
     {
         var validValue =
             value.ValueKind is
@@ -465,22 +428,119 @@ internal static partial class GovernedStatePersistence
         {
             case "active-value" when
                 state.StrategyId is null &&
-                state.NumericRule is null:
+                numericRule is null:
                 return;
-            case "strategy" when
+            case "numeric-rule" when
                 !string.IsNullOrWhiteSpace(state.StrategyId) &&
-                state.NumericRule is not null &&
+                numericRule is not null &&
                 value.ValueKind == JsonValueKind.Number:
-                ValidateNumericRule(state.NumericRule);
+                ValidateNumericRule(numericRule);
                 return;
             case "active-value":
-            case "strategy":
+            case "numeric-rule":
                 throw new InvalidDataException(
                     "A lifecycle governed-state entry has incoherent mode data.");
             default:
                 throw new InvalidDataException(
                     $"Lifecycle governed-state mode '{state.Mode}' is unsupported.");
         }
+    }
+
+    private static PersistedNumericRule? Map(
+        NumericRuleStrategy? rule) =>
+        rule is null
+            ? null
+            : new PersistedNumericRule(
+                rule.InputSignalKey,
+                JsonSerializer.SerializeToElement(rule.Threshold),
+                JsonSerializer.SerializeToElement(rule.ValueAtOrAbove),
+                JsonSerializer.SerializeToElement(rule.ValueBelow),
+                rule.WeightedInputs?.Select(input =>
+                    new PersistedNumericRuleInput(
+                        input.SignalKey,
+                        JsonSerializer.SerializeToElement(input.Minimum),
+                        JsonSerializer.SerializeToElement(input.Maximum),
+                        JsonSerializer.SerializeToElement(input.Weight)))
+                    .ToArray());
+
+    private static NumericRuleStrategy? Map(
+        PersistedNumericRule? rule)
+    {
+        if (rule is null)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(rule.InputSignalKey) ||
+            !TryGetCanonicalDouble(rule.Threshold, out var threshold) ||
+            !TryGetCanonicalDouble(
+                rule.ValueAtOrAbove,
+                out var valueAtOrAbove) ||
+            !TryGetCanonicalDouble(rule.ValueBelow, out var valueBelow))
+        {
+            throw new InvalidDataException(
+                "A lifecycle numeric rule contains invalid scalar configuration.");
+        }
+
+        if (rule.WeightedInputs is null)
+        {
+            return new NumericRuleStrategy(
+                rule.InputSignalKey,
+                threshold,
+                valueAtOrAbove,
+                valueBelow,
+                null);
+        }
+
+        if (rule.WeightedInputs.Count == 0 ||
+            threshold is < 0 or > 1)
+        {
+            throw new InvalidDataException(
+                "A weighted lifecycle numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var inputs = rule.WeightedInputs;
+        var mappedInputs = new List<NumericRuleInput>(inputs.Count);
+        foreach (var input in inputs)
+        {
+            if (input is null ||
+                !TryGetCanonicalDouble(input.Minimum, out var minimum) ||
+                !TryGetCanonicalDouble(input.Maximum, out var maximum) ||
+                !TryGetCanonicalDouble(input.Weight, out var weight))
+            {
+                throw new InvalidDataException(
+                    "A lifecycle numeric rule contains invalid weighted input configuration.");
+            }
+
+            mappedInputs.Add(
+                new NumericRuleInput(
+                    input.SignalKey ?? string.Empty,
+                    minimum,
+                    maximum,
+                    weight));
+        }
+
+        return new NumericRuleStrategy(
+            rule.InputSignalKey,
+            threshold,
+            valueAtOrAbove,
+            valueBelow,
+            mappedInputs);
+    }
+
+    private static bool TryGetCanonicalDouble(
+        JsonElement? value,
+        out double number)
+    {
+        if (value is JsonElement element &&
+            CanonicalJson.IsIeee754CompatibleNumber(element))
+        {
+            number = element.GetDouble();
+            return true;
+        }
+
+        number = default;
+        return false;
     }
 
     private static void ValidateNumericRule(NumericRuleStrategy rule)
@@ -494,11 +554,19 @@ internal static partial class GovernedStatePersistence
                 "A lifecycle numeric rule contains invalid scalar configuration.");
         }
 
-        if (rule.WeightedInputs is not { Count: > 0 } inputs)
+        if (rule.WeightedInputs is null)
         {
             return;
         }
 
+        if (rule.WeightedInputs.Count == 0 ||
+            rule.Threshold is < 0 or > 1)
+        {
+            throw new InvalidDataException(
+                "A weighted lifecycle numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var inputs = rule.WeightedInputs;
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var totalWeight = 0d;
         foreach (var input in inputs)
@@ -524,15 +592,6 @@ internal static partial class GovernedStatePersistence
                 "A lifecycle numeric rule must have positive total weight.");
         }
     }
-
-    private static NumericRuleStrategy? CloneStrategy(
-        NumericRuleStrategy? strategy) =>
-        strategy is null
-            ? null
-            : strategy with
-            {
-                WeightedInputs = strategy.WeightedInputs?.ToArray()
-            };
 
     private static void ValidateTarget(DecisionTargetRef? target)
     {
@@ -582,12 +641,8 @@ internal static partial class GovernedStatePersistence
     private static string FormatStatus(GovernedDecisionStateStatus status) =>
         status switch
         {
-            GovernedDecisionStateStatus.Pending => "pending",
             GovernedDecisionStateStatus.Active => "active",
             GovernedDecisionStateStatus.Superseded => "superseded",
-            GovernedDecisionStateStatus.Expired => "expired",
-            GovernedDecisionStateStatus.Completed => "completed",
-            GovernedDecisionStateStatus.RolledBack => "rolled-back",
             _ => throw new InvalidDataException(
                 "The governed-state lifecycle status is unsupported.")
         };
@@ -595,12 +650,8 @@ internal static partial class GovernedStatePersistence
     private static GovernedDecisionStateStatus ParseStatus(string? status) =>
         status switch
         {
-            "pending" => GovernedDecisionStateStatus.Pending,
             "active" => GovernedDecisionStateStatus.Active,
             "superseded" => GovernedDecisionStateStatus.Superseded,
-            "expired" => GovernedDecisionStateStatus.Expired,
-            "completed" => GovernedDecisionStateStatus.Completed,
-            "rolled-back" => GovernedDecisionStateStatus.RolledBack,
             _ => throw new InvalidDataException(
                 "A lifecycle governed-state status is invalid.")
         };
@@ -618,8 +669,7 @@ internal static partial class GovernedStatePersistence
     private sealed record PersistedDocument(
         int? Version,
         IReadOnlyList<PersistedState?>? States,
-        IReadOnlyList<PersistedActivation?>? Activations,
-        IReadOnlyList<PersistedTransition?>? Transitions);
+        IReadOnlyList<PersistedActivation?>? Activations);
 
     private sealed record PersistedState(
         string? AppId,
@@ -632,7 +682,7 @@ internal static partial class GovernedStatePersistence
         DecisionTargetRef? ControlTarget,
         string? Mode,
         string? StrategyId,
-        NumericRuleStrategy? NumericRule,
+        PersistedNumericRule? NumericRule,
         string? LastChangedAt,
         string? StateId,
         string? ProposalId,
@@ -642,15 +692,23 @@ internal static partial class GovernedStatePersistence
         string? ActivatedAt,
         string? LifecycleStatus);
 
+    private sealed record PersistedNumericRule(
+        string? InputSignalKey,
+        JsonElement? Threshold,
+        JsonElement? ValueAtOrAbove,
+        JsonElement? ValueBelow,
+        IReadOnlyList<PersistedNumericRuleInput?>? WeightedInputs);
+
+    private sealed record PersistedNumericRuleInput(
+        string? SignalKey,
+        JsonElement? Minimum,
+        JsonElement? Maximum,
+        JsonElement? Weight);
+
     private sealed record PersistedActivation(
         string? ActivationId,
         string? Fingerprint,
         string? ProposalId,
         string? ProposalFingerprint,
-        string? StateId);
-
-    private sealed record PersistedTransition(
-        string? TransitionId,
-        string? Fingerprint,
         string? StateId);
 }

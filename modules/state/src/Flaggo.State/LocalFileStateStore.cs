@@ -127,6 +127,16 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 throw new InvalidDataException("The local governed-state file is empty.");
             }
 
+            if (document.Version == LifecycleFormatVersion)
+            {
+                var lifecycleSnapshot =
+                    GovernedStatePersistence.Deserialize(json);
+                _ = new InMemoryGovernedStateLifecycleStore(
+                    lifecycleSnapshot,
+                    TimeProvider.System,
+                    new GuidGovernedStateIdentityGenerator());
+            }
+
             return ValidateAndMap(document);
         }
         catch (JsonException error)
@@ -170,7 +180,11 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 
             var controlTarget = ValidateAndMapTarget(persisted.ControlTarget);
             var numericRule = ValidateAndMapNumericRule(persisted.NumericRule);
-            ValidateMode(persisted, value, numericRule);
+            ValidateMode(
+                persisted,
+                value,
+                numericRule,
+                document.Version.Value);
             var lastChangedAt = ParseLastChangedAt(persisted.LastChangedAt);
             var lifecycleStatus = ParseLifecycleStatus(
                 persisted.LifecycleStatus,
@@ -257,7 +271,8 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
     private static void ValidateMode(
         PersistedState state,
         JsonElement value,
-        NumericRuleStrategy? numericRule)
+        NumericRuleStrategy? numericRule,
+        int version)
     {
         switch (state.Mode)
         {
@@ -269,7 +284,8 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 }
 
                 return;
-            case "strategy":
+            case "strategy" when version == LegacyFormatVersion:
+            case "numeric-rule" when version == LifecycleFormatVersion:
                 if (string.IsNullOrWhiteSpace(state.StrategyId) ||
                     numericRule is null ||
                     value.ValueKind != JsonValueKind.Number ||
@@ -282,6 +298,8 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 return;
             case "experiment":
             case "fallback":
+            case "strategy":
+            case "numeric-rule":
                 throw new InvalidDataException(
                     $"Persisted decision mode '{state.Mode}' is not supported by the local state adapter.");
             default:
@@ -325,16 +343,24 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 "A local numeric rule contains invalid scalar configuration.");
         }
 
-        if (rule.WeightedInputs is not { Count: > 0 } weightedInputs)
+        if (rule.WeightedInputs is null)
         {
             return new NumericRuleStrategy(
                 rule.InputSignalKey,
                 threshold,
                 valueAtOrAbove,
                 valueBelow,
-                rule.WeightedInputs is null ? null : []);
+                null);
         }
 
+        if (rule.WeightedInputs.Count == 0 ||
+            threshold is < 0 or > 1)
+        {
+            throw new InvalidDataException(
+                "A local weighted numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var weightedInputs = rule.WeightedInputs;
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var totalWeight = 0d;
         var mappedInputs = new List<NumericRuleInput>(weightedInputs.Count);
@@ -369,7 +395,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
             threshold,
             valueAtOrAbove,
             valueBelow,
-            mappedInputs);
+            Array.AsReadOnly(mappedInputs.ToArray()));
     }
 
     private static bool IsDecisionValue(JsonElement value) =>
@@ -446,12 +472,8 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 
         return value switch
         {
-            "pending" => GovernedDecisionStateStatus.Pending,
             "active" => GovernedDecisionStateStatus.Active,
             "superseded" => GovernedDecisionStateStatus.Superseded,
-            "expired" => GovernedDecisionStateStatus.Expired,
-            "completed" => GovernedDecisionStateStatus.Completed,
-            "rolled-back" => GovernedDecisionStateStatus.RolledBack,
             _ => throw new InvalidDataException(
                 "A local governed-state lifecycle status is invalid.")
         };
@@ -524,8 +546,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
     private sealed record PersistedStateDocument(
         int? Version,
         IReadOnlyList<PersistedState?>? States,
-        IReadOnlyList<PersistedActivation?>? Activations = null,
-        IReadOnlyList<PersistedTransition?>? Transitions = null);
+        IReadOnlyList<PersistedActivation?>? Activations = null);
 
     private sealed record PersistedState(
         string? AppId,
@@ -570,11 +591,6 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         string? Fingerprint,
         string? ProposalId,
         string? ProposalFingerprint,
-        string? StateId);
-
-    private sealed record PersistedTransition(
-        string? TransitionId,
-        string? Fingerprint,
         string? StateId);
 
     private sealed class SourceStateSnapshotProvider(

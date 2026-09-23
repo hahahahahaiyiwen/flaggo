@@ -504,7 +504,7 @@ public sealed class DecisionService(
         DecisionPolicyContract? policy,
         string mode) =>
         policy is not null &&
-        mode is not ("strategy" or "experiment")
+        mode is not ("strategy" or "numeric-rule" or "experiment")
             ? policy with
             {
                 MinimumEvidenceQuality = null,

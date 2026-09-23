@@ -35,6 +35,14 @@ public sealed class LocalFileStateStoreTests
         Assert.Equal(850, first!.Value.GetInt32());
         Assert.Equal(800, second!.Value.GetInt32());
         Assert.Equal(4, first.NumericRule!.WeightedInputs!.Count);
+        var exposedInputs = Assert.IsAssignableFrom<IList<NumericRuleInput>>(
+            first.NumericRule.WeightedInputs);
+        Assert.Throws<NotSupportedException>(
+            () => exposedInputs[0] =
+                new NumericRuleInput("tampered", 0, 1, 1));
+        Assert.Equal(
+            "tetris.boardPressure",
+            first.NumericRule.WeightedInputs[0].SignalKey);
         Assert.Equal(
             new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero),
             second.LastChangedAt);
@@ -484,6 +492,18 @@ public sealed class LocalFileStateStoreTests
             "strategy with null weighted input",
             InvalidDocument(state =>
                 state["numericRule"]!["weightedInputs"]![0] = null));
+        cases.Add(
+            "strategy with empty weighted inputs",
+            InvalidDocument(state =>
+                state["numericRule"]!["weightedInputs"] = new JsonArray()));
+        cases.Add(
+            "weighted threshold below range",
+            InvalidDocument(state =>
+                state["numericRule"]!["threshold"] = -0.1));
+        cases.Add(
+            "weighted threshold above range",
+            InvalidDocument(state =>
+                state["numericRule"]!["threshold"] = 1.1));
         return cases;
     }
 
