@@ -77,7 +77,7 @@ Detailed developer UX: [Control Plane and Data Plane UX](client-library/CONTROL_
 | HTTP behavior and orchestration | [Decision API](decision-api/README.md) |
 | SDK authoring and result projection | [Client Library](client-library/README.md) |
 | Bundle lifecycle and compatibility | [Contract Registry](contract-registry/README.md) |
-| Exposure and attribution semantics | [Decision Evidence](../DECISION_EVIDENCE.md) |
+| Exposure and attribution semantics | [Evidence](../architecture/EVIDENCE.md) |
 | This phase's endpoint and artifact boundary | This proposal, until replaced by versioned OpenAPI/JSON Schema |
 
 When prose and an executable artifact disagree after the freeze, the versioned OpenAPI or JSON Schema artifact wins and the prose must be corrected in the same change.

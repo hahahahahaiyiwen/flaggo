@@ -1,18 +1,13 @@
-# Decision Evidence
+# Decision evidence
 
 ## Purpose
 
-Decision evidence is what Flaggo knows from runtime facts, observations, telemetry, evidence views, quality signals, and provenance. It participates in Flaggo's top-level mental model:
+Decision evidence is what Flaggo knows from runtime facts, observations,
+telemetry, evidence views, quality signals, and provenance.
 
-```text
-Decision Definition
-Decision Evidence
-Decision Intelligence
-Decision Lifecycles
-Runtime Decision Execution
-```
-
-Evidence informs decisions, but it does not create authority by itself. Authority comes from governance and governed state.
+See the [architecture overview](OVERVIEW.md) for the system map. Evidence may
+inform policy, audit, and future proposal producers, but it does not create
+authority by itself. Authority comes from governance and governed state.
 
 ## Core idea
 
@@ -226,7 +221,7 @@ Evidence can be reused across decision definition revisions when semantics match
 | Raw observations | Reusable when immutable signal keys match. |
 | Signal definitions | Reusable by immutable signal key. |
 | Evidence views | Reusable when signal key, target, window, and filters match. |
-| Governed state | Not reused automatically; it belongs to decision intelligence/governance. |
+| Governed state | Not reused automatically; it belongs to the authority workflow. |
 
 Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.recentPlacementTimeMs` and `tetris.earlyLossRate24h` views while the new signal warms up.
 
@@ -246,4 +241,6 @@ Flaggo can expose domain-friendly evidence concepts while remaining compatible w
 
 ## Design rule
 
-> Evidence is reusable knowledge. It informs decision intelligence, but it does not become runtime authority until governance produces governed state.
+> Evidence is reusable knowledge. It may inform future proposals, runtime
+> policy, and audit, but it does not become runtime authority until governance
+> produces governed state.

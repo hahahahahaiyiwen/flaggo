@@ -1,26 +1,28 @@
-# Flaggo Component Design Index
+# Flaggo component design index
 
-This folder contains focused design documents for Flaggo system components.
+This folder contains focused designs for Flaggo system components and exact
+contract boundaries.
 
-Top-level product framing remains in:
+Canonical context:
 
+- [Documentation home](../README.md)
 - [Manifesto](../MANIFESTO.md)
-- [Hero Scenario](../HERO_SCENARIO.md)
-- [High-Level Design](../DESIGN.md)
-- [Mental Model](../MENTAL_MODEL.md)
-- [Decision Definition](../DECISION_DEFINITION.md)
-- [Decision Evidence](../DECISION_EVIDENCE.md)
-- [Decision Intelligence](../DECISION_INTELLIGENCE.md)
-- [Decision Lifecycles](../DECISION_LIFECYCLES.md)
-- [Runtime Decision Execution](../RUNTIME_DECISION_EXECUTION.md)
-- [MVP Implementation Guide](../IMPLEMENTATION_GUIDE.md)
-- [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md)
-- [Phase 3 Tetris Integration](tetris-integration/README.md)
-- [Shared Contracts](shared-contracts/README.md)
+- [Architecture overview](../architecture/OVERVIEW.md)
+- [Decision definition](../architecture/DECISION_DEFINITION.md)
+- [Evidence](../architecture/EVIDENCE.md)
+- [Authority](../architecture/AUTHORITY.md)
+- [Runtime execution](../architecture/RUNTIME_EXECUTION.md)
+- [Tetris scenario](../scenarios/TETRIS.md)
+- [MVP implementation guide](../IMPLEMENTATION_GUIDE.md)
+- [Phase 1 API contract proposal](API_CONTRACT_PROPOSAL.md)
+- [Phase 3 Tetris integration](tetris-integration/README.md)
+- [Shared contracts](shared-contracts/README.md)
 
 ## Component folders
 
-Each component under [`DESIGN.md` / System components](../DESIGN.md#system-components) has exactly one folder:
+Each component in the
+[architecture overview](../architecture/OVERVIEW.md#system-components) has
+exactly one folder:
 
 | # | High-level component | Design folder | Purpose |
 |---|---|---|---|

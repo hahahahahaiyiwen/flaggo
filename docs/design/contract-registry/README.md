@@ -549,7 +549,7 @@ The important design is:
 - the server derives per-definition proposal, activation, and strategy
   identities from
   the canonical tuple defined by
-  [Decision Lifecycles](../../DECISION_LIFECYCLES.md#bundle-approved-authority);
+  [Authority](../../architecture/AUTHORITY.md#bundle-approved-authority);
   activation creates the state identity through expected-baseline
   compare-and-swap on the stable
   application/environment/decision-key/control-target head,

@@ -30,7 +30,7 @@ when that exact tuple is absent, unknown, retired, or semantically conflicting.
 MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
-Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXECUTION.md).
+Runtime execution model: [Runtime execution](../../architecture/RUNTIME_EXECUTION.md).
 
 ## Runtime responsibility
 

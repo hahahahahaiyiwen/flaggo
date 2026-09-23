@@ -268,8 +268,8 @@ Port DTOs such as evidence, state, strategy execution, policy evaluation, and au
 Phase 3 uses bundle-approved initial authority and does not invoke decision
 intelligence. Phase 4 adds proposal-managed authority at a high level; both
 paths converge on the same `GovernedDecisionState` activation and runtime
-execution boundaries described by [Decision Lifecycles](DECISION_LIFECYCLES.md)
-and [Runtime Decision Execution](RUNTIME_DECISION_EXECUTION.md).
+execution boundaries described by [Authority](architecture/AUTHORITY.md)
+and [Runtime execution](architecture/RUNTIME_EXECUTION.md).
 
 ## MVP Tetris flow
 
@@ -318,7 +318,7 @@ Goal: make Flaggo easy to run and understand as an open-source project.
 Repository decision: Flaggo's open-source core uses a modular monorepo. Logical
 components retain explicit module-owned interfaces and may be separate
 deployables without becoming separate source repositories. See
-[Repository Architecture](REPOSITORY_ARCHITECTURE.md).
+[repository architecture](../CONTRIBUTING.md#repository-architecture).
 
 Deliverables:
 
