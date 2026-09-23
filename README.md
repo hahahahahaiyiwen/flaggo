@@ -75,7 +75,7 @@ tests/         Cross-module and end-to-end verification
 examples/      Small integrations and showcase links
 deploy/        Container and deployment assets
 tools/         Repository development commands
-docs/          Product, architecture, roadmap, and component designs
+docs/          Product, architecture, scenarios, and component designs
 ```
 
 Flaggo is early-stage. Prefer the smallest complete end-to-end behavior over

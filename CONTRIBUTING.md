@@ -69,7 +69,7 @@ publishing temporary coordination packages.
 | `examples/` | Small integrations and links to external showcase applications |
 | `deploy/` | Container and local deployment assets |
 | `tools/` | Repository development and automation commands |
-| `docs/` | Product, architecture, roadmap, and component design sources |
+| `docs/` | Product, architecture, scenario, and component design sources |
 
 ### Dependency rules
 
@@ -81,12 +81,76 @@ publishing temporary coordination packages.
 5. Cross-process behavior is governed by executable artifacts in `contracts/`.
 6. Every module boundary maintains focused documentation and tests.
 
+### Portability boundaries
+
+Flaggo must remain runnable without a managed cloud dependency. Domain and API
+logic use provider-neutral contracts and standard protocols; provider SDKs
+belong only in adapters at application composition boundaries.
+
+Cross-cutting infrastructure concerns stay behind explicit, injected,
+module-owned ports:
+
+- `IConfigProvider` for environment variables and explicit configuration;
+- `ISecretProvider` for credentials and secrets;
+- `IClock` for observable time;
+- `IIdGenerator` for generated identities; and
+- `IHealthReporter` for dependency and readiness health.
+
+These interfaces are owned beside the behavior that consumes them rather than
+collected in `packages/shared-contracts`, which remains a data-contract
+package. Domain capabilities keep their own ports, including registry
+read/lifecycle ports, `IStateStore`, `IEvidenceProvider`, `IPolicyEvaluator`,
+and `IAuditSink`.
+
+| Concern | Local implementation | Optional cloud adapter |
+| --- | --- | --- |
+| Configuration | Environment variables or explicit local files | Provider configuration service |
+| Secrets | Environment variables or local development secret store | Provider secret manager |
+| Registry and state | In-memory or SQLite-compatible store | Managed SQL, document, or cache service |
+| Evidence | In-process aggregation or local telemetry pipeline | OpenTelemetry-backed metrics or analytics store |
+| Audit | Durable file or SQLite-compatible store; memory/console only in tests or non-ready debugging | Object storage, event stream, or managed logging |
+
+Public APIs, bundles, policies, strategies, and audit schemas must remain usable
+without a cloud account. New providers add adapters behind existing ports
+instead of changing core contracts.
+
 ### Initial implementation shape
 
 The first server implementation remains modular, with separate control-plane
 and data-plane hosts. Registry, policy, state, evidence, reasoning, and audit
 stay explicit modules behind owned ports. Local adapters may use simple
 persistence; separate services are justified only by operational requirements.
+
+### Parallel contract implementation
+
+Executable API artifacts merge before client and service implementations
+diverge. The client track owns typed authoring, static extraction, canonical
+normalization and digesting, bundle output, request serialization, runtime
+identity propagation, exposure confirmation, configured availability fallback,
+and telemetry emission. The service track owns runtime and management
+endpoints, contract-integrity verification, target and input resolution,
+governed state and strategy execution, policy, durable audit, exposure and
+attribution linkage, local adapters, and health.
+
+Both tracks test against the same OpenAPI documents, schemas, fixtures, and
+conformance suites. Each implementation branch records the contract revision
+it implements. A contract-breaking change uses a dedicated contract pull
+request that updates executable artifacts, compatibility notes, fixtures, and
+both tracks' conformance coverage. Tracks merge small vertical increments and
+run cross-track contract tests continuously; end-to-end integration starts as
+soon as one fixture-backed decision call can complete.
+
+Extensions must use the owning seam instead of bypassing it:
+
+- add a result primitive only through an accepted shared and wire contract;
+- add strategy behavior through the strategy contract and executor;
+- add evidence sources through `IEvidenceProvider`;
+- add storage through registry lifecycle/read ports or `IStateStore`;
+- add policy rules through `IPolicyEvaluator`;
+- add asynchronous reasoning as an authorized proposal producer feeding the
+  governed-state activation boundary;
+- add telemetry transports through the SDK telemetry boundary; and
+- add cloud providers through adapters behind existing ports.
 
 ### When to split a repository
 
