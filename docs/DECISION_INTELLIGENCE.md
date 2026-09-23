@@ -2,11 +2,15 @@
 
 ## Purpose
 
-Decision intelligence is the analysis and proposal-generation capability that operates over a decision definition and decision evidence.
+Decision intelligence is the optional analysis and proposal-generation
+capability used by the proposal-managed authority workflow. It operates over a
+decision definition and decision evidence.
 
 It answers:
 
-> Given the declared objective, available evidence, uncertainty, current governed state, and known policy constraints, what bounded behavior should Flaggo recommend next?
+> Given the declared objective, available evidence, uncertainty, optional
+> current governed state, and known policy constraints, what bounded initial or
+> replacement authority should Flaggo recommend next?
 
 Decision intelligence does not approve its own recommendation and does not serve application requests. It produces a `DecisionProposal` for a [decision lifecycle](DECISION_LIFECYCLES.md) to validate and govern. Approved state is applied per request by [runtime decision execution](RUNTIME_DECISION_EXECUTION.md).
 
@@ -14,7 +18,7 @@ Decision intelligence does not approve its own recommendation and does not serve
 DecisionDefinition
   + DecisionEvidence
   + objectives
-  + current GovernedDecisionState
+  + current GovernedDecisionState when present
   -> Decision Intelligence
   -> DecisionProposal
 
@@ -27,7 +31,42 @@ GovernedDecisionState
   -> RuntimeDecisionResult
 ```
 
-This separation keeps Flaggo AI-native without allowing reasoning to become policy authority or request-time infrastructure.
+This separation keeps Flaggo AI-native without making intelligence a
+prerequisite for every usable decision or allowing reasoning to become policy
+authority or request-time infrastructure.
+
+## Relationship to authority workflows
+
+Phase 3 intentionally does not invoke decision intelligence:
+
+```text
+definition bundle + initial authority candidate
+  -> authenticated bundle approval
+  -> governed state
+```
+
+Phase 4 introduces the proposal-managed path:
+
+```text
+definition + evidence + current state when present
+  -> decision intelligence or another authorized producer
+  -> DecisionProposal
+  -> governance
+  -> governed initial or replacement state
+```
+
+Both paths use the same runtime state and execution boundary.
+
+When a proposal-managed definition has no governed state, the first approved
+activation reuses the shared state boundary with the no-state expected
+baseline: generation `0`, no `stateId`, and no predecessor on the resulting
+state. Later activations compare against the captured current state head and
+create replacement state. This section defines only that lifecycle invariant;
+Phase 4 must design the proposal and governance DTOs.
+
+The remaining sections describe conceptual Phase 4 responsibilities and
+deliverables. They do not define current proposal, experiment, rollout,
+override, rollback, or fallback-only wire/state contracts.
 
 ## Core responsibility
 
@@ -61,7 +100,10 @@ Decision intelligence consumes resolved, typed inputs rather than raw unbounded 
 - **Evidence views**: historical observations and derived evidence sliced by target, time, and filters.
 - **Decision and exposure records**: prior returned values, confirmed application, and attribution metadata.
 - **Outcome evidence**: declared success metrics and guardrails.
-- **Current governed state**: active and previous values, strategies, experiments, rollouts, cooldowns, and overrides.
+- **Current governed state, when present**: active authority and activation
+  lineage, plus
+  previous-safe-state, experiment, rollout, cooldown, or override data only
+  when those lifecycle contracts exist.
 - **Uncertainty**: evidence quality, sample size, freshness, variance, missingness, and model uncertainty.
 - **Policy context**: constraints intelligence should consider before producing a proposal.
 
@@ -95,14 +137,6 @@ Every proposal should identify:
 - requested approval mode;
 - compatibility and supersession intent.
 
-The Phase 3.5 state boundary currently provides typed fixed-value and
-numeric-strategy proposal contracts. Their shared context carries proposal and
-source identity, exact definition identity, candidate control target, expected
-state ID and generation, rationale, evidence and confidence references, and
-creation/expiry metadata. These contracts are inputs to lifecycle governance;
-they do not grant proposal producers a direct `GovernedDecisionState` write
-path.
-
 The proposal is passed to the lifecycle layer:
 
 ```text
@@ -115,13 +149,13 @@ DecisionProposal
 
 ## Async analysis path
 
-Decision intelligence normally runs outside the application request path:
+Decision intelligence runs outside the current application request path:
 
 ```text
 telemetry change, schedule, operator request, definition activation,
 experiment review, rollout review, or detected drift
   -> create intelligence work item
-  -> resolve definition, learning target, evidence, and current state
+  -> resolve definition, learning target, evidence, and current state when present
   -> observe and interpret
   -> choose analysis mode
   -> generate and evaluate candidates
@@ -208,33 +242,12 @@ Evaluation should consider:
 
 ### Produce proposal
 
-Example strategy proposal:
-
-```json
-{
-  "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-  "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-  "learningTarget": "cohort:new_players",
-  "controlTarget": "cohort:new_players",
-  "proposalType": "activate_strategy",
-  "strategy": {
-    "baseValue": 800,
-    "allowedRange": {
-      "min": 600,
-      "max": 1100
-    },
-    "step": 50,
-    "cooldown": "20s"
-  },
-  "confidence": {
-    "evidenceQuality": 0.82,
-    "modelUncertainty": 0.31,
-    "expectedOutcome": 0.72
-  },
-  "analysisMode": "qualitative_plus_metric_threshold_strategy",
-  "rationale": "Cohort evidence supports bounded adaptation while one fixed value cannot respond to live pressure."
-}
-```
+Phase 4 will define the concrete proposal DTO under issue #25. This document
+keeps only the required boundary: a proposal identifies the exact definition
+and target, describes one bounded candidate plus its rationale and supporting
+evidence claims, and carries no trusted activation, state, approval, or
+strategy identity. Proposal kinds and governance dispositions remain separate
+concepts.
 
 ## Relationship to policy
 
@@ -244,7 +257,8 @@ Policy is authoritative and independently evaluated by the lifecycle layer. Deci
 - lower evidence-quality requirements;
 - exceed rollout or experiment limits;
 - bypass approval;
-- ignore operator pause or override state;
+- ignore operator pause or override state when a separately approved operator
+  contract exists;
 - grant itself authority at a target.
 
 ## Relationship to targets
@@ -289,7 +303,7 @@ Attribution prevents unused decisions, delayed outcomes, and unrelated observati
 ## Design principles
 
 1. **Proposal, not authority**: intelligence recommends; governance authorizes.
-2. **Async by default**: unbounded reasoning does not belong in the request path.
+2. **Asynchronous intelligence**: intelligence does not serve current application requests. Any future request-time intelligence requires a separately approved bounded contract with enforceable latency and resource budgets; unbounded reasoning never belongs in the request path.
 3. **Evidence before confidence**: weak evidence leads to hold, experiment, or conservative proposals.
 4. **Analysis mode is explicit**: heuristics, experiments, models, bandits, and AI synthesis remain distinguishable.
 5. **Reasoning is scoped**: every proposal names its learning and control targets.

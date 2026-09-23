@@ -16,7 +16,9 @@ For the hero scenario, the first client library target is TypeScript for the Tet
 - Integrate with OpenTelemetry where configured.
 - Avoid forcing developers to build metrics aggregation, policy checks, or audit correlation manually.
 - Keep SDK interfaces stable while server-side strategies, evidence, and intelligence evolve.
-- Keep definition synchronization language-neutral: SDK declarations can generate a definition bundle, but the control plane must also support manifest-first, registry-first, and direct REST-client workflows.
+- Keep definition synchronization language-neutral: SDK declarations can
+  generate a definition bundle, but the control plane must also support
+  bundle-first, registry-first, and direct REST-client workflows.
 
 MVP implementation guidance: [MVP Implementation Guide](../../IMPLEMENTATION_GUIDE.md).
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
@@ -34,7 +36,11 @@ build/release:
 
 application/bootstrap startup (MVP):
   validate/apply bundle through the control-plane API
-  receive registration receipt and runtime binding
+  obtain authenticated approval for the exact canonical bundle when required
+  authority-workflow branch:
+    proposal-managed -> publish the definition and receive a ready receipt
+    bundle-approved -> activate initial authority and receive a ready receipt
+  initialize runtime binding
 
 deployment:
   deploy application independently
@@ -47,7 +53,7 @@ runtime:
 The application-facing loop should still feel like:
 
 ```text
-declare -> decide by observing
+declare -> approve -> decide -> observe
 ```
 
 ## Initial responsibilities
@@ -70,7 +76,7 @@ The client library should support:
    - Define default safe value.
    - Define range or allowed values.
    - Define optimization intent.
-   - Define safety preset or advanced policy.
+   - Define explicit typed policy constraints.
 
 3. **Scoped decision request**
    - Pass runtime context.
@@ -80,10 +86,11 @@ The client library should support:
    - Treat cohort/segment identifiers as claims that the server may verify or replace.
    - Receive the runtime decision value directly in the basic path.
 
-4. **Decision-linked evidence emission**
-   - Emit typed domain events and metrics through the SDK.
-   - Automatically attach decision, target, value, audit, timestamp, and definition identity when available.
-   - Allow advanced users to define typed events and evidence metrics explicitly.
+4. **Raw signal and exposure-scoped outcome emission**
+   - Emit ordinary typed domain events and metrics as raw, unlinked telemetry.
+   - Never infer or automatically attach decision context to ordinary signal emission.
+   - After applying and confirming a server decision, emit attributed outcomes through an explicit exposure-scoped operation or payload containing the returned `exposureId`.
+   - Allow advanced users to define typed raw events and exposure-scoped outcome metrics explicitly.
 
 5. **Fallback handling**
    - Optionally use the code-declared fallback when the data plane is unavailable.
@@ -95,7 +102,11 @@ The client library should support:
 6. **Definition bundle support**
    - Generate or reference a canonical `DecisionDefinitionBundle` in code-first workflows.
    - Expose bundle digest/revision metadata to runtime calls.
-   - For MVP, explicitly validate/apply the extracted bundle during trusted application/bootstrap startup before enabling data-plane calls.
+   - For MVP, explicitly validate/apply the extracted bundle and complete
+     exact-bundle approval when required during trusted
+     application/bootstrap startup. Proposal-managed definitions wait only for
+     approved publication; bundle-approved definitions also wait for initial
+     authority activation before enabling data-plane calls.
    - Keep management calls separate from decide and exposure operations.
 
 ## Example shape
@@ -127,9 +138,21 @@ const flaggo = await createFlaggoClient({
 });
 ```
 
-Startup registration sends the extracted bundle once to the management API and initializes compact expected identity from the accepted receipt. Production decision calls send only that identity. Availability fallback is disabled unless explicitly configured; `local-default` uses the decision's code-declared default only for recognized data-plane availability failures.
+Startup registration sends the extracted bundle once to the management API and
+initializes compact expected identity from a ready receipt. A ready receipt for
+a bundle-approved definition also identifies the derived proposal, activation,
+state, generation, target, and strategy kind. Production decision calls send
+only the definition identity. Availability fallback is disabled unless
+explicitly configured; `local-default` uses the decision's code-declared
+default only for recognized data-plane availability failures.
 
-If apply returns `requires-approval`, startup raises a typed error containing the `approvalRequestId` and does not initialize the data-plane client. After an authorized reviewer approves the pending bundle, retrying startup with the same bundle receives the approved receipt.
+If apply returns `requires-approval`, startup raises a typed error containing
+the `approvalRequestId` and does not initialize the data-plane client. After an
+authorized reviewer approves the exact bundle snapshot, a proposal-managed
+definition publishes without an initial activation plan and can become ready
+immediately. For bundle-approved authority, the service derives the activation
+request and publishes state through expected-baseline compare-and-swap;
+retrying startup receives the original ready receipt once activation succeeds.
 
 If approval expires, retrying the same startup apply and deterministic key causes the server to revalidate and create one fresh linked approval request. Concurrent replicas receive that replacement request rather than minting independent approvals.
 
@@ -253,35 +276,73 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     range: [200, 1500],
     step: 50
   },
-  policy: {
-    maxDelta: 50,
-    cooldown: "20s",
-    minSampleSize: 30,
-    minEvidenceQuality: 0.7,
-    maxModelUncertainty: 0.35
+  lifecycle: {
+    authorityMode: "bundle-approved",
+    initialAuthority: {
+      controlTarget: { type: "cohort", id: "new_players" },
+      kind: "numeric-rule",
+      rule: {
+        threshold: 0.55,
+        valueAtOrAbove: 850,
+        valueBelow: 750,
+        weightedInputs: [
+          {
+            signal: boardPressureSignal,
+            minimum: 0,
+            maximum: 1,
+            weight: 0.45
+          },
+          {
+            signal: recentPlacementTimeMsSignal,
+            minimum: 0,
+            maximum: 2000,
+            weight: 0.25
+          },
+          {
+            signal: recoveryFailuresSignal,
+            minimum: 0,
+            maximum: 5,
+            weight: 0.20
+          },
+          {
+            signal: currentLevelSignal,
+            minimum: 0,
+            maximum: 20,
+            weight: 0.10
+          }
+        ]
+      },
+      rationale: "Initial deterministic Tetris behavior."
+    }
   },
-  requestedApproval: "automatic",
+  policy: {
+    maxDelta: 50
+  },
   context: {
     sessionId: flaggo.target.session(sessionId),
     userId: flaggo.target.user(userId),
-    cohort: flaggo.target.cohort(playerCohort),
-    deviceType: device.type
+    cohort: flaggo.target.cohort(playerCohort)
   }
 });
 
 gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
+let confirmedExposureId: string | undefined;
 if (
   dropIntervalDecision.source === "server" &&
-  dropIntervalDecision.confirmToken
+  dropIntervalDecision.exposure.confirmationRequired
 ) {
-  await flaggo.exposures.confirm(
+  const confirmedExposure = await flaggo.exposures.confirm(
     dropIntervalDecision.decisionId,
-    dropIntervalDecision.confirmToken
+    dropIntervalDecision.exposure.confirmToken
   );
+  confirmedExposureId = confirmedExposure.exposureId;
 }
 ```
 
 The basic API keeps the `flaggo.tune.number(...)` SDK surface but returns a number decision object. The application applies the plain numeric value via `.value`. A server receipt carries `decisionId` and confirmation metadata; an SDK-local fallback receipt deliberately does not. Signal schemas are defined once near producers and reused through typed handles. Bound inference inputs combine a signal declaration reference with its current value, while typed target wrappers combine target schema with the current ID. Tooling partitions this object into an immutable extracted definition and a compact runtime request; runtime values never enter the definition digest. Emitting a signal does not associate it with every decision in the program.
+Static lifecycle fields such as `initialAuthority.controlTarget` use a literal
+`DecisionTargetRef`; `flaggo.target.*(...)` wrappers are reserved for runtime
+context binding.
 
 ### Policy authoring normalization
 
@@ -290,14 +351,22 @@ The shorthand `policy` object is authoring syntax, not the canonical policy cont
 | `PolicyAuthoring` field | Canonical constraint |
 | --- | --- |
 | `maxDelta` | `{ kind: "max-delta", value }` |
-| `cooldown: "20s"` | `{ kind: "cooldown", seconds: 20 }` |
 | `minSampleSize` | `{ kind: "min-sample-size", value }` |
 | `minEvidenceQuality` | `{ kind: "min-evidence-quality", value }` |
 | `maxModelUncertainty` | `{ kind: "max-model-uncertainty", value }` |
 | `minExpectedOutcome` | `{ kind: "min-expected-outcome", value }` |
-| `paused` | `{ kind: "pause", paused }` |
 
 The result is `InlinePolicy { kind: "inline", constraints }`; constraints are duplicate-free and canonically sorted by `kind`. The explicit advanced form accepts canonical `PolicyReference | InlinePolicy` directly.
+
+Cooldown authoring is intentionally unavailable until issue #33 defines the
+separate activation and request-time temporal contracts.
+
+`output.range` and `output.step` remain action-space semantics. Extraction does
+not duplicate them into synthesized policy constraints, so the code-first
+Tetris declaration and its canonical bundle form hash identically.
+Extraction also preserves `signals.evidence` as canonical signal-role
+references and maps `output.default` to `fallback.value` without inventing a
+fallback reason.
 
 ### Extractable code-first subset
 
@@ -333,7 +402,9 @@ Rules:
 - two call sites in one build that use the same decision key with different canonical definitions fail the build with `contract-conflict`,
 - development runtime extraction may memoize by decision key, but must reject a second digest for that key,
 - different deployed builds may carry different registered revisions for the same stable key,
-- the server returns governed fallback for unknown or conflicting identities rather than registering runtime-dependent semantics.
+- the server returns typed Problem Details with no server or SDK fallback for
+  unknown or conflicting identities rather than registering
+  runtime-dependent semantics.
 
 ### Basic evidence emission
 
@@ -353,19 +424,18 @@ sessionEndedEvent.emit({
 });
 ```
 
-The SDK and telemetry pipeline should attach decision context automatically when possible:
+The emissions above are raw domain telemetry unless the application identifies
+them as outcomes of an applied decision. The SDK must not infer exposure from
+timing, `decisionId`, revision, or digest alone.
 
-- decision key,
-- decision definition revision,
-- returned value,
-- runtime target,
-- resolved control target when known,
-- decision/audit correlation ID,
-- timestamp,
-- definition revision or digest,
-- application/build identity.
-
-An explicit decision-scoped observation helper can exist as shorthand for advanced users, but it should not be required in the hero path.
+After applying a server decision that requires confirmation, the client uses
+the opaque confirm token and retains the returned `exposureId`, as shown by
+`confirmedExposureId` above. Later attributed outcome telemetry correlates to
+that `exposureId`. The server joins the exposure to the audited decision record
+containing the complete `{ definitionId, revision, contractDigest }` identity,
+returned value, targets, decision-time inputs, audit ID, timestamp, and
+application/build provenance. An ergonomic outcome helper may wrap this flow,
+but it must not omit confirmation or substitute an incomplete identity.
 
 ### Advanced evidence and governance
 
@@ -405,12 +475,13 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
       range: [200, 1500],
       step: 50
     },
-    requestedApproval: "automatic",
+    lifecycle: {
+      authorityMode: "proposal-managed"
+    },
     policy: {
       kind: "inline",
       constraints: [
         { kind: "max-delta", value: 50 },
-        { kind: "cooldown", seconds: 20 },
         { kind: "min-sample-size", value: 30 },
         { kind: "min-evidence-quality", value: 0.7 },
         { kind: "max-model-uncertainty", value: 0.35 }
@@ -419,15 +490,13 @@ const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
     context: {
       sessionId: { type: "string", target: "session" },
       userId: { type: "string", target: "user" },
-      cohort: { type: "string", target: "cohort" },
-      deviceType: "string"
+      cohort: { type: "string", target: "cohort" }
     }
   },
   context: {
     sessionId,
     userId,
-    cohort: playerCohort,
-    deviceType: device.type
+    cohort: playerCohort
   },
   inputs: [
     boardPressureSignal.input(boardPressure),
@@ -478,7 +547,11 @@ type DecisionResult<T> =
   | ClientFallbackResult<T>;
 ```
 
-`confidence` is `null` when Flaggo returns a static decision fallback because no evidence-backed decision was approved. If only target/evidence resolution fallback happened, confidence should still be present and should refer to the returned decision's evidence views and control target.
+`confidence` is present only when the returned authority makes an
+evidence-backed claim. It is `null` for decision fallback and deterministic
+bundle-authored strategies. Resolution fallback preserves the broader
+authority's semantics: evidence-backed authority retains confidence, while a
+deterministic broader-target strategy returns `null`.
 
 `decisionMode` tells the application how the value was produced without exposing internal implementation details. For the Tetris adaptive MVP, the expected mode is usually `strategy`: the server executed an approved strategy against live runtime context and returned an immediate numeric value.
 
@@ -540,8 +613,8 @@ type CodeFirstNumberTuneRequest = {
   inference?: BoundInferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
+  lifecycle: AuthorityLifecycleAuthoring;
   policy: PolicyAuthoring;
-  requestedApproval?: RequestedApprovalMode;
   context: BoundRuntimeContext;
 };
 
@@ -557,21 +630,48 @@ type AdvancedNumberTuneDefinition = {
   inference?: InferenceDeclaration;
   intent: DecisionIntent;
   output: NumberOutputContract;
+  lifecycle: AuthorityLifecycleAuthoring;
   policy: PolicyReference | InlinePolicy;
-  requestedApproval?: RequestedApprovalMode;
   context: RuntimeContextSchema;
 };
 
-type RequestedApprovalMode = "automatic" | "human" | "policy-default";
+type AuthorityLifecycleAuthoring =
+  | BundleApprovedAuthorityAuthoring
+  | { authorityMode: "proposal-managed" };
+
+type BundleApprovedAuthorityAuthoring = {
+  authorityMode: "bundle-approved";
+  initialAuthority: NumberInitialAuthorityAuthoring;
+};
+
+type NumberInitialAuthorityAuthoring =
+  | {
+      controlTarget: DecisionTargetRef;
+      kind: "active-value";
+      value: number;
+      rationale: string;
+    }
+  | {
+      controlTarget: DecisionTargetRef;
+      kind: "numeric-rule";
+      rule: NumericRuleAuthoring;
+      rationale: string;
+    };
+
+type NumericRuleAuthoring = Omit<NumericRuleDeclaration, "weightedInputs"> & {
+  weightedInputs: Array<
+    Omit<NumericRuleInput, "signal"> & {
+      signal: InferenceSignalHandle<number>;
+    }
+  >;
+};
 
 type PolicyAuthoring = {
   maxDelta?: number;
-  cooldown?: `${number}s`;
   minSampleSize?: number;
   minEvidenceQuality?: number;
   maxModelUncertainty?: number;
   minExpectedOutcome?: number;
-  paused?: boolean;
 };
 
 type NumberOutputContract = {
@@ -582,10 +682,7 @@ type NumberOutputContract = {
 
 type RuntimeContextSchema = Record<
   string,
-  | "string"
-  | "number"
-  | "boolean"
-  | { type: "string" | "number" | "boolean"; target?: string }
+  { type: "string" | "number" | "boolean"; target?: string }
 >;
 
 type RuntimeContextValue = string | number | boolean | null;
@@ -735,6 +832,10 @@ const unexpectedTarget: MetricObjective = {
 };
 ```
 
+`NumericRuleAuthoring.weightedInputs[].signal` accepts only
+`InferenceSignalHandle<number>`, so boolean/string metrics, derived metrics,
+and events fail at authoring time before registry validation repeats the check.
+
 The SDK should not implement policy, strategy selection, async intelligence, or server state. Its responsibilities are definition extraction from static request fields, telemetry, optional definition bundle export, runtime request, compact definition identity propagation, typed response, and explicitly configured local fallback for data-plane availability failures.
 
 In the basic path, `default` is the singular safe fallback value. During bundle generation, the SDK can compile it into the lower-level action-space default and fallback definition required by the registry/runtime model.
@@ -752,7 +853,10 @@ write declaration in code
   -> extract flaggo.decision-definition-bundle.json
   -> deploy application independently
   -> trusted startup validates/applies bundle through management API
-  -> receive registration receipt
+  -> authorized actor approves the exact canonical bundle when required
+  -> authority-workflow branch:
+       proposal-managed -> publish definition and return ready receipt
+       bundle-approved -> activate initial authority and return ready receipt
   -> initialize data-plane client with accepted identity
   -> runtime decide succeeds only for exact registered identity
 ```
@@ -820,9 +924,14 @@ const decision = await dropInterval.decide({
   runtimeContext: {
     userId,
     sessionId,
-    boardPressure,
-    recentPlacementTimeMs
-  }
+    cohort: playerCohort
+  },
+  inputs: [
+    boardPressureSignal.input(boardPressure),
+    recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
+    recoveryFailuresSignal.input(recoveryFailures),
+    currentLevelSignal.input(game.level)
+  ]
 });
 ```
 
@@ -834,6 +943,10 @@ The full `DecisionDefinitionBundle` should not be sent with each runtime request
 - deployment annotations or injected config,
 - direct REST headers/body fields.
 
+`runtimeContext` carries declared contextual and target-binding fields.
+Strategy operands use the canonical `inputs` collection; the SDK must not move
+or duplicate inference values into context.
+
 Different builds of the same service can be deployed at the same time. The SDK should treat expected definition identity as build/deployment metadata attached to each workload.
 
 If expected identity is missing, unknown, conflicting, or retired, the SDK surfaces the Problem Details contract error. It must not invoke local fallback or retry with another revision. Local fallback is reserved for explicitly configured data-plane availability failures.
@@ -842,7 +955,10 @@ Production credentials use OAuth 2.0/OIDC scopes. The SDK keeps management crede
 
 The exact availability classifier and retry defaults are defined in the [API Contract Proposal](../API_CONTRACT_PROPOSAL.md#sdk-availability-fallback-classifier). The SDK must compare each generated call-site digest with `RegistrationReceipt.acceptedDefinitions[decisionKey]` before a remote attempt or local fallback. Availability fallback is forbidden until that accepted binding exists and matches.
 
-For valid Flaggo Problem Details, the SDK requires `clientFallback.eligible: true`; status `503` alone does not authorize a local value. In particular, `required-evidence-unavailable` is forbidden unless the registered policy separately permits it and the server projects that permission into the error.
+For valid Flaggo Problem Details, the SDK requires
+`clientFallback.eligible: true`; status `503` alone does not authorize a local
+value. `required-evidence-unavailable` is always ineligible because missing
+evidence is a server evaluation outcome, not data-plane unavailability.
 
 ## Telemetry behavior
 
@@ -875,7 +991,8 @@ For the Tetris hero scenario, the first client library design should support:
 - TypeScript only.
 - Number decision definitions.
 - Basic `tune.number(...)` call returning a number decision receipt with a plain numeric `.value`.
-- Safety preset support, starting with `gradual`.
+- Explicit typed policy constraints; code-first shorthand normalizes to the
+  canonical `InlinePolicy` representation.
 - Signal declarations plus normal domain event/OpenTelemetry emission.
 - Advanced domain event and metric declarations as optional evidence mode.
 - Runtime context.
@@ -884,7 +1001,11 @@ For the Tetris hero scenario, the first client library design should support:
 - Singular default/fallback value.
 - DecisionDefinitionBundle generation or reference.
 - Trusted startup registration through the control-plane validate/apply API.
-- Expected definition digest/revision propagation.
+- Complete accepted `{ definitionId, revision, contractDigest }` propagation
+  for production requests.
+- Local data-plane initialization remains disabled when apply fails or remains
+  pending because no accepted binding exists. A direct request that bypasses
+  this precondition may receive `409 contract-not-registered`.
 - Decision API call with a typed response.
 - Runtime API path versioning through `/v1`.
 - OpenTelemetry telemetry mode.

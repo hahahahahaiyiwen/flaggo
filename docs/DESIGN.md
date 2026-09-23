@@ -24,10 +24,11 @@ Decision Evidence
   provides runtime facts, observations, evidence views, quality, and provenance
 
 Decision Intelligence
-  analyzes evidence and produces bounded proposals
+  optionally analyzes evidence and produces bounded proposals
 
 Decision Lifecycles
-  validate, approve, activate, observe, and transition governed state
+  approve bundle candidates or govern independent proposals,
+  then activate and transition governed state
 
 Runtime Decision Execution
   applies compatible governed state to one application request
@@ -36,6 +37,10 @@ Runtime Decision Execution
 Canonical loops:
 
 ```text
+DecisionDefinition + bundle-declared initial authority
+  -> authenticated bundle approval
+  -> GovernedDecisionState
+
 DecisionDefinition + DecisionEvidence + outcomes + objectives
   -> Decision Intelligence
   -> DecisionProposal
@@ -55,7 +60,7 @@ A decision key is the stable developer-facing name where application code delega
 
 Examples include `tetris.dropInterval`, `checkout.fraudReviewRequired`, `api.retryPolicy`, `llm.modelRoute`, and `workflow.escalationAction`.
 
-A decision definition is the versioned semantic contract behind a key. It answers: **what may be decided and how should it resolve for this revision?** It owns signal declarations, typed intent, inference configuration, safety constraints, and output contract/action space. It does not own governed state or concrete runtime results.
+A decision definition is the versioned semantic contract behind a key. It answers: **what may be decided and how should it resolve for this revision?** It owns signal declarations, typed intent, inference configuration, safety constraints, output contract/action space, and authority workflow. A bundle-approved definition may declare an initial authority candidate, but it does not own approved governed state or concrete runtime results.
 
 Detailed concept design: [DECISION_DEFINITION.md](DECISION_DEFINITION.md).
 
@@ -85,11 +90,13 @@ The decision definition declares a target hierarchy, and resolvers choose path-s
 
 ### Decision intelligence
 
-Decision intelligence is the AI-native reasoning layer that turns decision definitions and decision evidence into `DecisionProposal` objects. For real-time adaptive decisions, it usually proposes a bounded strategy that can later be governed and executed against live context.
+Decision intelligence is the optional future Phase 4 reasoning layer that may
+turn decision definitions and decision evidence into `DecisionProposal`
+objects. It does not participate in the bundle-approved Phase 3 path.
 
 It answers: **how should Flaggo reason about what to do next before governance decides whether it is safe to apply?**
 
-This is the layer that makes Flaggo more than a dynamic configuration or feature flag service. It can behave like an embedded data scientist or operator assistant: observe telemetry, compare outcomes, choose an analysis strategy, propose experiments, value changes, or bounded adaptation strategies, explain uncertainty, and recommend whether to hold, change, test, roll back, or fall back.
+This layer extends Flaggo beyond declarative authority once teams need a closed loop. It can behave like an embedded data scientist or operator assistant: observe telemetry, compare outcomes, choose an analysis strategy, propose experiments, value changes, or bounded adaptation strategies, explain uncertainty, and recommend whether to hold, change, test, roll back, or fall back.
 
 Decision intelligence should produce a **DecisionProposal**, not an automatically final runtime decision. A proposal can be a single value, an experiment, a rollout, or a bounded strategy.
 
@@ -99,13 +106,19 @@ Detailed concept design: [DECISION_INTELLIGENCE.md](DECISION_INTELLIGENCE.md).
 
 ### Decision lifecycles
 
-Decision lifecycles validate proposals, apply policy and approval, activate `GovernedDecisionState`, and manage optimization, experiment, and rollout transitions through completion or rollback.
+Phase 3 decision lifecycles authenticate bundle approval, activate
+`GovernedDecisionState`, and supersede prior authority. Future
+proposal-managed contracts may add optimization, experiment, rollout,
+completion, and rollback transitions.
 
 Detailed concept design: [DECISION_LIFECYCLES.md](DECISION_LIFECYCLES.md).
 
 ### Runtime decision execution
 
-Runtime decision execution resolves compatible governed state and applies fixed resolution, strategy evaluation, deterministic variant assignment, rollout routing, override, or fallback for one application request.
+Phase 3 runtime decision execution resolves compatible governed state and
+applies active-value resolution, numeric-rule evaluation, or governed fallback
+for one application request. Variant assignment, rollout routing, and override
+remain future mechanisms.
 
 Detailed concept design: [RUNTIME_DECISION_EXECUTION.md](RUNTIME_DECISION_EXECUTION.md).
 
@@ -128,8 +141,8 @@ At a high level:
 
 ```text
 DecisionDefinition + runtime context + compatible GovernedDecisionState
-  -> fixed resolution, strategy evaluation, variant assignment,
-     rollout routing, override, or fallback
+  -> active-value resolution, numeric-rule evaluation,
+     or governed fallback
   -> policy, target, and safety checks
   -> RuntimeDecisionResult, possibly containing fallback
 ```
@@ -143,11 +156,14 @@ Decision key: tetris.dropInterval
 Decision definition: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A / rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
 Runtime target: session:game-456
 Control target: cohort:new_players or global
-Runtime context: userId, sessionId, cohort, currentLevel, deviceType, boardPressure, recentPlacementTimeMs, recoveryFailures
+Runtime context: userId, sessionId, cohort
+Inference inputs: currentLevel, boardPressure, recentPlacementTimeMs, recoveryFailures
 Evidence views: hard-drop rate, placement time, early game-over rate by session/cohort/global windows
 Goals: keep gameplay challenging but playable
-Policy constraints: min/max interval, max delta, cooldown, min evidence quality, max model uncertainty
-Governed state: active value or strategy, previous value, cooldown, rollout, operator mode
+Action-space constraints: min/max interval and 50ms step
+Policy constraints: max delta; temporal semantics are clarified separately
+Initial authority: bundle-declared numeric rule for cohort:new_players
+Governed state: approved active strategy, predecessor, generation, and approval reference
 Action space: numeric interval from 200ms to 1500ms
 Fallback contract: 800ms default
 ```
@@ -156,12 +172,15 @@ This scenario should prove the smallest useful version of Flaggo:
 
 1. A developer can declare a stable decision key and bounded decision definition.
 2. The app can emit observations and ask for a decision for a runtime target.
-3. Flaggo can resolve evidence views, governed state, goals, policy, and uncertainty.
-4. Async intelligence can produce a proposal for a decision definition and control target.
-5. The decision lifecycle can approve, limit, hold, roll back, fall back, or activate the strategy.
-6. Runtime decision execution can apply governed state against live game context.
-7. The app can safely apply a value or fallback.
-8. An operator can inspect why the decision happened.
+3. The bundle can declare a bounded initial numeric rule and control target.
+4. An authenticated actor can approve the exact bundle snapshot.
+5. Flaggo can activate the derived governed state idempotently.
+6. Runtime decision execution can apply that state against live game context.
+7. The app can safely apply a value or fallback and confirm exposure.
+8. An operator can inspect the approval, activation, runtime policy, and outcome linkage.
+
+Phase 4 extends this scenario with evidence-backed proposal generation and
+independent governance; it does not redefine the runtime execution path.
 
 ## System components
 
@@ -203,7 +222,12 @@ Responsibilities:
 - execute compatible governed state through deterministic selection or approved strategy logic,
 - return a value/action, explanation, confidence, policy result, and fallback status.
 
-The Decision API must be fast, reliable, and safe-by-default. For a registered definition, if policy, evidence, or governed state prevents adaptation, it returns the registered fallback rather than pretending confidence exists. Missing, unknown, conflicting, or retired definition identity is a contract error, not a fallback decision.
+The Decision API must be fast, reliable, and safe-by-default. For a ready,
+registered definition, if no permitted target has compatible active state or
+if applicable evidence/policy prevents adaptation, it returns the registered
+fallback rather than pretending confidence exists. Missing, unknown,
+conflicting, retired, or non-ready definition identity and corrupt/incoherent
+state are errors, not fallback decisions.
 
 Fallback provenance is explicit. A server-produced policy fallback is a normal audited `RuntimeDecisionResult` with `source: server`, policy result, decision ID, and audit ID. An explicitly configured client fallback caused by data-plane unavailability has `source: client-fallback` and cannot claim server policy, decision, audit, or exposure identity. Contract/configuration errors never become client fallback.
 
@@ -248,7 +272,9 @@ Responsibilities:
 
 - resolve applicable policies by decision definition and target,
 - enforce hard constraints,
-- evaluate evidence quality, model uncertainty limits, sample-size requirements, cooldowns, max deltas, approval requirements, and guardrails,
+- evaluate bounds, max deltas, approval requirements, and guardrails, plus
+  evidence quality, model uncertainty, sample size, or temporal constraints
+  only when the active authority and policy require them,
 - block or require fallback when safety requirements are not met,
 - produce stable reason codes for audit and operator visibility.
 
@@ -260,31 +286,34 @@ The state service tracks the current and historical state of decisions.
 
 Responsibilities:
 
-- active value/action per decision definition and control target,
-- previous decisions,
-- cooldown state,
-- rollout or exposure state,
-- operator overrides,
-- paused/resumed mode,
-- rollback transition metadata.
+- one stable authority head per application/environment/decision key/control
+  target,
+- immutable exact-definition active value or strategy records,
+- state identity and monotonic generation,
+- predecessor, proposal, activation, and approval references,
+- atomic expected-baseline activation,
+- read-only runtime projection.
 
-State lets Flaggo avoid stateless one-off guesses and prevents thrashing or conflicting decisions.
+Later lifecycle capabilities may add completion, expiry, rollout, pause,
+override, rollback, and temporal stabilization state behind explicit
+contracts.
 
 ### 7. [Decision reasoning engine](design/reasoning-engine/README.md)
 
-The decision reasoning engine executes the decision intelligence model and proposes the next candidate action.
+The Phase 3 reasoning seam executes approved numeric rules. A future Phase 4
+seam may run decision intelligence and propose the next candidate action.
 
 Responsibilities:
 
-- interpret evidence relative to goals,
-- account for uncertainty,
-- compare candidate values and strategies within the action space,
-- choose an analysis mode such as qualitative reasoning, heuristic rules, experiment analysis, bandits, statistical models, or LLM-assisted reasoning,
-- produce decision proposals or strategy proposals rather than directly applying runtime decisions,
-- produce a rationale,
-- hand candidate decisions to policy before application.
+- deterministically execute the approved Phase 3 `numeric-rule`,
+- return a typed candidate or execution error without owning state, policy, or
+  fallback,
+- preserve a separate future boundary for evidence interpretation, uncertainty,
+  candidate comparison, proposal generation, and rationale.
 
-This engine may use AI, deterministic algorithms, statistical methods, bandits, rules, or hybrids. The design should not assume every decision requires an LLM.
+Future proposal generation may use AI, deterministic algorithms, statistical
+methods, bandits, rules, or hybrids. It must not change the bounded Phase 3
+runtime executor or assume every decision requires an LLM.
 
 ### 8. [Audit and explanation service](design/audit-explanation/README.md)
 
@@ -299,11 +328,13 @@ Responsibilities:
 
 Auditability is required for trust. It is not optional observability.
 
-### 9. [Operator console](design/operator-console/README.md)
+### 9. [Future operator console](design/operator-console/README.md)
 
-The operator console is the human governance interface.
+The future operator console is the human governance interface. Phase 3
+provides inspectable audit, state, and registration output but no current
+pause, override, or rollback authoring surface.
 
-Responsibilities:
+Future responsibilities:
 
 - list decision keys and definitions,
 - inspect runtime/control/evidence/policy targets and resolution chains,
@@ -335,7 +366,9 @@ application code
 application deployment (independent)
   -> trusted application/bootstrap startup
   -> control-plane validate/apply
-  -> registered definition identity
+  -> authenticated approval of initial authority, when declared
+  -> expected-baseline activation
+  -> ready registration receipt
   -> initialize data-plane client
   -> runtime request carries exact definitionId + revision + contractDigest
 ```
@@ -354,26 +387,40 @@ The **runtime decision execution path** serves application requests:
 
 ```text
 Application code
-  -> emits domain telemetry through client library
-  -> asks Decision API for decision(definition, runtime target, runtime context)
+  -> emits raw domain telemetry through client library
+  -> asks Decision API for decision(
+       decision key,
+       complete { definitionId, revision, contractDigest } expectation,
+       runtime target,
+       runtime context,
+       signal inputs)
 
 Decision API
-  -> loads decision definition
-  -> resolves runtime target, control target, evidence views, policy, and fallback
-  -> fetches evidence snapshots
+  -> resolves the exact accepted definition binding
+  -> resolves runtime target, control target, policy, and fallback
+  -> fetches evidence snapshots only when runtime policy requires them
   -> fetches compatible GovernedDecisionState
-  -> executes fixed value, approved strategy, variant assignment,
-     rollout routing, override, or fallback
+  -> resolves active-value authority, evaluates numeric-rule authority,
+     or produces governed fallback
   -> applies deterministic runtime policy checks
-  -> records audit/explanation
-  -> returns RuntimeDecisionResult, possibly containing fallback
+  -> durably records audit/explanation
+  -> returns RuntimeDecisionResult only after audit persistence succeeds
 
 Application code
   -> applies returned value/action
-  -> emits outcome telemetry
+  -> when confirmation is required, confirms exposure with the server receipt
+  -> receives exposureId
+  -> emits attributed outcome telemetry linked to exposureId
 ```
 
-The **decision intelligence path** analyzes evidence outside the application's request/response path:
+Raw domain telemetry can be emitted without a decision or exposure. Outcome
+attribution begins only after confirmed application; the exposure record joins
+`exposureId` to the audited decision's complete
+`{ definitionId, revision, contractDigest }` identity, inputs, targets, and
+returned value.
+
+The future **decision intelligence path** analyzes evidence outside the
+application's request/response path:
 
 ```text
 Telemetry changes, schedule, operator request, definition activation, rollout review, or drift
@@ -386,7 +433,20 @@ Telemetry changes, schedule, operator request, definition activation, rollout re
   -> produce DecisionProposal
 ```
 
-The **decision lifecycle path** turns proposals into authority:
+The **bundle-approved lifecycle path** supplies the first deterministic
+authority without invoking decision intelligence:
+
+```text
+DecisionDefinition + initialAuthority
+  -> validate exact candidate
+  -> authenticated approval
+  -> server-derived proposal and activation identities
+  -> expected-baseline activation
+  -> GovernedDecisionState
+```
+
+The future **proposal-managed lifecycle path** conceptually turns independent
+proposals into authority:
 
 ```text
 DecisionProposal
@@ -399,16 +459,27 @@ DecisionProposal
 
 Runtime decision execution then applies deterministic, bounded, policy-gated state and returns a `RuntimeDecisionResult`.
 
-Rollback is not a kind of governed-state payload. A rollback proposal transitions authority by activating a replacement or previous known-safe state and marking the replaced state `rolled-back`.
+Rollback is a future transition contract, not a governed-state payload kind.
+It would activate replacement or previous known-safe authority.
 
-Governed state lifecycle:
+Current and future lifecycle boundaries:
 
 ```text
-DecisionProposal: proposed -> validated -> pending-approval | approved | rejected
-GovernedDecisionState: pending -> active -> superseded | expired | completed | rolled-back
+GovernedDecisionState:
+  active -> superseded
+
+Future DecisionProposal:
+  proposed -> validated -> pending-approval | approved | rejected
+
+Future lifecycle transitions:
+  active -> expired | completed | rolled-back
 ```
 
-Approval can be automatic for low-risk changes within typed constraints and sufficient evidence only when deployment or environment policy grants that authority. Human approval is required for high-impact strategies, policy exceptions, insufficient evidence quality, excessive model uncertainty, weak expected outcome, overlapping target conflicts, or regulated/business-critical decisions.
+Future proposal-managed approval may be automatic for low-risk changes within
+typed constraints and sufficient evidence only when deployment or environment
+policy grants that authority. Its concrete automatic and human approval rules
+remain deferred. Phase 3 bundle-approved authority requires an authenticated
+actor to approve the exact declared snapshot.
 
 Cross-cutting flows keep the system declared, evidenced, audited, and improved over time:
 
@@ -431,6 +502,7 @@ For a request like:
 ```text
 definitionId = def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
 revision = rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+contractDigest = sha256:contract...
 runtime target = session:game-456
 ```
 

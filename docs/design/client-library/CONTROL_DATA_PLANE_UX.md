@@ -31,7 +31,11 @@ application deployment
 application/bootstrap startup (MVP)
   SDK loads the extracted canonical bundle
   SDK calls control-plane validate/apply
-  registry returns definitionId + revision + contractDigest
+  authorized actor approves the exact canonical bundle when required
+  authority-workflow branch:
+    proposal-managed -> registry publishes the definition and returns a ready receipt
+    bundle-approved -> service activates state through expected-baseline
+      compare-and-swap and returns a ready receipt with authority identities
   SDK initializes the data-plane client with that binding
 
 data plane
@@ -77,9 +81,15 @@ The exact SDK shape remains provisional, but behavior is fixed:
 1. Load the statically extracted canonical bundle; do not derive semantics from whichever runtime branch executes.
 2. Call the management validate/apply operation, not the decide endpoint.
 3. Use a deterministic idempotency key derived from application, environment, and `bundleDigest` so concurrent replicas submitting identical bundles converge on one result.
-4. Accept only an approved registration receipt.
-5. Initialize the data-plane binding from the returned definition ID, revision, and digest.
-6. Permit decision calls only after registration succeeds.
+4. Accept only a ready registration receipt: immediately after approved
+   proposal-managed publication when no initial authority exists, or after all
+   required bundle-approved authority is active.
+5. Verify that the receipt includes definition identity and, for
+   bundle-approved definitions, proposal, activation, state, generation,
+   target, and strategy-kind references.
+6. Initialize the data-plane binding from the returned definition ID,
+   revision, and digest.
+7. Permit decision calls only after registration succeeds.
 
 Startup registration does not bypass lifecycle or approval:
 
@@ -91,9 +101,23 @@ Startup registration does not bypass lifecycle or approval:
 
 The Flaggo client initialization rejects on validation failure, apply failure, conflict, or `requires-approval`. The host application decides whether to stop startup or continue without Polari, but it cannot turn that failure into a local decision fallback.
 
-The typed approval error includes the stable `approvalRequestId`. Approval atomically applies the pending canonical bundle; a later startup retry or restart with the same bundle receives the stored approved receipt and may initialize the data plane.
+The typed approval error includes the stable `approvalRequestId`. Approval
+authorizes the exact pending canonical bundle snapshot. For a proposal-managed
+definition, approval publishes the definition and stores a ready receipt
+without an activation plan or authority references. For bundle-approved
+authority, approval derives proposal and activation identities, stores the
+captured-baseline activation plan, and publishes state through
+expected-baseline compare-and-swap. A later startup retry or restart with the
+same bundle receives the stored ready receipt and may initialize the data
+plane.
 
-If that approval expires, the next startup apply uses the same deterministic key but triggers server-side revalidation and receives one fresh linked approval request. Concurrent replicas converge on the replacement request; the SDK does not need a renewal endpoint or a new locally generated key.
+If that approval expires before authorization, the next startup apply uses the
+same deterministic key but triggers server-side revalidation and receives one
+fresh linked approval request. Concurrent replicas converge on the replacement
+request; the SDK does not need a renewal endpoint or a new locally generated
+key. Once approved publication is ready, exact retries return the same receipt.
+For bundle-approved authority they also return the same activation and state
+instead of creating new authority.
 
 ### Credential boundary
 
@@ -139,7 +163,11 @@ The data plane never:
 - silently selects the latest or previous revision,
 - treats contract/configuration failure as a fallback decision.
 
-Known older revisions can continue operating during rolling deployments only when the exact revision remains registered and allowed.
+Known older revisions can continue issuing requests during rolling deployments
+only when the exact revision remains registered and allowed. If a newer
+revision has replaced the stable authority head, the older request receives
+server fallback unless another permitted target has exact compatible state; it
+never consumes the newer strategy.
 
 ## Runtime error behavior
 
@@ -150,11 +178,17 @@ Known older revisions can continue operating during rolling deployments only whe
 | Unknown definition ID/revision | `409 contract-not-registered` | Forbidden |
 | Digest conflicts with registered definition | `409 contract-conflict` | Forbidden |
 | Definition is retired | `409 retired-definition` | Forbidden |
+| Required activation is pending or failed | `409 definition-not-ready` | Forbidden |
 | Invalid context or inference input | `400` or `422` Problem Details | Forbidden |
-| Registered definition evaluates but policy/evidence blocks adaptation | `200` audited server fallback | Not applicable |
-| Data plane is unavailable, unreachable, or times out | Transport/availability failure | Explicitly configurable |
+| A required state, policy, or audit readiness check failed | `503 decision-service-not-ready` with `clientFallback.eligible: false` | Forbidden |
+| Persisted state violates canonical invariants | `500 invalid-decision-state` with `clientFallback.eligible: false` | Forbidden |
+| Registered definition evaluates but applicable state, policy, or evidence blocks adaptation | `200` audited server fallback | Not applicable |
+| Required evidence is unavailable and governed fallback is forbidden | `503 required-evidence-unavailable` with `clientFallback.eligible: false` | Forbidden |
+| Data plane is genuinely unavailable, unreachable, or times out after readiness passed | Transport failure or `503 service-unavailable` with `clientFallback.eligible: true` | Explicitly configurable |
 
-Contract errors are actionable deployment or control-plane mistakes. Converting them into local values would hide drift and make an unregistered build appear healthy.
+Contract and readiness errors are actionable deployment, control-plane, or
+operator failures. Converting them into local values would hide drift or
+corruption and make an unhealthy deployment appear healthy.
 
 ## Three distinct outcomes
 
@@ -164,7 +198,9 @@ The registered definition is evaluated and produces an approved value or strateg
 
 ### Governed server fallback
 
-The registered definition is valid, but evidence, policy, governed state, or safety prevents adaptation. The server returns the definition's registered fallback as an audited `200` decision result.
+The registered definition is valid, but governed state, policy, safety, or
+explicitly required evidence prevents adaptation. The server returns the
+definition's registered fallback as an audited `200` decision result.
 
 ### SDK availability fallback
 
@@ -174,9 +210,16 @@ An availability fallback has no server `decisionId`, `auditId`, policy result, d
 
 Availability fallback is disabled by default. It is eligible only after configured retries for DNS/connection failure, connection/read timeout before a complete response, intermediary `502`/`504`, or a valid Flaggo `5xx` Problem Details response with `clientFallback.eligible: true`. It is forbidden for TLS, certificate, proxy/authentication configuration, caller cancellation, malformed responses, every `503` without explicit eligibility, every `4xx`, `500`/`501`/`505`, and Flaggo problems where eligibility is false or absent.
 
-`required-evidence-unavailable` is forbidden by default. It becomes eligible only when the registered definition policy separately allows that client fallback and the server returns the explicit eligibility extension. HTTP `503` alone is not sufficient.
+`required-evidence-unavailable` is always ineligible for SDK-local fallback.
+When governed fallback is permitted, the server returns an audited fallback
+decision. Otherwise the SDK surfaces fallback-ineligible Problem Details.
 
-The default is one retry after the initial attempt with the same decide idempotency key. Before any remote attempt or local fallback, the generated call-site digest must match `acceptedDefinitions[decisionKey].contractDigest` from the approved registration receipt. Missing or mismatched binding is a local contract error, not availability.
+The default is one retry after the initial attempt with the same decide
+idempotency key. Before any remote attempt or local fallback, the generated
+call-site digest must match
+`acceptedDefinitions[decisionKey].contractDigest` from the ready registration
+receipt. Missing or mismatched binding is a local contract error, not
+availability.
 
 ## SDK error surface
 
@@ -197,19 +240,17 @@ Contract errors expose the server Problem Details payload, including stable `cod
 
 The SDK must not catch a contract error and return a success-shaped local value. Direct REST clients receive the same Problem Details contract without SDK-specific fallback behavior.
 
-## Failed control-plane apply
+## Failed or pending control-plane apply
 
-Atomic bundle apply means a failed bundle produces no registry mutations. Existing registered definitions continue serving clients that explicitly reference them.
+An apply that fails or remains pending produces no accepted runtime binding
+for the requested new or changed definition. Existing registered definitions
+continue serving only callers that explicitly reference their complete accepted
+`{ definitionId, revision, contractDigest }` tuple.
 
-If code expecting a failed or unapplied new definition is deployed:
-
-```text
-new build sends new definitionId/revision/digest
-  -> data plane cannot resolve exact identity
-  -> 409 contract-not-registered
-  -> SDK surfaces the contract error
-  -> no old revision and no local fallback are selected
-```
+Until the requested binding is accepted, client data-plane calls remain
+disabled locally. A direct request that bypasses this client precondition may
+receive `409 contract-not-registered`; it must not fabricate a new identity,
+select an older revision, or use local fallback.
 
 This preserves runtime correctness across every control-plane client experience.
 

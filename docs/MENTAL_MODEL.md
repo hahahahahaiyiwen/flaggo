@@ -24,33 +24,62 @@ Decision Evidence
   provides runtime facts, declared signals, evidence views, quality, and provenance
 
 Decision Intelligence
-  analyzes evidence and proposes bounded changes
+  optionally analyzes evidence and proposes bounded future changes
 
 Control-plane decision lifecycles
-  optimization, experimentation, and rollout
-  -> DecisionProposal -> governance -> GovernedDecisionState
+  Phase 3 bundle approval; future proposal governance
+  -> GovernedDecisionState
 
 Runtime decision execution
-  fixed resolution, strategy evaluation, variant assignment,
-  rollout routing, override, or fallback
+  active-value resolution, numeric-rule evaluation,
+  or governed fallback
   -> RuntimeDecisionResult
 ```
 
 `GovernedDecisionState` is not part of a decision definition. It is produced by an approved control-plane lifecycle and consumed by runtime decision execution. A runtime decision result is also not part of the definition; it is the per-request output of the runtime decision provider.
 
-Control-plane lifecycles and runtime execution operate at different timescales. A lifecycle decides whether an optimization, experiment, or rollout should exist and how it progresses. Runtime execution applies the resulting approved state consistently for each request.
+Flaggo supports two authority workflows:
+
+```text
+bundle-approved:
+  definition bundle + initial authority candidate
+  -> authenticated bundle approval
+  -> governed state
+
+proposal-managed (future Phase 4):
+  definition + evidence + current state when present
+  -> decision intelligence or another authorized producer
+  -> DecisionProposal -> governance
+  -> initial or replacement governed state
+```
+
+Phase 3 implements the bundle-approved workflow. A future proposal-managed
+workflow must converge on the same governed-state boundary and runtime
+execution path or introduce explicitly approved extensions. Its first
+activation uses the shared no-state expected baseline (generation `0` with no
+`stateId`) and creates a state with no predecessor; later activations compare
+against the current state head and create replacement state. These are
+lifecycle invariants, while the concrete proposal and governance contracts
+remain Phase 4 work. The bundle contains an initial authority candidate, not
+self-approved active state.
+
+Control-plane lifecycles and runtime execution operate at different timescales.
+Phase 3 approves and activates bundle authority; runtime execution applies
+that authority consistently for each request. Future lifecycle contracts may
+decide whether an optimization, experiment, or rollout should exist and how it
+progresses.
 
 ## Core concepts by layer
 
 | Concept | Answers | Owns | Does not own |
 | --- | --- | --- | --- |
 | Decision key | What decision family does the application delegate? | Stable developer-facing name such as `tetris.dropInterval`. | Revision semantics, evidence history, active strategy. |
-| Decision definition | What may be decided and how should the system resolve it? | Versioned contract: decision key, signals, intent, inference, output contract/action space, and safety constraints. | Raw telemetry history, application/build provenance, governed state, concrete runtime result. |
+| Decision definition | What may be decided and how should the system resolve it? | Versioned contract: decision key, signals, intent, inference, output contract/action space, safety constraints, and authority workflow. Bundle-approved definitions may declare an initial authority candidate. | Raw telemetry history, application/build provenance, approved governed state, concrete runtime result. |
 | Decision evidence | What is known now or historically? | Runtime facts, target identifiers, emitted events/metrics, evidence views, exposure records, evidence quality, uncertainty, provenance such as app/build identity. | Policy authority or active strategy state. |
-| Decision intelligence | What bounded behavior should Flaggo recommend from the definition and evidence? | Async analysis, proposal generation, and reasoning mode selection. | Lifecycle authority, governance approval, or per-request execution. |
-| Decision lifecycle | How does a proposed optimization, experiment, or rollout become and remain active? | Validation, approval, activation, observation, conclusion, promotion, supersession, and rollback. | Per-request value selection. |
-| Governed decision state | What behavior has been approved for future/runtime use? | Active value, strategy, experiment, rollout, cooldown, override, lifecycle, previous safe value. | Decision definition semantics or raw evidence history. |
-| Runtime decision execution | How is approved behavior applied to this request? | Fixed-value resolution, strategy evaluation, deterministic variant assignment, rollout routing, override, and fallback. | Proposing or approving future behavior. |
+| Decision intelligence | What bounded behavior should Flaggo recommend from the definition and evidence? | Optional async analysis, proposal generation, and reasoning mode selection for proposal-managed authority. | Bundle approval, lifecycle authority, governance approval, or per-request execution. |
+| Decision lifecycle | How does declared behavior become and remain active? | Phase 3 bundle approval, activation, and supersession; future contracts may add proposal governance and broader transitions. | Per-request value selection. |
+| Governed decision state | What behavior has been approved for runtime use? | Phase 3 `active-value` or `numeric-rule` authority plus activation lineage. | Decision definition semantics, raw evidence history, or unapproved future authority kinds. |
+| Runtime decision execution | How is approved behavior applied to this request? | Phase 3 active-value resolution, numeric-rule evaluation, and governed fallback. | Proposing or approving future behavior. |
 | Runtime decision result | What did this request receive? | Returned value, fallback status, explanation, audit ID, confidence, policy result. | Future authority unless persisted as governed state. |
 
 ## Decision definition
@@ -60,12 +89,16 @@ A decision definition is the contract for one semantic revision of a decision ke
 ```text
 DecisionDefinition
   key: tetris.dropInterval
-  revision: 2
+  definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
+  revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+  contractDigest: sha256:contract...
   targetHierarchy: session -> user -> cohort -> global
   signals:
     allow:
       - tetris.boardPressure
       - tetris.recentPlacementTimeMs
+      - tetris.recoveryFailures
+      - tetris.currentLevel
       - tetris.piecePlaced
       - tetris.sessionEnded
       - tetris.earlyLossRate24h
@@ -85,33 +118,47 @@ DecisionDefinition
       inputs:
         - tetris.boardPressure
         - tetris.recentPlacementTimeMs
+        - tetris.recoveryFailures
+        - tetris.currentLevel
       fallbackOrder: cohort -> global
   output:
       type: number
       range: 200..1500
       step: 50
       default: 800
-  requestedApproval: automatic
-  safety:
+  lifecycle:
+      authorityMode: bundle-approved
+      initialAuthority:
+        controlTarget: cohort:new_players
+        kind: numeric-rule
+        rule:
+          threshold: 0.55
+          valueAtOrAbove: 850
+          valueBelow: 750
+          weightedInputs:
+            - tetris.boardPressure: 0..1 * 0.45
+            - tetris.recentPlacementTimeMs: 0..2000 * 0.25
+            - tetris.recoveryFailures: 0..5 * 0.20
+            - tetris.currentLevel: 0..20 * 0.10
+        rationale: Initial deterministic Tetris behavior.
+  policy:
+      kind: inline
       constraints:
-        - type: max-step-change
+        - kind: max-delta
           value: 50
-        - type: cooldown
-          duration: 20s
-        - type: min-evidence-quality
-          value: 0.70
-        - type: max-model-uncertainty
-          value: 0.35
-        - type: min-sample-size
-          value: 30
 ```
 
 Notes:
 
 - The decision key is a sub-concept of the decision definition: it identifies the decision family.
 - The definition owns the output **contract** or action space, not the actual runtime result.
-- A definition must explicitly permit experimentation before governed state can activate an experiment. It owns the experiment safety envelope, such as eligible assignment target kinds, allowed values, traffic limits, exposure requirements, and applicable approval constraints.
-- Active experiment identifiers, variants, allocation weights, assignment salt/version, lifecycle status, and promotion or rollback state belong to `GovernedDecisionState`, not the definition.
+- In revised Phase 3, `max-delta` compares the candidate with the fixed contract
+  default (`output.default = 800`, normalized as `actionSpace.default`). It does
+  not imply previous-result or request-time stabilization semantics, which
+  remain owned by #33.
+- Experiment permission and active experiment metadata are future contract
+  concerns. The current Phase 3 `DecisionDefinition` and
+  `GovernedDecisionState` contain no experiment fields.
 - Signal definitions are owned outside individual decisions, usually near the producer. A signal key such as `tetris.boardPressure` is the immutable semantic identity for its schema, type, units, range, and meaning.
 - A decision definition does not redefine signal schemas. It explicitly allows the signal handles it may use and assigns them roles as objectives, inference inputs, evidence, or guardrails.
 - `targetHierarchy` defines meaningful target levels for signal aggregation, evidence views, learning, inference, governance, and fallback.
@@ -121,8 +168,11 @@ Notes:
 - `inference.fallbackOrder` makes broader fallback levels explicit.
 - Intent is typed. Natural-language intent captures product direction; metric-objective intent binds optimization to declared signals.
 - Natural-language intent is advisory metadata unless paired with metric objectives or typed policy constraints.
-- Safety should use typed constraints when behavior must be machine-enforced. Labels such as `gradual` can remain presets only if they expand to concrete constraints.
-- Application-authored definitions can request an approval mode, but deployment or environment policy grants authority. A definition cannot grant itself automatic approval.
+- Safety uses typed constraints when behavior must be machine-enforced.
+  Preset labels are not part of the current contract.
+- A bundle-authored initial authority is only a candidate. An authenticated
+  control-plane approval grants authority; the definition cannot approve
+  itself.
 - Evidence views are derived from the decision definition revision, referenced signal definitions, target hierarchy, and filter/window needs; they do not need to be manually bound as a separate concept in the definition. A view may select a window for a raw event or app-emitted metric, but must not override a fixed-window derived signal.
 
 ## Decision evidence
@@ -134,13 +184,12 @@ Runtime context:
   sessionId = game-456
   userId = user-123
   cohort = new_players
-  boardPressure = 0.82
-  recentPlacementTimeMs = 1420
-  currentLevel = 3
 
 Inference inputs used by runtime strategy evaluation:
-  boardPressure <- declared metric boardPressure
-  recentPlacementTimeMs <- declared metric recentPlacementTimeMs
+  tetris.boardPressure = 0.82
+  tetris.recentPlacementTimeMs = 1420
+  tetris.recoveryFailures = 2
+  tetris.currentLevel = 3
 
 Runtime target resolved from context:
   session:game-456
@@ -167,16 +216,29 @@ A value used online should be a declared signal, usually an app-emitted metric w
 
 This keeps the top-level model small while avoiding arbitrary context fields. Context may carry values, but only declared inference inputs are meaningful to runtime strategy evaluation.
 
-## Decision intelligence and decision lifecycles
+## Authority workflows
 
-Decision intelligence performs control-plane analysis and proposal generation, but it does not own governance authority. Control-plane lifecycles coordinate how proposed behavior becomes approved state:
+The bundle-approved workflow supplies a deterministic initial authority without
+decision intelligence:
+
+```text
+definition + initial authority candidate
+  -> bundle validation
+  -> authenticated bundle approval
+  -> expected-baseline activation
+  -> GovernedDecisionState
+```
+
+The future proposal-managed workflow may add asynchronous reasoning or another
+authorized producer. The following lifecycles are conceptual rather than
+current contracts:
 
 ```text
 Adaptive optimization lifecycle:
   DecisionDefinition + DecisionEvidence + outcomes + typed intent/objectives
   -> DecisionProposal
   -> governance
-  -> GovernedDecisionState
+  -> initial or replacement GovernedDecisionState
 
 Experiment lifecycle:
   declared experiment permission + hypothesis + candidate variants
@@ -193,14 +255,19 @@ Progressive rollout lifecycle:
   -> advance, pause, complete, or roll back
 ```
 
-Proposals may be produced by decision intelligence, operators, or other authorized automation. Governance, rather than the proposal source, grants authority.
+Future proposals may be produced by decision intelligence, operators, or other
+authorized automation. Governance, rather than the proposal source, grants
+authority.
+
+Bundle approval and proposal governance differ in how the candidate is
+produced, not in how runtime consumes the resulting state.
 
 Runtime decision execution consumes the approved state:
 
 ```text
 DecisionDefinition + runtime context + compatible GovernedDecisionState + policy
-  -> fixed resolution, strategy evaluation, deterministic variant assignment,
-     rollout routing, override, or fallback
+  -> active-value resolution, numeric-rule evaluation,
+     or governed fallback
   -> RuntimeDecisionResult
 ```
 
@@ -221,22 +288,27 @@ The word "scope" should not carry every meaning. Decision definitions declare a 
 | Fallback scope | Boundary where a fallback value or rule applies. |
 | Application/build provenance | Software artifact identity used for audit and operations, not a personalization target by default. |
 
-Target hierarchy is not a guarantee that every target kind forms a clean total order. Some target kinds, especially cohorts, can overlap. Resolution must therefore use selector semantics and precedence, not just "nearest ancestor wins."
+Current runtime resolution does not arbitrate overlapping selectors or
+priorities. Reasoning supplies an ordered set of exact targets authorized by
+the registry-owned runtime projection: the exact primary `inference.target`
+followed only by the exact target kinds declared in `inference.fallbackOrder`.
+Any future overlapping-selector or priority model requires a separately
+approved target-resolution contract.
 
-Target resolution should define:
+Authority replacement is independent of target-resolution precedence:
 
 | Rule | Meaning |
 | --- | --- |
-| Selector | Predicate or identifier that determines whether a target applies. |
-| Specificity | More specific targets usually outrank broader targets. |
-| Priority | Explicit numeric or ordered priority breaks ties among overlapping targets. |
-| Supersession | A state can replace another only through explicit `supersedesStateId`, a unique-active-state invariant, or policy-mediated conflict resolution. |
-| Conflict result | If two applicable states cannot be ordered safely, policy should force fallback or operator review. |
+| Stable address | Application, environment, decision key, and control target identify one authority head across semantic revisions. |
+| Expected baseline | Approval preparation captures and durably stores the current `ExpectedAuthorityBaseline` with the deterministic activation plan. |
+| Replacement | Activation compare-and-swaps the stable head against that captured baseline; a changed head produces a stale conflict rather than an alternate mutation path. |
+| Predecessor | A successful replacement creates a new immutable state whose `predecessorStateId` records the replaced state. |
 
-Resolution may still produce chains such as:
+For the Tetris definition whose explicit fallback order is
+`cohort -> global`, resolution produces:
 
 ```text
-session:game-456 -> user:user-123 -> cohort:new_players -> global
+session:game-456 -> cohort:new_players -> global
 ```
 
 But the chain is used differently by different layers:
@@ -256,8 +328,9 @@ Polari separates definition management from runtime evaluation:
 
 | Plane | Owns |
 | --- | --- |
-| Control plane | Definition bundles, immutable revisions, policies, optimization/experiment/rollout lifecycles, governed state, and registration receipts. |
-| Data plane | Fixed resolution, strategy evaluation, deterministic variant assignment, rollout routing, override/fallback execution, and exposure confirmation for exact registered identities. |
+| Phase 3 control plane | Definition bundles, immutable revisions, policies, bundle approval, activation, supersession, governed state, and registration receipts. |
+| Phase 3 data plane | Active-value resolution, numeric-rule evaluation, governed fallback, and exposure confirmation for exact registered identities. |
+| Future extensions | Proposal-managed optimization, experiment, rollout, override, and broader lifecycle transitions after their contracts are approved. |
 
 Application deployment is a third, developer-owned lifecycle. Code-first declarations generate control-plane artifacts. For MVP, trusted application/bootstrap startup validates/applies those artifacts and initializes the runtime binding before data-plane use. A runtime call must carry `definitionId + revision + contractDigest`.
 
@@ -266,7 +339,9 @@ code-first declaration
   -> static extraction
   -> application deployment
   -> trusted startup control-plane registration
-  -> registered definition identity
+  -> authenticated bundle approval
+  -> initial governed authority activation
+  -> ready registration receipt
   -> data-plane decision
 ```
 
@@ -280,11 +355,13 @@ Use explicit names:
 
 | Name | Meaning |
 | --- | --- |
-| `DecisionProposal` | Candidate value, strategy, experiment, hold, rollback, or fallback recommendation produced by intelligence, an operator, or authorized automation. |
+| `DecisionProposal` | Future Phase 4 candidate produced by intelligence, an operator, or authorized automation. |
 | `GovernedDecisionState` | Approved durable authority that runtime decision execution may consume. |
 | `RuntimeDecisionResult` | Per-request response returned to application code. |
 
-For experimentation, keep lifecycle and execution terminology distinct:
+For future experimentation, keep lifecycle and execution terminology distinct.
+The following table is conceptual and does not define current state or result
+fields:
 
 | Name | Plane | Meaning |
 | --- | --- | --- |
@@ -299,17 +376,27 @@ Assignment must be deterministic for the same declared assignment target across 
 experimentId + allocationVersion + assignmentTargetKind + assignmentTargetId + salt
 ```
 
-`DecisionProposal` and `GovernedDecisionState` have separate lifecycles:
+Bundle-derived authority and independently generated proposals have separate
+entry paths:
 
 ```text
-DecisionProposal:
+Bundle initial authority:
+  declared -> approval-pending -> authorized -> activated
+
+Future DecisionProposal:
   proposed -> validated -> approved | rejected
 
 GovernedDecisionState:
-  pending -> active -> superseded | expired | rolled-back
+  active -> superseded
+
+Future lifecycle transitions:
+  active -> expired | completed | rolled-back
 ```
 
-Validation checks schema compatibility, output bounds, typed safety constraints, target authority, evidence quality, and policy. Approval can be automatic or human-controlled only when authorized by deployment or environment policy:
+Bundle-approved validation checks the declared target, inference inputs,
+numeric rule, action space, fallback, and applicable runtime policy; an
+authenticated actor approves that exact snapshot. The future approval modes
+below are conceptual and apply to proposal-managed authority:
 
 | Approval mode | When appropriate |
 | --- | --- |
@@ -317,18 +404,24 @@ Validation checks schema compatibility, output bounds, typed safety constraints,
 | Human approval | New strategy classes, high-impact changes, insufficient evidence quality, excessive model uncertainty, weak expected outcome, overlapping target conflicts, policy exceptions, or regulated/business-critical decisions. |
 | Operator override | Emergency pause, forced fallback, rollback, or manually pinned value. |
 
-Effective policy is the intersection of definition constraints, environment policy, and operator controls. Less-trusted or narrower layers may restrict behavior but never widen it; an application-authored definition cannot override environment approval requirements, relax mandatory evidence-quality floors, or bypass an operator pause.
+The operator-override row is conceptual. Phase 3 exposes no pause or override
+authoring/evaluation surface; later work must approve those contracts first.
+
+Effective policy is the intersection of definition constraints, environment
+policy, and approved operator controls. Less-trusted or narrower layers may
+restrict behavior but never widen it; an application-authored definition
+cannot override environment approval requirements or relax mandatory
+evidence-quality floors. A future operator-pause contract would add another
+narrowing control rather than an implicit current behavior.
 
 Active `GovernedDecisionState` is then consumed by runtime decision execution:
 
 ```text
 runtime target + runtime context
   -> resolve applicable governed state
-  -> return an active fixed value
-     or evaluate an active strategy
-     or assign an active experiment variant
-     or route an active rollout
-     or apply an override or fallback
+  -> return active-value authority
+     or evaluate numeric-rule authority
+     or produce governed fallback
   -> RuntimeDecisionResult
 ```
 
@@ -336,18 +429,23 @@ The `RuntimeDecisionResult` is an output record, not part of the definition:
 
 ```text
 value: 850
-fallbackUsed: false
+valueType: number
+decisionMode: strategy
+strategyId: strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5
 decisionId: decision-123
-confidence:
-  evidenceQuality: 0.82
-  modelUncertainty: 0.31
-  expectedOutcome: 0.72
+confidence: null
+fallback:
+  source: server
+  resolutionFallbackUsed: false
+  decisionFallbackUsed: false
+  reason: null
 policy:
   result: approved
 auditId: audit-789
 ```
 
-When variant assignment is used, the result must also identify the assignment:
+Under a future experiment contract, variant-assignment results would also
+identify the assignment:
 
 ```text
 decisionMode: experiment
@@ -373,14 +471,26 @@ Adaptive learning needs explicit attribution. A runtime result should create a d
 RuntimeDecisionResult
   -> decisionId
   -> application applies or renders value
-  -> confirmExposure(decisionId)
+  -> narrow to ServerDecisionReceipt
+  -> require exposure.confirmationRequired
+  -> confirmExposure(decisionId, exposure.confirmToken)
   -> client-applied exposureId
   -> outcome events within attribution window
   -> attributed evidence
   -> future DecisionProposal
 ```
 
-Decision records should capture definition revision/hash, runtime target, resolved control target, governed state ID, returned value, decision mode, fallback status, inference input values, policy result, audit ID, and timestamp. Experiment decisions must additionally capture experiment ID, variant ID, allocation version, and assignment unit. Exposure records should link to decision records and capture the fact that the application actually applied or rendered the value. Outcome events should declare attribution windows so unused responses, delayed outcomes, censoring, confounding, and selection bias can be handled explicitly rather than silently training the wrong lesson.
+Decision records should capture the complete runtime identity
+`{ definitionId, revision, contractDigest }`, runtime target, resolved control
+target, governed state ID, returned value, decision mode, fallback status,
+inference input values, policy result, audit ID, and timestamp. A future
+experiment contract must additionally define the
+experiment ID, variant ID, allocation version, and assignment unit recorded
+for experiment decisions. Exposure records should link to decision records and
+capture the fact that the application actually applied or rendered the value.
+Outcome events should declare attribution windows so unused responses, delayed
+outcomes, censoring, confounding, and selection bias can be handled explicitly
+rather than silently training the wrong lesson.
 
 ## Reuse rule
 
@@ -390,7 +500,16 @@ Different decision definitions should not automatically share active decision au
 | --- | --- |
 | Raw telemetry observations | Reusable when event and field semantics match. |
 | Evidence views/signals | Reusable only when signal definitions and aggregation semantics are compatible. |
-| GovernedDecisionState | Isolated by decision definition revision/hash and control target unless explicitly declared compatible. |
-| RuntimeDecisionResult, decision records, and confirmed exposures | Bound to the exact definition revision/hash used by the request. |
+| Authority head | Stable by application, environment, decision key, and control target so every semantic revision participates in one ordered CAS lineage. |
+| GovernedDecisionState | Immutable and bound to the exact approved `{ definitionId, revision, contractDigest }` tuple. |
+| RuntimeDecisionResult, decision records, and confirmed exposures | Bound to the complete `{ definitionId, revision, contractDigest }` tuple used by the request. |
 
-Runtime requests should bind to an expected decision definition revision or contract hash. `GovernedDecisionState` should declare which revisions or contract hashes it is compatible with. New definitions can start partially warm only through semantic compatibility: unchanged signals and evidence may be reused, while new or changed signals warm up before policy allows them to influence proposals or runtime execution.
+Runtime requests must bind to the complete expected
+`{ definitionId, revision, contractDigest }` tuple. The active authority head
+may point to only one immutable state; runtime uses it only when that state
+matches the request's complete identity. An older registered request receives
+server fallback after a newer revision replaces the head rather than consuming
+the new strategy. New
+definitions can start partially warm only through semantic compatibility:
+unchanged signals and evidence may be reused, while new or changed signals warm
+up before policy allows them to influence proposals or runtime execution.

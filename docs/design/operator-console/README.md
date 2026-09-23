@@ -2,7 +2,10 @@
 
 ## Purpose
 
-The operator console is the human governance surface for Flaggo. It lets operators inspect decisions, active state, evidence quality, policy outcomes, audit records, overrides, and rollback controls.
+The operator console is the human governance surface for Flaggo. It lets
+operators inspect definitions, bundle approvals, activation lineage, active
+state, policy outcomes, audit records, and later proposal-managed evidence and
+controls.
 
 The full console is not required for the MVP. The MVP should still expose enough local audit and state visibility that a future console has clear API and data seams.
 
@@ -14,7 +17,7 @@ The MVP does not need a polished UI. It should provide inspectable outputs throu
 
 - structured audit records,
 - local logs or file audit sink,
-- active state fixtures,
+- active state and registration-receipt inspection,
 - documented API responses,
 - optional simple debug endpoint or script.
 
@@ -23,13 +26,16 @@ The MVP does not need a polished UI. It should provide inspectable outputs throu
 The future operator console should support:
 
 - list decision keys and definitions,
+- inspect bundle approval actor, snapshot, proposal, activation, state, and
+  generation,
 - inspect active contracts and lifecycle state,
 - inspect active values and active strategies,
 - view recent decisions and audit records,
 - view evidence quality and confidence,
 - pause or resume a decision/target,
 - set or clear operator overrides,
-- approve, reject, or roll back proposals,
+- approve or reject bundle snapshots and later independent proposals,
+- replace or roll back authority when those lifecycle contracts exist,
 - inspect fallback and policy reason trends.
 
 ## MVP non-goals

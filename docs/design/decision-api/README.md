@@ -4,14 +4,22 @@
 
 The Decision API is the runtime service applications call when they need a `RuntimeDecisionResult` from flaggo.
 
-It receives a decision key, runtime target/context, application identity, and optional request metadata. It resolves the applicable decision definition, control target, evidence views, governed state, and policy, records audit context, and returns a value or fallback guidance.
+It receives a decision key, the complete expected runtime identity, runtime
+target/context, live inputs, application identity, and optional request
+metadata. It resolves the exact accepted definition binding, control target,
+governed state, policy, and evidence only when required, records audit context,
+and returns a value or governed fallback.
 
-The runtime API should also verify compact definition identity when the client or deployment provides it. A decision must not be returned as approved when the caller's definition ID or revision is unknown, retired, or semantically conflicting.
+Production requests must provide the complete
+`{ definitionId, revision, contractDigest }` tuple from an accepted
+registration binding. The runtime API must not return an approved decision
+when that exact tuple is absent, unknown, retired, or semantically conflicting.
 
 ## Design goals
 
 - Provide a small runtime API for application decision calls.
-- Be safe-by-default: return fallback when evidence, policy, or service state is insufficient.
+- Be safe-by-default: return fallback when applicable evidence, policy, or
+  service state is insufficient.
 - Keep decision responses explainable and auditable.
 - Separate application execution from decision evaluation.
 - Support scope resolution.
@@ -29,20 +37,19 @@ Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXE
 At a high level:
 
 ```text
-request(decision key, runtime context, signal inputs)
-  -> validate decision key and definition identity
+request(decision key, expected contract, runtime context, signal inputs)
+  -> require complete definitionId/revision/contractDigest tuple
+  -> resolve the exact accepted registration binding
   -> reject duplicate input keys
   -> verify every input resolves to an allowed app-emitted primitive metric
   -> verify metric objectives resolve to numeric metrics and obey direction/target invariants
   -> verify policy is present
-  -> verify expected contract digest/revision when supplied
-  -> resolve target chain
   -> load decision definition
-  -> fetch telemetry evidence
+  -> resolve the definition-owned target chain
   -> fetch governed state
-  -> assess uncertainty
-  -> load active fixed value, strategy, experiment, rollout, override, or fallback
-  -> execute the matching approved runtime mechanism
+  -> fetch telemetry evidence and assess uncertainty only when required
+  -> load active-value or numeric-rule authority, or resolve governed fallback
+  -> execute the matching Phase 3 runtime mechanism
   -> apply deterministic runtime policy checks
   -> record audit/explanation
   -> return RuntimeDecisionResult, possibly containing fallback
@@ -140,7 +147,10 @@ Responsibilities:
 - define evidence requirements,
 - define goals and fallback contracts,
 - register policy constraints,
-- register `GovernedDecisionState` strategies produced by async intelligence or operator tooling.
+- approve bundle-declared initial authority and activate derived
+  `GovernedDecisionState`,
+- govern later strategies produced by async intelligence or operator tooling
+  through the same activation boundary.
 
 Decision resources should be managed as versioned, append-only contracts with a simplified lifecycle:
 
@@ -148,13 +158,18 @@ Decision resources should be managed as versioned, append-only contracts with a 
 active -> deprecated -> retired
 ```
 
-Management APIs should support manifest-driven sync so build/deploy tooling can register or validate resources owned by a codebase. Missing resources should not be hard-deleted automatically; they should become deprecation candidates and require explicit lifecycle transition.
+Management APIs should support contract-bundle sync so build/deploy tooling can
+register or validate resources owned by a codebase. Missing resources should
+not be hard-deleted automatically; they should become deprecation candidates
+and require explicit lifecycle transition.
 
-### State and operator APIs
+### Future state and operator APIs
 
-State/operator APIs control live decision behavior.
+State/operator APIs may later control live decision behavior. Phase 3 defines
+no pause, override, rollback, cooldown, or rollout endpoint; each requires its
+own approved contract.
 
-Initial resource groups:
+Candidate resource groups:
 
 ```http
 /v1/state
@@ -207,8 +222,7 @@ Example:
   "runtimeContext": {
     "userId": "user-123",
     "sessionId": "game-456",
-    "cohort": "new_players",
-    "deviceType": "mobile"
+    "cohort": "new_players"
   },
   "inputs": [
     { "signal": { "key": "tetris.boardPressure" }, "value": 0.82 },
@@ -266,29 +280,24 @@ Response:
   ],
   "resolutionChain": [
     "session:game-456",
-    "user:user-123",
     "cohort:new_players",
     "global"
   ],
-  "value": 700,
+  "value": 850,
   "valueType": "number",
   "decisionMode": "strategy",
-  "strategyId": "strategy-tetris-new-players-v1",
-  "confidence": {
-    "evidenceQuality": 0.82,
-    "modelUncertainty": 0.31,
-    "expectedOutcome": 0.72
-  },
+  "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
+  "confidence": null,
   "fallback": {
     "source": "server",
-    "resolutionFallbackUsed": false,
+    "resolutionFallbackUsed": true,
     "decisionFallbackUsed": false,
-    "reason": null
+    "reason": "no_active_session_authority"
   },
   "policy": {
     "result": "approved",
     "reasons": [],
-    "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
+    "appliedConstraints": ["number-bounds", "step", "max-delta"]
   },
   "definitionStatus": {
     "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
@@ -304,7 +313,7 @@ Response:
     "confirmationRequired": true,
     "confirmToken": "confirm-789"
   },
-  "reason": "Approved strategy slowed the drop interval because board pressure was high and recent placement time was slow.",
+  "reason": "The approved weighted numeric rule met its 0.55 threshold.",
   "auditId": "audit-789"
 }
 ```
@@ -325,8 +334,8 @@ This means Flaggo could not use the most specific requested scope, but it still 
   },
   "decisionId": "decision-791",
   "runtimeTarget": {
-    "type": "user",
-    "id": "user-123"
+    "type": "session",
+    "id": "game-456"
   },
   "controlTarget": {
     "type": "cohort",
@@ -341,29 +350,25 @@ This means Flaggo could not use the most specific requested scope, but it still 
     }
   ],
   "resolutionChain": [
-    "user:user-123",
+    "session:game-456",
     "cohort:new_players",
     "global"
   ],
   "value": 750,
   "valueType": "number",
   "decisionMode": "strategy",
-  "strategyId": "strategy-tetris-new-players-v1",
-  "confidence": {
-    "evidenceQuality": 0.86,
-    "modelUncertainty": 0.28,
-    "expectedOutcome": 0.78
-  },
+  "strategyId": "strategy_01JQ8YJ6K7L8M9N0P1Q2R3S4T5",
+  "confidence": null,
   "fallback": {
     "source": "server",
     "resolutionFallbackUsed": true,
     "decisionFallbackUsed": false,
-    "reason": "runtime_target_insufficient_evidence"
+    "reason": "no_active_session_authority"
   },
   "policy": {
     "result": "approved",
     "reasons": [],
-    "appliedConstraints": ["number-bounds", "max-delta", "cooldown"]
+    "appliedConstraints": ["number-bounds", "step", "max-delta"]
   },
   "definitionStatus": {
     "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
@@ -377,7 +382,7 @@ This means Flaggo could not use the most specific requested scope, but it still 
     "confirmationRequired": true,
     "confirmToken": "confirm-791"
   },
-  "reason": "User-level evidence was insufficient; cohort-level evidence for new_players supported the returned drop interval.",
+  "reason": "The request resolved to cohort authority and the weighted score was below 0.55.",
   "auditId": "audit-791"
 }
 ```
@@ -398,23 +403,12 @@ This means Flaggo could not safely make an approved decision at any applicable s
   },
   "decisionId": "decision-790",
   "runtimeTarget": {
-    "type": "user",
-    "id": "user-123"
+    "type": "session",
+    "id": "game-456"
   },
-  "controlTarget": {
-    "type": "global",
-    "id": "global"
-  },
-  "targetProvenance": [
-    {
-      "targetType": "cohort",
-      "claimedId": "new_players",
-      "resolvedId": "new_players",
-      "source": "client-verified"
-    }
-  ],
+  "targetProvenance": [],
   "resolutionChain": [
-    "user:user-123",
+    "session:game-456",
     "cohort:new_players",
     "global"
   ],
@@ -424,14 +418,14 @@ This means Flaggo could not safely make an approved decision at any applicable s
   "confidence": null,
   "fallback": {
     "source": "server",
-    "resolutionFallbackUsed": true,
+    "resolutionFallbackUsed": false,
     "decisionFallbackUsed": true,
-    "reason": "insufficient_evidence_all_scopes"
+    "reason": "missing_state"
   },
   "policy": {
     "result": "fallback",
-    "reasons": ["insufficient_evidence_all_scopes"],
-    "appliedConstraints": ["min-evidence-quality", "max-model-uncertainty", "min-sample-size"]
+    "reasons": ["missing_state"],
+    "appliedConstraints": []
   },
   "definitionStatus": {
     "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
@@ -442,13 +436,17 @@ This means Flaggo could not safely make an approved decision at any applicable s
     "compatibility": "identical"
   },
   "exposure": {
-    "confirmationRequired": true,
-    "confirmToken": "confirm-790"
+    "confirmationRequired": false
   },
-  "reason": "No scope in the resolution chain had sufficient evidence for a safe decision.",
+  "reason": "No permitted target had compatible active authority; returned the registered fallback.",
   "auditId": "audit-790"
 }
 ```
+
+This fallback selected no authority. It therefore omits `controlTarget`,
+`strategyId`, state lineage, and exposure confirmation. The ordered
+`resolutionChain` records which permitted targets were attempted; it does not
+fabricate a global authority or evidence claim.
 
 ## Request responsibilities
 
@@ -477,7 +475,7 @@ The response should provide:
 - decision mode,
 - strategy ID when an approved strategy produced the value,
 - fallback status separated into resolution fallback and decision fallback,
-- resolved scope,
+- resolved control scope when active authority produced the result,
 - verified target provenance,
 - policy result,
 - contract integrity status,
@@ -505,14 +503,20 @@ For Tetris:
 
 ```text
 runtime target: session:game-456
-resolution chain: session:game-456 -> user:user-123 -> cohort:new_players -> global
+resolution chain: session:game-456 -> cohort:new_players -> global
 ```
 
-The runtime target, control target, target provenance, and resolution chain should be included in the response. Full evidence-view detail belongs in the audit record rather than the latency-sensitive runtime response.
+The runtime target and resolution chain should be included in the response.
+The control target and its provenance are present only when an active authority
+was selected. Full evidence-view detail belongs in the audit record rather than
+the latency-sensitive runtime response.
 
 Client-supplied cohort or segment IDs are claims, not authority. The service verifies the claim or replaces it using trusted server-side attributes and records `client-verified`, `server-derived`, or `server-replaced` provenance in the result.
 
-Resolution fallback should not be treated as a failed decision. If Flaggo falls back from `user` evidence to `cohort` evidence and returns an approved cohort-governed value, the response should still be an approved decision with a confidence score for the evidence used.
+Resolution fallback should not be treated as a failed decision. If Flaggo
+resolves from a requested `session` target to approved `cohort` authority, the
+response is still approved. Confidence is present only when that authority
+makes an evidence-backed claim.
 
 ## Policy evaluation
 
@@ -522,20 +526,29 @@ Policy may block or force fallback because of:
 
 - out-of-range value,
 - max delta violation,
-- cooldown,
-- insufficient sample size,
-- insufficient evidence quality,
-- excessive model uncertainty,
-- insufficient expected outcome,
-- guardrail breach,
-- paused operator mode,
-- missing required evidence.
+- no compatible active state at any permitted target,
+- applicable evidence, uncertainty, guardrail, temporal, or operator
+  constraints.
 
 Policy reason codes should be stable because clients, audits, and the operator console may depend on them.
 
+Missing, duplicate, invalid, or nonfinite required inference inputs and invalid
+runtime context are rejected during request validation with Problem Details;
+they do not enter policy evaluation or become fallback. Contract identity and
+registration-readiness failures likewise remain contract errors.
+
+A pending activation, failed readiness check, corrupt/torn persisted state, or
+state that violates `DecisionState` invariants is a service/readiness error.
+Those failures must not be converted into `missing_state` fallback.
+
 ## Contract integrity
 
-The Decision API should compare the request's expected contract identity with registry state before approving a decision. It must support rolling deployments where several builds of the same service call the API concurrently with different known definition IDs or revisions.
+The Decision API should compare the request's expected contract identity with
+registry state before approving a decision. It must accept concurrent rolling-
+deployment requests for different known identities without substituting
+revisions. Because one stable authority head serializes each decision key and
+control target, an older accepted identity receives server fallback when that
+head no longer contains compatible state.
 
 Success and error states:
 
@@ -547,10 +560,17 @@ Success and error states:
 | `contract-conflict` | The digest does not match the registered revision; return `409` Problem Details. |
 | `unknown-decision-key` | Decision key is not registered; return `404` Problem Details. |
 | `retired-definition` | The exact revision is retired; return `409` Problem Details. |
+| `definition-not-ready` | Required initial activation is pending or failed; return `409` Problem Details and forbid client fallback. |
+| `decision-service-not-ready` | A required state, policy, or audit readiness check failed; return `503` Problem Details with `clientFallback.eligible: false`. |
+| `invalid-decision-state` | Persisted state violates canonical invariants; return `500` Problem Details with `clientFallback.eligible: false`. |
 
 The full contract bundle should not be sent on each runtime request.
 
-Contract/configuration failures are not decision fallback. The service does not execute an older revision, and the SDK must not convert the 4xx response into local fallback.
+Contract/configuration and readiness failures are not decision fallback. The
+service does not execute an older revision, and the SDK must not convert these
+responses into local fallback. Fallback-eligible `503 service-unavailable` is
+reserved for genuine transient data-plane availability after required
+readiness checks passed.
 
 ## Authentication and retry identity
 
@@ -569,21 +589,27 @@ Phase 1 exposes only the singular decide operation. Batch decisions are deferred
 
 ## Strategy execution
 
-For real-time adaptive decisions, the Decision API should execute an active governed strategy rather than run deep analysis in the online request path.
+For real-time decisions, the Decision API resolves fixed authority directly or
+executes an active governed numeric rule rather than running deep analysis in
+the online request path.
 
 MVP strategy execution:
 
 ```text
-active strategy
-  -> evaluate runtime conditions against request context and evidence snapshot
-  -> calculate candidate value
-  -> clamp to action space and strategy bounds
-  -> check max delta and cooldown
+numeric-rule authority
+  -> evaluate the declared rule against request inputs
+  -> executor returns candidate value or typed error
+  -> Decision API validates action space and strategy contract
   -> pass candidate to policy
-  -> return approved value or fallback
+  -> return approved value or governed fallback, or surface the error
 ```
 
-The first strategy executor can support only numeric rule strategies for `tetris.dropInterval`. Future executors can add fixed value, scoring, bandit, model, or experiment strategies behind the same interface.
+The Phase 3 strategy executor supports only numeric-rule authority for
+`tetris.dropInterval`. `active-value` authority is already a candidate and is
+resolved directly by Decision API orchestration. State absence, policy
+fallback, and registered fallback selection also remain outside the executor.
+Future bounded strategy kinds may extend the strategy interface without moving
+those orchestration responsibilities into it.
 
 Intent-level service port:
 
@@ -593,24 +619,33 @@ interface IStrategyExecutor {
 }
 ```
 
-The Decision API should treat strategy execution as a bounded operation. It should not call an unbounded agent loop in the normal online path unless a specific decision definition is explicitly configured for that behavior.
+The Decision API must keep online strategy execution bounded and must never
+call an unbounded agent loop. Any future request-time mechanism requires a
+separately approved bounded strategy kind, explicit executor port, and
+enforceable latency and resource budgets.
 
 ## Fallback and confidence semantics
 
 The API should distinguish two fallback types:
 
 1. **Resolution fallback**
-   - Flaggo could not use the requested or most-specific runtime target/evidence view.
+   - Flaggo could not use the requested or most-specific runtime target,
+     authority, or required evidence view.
    - Flaggo resolved to a broader target, such as `cohort` or `global`.
    - A real decision may still be approved.
-   - Confidence should be present when the broader-target decision is approved.
+   - Confidence is present only when the approved broader-target authority
+     makes an evidence-backed claim.
 
 2. **Decision fallback**
    - Flaggo could not safely approve a decision.
    - The returned value is the configured fallback.
    - Confidence is `null` because no evidence-backed decision was approved.
 
-Confidence is not one generic score. It is required for `strategy`, `experiment`, and every result claiming evidence-backed adaptation. It is null for decision fallback and may be null for a non-evidence-based active value. When present, it describes the returned decision at the evidence and control target used, not necessarily the originally requested runtime target:
+Confidence is not one generic score. It is required only when a result claims
+evidence-backed adaptation. It is `null` for decision fallback,
+non-evidence-based active values, and deterministic bundle-authored strategies.
+When present, it describes the returned decision at the evidence and control
+target used, not necessarily the originally requested runtime target:
 
 | Field | Meaning |
 | --- | --- |
@@ -628,7 +663,9 @@ Fallback provenance must be explicit:
 
 ## Exposure confirmation
 
-Returning a value creates a decision record, not an exposure. The server response may include a confirm token or decision handle:
+Returning a value creates a decision record, not an exposure. An approved
+authority result includes a confirm token or decision handle; a server fallback
+returns `confirmationRequired: false`:
 
 This distinction matters because an application can request a decision without using it. The game may end, the relevant component may unmount, local state may change, or a newer decision may supersede the response before the value is applied. Treating every returned value as an exposure would associate outcomes with behavior the user never experienced and bias later evidence, evaluation, and optimization.
 
@@ -664,7 +701,7 @@ The audit record should correlate:
 - runtime target,
 - control target,
 - runtime context summary,
-- evidence snapshot/view summary,
+- evidence snapshot/view summary when evidence participated,
 - governed state summary,
 - active value, strategy, or candidate action,
 - policy result,
@@ -681,9 +718,9 @@ For the Tetris hero scenario, the first Decision API should support:
 - number decisions,
 - session/user/cohort/global target resolution,
 - resolution fallback and decision fallback response fields,
-- confidence and policy result fields,
+- nullable confidence and policy result fields,
 - audit ID generation,
-- simple evidence snapshot integration,
+- an optional evidence snapshot seam,
 - deterministic policy evaluation,
 - active numeric rule strategy execution.
 
@@ -694,7 +731,8 @@ The complete rationale is tracked in the [API Contract Proposal decision log](..
 - governed fallback is a completed audited `200`; malformed and configuration failures use Problem Details (A3),
 - exposure confirmation requires an opaque token and is idempotent (A4),
 - client cohort/segment claims are verified or replaced server-side (A8),
-- runtime responses contain compact confidence and target provenance while full evidence remains in audit (A9),
+- runtime responses contain compact confidence when applicable and target
+  provenance while full evidence remains in audit (A9),
 - batch decisions are deferred (A10),
 - production authentication uses OAuth 2.0/OIDC scopes with explicit local-development bypass only (A11),
 - optional `Idempotency-Key` provides decide retry identity (A12).

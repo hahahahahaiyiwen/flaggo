@@ -85,7 +85,13 @@ It should mean:
 - human intent remains encoded in goals and boundaries,
 - fallback behavior exists when confidence, evidence, or safety is insufficient.
 
-AI should primarily participate in asynchronous analysis: interpreting evidence, detecting drift, comparing strategies, generating `DecisionProposal` objects, and explaining tradeoffs. Online execution should normally be deterministic, bounded, compatible with approved `GovernedDecisionState`, and policy-gated.
+AI should primarily participate in asynchronous analysis: interpreting
+evidence, detecting drift, comparing strategies, generating
+`DecisionProposal` objects, and explaining tradeoffs. Online execution is
+deterministic, bounded, compatible with approved `GovernedDecisionState`, and
+policy-gated. It never invokes an unbounded request-time agent loop; any future
+request-time mechanism requires a separately approved bounded contract with
+enforceable latency and resource budgets.
 
 This is the standard Flaggo should hold itself to: not "AI makes choices" but "software gains a policy-gated decision interface that can use AI where AI is appropriate."
 
@@ -110,14 +116,20 @@ It should help software move from static branching toward governed runtime judgm
 The long-term ambition is for AI-native runtime decisioning to become a normal software primitive:
 
 ```text
+future control-plane extensions:
 definition + evidence + outcomes + objectives
   -> optimization, experiment, or rollout lifecycle
   -> proposal -> governance -> governed state
 
+current Phase 3 runtime core:
 definition + runtime context + compatible governed state + policy
-  -> fixed resolution, strategy evaluation, variant assignment,
-     rollout routing, override, or fallback
+  -> active-value resolution, numeric-rule evaluation,
+     or governed fallback
   -> runtime decision result
+
+future runtime mechanisms:
+  experiment assignment, rollout routing, and override
+  only after their contracts are approved
 ```
 
 Not every branch should become a decision call. Not every decision needs AI. Not every system should adapt automatically.

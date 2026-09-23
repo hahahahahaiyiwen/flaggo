@@ -2,9 +2,13 @@
 
 ## Purpose
 
-The reasoning engine currently hosts two distinct seams: async decision-intelligence proposal generation and bounded runtime strategy execution. They may share an MVP component, but they remain separate architectural responsibilities and interfaces.
+The reasoning engine hosts two distinct seams: bounded runtime strategy
+execution and optional async decision-intelligence proposal generation. They
+remain separate architectural responsibilities and interfaces.
 
-For the MVP, do not build a full AI agent platform. Build the online strategy executor and keep async intelligence as a scripted or fixture-based proposal source that uses the same shared contracts future agents will use.
+Phase 3 builds and validates the online strategy executor against
+bundle-approved state. Phase 4 may add a scripted or fixture-based proposal
+source; it is not required to establish the Tetris authority.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
 Decision intelligence model: [Decision Intelligence](../../DECISION_INTELLIGENCE.md).
@@ -14,16 +18,17 @@ Runtime execution model: [Runtime Decision Execution](../../RUNTIME_DECISION_EXE
 
 | Area | MVP behavior |
 | --- | --- |
-| Online strategy execution | Deterministically execute active `numeric-rule` strategies in the Decision API request path. |
-| Async intelligence | Produce or load scripted `StrategyProposal` objects for Tetris. |
-| Governance | Review and activate proposals into `DecisionState`. |
+| Phase 3 online strategy execution | Deterministically execute an active bundle-approved `numeric-rule` in the Decision API request path. |
+| Phase 3 authority input | Consume state activated from an authenticated bundle approval; do not generate authority. |
+| Phase 4 async intelligence | Produce independent proposals that use the same activation boundary. |
 
-The online executor must be fast and bounded. The async proposal source may later become agentic.
+The online executor must be fast and bounded. A later proposal source may
+become agentic without changing runtime execution.
 
 ## Definition projection ownership
 
 Runtime reasoning receives a typed `RuntimeDefinitionProjection` through the
-registry-owned async read port. It does not parse definition bundles or
+registry-owned runtime read port. It does not parse definition bundles or
 registry persistence. Target resolution uses the projection's inference target
 followed by its explicit fallback order; target hierarchy is an authorization
 boundary, not an implied precedence list. Missing required context,
@@ -43,93 +48,115 @@ interface IStrategyExecutor {
 }
 
 type StrategyExecutionRequest = {
-  definition: DecisionDefinition;
-  state: DecisionState;
-  evidence: EvidenceSnapshot;
-  runtimeContext: RuntimeContext;
-  now: string;
+  definition: RuntimeDefinitionProjection;
+  strategy: NumericRuleStrategy;
+  inputs: SignalInput[];
 };
 
-type StrategyExecutionResult = {
-  value: DecisionValue;
-  decisionMode: "active-value" | "strategy" | "experiment" | "fallback";
-  strategyId?: string;
-  confidence: ConfidenceReport | null;
-  reason: string;
-};
+type StrategyExecutionResult =
+  | {
+      result: "candidate";
+      value: number;
+      strategyId: string;
+      confidence: null;
+      reason: string;
+    }
+  | {
+      result: "error";
+      code:
+        | "invalid-strategy"
+        | "missing-input"
+        | "duplicate-input"
+        | "invalid-input";
+      reason: string;
+    };
 ```
 
-`IStrategyExecutor` should only be called after the Decision API has found an active `DecisionState` with an active value or active strategy. Missing state should be handled before strategy execution and should resolve to contract fallback or policy fallback.
+`EvidenceSnapshot` is deliberately absent from this Phase 3 port. The executor
+consumes only the resolved definition, the approved numeric rule, and live
+`SignalInput[]` values from the decision request. Evidence may inform runtime
+policy, audit/explanation, and future proposal generation, but it does not
+become an implicit numeric-rule operand.
+
+Bundle-authored strategies return `confidence: null`; authored rationale and
+authenticated approval are provenance, not learned confidence.
+
+The Decision API resolves `active-value` authority directly. It calls
+`IStrategyExecutor` only after finding coherent `numeric-rule` authority and
+passes the materialized rule rather than the whole state union. No compatible
+active state at any permitted target is handled before strategy execution and
+may resolve to the registered server fallback. Policy evaluation and fallback
+selection occur after candidate production. Corrupt or incoherent state,
+invalid strategy input, and non-ready registration are errors, not executor
+fallback decisions.
 
 ## Numeric rule strategy behavior
 
 ```text
-start with baseValue or previousValue
-  -> evaluate rules against runtimeContext and evidence metrics
-  -> apply matching adjustments
-  -> clamp to strategy min/max
-  -> align to step
-  -> return candidate to policy
+read each declared rule input from validated inputs by signal key
+  -> normalize each value to [0, 1] using declared minimum/maximum
+  -> multiply by its declared weight
+  -> divide the weighted sum by total weight
+  -> compare the score with the declared threshold
+  -> return valueAtOrAbove or valueBelow to policy
 ```
+
+The division by finite positive total weight is mandatory; weights are not
+required to sum to `1`. The threshold is compared with the normalized weighted
+average, never the unnormalized sum.
 
 Rules:
 
-- Multiple matching rules may be applied in order unless later policy chooses otherwise.
-- Missing facts should make a condition false, not throw.
-- Strategy execution should not apply fallback directly unless no candidate can be produced.
-- Policy remains responsible for approval, cooldown, max delta, and fallback.
+- Weighted inputs must be declared inference inputs that resolve to
+  app-emitted numeric metrics, with finite ranges and positive total weight.
+- Missing, duplicate, nonnumeric, or nonfinite required inputs make the
+  strategy result invalid; they do not silently become zero.
+- Numeric rule operands come only from `StrategyExecutionRequest.inputs`.
+- Normalized input values are clamped to `[0, 1]`.
+- Strategy execution never applies fallback directly; it returns a candidate
+  or a typed execution error.
+- Policy remains responsible for output bounds, step, applicable max delta, and
+  fallback.
 
 ## Runtime condition evaluation
 
-Conditions support:
+The Phase 3 numeric rule consumes only the live inputs declared by
+`inference.inputs`. Evidence-backed or stateful condition languages are not
+part of this rule contract. An evidence-consuming runtime mechanism would
+require a separately approved bounded strategy kind and an explicit
+executor-port extension; it must not be added as an optional evidence
+parameter to the current contract.
 
-- `all`,
-- `any`,
-- primitive fact lookup,
-- comparison operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`.
+## Phase 4 async proposal source
 
-Fact sources:
-
-1. `runtimeContext`,
-2. `evidence.metrics`,
-3. selected state facts if explicitly exposed.
-
-MVP should start with runtime context facts only unless evidence metrics are already available.
-
-## Async proposal source
-
-```ts
-interface IDecisionIntelligence {
-  propose(input: IntelligenceRequest): Promise<DecisionProposal>;
-}
-```
-
-For MVP, `IDecisionIntelligence` can be implemented as:
-
-- a fixture loader,
-- a script that creates the Tetris strategy proposal,
-- a simple heuristic that returns a fixed `StrategyProposal`.
-
-The important point is that proposal output uses the same `DecisionProposal` and `DecisionStrategy` contracts future AI agents will use.
+Phase 4 may begin with a scripted or fixture-backed proposal source. Its
+producer port and proposal DTO are intentionally deferred until the Phase 4
+contract is designed. Any future producer remains outside the online executor
+and cannot write active state directly.
 
 ## Tetris MVP strategy
 
-Initial strategy:
+Initial bundle-approved strategy:
 
 ```text
-baseValue = 800
-range = 600..1100
-step = 50
-cooldown = 20s
+score =
+  normalize(boardPressure, 0..1) * 0.45
+  + normalize(recentPlacementTimeMs, 0..2000) * 0.25
+  + normalize(recoveryFailures, 0..5) * 0.20
+  + normalize(currentLevel, 0..20) * 0.10
 
-if boardPressure >= 0.7 and recentPlacementTimeMs >= 1200:
-  adjust +50
-
-if boardPressure == low and recentPlacementTimeMs <= 700:
-  adjust -50
+if score >= 0.55:
+  return 850
+else:
+  return 750
 ```
 
-This proves real-time adaptation without building complex modeling infrastructure.
+These Tetris weights total `1`, so the displayed numerator already equals the
+normalized weighted average. The executor still applies the canonical total
+weight denominator.
+
+This proves real-time contextual adaptation without claiming learned evidence
+or building proposal-generation infrastructure.
 
 ## MVP non-goals
 

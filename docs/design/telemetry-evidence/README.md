@@ -2,7 +2,11 @@
 
 ## Purpose
 
-The telemetry/evidence component turns runtime observations into decision evidence. It supplies request-time inputs to runtime decision execution and historical evidence to decision intelligence and decision lifecycles.
+The telemetry/evidence component turns emitted observations into historical
+decision evidence. Live runtime inference inputs travel with the decision
+request; evidence is a separate optional input to runtime policy,
+audit/explanation, and future proposal generation. It does not cross the
+current strategy executor boundary.
 
 For the MVP, evidence can be simple and local. The design should still preserve a clean `IEvidenceProvider` seam so later implementations can use OpenTelemetry pipelines, metrics stores, or cloud data services.
 
@@ -19,9 +23,12 @@ Evidence should provide:
 - freshness and quality status,
 - sample size when available,
 - confidence when available,
-- numeric metrics used by policy or strategy execution.
+- numeric metrics used by policy, audit, or future proposal generation.
 
-The MVP may use fixture or in-memory evidence. Runtime context can carry the most important live facts for Tetris.
+The revised Phase 3 Tetris path does not require an evidence fixture or
+confidence report. It emits linked telemetry for inspection and future
+proposal-managed use. Later paths may use fixture, in-memory, or aggregated
+evidence behind the same port.
 
 ## Core port
 
@@ -57,23 +64,32 @@ type EvidenceSnapshot = {
 
 ```text
 Decision API
-  -> resolves runtime target, control target, and evidence views
-  -> requests evidence snapshots
-  -> passes evidence to strategy executor and policy evaluator
-  -> records evidence summary in audit
+  -> determines whether runtime policy requires evidence
+  -> when required, resolves evidence views and requests snapshots
+  -> passes optional evidence to runtime policy
+  -> records an evidence summary only when evidence participated
+
+decision request
+  -> supplies live inference inputs
+  -> passes StrategyExecutionRequest.inputs to IStrategyExecutor
 ```
 
 Missing evidence should not crash runtime. It should produce `quality = "missing"` or `quality = "insufficient"` and allow policy to decide whether fallback is required.
 
 ## Reuse across definition changes
 
-Different decision definitions should not share active decision state by default, but they can reuse telemetry and evidence when the meaning is stable. This reduces cold start without letting a strategy trained for one definition control another definition.
+Different definition revisions serialize authority replacement through one
+stable decision/control-target head, but an immutable active state record can
+execute only for its exact definition identity. Telemetry and evidence may be
+reused when meaning is stable. This reduces cold start without letting a
+strategy approved for one definition control another definition.
 
 | Layer | Reuse rule |
 | --- | --- |
 | Raw observations | Reusable across definitions when application, signal key, and target semantics match. |
 | Evidence views | Reusable when signal key, target, window, and filters match. |
-| Decision state/strategy | Not reusable by default; keyed by decision definition and control/runtime target. |
+| Authority head | Stable by application, environment, decision key, and control target across semantic revisions. |
+| Decision state/strategy | Not reusable; bound to the exact approved definition identity. |
 
 Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
 
@@ -106,6 +122,15 @@ Design rule:
 
 Values used by runtime strategy evaluation should be declared metrics first, then selected as inference inputs when the decision definition needs them on the hot path.
 
+The same declared metric may also contribute to an asynchronous
+`EvidenceSnapshot`, but the snapshot and live inference input are distinct
+contracts. Phase 3 does not translate or pass an `EvidenceSnapshot` into
+`IStrategyExecutor`.
+
+A future evidence-consuming runtime strategy requires a separately approved
+bounded strategy kind and executor-port extension. It is not enabled by adding
+an optional snapshot to the current numeric-rule request.
+
 | Concept | Meaning | Example |
 | --- | --- | --- |
 | Declared metric | App-computed or pre-materialized signal with stable semantics. | `boardPressure` |
@@ -123,7 +148,7 @@ Design rule:
 
 Phase 1 does not define a Flaggo-specific telemetry HTTP API. SDK telemetry should use OTLP; any direct/demo ingestion path is non-blocking and must not alter decision or exposure contracts.
 
-## Tetris MVP evidence
+## Tetris telemetry and future evidence
 
 Useful metrics:
 
@@ -132,7 +157,20 @@ Useful metrics:
 - `earlyGameOverRate`,
 - `recoveryFailureRate`.
 
-Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and `recoveryFailures` can come from runtime context only after they are declared as metrics and selected as inference inputs. The same metrics can be emitted over time, captured in decision records when Flaggo returns a decision, and copied into exposure records only after the client confirms application/rendering. Aggregated evidence can provide broader confidence and sample-size context.
+Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and
+`recoveryFailures` travel exclusively through `DecideRequest.inputs` and
+`StrategyExecutionRequest.inputs` after they are declared as metrics and
+selected as inference inputs. `runtimeContext` remains reserved for target
+bindings and other declared contextual facts. The same metrics can be emitted
+over time, captured in decision records when Flaggo returns a decision, and
+copied into exposure records only after the client confirms
+application/rendering. Aggregated evidence can provide broader confidence and
+sample-size context.
+
+In revised Phase 3, the bundle-approved rule consumes the declared live inputs
+directly and returns no learned confidence. Outcome telemetry is linked but is
+not ingested to create or replace authority. Phase 4 may aggregate these
+observations into evidence for independent proposals.
 
 ## MVP non-goals
 
