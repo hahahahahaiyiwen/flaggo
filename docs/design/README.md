@@ -49,3 +49,8 @@ The [Phase 3 Tetris Integration](tetris-integration/README.md) composes these
 component boundaries into the cloud-free hero scenario using authenticated
 bundle approval and the shared governed-state activation boundary without
 moving management authority into the browser.
+
+The [Manifest-first client and OpenTelemetry evidence design](MANIFEST_FIRST_CLIENT.md)
+records the accepted #44 replacement for producer-coupled authoring and inputs,
+including its bounded telemetry projections and downstream Phase 3 boundaries.
+Its status is explicit; it does not claim the replacement is implemented.
