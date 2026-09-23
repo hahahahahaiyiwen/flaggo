@@ -36,7 +36,7 @@ identity.
 | --- | --- | --- |
 | Key | Stable decision family. | `tetris.dropInterval` |
 | Target hierarchy | Permitted resolution levels and order. | `session -> cohort -> global` |
-| Runtime inputs | Typed current values the application may send. | board pressure, placement time, failures, level |
+| Runtime inputs | Typed values resolved from declared request or authorized evidence sources. | board pressure, placement time, failures, level |
 | Signal references | Immutable observation/evidence identities. | early-loss rate, hard-drop rate |
 | Intent | Human or metric objective for async analysis. | reduce early loss while preserving challenge |
 | Action space | Output type, bounds, allowed values, step, and default. | number `200..1500`, step `50`, default `800` |

@@ -19,8 +19,9 @@ static definitions, or trusted registration behavior in browser/runtime code.
   lineage.
 - Decision Service executes the approved weighted rule, evaluates definition
   constraints, appends a DecisionRecord, and confirms exposures.
-- Evidence Store owns observations, DecisionRecords, exposure records, and
-  outcomes.
+- OTel Ingestion validates exposure-linked outcome attribution. Evidence Store
+  owns the resulting observations, DecisionRecords, exposure records, and
+  Outcome records.
 - The application owns its OTel provider/exporter and sends data to OTel
   Ingestion.
 

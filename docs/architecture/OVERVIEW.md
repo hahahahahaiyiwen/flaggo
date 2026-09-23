@@ -52,7 +52,7 @@ Adapters may expose ports or service APIs while preserving the same boundary.
 | Evidence | Durable observed or derived knowledge. | Evidence Store |
 | Decision record | Reconstructable record of one server result. | Decision Service -> Evidence Store |
 | Exposure | Confirmation that the application applied or rendered a result. | Decision Service -> Evidence Store |
-| Outcome | Observation attributed to a confirmed exposure. | Evidence Store |
+| Outcome | Observation validated and attributed to a confirmed exposure, then durably stored. | OTel Ingestion -> Evidence Store |
 
 `RuntimeDecisionResult` records what one request received. It is not authority.
 

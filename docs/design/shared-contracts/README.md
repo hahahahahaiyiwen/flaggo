@@ -334,12 +334,11 @@ applicable decision constraints. Contract Service validates that every rule
 reference names a numeric input declaration. Decision Service supplies the
 resolved value regardless of whether #44 declared a request or evidence source.
 
-Missing evidence explicitly required by decision constraints is a server evaluation
-outcome, not a numeric-rule executor input or data-plane availability failure.
-When governed fallback is permitted, the server returns the registered
-fallback as a durably recorded decision. Otherwise it returns fallback-ineligible
-`required-evidence-unavailable` Problem Details. Definition constraints never
-authorizes an SDK-local value for this outcome.
+Missing, stale, or unsuitable evidence for an evidence-sourced input is an
+explicit input-resolution outcome owned by #44, not a numeric-rule executor
+input or Decision Service availability failure. The bounded executor is not
+invoked without a complete accepted resolved-input set. This outcome never
+authorizes an SDK-local value.
 
 `InferenceDeclaration.inputs` identifies typed resolved inputs. #44 owns each
 input's explicit request or evidence source and the supported projection
@@ -361,11 +360,7 @@ separately owned or resolved constraint reference.
 ```ts
 type DecisionConstraint =
   | NumberBoundsConstraint
-  | MaxDeltaConstraint
-  | EvidenceQualityConstraint
-  | ModelUncertaintyConstraint
-  | ExpectedOutcomeConstraint
-  | SampleSizeConstraint;
+  | MaxDeltaConstraint;
 
 type NumberBoundsConstraint = {
   kind: "number-bounds";
@@ -378,26 +373,6 @@ type MaxDeltaConstraint = {
   value: number;
 };
 
-type EvidenceQualityConstraint = {
-  kind: "min-evidence-quality";
-  value: number;
-};
-
-type ModelUncertaintyConstraint = {
-  kind: "max-model-uncertainty";
-  value: number;
-};
-
-type ExpectedOutcomeConstraint = {
-  kind: "min-expected-outcome";
-  value: number;
-};
-
-type SampleSizeConstraint = {
-  kind: "min-sample-size";
-  value: number;
-};
-
 type ConstraintEvaluationResult = {
   result: "approved" | "blocked" | "fallback";
   reasons: string[];
@@ -405,10 +380,12 @@ type ConstraintEvaluationResult = {
 };
 ```
 
-The replacement Phase 3 contract intentionally has no generic cooldown,
-pause, or other temporal/operator constraint. Follow-up contracts must define
-those semantics, required state, and concurrency behavior before they become
-shared or authorable surfaces. Issue #33 owns the temporal portion.
+The replacement Phase 3 contract intentionally has no evidence-threshold,
+generic cooldown, pause, or other temporal/operator constraint. A follow-up
+must define the accepted binding/view identity, required state, failure
+behavior, and concurrency semantics before such constraints become shared or
+authorable. #44 owns evidence input/binding semantics; issue #33 owns temporal
+constraints.
 
 Rules:
 
@@ -543,7 +520,8 @@ Rules:
 
 - The MVP can use in-memory or fixture evidence.
 - Evidence details should be available to durable decision records, but runtime responses should stay compact.
-- Missing evidence should not crash runtime; it should flow into constraint and fallback semantics.
+- Missing, stale, or unsuitable evidence should produce the explicit
+  input-resolution outcome defined by the accepted evidence-source contract.
 - Every confidence field is a finite number in the inclusive range `[0, 1]`.
 - `evidenceQuality` is required, so an empty confidence object is invalid.
 - Higher `evidenceQuality` and `expectedOutcome` are better; higher `modelUncertainty` means less certainty.
@@ -936,7 +914,6 @@ type DecisionRecord = {
   runtimeTarget?: DecisionTargetRef;
   controlTarget?: DecisionTargetRef;
   resolvedInputs: ResolvedDecisionInput[];
-  constraintEvidence?: EvidenceSnapshot;
   stateSummary: DecisionStateSummary;
   constraints: ConstraintEvaluationResult;
   reason: string;
