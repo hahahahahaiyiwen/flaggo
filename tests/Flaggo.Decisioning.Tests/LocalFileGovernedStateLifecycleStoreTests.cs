@@ -45,6 +45,41 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
     }
 
     [Fact]
+    public async Task RestartPreservesDerivedNumericRuleStrategyIdentity()
+    {
+        using var file = TestJsonFile.CreateCommitted("state-numeric-rule");
+        var firstStore = Store(file.Path, "state-1");
+        var request = NumericRuleRequest(
+            "activation-1",
+            "proposal-1",
+            new(null, 0));
+        var activated = await firstStore.ActivateAsync(
+            request,
+            CancellationToken.None);
+
+        var restarted = Store(file.Path, "state-unexpected");
+        var replay = await restarted.ActivateAsync(
+            request,
+            CancellationToken.None);
+        var runtime = new LocalFileStateStore(
+            new LocalFileStateStoreOptions(file.Path));
+        var projected = await runtime.GetActiveAsync(
+            "decision",
+            "definition",
+            "revision",
+            [null],
+            CancellationToken.None);
+
+        Assert.StartsWith("strategy_", activated.StrategyId);
+        Assert.Equal(activated.StrategyId, replay.StrategyId);
+        Assert.Equal(activated.StrategyId, projected!.StrategyId);
+        Assert.Equal("numeric-rule", projected.Mode);
+        Assert.Equal(
+            activated.NumericRule!.Threshold,
+            projected.NumericRule!.Threshold);
+    }
+
+    [Fact]
     public async Task PublicationFailureLeavesPreviousAuthorityVisible()
     {
         using var file = TestJsonFile.CreateCommitted("state-publication-failure");
@@ -68,6 +103,40 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
                         first.Generation),
                     850),
                 CancellationToken.None));
+
+        var runtime = new LocalFileStateStore(
+            new LocalFileStateStoreOptions(file.Path));
+        var projected = await runtime.GetActiveAsync(
+            "decision",
+            "definition",
+            "revision",
+            [null],
+            CancellationToken.None);
+        Assert.Equal("state-1", projected!.StateId);
+        Assert.Equal(800, projected.Value.GetInt32());
+    }
+
+    [Fact]
+    public async Task CancellationLeavesPreviousAuthorityVisible()
+    {
+        using var file = TestJsonFile.CreateCommitted("state-cancellation");
+        var initial = Store(file.Path, "state-1");
+        var first = await initial.ActivateAsync(
+            Request("activation-1", "proposal-1", new(null, 0), 800),
+            CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => Store(file.Path, "state-2").ActivateAsync(
+                Request(
+                    "activation-2",
+                    "proposal-2",
+                    new GovernedStateBaseline(
+                        first.StateId,
+                        first.Generation),
+                    850),
+                cancellation.Token));
 
         var runtime = new LocalFileStateStore(
             new LocalFileStateStoreOptions(file.Path));
@@ -208,6 +277,80 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
     }
 
     [Fact]
+    public async Task RemovedTransitionReplayFieldIsRejected()
+    {
+        using var file = TestJsonFile.CreateCommitted("state-old-transitions");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                new(null, 0),
+                800),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        document["transitions"] = new JsonArray();
+        await file.WriteAsync(document.ToJsonString());
+        var runtime = new LocalFileStateStore(
+            new LocalFileStateStoreOptions(file.Path));
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => runtime.GetActiveAsync(
+                "decision",
+                "definition",
+                "revision",
+                [null],
+                CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => Store(file.Path, "state-2").ActivateAsync(
+                Request(
+                    "activation-2",
+                    "proposal-2",
+                    new(null, 0),
+                    850),
+                CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("completed")]
+    [InlineData("expired")]
+    [InlineData("rolled-back")]
+    public async Task RemovedLifecycleStatusIsRejected(string status)
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            $"state-removed-status-{status}");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                new(null, 0),
+                800),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        document["states"]![0]!["lifecycleStatus"] = status;
+        await file.WriteAsync(document.ToJsonString());
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => Store(file.Path, "state-2").ActivateAsync(
+                Request(
+                    "activation-2",
+                    "proposal-2",
+                    new(null, 0),
+                    850),
+                CancellationToken.None));
+    }
+
+    [Fact]
     public async Task LegacyRuntimeDocumentIsReadableButNotLifecycleMutable()
     {
         using var file = TestJsonFile.CreateCommitted("state-legacy-lifecycle");
@@ -273,29 +416,48 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
         string environment = "dev") =>
         new(
             activationId,
+            proposalId,
             $"approval-{activationId}",
-            new FixedValueDecisionProposal(
-                new DecisionProposalContext(
-                    proposalId,
-                    new DecisionProposalSource(
-                        DecisionProposalSourceKind.Scripted,
-                        "fixture"),
-                    new GovernedDefinitionIdentity(
-                        appId,
-                        environment,
-                        "decision",
-                        new RuntimeContractIdentity(
-                            "definition",
-                            $"sha256:{new string('a', 64)}",
-                            "revision")),
-                    null,
-                    baseline,
-                    "Improve the governed value.",
-                    ["evidence-1"],
-                    ["confidence-1"],
-                    Now.AddMinutes(-1),
-                    Now.AddHours(1)),
+            new GovernedDefinitionIdentity(
+                appId,
+                environment,
+                "decision",
+                new RuntimeContractIdentity(
+                    "definition",
+                    $"sha256:{new string('a', 64)}",
+                    "revision")),
+            null,
+            baseline,
+            new ActiveValueActivationCandidate(
+                "Improve the governed value.",
                 JsonSerializer.SerializeToElement(value)));
+
+    private static GovernedStateActivationRequest NumericRuleRequest(
+        string activationId,
+        string proposalId,
+        GovernedStateBaseline baseline) =>
+        new(
+            activationId,
+            proposalId,
+            $"approval-{activationId}",
+            new GovernedDefinitionIdentity(
+                "app",
+                "dev",
+                "decision",
+                new RuntimeContractIdentity(
+                    "definition",
+                    $"sha256:{new string('a', 64)}",
+                    "revision")),
+            null,
+            baseline,
+            new NumericRuleActivationCandidate(
+                "Adapt the governed value.",
+                JsonSerializer.SerializeToElement(800),
+                new NumericRuleStrategy(
+                    "pressure",
+                    0.5,
+                    750,
+                    850)));
 
     private sealed class FixedTimeProvider : TimeProvider
     {

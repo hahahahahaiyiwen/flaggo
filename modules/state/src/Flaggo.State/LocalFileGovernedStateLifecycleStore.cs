@@ -84,26 +84,11 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         return await store.GetBaselineAsync(address, cancellationToken);
     }
 
-    public async Task<GovernedDecisionState?> GetStateAsync(
-        string stateId,
-        CancellationToken cancellationToken)
-    {
-        var store = await LoadAsync(cancellationToken);
-        return await store.GetStateAsync(stateId, cancellationToken);
-    }
-
     public Task<GovernedDecisionState> ActivateAsync(
         GovernedStateActivationRequest request,
         CancellationToken cancellationToken) =>
         MutateAsync(
             store => store.ActivateAsync(request, cancellationToken),
-            cancellationToken);
-
-    public Task<GovernedDecisionState> TransitionAsync(
-        GovernedStateTransitionRequest request,
-        CancellationToken cancellationToken) =>
-        MutateAsync(
-            store => store.TransitionAsync(request, cancellationToken),
             cancellationToken);
 
     private async Task<GovernedDecisionState> MutateAsync(
@@ -130,7 +115,7 @@ public sealed class LocalFileGovernedStateLifecycleStore :
         GovernedStatePersistenceSnapshot snapshot;
         if (!File.Exists(_commitDescriptorPath))
         {
-            snapshot = new GovernedStatePersistenceSnapshot(2, [], [], []);
+            snapshot = new GovernedStatePersistenceSnapshot(2, [], []);
         }
         else
         {
@@ -252,13 +237,6 @@ internal static partial class GovernedStatePersistence
                     replay.Fingerprint,
                     replay.ProposalId,
                     replay.ProposalFingerprint,
-                    replay.StateId)).ToArray(),
-            snapshot.Transitions
-                .OrderBy(replay => replay.TransitionId, StringComparer.Ordinal)
-                .Select(
-                replay => new PersistedTransition(
-                    replay.TransitionId,
-                    replay.Fingerprint,
                     replay.StateId)).ToArray());
         return JsonSerializer.SerializeToUtf8Bytes(document, WriteOptions);
     }
@@ -275,8 +253,7 @@ internal static partial class GovernedStatePersistence
             if (document is null ||
                 document.Version != CurrentVersion ||
                 document.States is null ||
-                document.Activations is null ||
-                document.Transitions is null)
+                document.Activations is null)
             {
                 throw new InvalidDataException(
                     "A lifecycle governed-state document must use version 2.");
@@ -287,14 +264,10 @@ internal static partial class GovernedStatePersistence
             var activations = document.Activations
                 .Select(Map)
                 .ToArray();
-            var transitions = document.Transitions
-                .Select(Map)
-                .ToArray();
             return new GovernedStatePersistenceSnapshot(
                 CurrentVersion,
                 states,
-                activations,
-                transitions);
+                activations);
         }
         catch (JsonException error)
         {
@@ -426,24 +399,6 @@ internal static partial class GovernedStatePersistence
             replay.StateId);
     }
 
-    private static GovernedStateTransitionReplay Map(
-        PersistedTransition? replay)
-    {
-        if (replay is null ||
-            string.IsNullOrWhiteSpace(replay.TransitionId) ||
-            !FingerprintPattern().IsMatch(replay.Fingerprint ?? string.Empty) ||
-            string.IsNullOrWhiteSpace(replay.StateId))
-        {
-            throw new InvalidDataException(
-                "A governed-state transition replay entry is invalid.");
-        }
-
-        return new GovernedStateTransitionReplay(
-            replay.TransitionId,
-            replay.Fingerprint!,
-            replay.StateId);
-    }
-
     private static void ValidateValueAndMode(
         PersistedState state,
         JsonElement value)
@@ -467,14 +422,14 @@ internal static partial class GovernedStatePersistence
                 state.StrategyId is null &&
                 state.NumericRule is null:
                 return;
-            case "strategy" when
+            case "numeric-rule" when
                 !string.IsNullOrWhiteSpace(state.StrategyId) &&
                 state.NumericRule is not null &&
                 value.ValueKind == JsonValueKind.Number:
                 ValidateNumericRule(state.NumericRule);
                 return;
             case "active-value":
-            case "strategy":
+            case "numeric-rule":
                 throw new InvalidDataException(
                     "A lifecycle governed-state entry has incoherent mode data.");
             default:
@@ -582,12 +537,8 @@ internal static partial class GovernedStatePersistence
     private static string FormatStatus(GovernedDecisionStateStatus status) =>
         status switch
         {
-            GovernedDecisionStateStatus.Pending => "pending",
             GovernedDecisionStateStatus.Active => "active",
             GovernedDecisionStateStatus.Superseded => "superseded",
-            GovernedDecisionStateStatus.Expired => "expired",
-            GovernedDecisionStateStatus.Completed => "completed",
-            GovernedDecisionStateStatus.RolledBack => "rolled-back",
             _ => throw new InvalidDataException(
                 "The governed-state lifecycle status is unsupported.")
         };
@@ -595,12 +546,8 @@ internal static partial class GovernedStatePersistence
     private static GovernedDecisionStateStatus ParseStatus(string? status) =>
         status switch
         {
-            "pending" => GovernedDecisionStateStatus.Pending,
             "active" => GovernedDecisionStateStatus.Active,
             "superseded" => GovernedDecisionStateStatus.Superseded,
-            "expired" => GovernedDecisionStateStatus.Expired,
-            "completed" => GovernedDecisionStateStatus.Completed,
-            "rolled-back" => GovernedDecisionStateStatus.RolledBack,
             _ => throw new InvalidDataException(
                 "A lifecycle governed-state status is invalid.")
         };
@@ -618,8 +565,7 @@ internal static partial class GovernedStatePersistence
     private sealed record PersistedDocument(
         int? Version,
         IReadOnlyList<PersistedState?>? States,
-        IReadOnlyList<PersistedActivation?>? Activations,
-        IReadOnlyList<PersistedTransition?>? Transitions);
+        IReadOnlyList<PersistedActivation?>? Activations);
 
     private sealed record PersistedState(
         string? AppId,
@@ -647,10 +593,5 @@ internal static partial class GovernedStatePersistence
         string? Fingerprint,
         string? ProposalId,
         string? ProposalFingerprint,
-        string? StateId);
-
-    private sealed record PersistedTransition(
-        string? TransitionId,
-        string? Fingerprint,
         string? StateId);
 }

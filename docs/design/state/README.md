@@ -60,6 +60,7 @@ type ActivationCandidate =
     }
   | {
       kind: "numeric-rule";
+      initialValue: number;
       rule: NumericRuleDeclaration;
       rationale: string;
     };
@@ -75,6 +76,9 @@ type ActivationRequest = {
   candidate: ActivationCandidate;
 };
 ```
+
+The implemented C# port is `IGovernedStateLifecycleStore`; the names above
+describe the language-neutral boundary rather than a second contract.
 
 Both candidates use the same expected-baseline compare-and-swap, replay, and
 publication path. Numeric-rule activation derives and persists `strategyId`;
@@ -107,6 +111,11 @@ validation conflicts, and atomic publication. Broader completion, expiry,
 rollback, evidence, confidence, and generic proposal-source surfaces are
 deferred until a concrete lifecycle requires them.
 
+The implemented lifecycle status is only `active | superseded`. Replacement
+always supersedes the prior head. Prior immutable records remain inside the
+committed snapshot for predecessor lineage; the activation port exposes no
+public transition or history API.
+
 `getBaseline` is used while preparing an approval transition, not afresh on
 each activation attempt. The control plane atomically persists the observed
 `ExpectedAuthorityBaseline` with the deterministic activation ID before
@@ -118,6 +127,21 @@ authority-reauthorization receives a new deterministic activation identity and
 captures the then-current stable head as its own baseline. It reuses the
 accepted definition revision and does not replace successful sibling
 activations from the original bundle.
+
+## Local persistence
+
+Lifecycle document version 2 contains only state lineage and activation replay
+records. Removed transition entries, broad lifecycle statuses, proposal-source
+metadata, evidence/confidence references, and expiry fields are invalid. The
+strict reader provides no migration or compatibility path for the superseded
+lifecycle-v2 shape.
+
+The local writer acquires a file lease, reloads the latest committed snapshot,
+applies compare-and-swap, writes a complete immutable artifact, and switches
+the digest-pinned descriptor last. Cancellation or publication failure before
+that switch leaves the previous authority visible. Version 1 remains the
+current read-only runtime snapshot format until #40 replaces the bundle/runtime
+contract; lifecycle mutation never accepts it.
 
 ## Runtime behavior
 
@@ -229,8 +253,8 @@ Rules:
 - `StateAddress = { appId, environment, decisionKey, controlTarget }` is stable
   across semantic revisions of that decision.
 -   Activating a new revision compare-and-swaps the current head and increments its
-  generation. The read/history projection then reports the retained predecessor
-  as superseded without changing its authority payload or definition binding.
+  generation. The retained predecessor record is superseded without changing
+  its authority payload or definition binding.
 - A request for an older registered revision never consumes the newer
   strategy. If no permitted authority head contains an exact compatible state,
   it receives the audited server fallback.
