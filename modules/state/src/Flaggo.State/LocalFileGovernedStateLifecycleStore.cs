@@ -476,16 +476,24 @@ internal static partial class GovernedStatePersistence
                 "A lifecycle numeric rule contains invalid scalar configuration.");
         }
 
-        if (rule.WeightedInputs is not { Count: > 0 } inputs)
+        if (rule.WeightedInputs is null)
         {
             return new NumericRuleStrategy(
                 rule.InputSignalKey,
                 threshold,
                 valueAtOrAbove,
                 valueBelow,
-                rule.WeightedInputs is null ? null : []);
+                null);
         }
 
+        if (rule.WeightedInputs.Count == 0 ||
+            threshold is < 0 or > 1)
+        {
+            throw new InvalidDataException(
+                "A weighted lifecycle numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var inputs = rule.WeightedInputs;
         var mappedInputs = new List<NumericRuleInput>(inputs.Count);
         foreach (var input in inputs)
         {
@@ -540,11 +548,19 @@ internal static partial class GovernedStatePersistence
                 "A lifecycle numeric rule contains invalid scalar configuration.");
         }
 
-        if (rule.WeightedInputs is not { Count: > 0 } inputs)
+        if (rule.WeightedInputs is null)
         {
             return;
         }
 
+        if (rule.WeightedInputs.Count == 0 ||
+            rule.Threshold is < 0 or > 1)
+        {
+            throw new InvalidDataException(
+                "A weighted lifecycle numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var inputs = rule.WeightedInputs;
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var totalWeight = 0d;
         foreach (var input in inputs)

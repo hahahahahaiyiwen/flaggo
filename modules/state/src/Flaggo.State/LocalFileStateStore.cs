@@ -343,16 +343,24 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
                 "A local numeric rule contains invalid scalar configuration.");
         }
 
-        if (rule.WeightedInputs is not { Count: > 0 } weightedInputs)
+        if (rule.WeightedInputs is null)
         {
             return new NumericRuleStrategy(
                 rule.InputSignalKey,
                 threshold,
                 valueAtOrAbove,
                 valueBelow,
-                rule.WeightedInputs is null ? null : []);
+                null);
         }
 
+        if (rule.WeightedInputs.Count == 0 ||
+            threshold is < 0 or > 1)
+        {
+            throw new InvalidDataException(
+                "A local weighted numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var weightedInputs = rule.WeightedInputs;
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var totalWeight = 0d;
         var mappedInputs = new List<NumericRuleInput>(weightedInputs.Count);

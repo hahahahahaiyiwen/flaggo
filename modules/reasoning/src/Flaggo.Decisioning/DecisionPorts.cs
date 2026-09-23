@@ -450,6 +450,7 @@ public sealed class DeterministicStrategyExecutor : IStrategyExecutor
         if (request.State.NumericRule.WeightedInputs is { Count: > 0 } weightedInputs)
         {
             var score = 0d;
+            var totalWeight = 0d;
             foreach (var ruleInput in weightedInputs)
             {
                 var matching = request.Inputs.Where(value =>
@@ -472,8 +473,15 @@ public sealed class DeterministicStrategyExecutor : IStrategyExecutor
                     0,
                     1);
                 score += normalized * ruleInput.Weight;
+                totalWeight += ruleInput.Weight;
             }
 
+            if (!double.IsFinite(totalWeight) || totalWeight <= 0)
+            {
+                return Task.FromResult(InvalidNumericRuleResult(request.State));
+            }
+
+            score /= totalWeight;
             return Task.FromResult(
                 NumericRuleResult(
                     request,

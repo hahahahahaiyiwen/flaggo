@@ -484,6 +484,18 @@ public sealed class LocalFileStateStoreTests
             "strategy with null weighted input",
             InvalidDocument(state =>
                 state["numericRule"]!["weightedInputs"]![0] = null));
+        cases.Add(
+            "strategy with empty weighted inputs",
+            InvalidDocument(state =>
+                state["numericRule"]!["weightedInputs"] = new JsonArray()));
+        cases.Add(
+            "weighted threshold below range",
+            InvalidDocument(state =>
+                state["numericRule"]!["threshold"] = -0.1));
+        cases.Add(
+            "weighted threshold above range",
+            InvalidDocument(state =>
+                state["numericRule"]!["threshold"] = 1.1));
         return cases;
     }
 

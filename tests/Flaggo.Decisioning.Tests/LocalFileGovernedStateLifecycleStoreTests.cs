@@ -531,6 +531,55 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
     }
 
     [Theory]
+    [InlineData("empty-inputs")]
+    [InlineData("threshold-below-range")]
+    [InlineData("threshold-above-range")]
+    public async Task ReadersRejectInvalidWeightedRuleShape(
+        string invalidRule)
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            $"state-invalid-weighted-rule-{invalidRule}");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            NumericRuleRequest(
+                "activation-1",
+                "proposal-1",
+                new(null, 0)),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        var rule = document["states"]![0]!["numericRule"]!;
+        rule["weightedInputs"] = invalidRule == "empty-inputs"
+            ? new JsonArray()
+            : JsonSerializer.SerializeToNode(
+                new[]
+                {
+                    new
+                    {
+                        signalKey = "pressure",
+                        minimum = 0,
+                        maximum = 1,
+                        weight = 1
+                    }
+                });
+        if (invalidRule == "threshold-below-range")
+        {
+            rule["threshold"] = -0.1;
+        }
+        else if (invalidRule == "threshold-above-range")
+        {
+            rule["threshold"] = 1.1;
+        }
+
+        await file.WriteAsync(document.ToJsonString());
+
+        await AssertInvalidLifecycleDocument(file.Path);
+    }
+
+    [Theory]
     [InlineData("pending")]
     [InlineData("completed")]
     [InlineData("expired")]

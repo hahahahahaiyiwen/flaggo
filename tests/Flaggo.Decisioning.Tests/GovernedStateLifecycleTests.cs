@@ -416,6 +416,47 @@ public sealed class GovernedStateLifecycleTests
             CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("empty-inputs")]
+    [InlineData("threshold-below-range")]
+    [InlineData("threshold-above-range")]
+    public async Task ActivateAsync_InvalidWeightedRuleFailsBeforePublication(
+        string invalidRule)
+    {
+        var store = Store("state-unexpected");
+        var threshold = invalidRule switch
+        {
+            "threshold-below-range" => -0.1,
+            "threshold-above-range" => 1.1,
+            _ => 0.5
+        };
+        IReadOnlyList<NumericRuleInput> inputs = invalidRule == "empty-inputs"
+            ? []
+            : [new NumericRuleInput("pressure", 0, 1, 1)];
+
+        var error = await Assert.ThrowsAsync<GovernedStateValidationException>(
+            () => store.ActivateAsync(
+                Request(
+                    "activation-1",
+                    "proposal-1",
+                    EmptyBaseline(),
+                    new NumericRuleActivationCandidate(
+                        "Adapt the governed value.",
+                        JsonSerializer.SerializeToElement(800),
+                        new NumericRuleStrategy(
+                            "pressure",
+                            threshold,
+                            750,
+                            850,
+                            inputs))),
+                CancellationToken.None));
+
+        Assert.Equal("invalid-activation", error.Code);
+        Assert.Null(await store.GetBaselineAsync(
+            Address(),
+            CancellationToken.None));
+    }
+
     [Fact]
     public async Task ActivateAsync_CancellationLeavesAuthorityUnchanged()
     {

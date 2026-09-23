@@ -686,11 +686,20 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
                 "A numeric rule contains invalid scalar configuration.");
         }
 
-        if (strategy.WeightedInputs is not { Count: > 0 } weightedInputs)
+        if (strategy.WeightedInputs is null)
         {
             return;
         }
 
+        if (strategy.WeightedInputs.Count == 0 ||
+            strategy.Threshold is < 0 or > 1)
+        {
+            throw Validation(
+                "invalid-activation",
+                "A weighted numeric rule requires inputs and a threshold from zero through one.");
+        }
+
+        var weightedInputs = strategy.WeightedInputs;
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var totalWeight = 0d;
         foreach (var input in weightedInputs)
