@@ -87,7 +87,10 @@ Rules:
 - Runtime context must stay primitive and JSON-serializable for durable decision records and constraint evaluation.
 - A signal `key` is its immutable semantic identity. Any schema or meaning change requires a new key; schema digests detect conflicting definitions under the same key.
 - `schemaDigest` is `sha256:<lowercase-hex>` over the RFC 8785 canonical signal declaration with `schemaDigest` omitted. Tooling recomputes and verifies it when supplied; a mismatch is invalid. Reusing one signal key with a different computed digest is a contract conflict. Signal references contain only `key`, so digest metadata cannot change decision-definition identity.
-- A decision may only use signals referenced by explicit roles such as objectives, inference inputs, evidence, or guardrails. Tooling may materialize an associated-signal set in the extracted contract for governance, but authored definitions should not duplicate role references by hand.
+- A decision may only use signals referenced by explicit roles such as
+  objectives, input sources, evidence, or guardrails. Contract Service may
+  materialize an associated-signal set in the registered projection for
+  governance, but authored definitions should not duplicate role references.
 
 ## Action space
 
@@ -561,7 +564,7 @@ type DecideRequest = {
   definition?: DecisionDefinitionRef;
   runtimeTarget?: DecisionTargetRef;
   runtimeContext: RuntimeContext;
-  inputs?: SignalInput[];
+  inputs?: RequestDecisionInput[];
   expectedContract: RuntimeContractIdentity;
   client: {
     appId: string;
@@ -572,9 +575,25 @@ type DecideRequest = {
   correlationId?: string;
 };
 
-type SignalInput = {
-  signal: SignalRef;
+type RequestDecisionInput = {
+  input: DecisionInputRef;
   value: RuntimeContextValue;
+};
+
+type ResolvedDecisionInput = {
+  input: DecisionInputRef;
+  value: RuntimeContextValue;
+  provenance:
+    | {
+        source: "request";
+        field: string;
+      }
+    | {
+        source: "evidence";
+        binding: string;
+        observedAt: string;
+        view: EvidenceViewRef;
+      };
 };
 
 type TargetResolutionProvenance = {
@@ -916,7 +935,8 @@ type DecisionRecord = {
   contractVersion?: string;
   runtimeTarget?: DecisionTargetRef;
   controlTarget?: DecisionTargetRef;
-  evidence?: EvidenceSnapshot;
+  resolvedInputs: ResolvedDecisionInput[];
+  constraintEvidence?: EvidenceSnapshot;
   stateSummary: DecisionStateSummary;
   constraints: ConstraintEvaluationResult;
   reason: string;
@@ -927,8 +947,10 @@ Rules:
 
 - Decision records may contain more detail than runtime responses.
 - Every server-produced decision record captures the exact normalized
-  `DecideRequest`, including all inference inputs used by successful strategy
-  execution. SDK-local fallback produces no server decision record.
+  `DecideRequest` plus every `ResolvedDecisionInput` used by successful
+  execution. Request-sourced values retain their manifest field; evidence-
+  sourced values retain binding, observation time, and evidence-view
+  provenance. SDK-local fallback produces no server decision record.
 - Decision Service preallocates one durable record identity before constructing
   the response or record. `DecisionRecord.decisionRecordId` and
   `DecisionRecord.response.decisionRecordId` must be identical, and the

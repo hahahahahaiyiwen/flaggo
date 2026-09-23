@@ -69,14 +69,22 @@ definitions:
       target: session
       fallbackOrder: [cohort, global]
       inputs:
-        - tetris.boardPressure
-        - tetris.recentPlacementTimeMs
-        - tetris.recoveryFailures
-        - tetris.currentLevel
+        - key: tetris.boardPressure
+          valueType: number
+          source: { kind: request, field: boardPressure }
+        - key: tetris.recentPlacementTimeMs
+          valueType: number
+          source: { kind: request, field: recentPlacementTimeMs }
+        - key: tetris.recoveryFailures
+          valueType: number
+          source: { kind: request, field: recoveryFailures }
+        - key: tetris.currentLevel
+          valueType: number
+          source: { kind: request, field: currentLevel }
     actionSpace:
       type: number
-      minimum: 200
-      maximum: 1500
+      min: 200
+      max: 1500
       step: 50
       default: 800
     fallback:
@@ -92,9 +100,27 @@ definitions:
         controlTarget:
           type: cohort
           id: new_players
-        threshold: 0.55
-        valueAtOrAbove: 850
-        valueBelow: 750
+        rule:
+          threshold: 0.55
+          valueAtOrAbove: 850
+          valueBelow: 750
+          weightedInputs:
+            - input: { key: tetris.boardPressure }
+              minimum: 0
+              maximum: 1
+              weight: 0.45
+            - input: { key: tetris.recentPlacementTimeMs }
+              minimum: 0
+              maximum: 2000
+              weight: 0.25
+            - input: { key: tetris.recoveryFailures }
+              minimum: 0
+              maximum: 5
+              weight: 0.20
+            - input: { key: tetris.currentLevel }
+              minimum: 0
+              maximum: 20
+              weight: 0.10
         rationale: Initial deterministic Tetris behavior.
 ```
 
@@ -112,7 +138,7 @@ signals:
   - key: tetris.boardPressure
     kind: metric
     type: number
-    source: application
+    source: app-emitted
     range: [0, 1]
   - key: tetris.earlyLossRate24h
     kind: metric
