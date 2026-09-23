@@ -165,8 +165,9 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         _identityGenerator = identityGenerator;
         var activeAddresses = new HashSet<GovernedStateAddress>();
 
-        foreach (var entry in snapshot.States)
+        foreach (var snapshotEntry in snapshot.States)
         {
+            var entry = FreezeEntry(snapshotEntry);
             if (string.IsNullOrWhiteSpace(entry.State.StateId) ||
                 !_states.TryAdd(entry.State.StateId, entry))
             {
@@ -217,7 +218,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
             }
         }
 
-        foreach (var addressStates in snapshot.States.GroupBy(
+        foreach (var addressStates in _states.Values.GroupBy(
                      entry => entry.Address))
         {
             var ordered = addressStates
@@ -304,6 +305,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        request = FreezeActivationRequest(request);
         ValidateActivation(request);
         var requestFingerprint = Fingerprint(request);
         var proposalFingerprint = Fingerprint(
@@ -732,7 +734,48 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         NumericRuleStrategy strategy) =>
         strategy with
         {
-            WeightedInputs = strategy.WeightedInputs?.ToArray()
+            WeightedInputs = strategy.WeightedInputs is null
+                ? null
+                : Array.AsReadOnly(strategy.WeightedInputs.ToArray())
+        };
+
+    private static GovernedStateActivationRequest FreezeActivationRequest(
+        GovernedStateActivationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return request with
+        {
+            Candidate = request.Candidate switch
+            {
+                ActiveValueActivationCandidate activeValue =>
+                    activeValue with
+                    {
+                        Value = activeValue.Value.Clone()
+                    },
+                NumericRuleActivationCandidate numericRule =>
+                    numericRule with
+                    {
+                        InitialValue = numericRule.InitialValue.Clone(),
+                        Rule = numericRule.Rule is null
+                            ? null!
+                            : CloneStrategy(numericRule.Rule)
+                    },
+                _ => request.Candidate
+            }
+        };
+    }
+
+    private static GovernedStateEntry FreezeEntry(
+        GovernedStateEntry entry) =>
+        entry with
+        {
+            State = entry.State with
+            {
+                Value = entry.State.Value.Clone(),
+                NumericRule = entry.State.NumericRule is null
+                    ? null
+                    : CloneStrategy(entry.State.NumericRule)
+            }
         };
 
     private static GovernedStateAddress Address(

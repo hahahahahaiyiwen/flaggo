@@ -334,6 +334,12 @@ internal static partial class GovernedStatePersistence
             persisted.LastChangedAt,
             "lastChangedAt",
             required: true);
+        if (lastChangedAt != activatedAt)
+        {
+            throw new InvalidDataException(
+                "Lifecycle governed-state activation and change timestamps must match.");
+        }
+
         var status = ParseStatus(persisted.LifecycleStatus);
         var state = new GovernedDecisionState(
             persisted.DefinitionId,

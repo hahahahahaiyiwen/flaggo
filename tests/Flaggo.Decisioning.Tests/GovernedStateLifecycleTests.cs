@@ -458,6 +458,45 @@ public sealed class GovernedStateLifecycleTests
     }
 
     [Fact]
+    public async Task ActivateAsync_FreezesWeightedRuleAuthority()
+    {
+        var store = Store("state-1");
+        var inputs = new[]
+        {
+            new NumericRuleInput("pressure", 0, 1, 1)
+        };
+        var activated = await store.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                EmptyBaseline(),
+                new NumericRuleActivationCandidate(
+                    "Adapt the governed value.",
+                    JsonSerializer.SerializeToElement(800),
+                    new NumericRuleStrategy(
+                        "pressure",
+                        0.5,
+                        750,
+                        850,
+                        inputs))),
+            CancellationToken.None);
+
+        inputs[0] = new NumericRuleInput("tampered", 0, 1, 1);
+        var baseline = await store.GetBaselineAsync(
+            Address(),
+            CancellationToken.None);
+        var storedInputs = baseline!.NumericRule!.WeightedInputs!;
+
+        Assert.Equal("pressure", Assert.Single(storedInputs).SignalKey);
+        var exposedList =
+            Assert.IsAssignableFrom<IList<NumericRuleInput>>(storedInputs);
+        Assert.Throws<NotSupportedException>(
+            () => exposedList[0] =
+                new NumericRuleInput("tampered-again", 0, 1, 1));
+        Assert.Equal(activated.StrategyId, baseline.StrategyId);
+    }
+
+    [Fact]
     public async Task ActivateAsync_CancellationLeavesAuthorityUnchanged()
     {
         var store = Store("state-unexpected");

@@ -579,6 +579,31 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
         await AssertInvalidLifecycleDocument(file.Path);
     }
 
+    [Fact]
+    public async Task ReadersRejectUnequalLifecycleTimestamps()
+    {
+        using var file = TestJsonFile.CreateCommitted(
+            "state-unequal-lifecycle-timestamps");
+        var lifecycle = Store(file.Path, "state-1");
+        await lifecycle.ActivateAsync(
+            Request(
+                "activation-1",
+                "proposal-1",
+                new(null, 0),
+                800),
+            CancellationToken.None);
+        var bytes = await CommittedFileSnapshot.ReadAsync(
+            CommittedFileSnapshotSource.FromDescriptor(file.Path),
+            options: null,
+            CancellationToken.None);
+        var document = JsonNode.Parse(bytes)!.AsObject();
+        document["states"]![0]!["lastChangedAt"] =
+            Now.AddMinutes(-5).ToString("O");
+        await file.WriteAsync(document.ToJsonString());
+
+        await AssertInvalidLifecycleDocument(file.Path);
+    }
+
     [Theory]
     [InlineData("pending")]
     [InlineData("completed")]
