@@ -77,7 +77,7 @@
           "description": "Human-readable message. Not used for program logic."
         },
         "decisionKey": { "type": "string" },
-        "signalKey": { "type": "string" }
+        "inputKey": { "type": "string" }
       }
     },
     "ClientFallbackEligibility": {

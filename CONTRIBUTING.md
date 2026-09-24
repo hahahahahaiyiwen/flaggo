@@ -124,10 +124,12 @@ persistence; separate services are justified only by operational requirements.
 ### Parallel contract implementation
 
 Executable API artifacts merge before client and service implementations
-diverge. The client track owns typed authoring, static extraction, canonical
-normalization and digesting, bundle output, request serialization, runtime
-identity propagation, exposure confirmation, configured availability fallback,
-and telemetry emission. The service track owns runtime and management
+diverge. The client track owns JSON manifest compilation, generated typed
+catalogs, canonical normalization/digesting, separate trusted publication,
+plain request serialization, runtime identity propagation, exposure
+confirmation, and configured availability fallback. Application OTel
+instrumentation and Collector pipelines remain application-owned.
+The service track owns runtime and management
 endpoints, contract-integrity verification, target and input resolution,
 governed state and strategy execution, policy, durable audit, exposure and
 attribution linkage, local adapters, and health.
@@ -144,12 +146,13 @@ Extensions must use the owning seam instead of bypassing it:
 
 - add a result primitive only through an accepted shared and wire contract;
 - add strategy behavior through the strategy contract and executor;
-- add evidence sources through `IEvidenceProvider`;
+- add input projections through the evidence module's `IInputTelemetrySink`
+  and `IInputEvidenceReader`; keep policy quality behind `IEvidenceProvider`;
 - add storage through registry lifecycle/read ports or `IStateStore`;
 - add policy rules through `IPolicyEvaluator`;
 - add asynchronous reasoning as an authorized proposal producer feeding the
   governed-state activation boundary;
-- add telemetry transports through the SDK telemetry boundary; and
+- add telemetry transports at the host adapter, not the runtime SDK; and
 - add cloud providers through adapters behind existing ports.
 
 ### When to split a repository

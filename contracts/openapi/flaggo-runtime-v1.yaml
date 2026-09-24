@@ -3,7 +3,7 @@
   "info": {
     "title": "Flaggo Runtime API",
     "version": "1.0.0",
-    "description": "Phase 1 data-plane contract: decide, exposure confirmation, and health. Domain types are owned by Shared Contracts; strict wire models live in ../schemas/runtime-models-v1.schema.json and ../schemas/problem-details-v1.schema.json.",
+    "description": "Manifest-first data plane: exact-identity decisions with plain request inputs, operational exposure confirmation, native OTLP/HTTP ingress, and health. Required input evidence unavailable is always SDK-fallback-ineligible. Authenticated tenant/application/environment scope is mandatory; telemetry resource attributes cannot authorize scope. Strict JSON wire models live in ../schemas/runtime-models-v1.schema.json and ../schemas/problem-details-v1.schema.json; OTLP uses upstream Protobuf, not JSON Problem Details.",
     "license": { "name": "Apache-2.0" }
   },
   "servers": [
@@ -14,6 +14,7 @@
   "tags": [
     { "name": "decide", "description": "Runtime decision evaluation" },
     { "name": "exposure", "description": "Exposure confirmation" },
+    { "name": "telemetry", "description": "Scoped native binary OTLP/HTTP ingestion" },
     { "name": "health", "description": "Liveness and readiness" }
   ],
   "paths": {
@@ -103,6 +104,81 @@
         }
       }
     },
+    "/otlp/{appId}/{environment}/v1/metrics": {
+      "post": {
+        "tags": ["telemetry"],
+        "operationId": "exportOtlpMetrics",
+        "summary": "Project native Gauge observations into declared input evidence.",
+        "description": "Accepts opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest and returns ExportMetricsServiceResponse. Unmatched telemetry is discarded. Matched unsupported metrics are explicitly rejected; aggregated metric exemplars cannot prove exposure.",
+        "security": [{ "oauth2": ["polari.telemetry:ingest"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/OtlpApplicationPath" },
+          { "$ref": "#/components/parameters/OtlpEnvironmentPath" },
+          { "$ref": "#/components/parameters/OtlpEncodingHeader" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/OtlpExport" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/OtlpAcknowledgement" },
+          "400": { "$ref": "#/components/responses/OtlpError" },
+          "401": { "$ref": "#/components/responses/OtlpError" },
+          "403": { "$ref": "#/components/responses/OtlpError" },
+          "413": { "$ref": "#/components/responses/OtlpError" },
+          "415": { "$ref": "#/components/responses/OtlpError" },
+          "429": { "$ref": "#/components/responses/OtlpRetry" },
+          "503": { "$ref": "#/components/responses/OtlpRetry" }
+        }
+      }
+    },
+    "/otlp/{appId}/{environment}/v1/traces": {
+      "post": {
+        "tags": ["telemetry"],
+        "operationId": "exportOtlpTraces",
+        "summary": "Project native spans and named span events into declared input evidence.",
+        "description": "Accepts opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest and returns ExportTraceServiceResponse. Supports latest span duration/attribute or named event attribute. Source trace flags are provenance, not completeness or confidence.",
+        "security": [{ "oauth2": ["polari.telemetry:ingest"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/OtlpApplicationPath" },
+          { "$ref": "#/components/parameters/OtlpEnvironmentPath" },
+          { "$ref": "#/components/parameters/OtlpEncodingHeader" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/OtlpExport" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/OtlpAcknowledgement" },
+          "400": { "$ref": "#/components/responses/OtlpError" },
+          "401": { "$ref": "#/components/responses/OtlpError" },
+          "403": { "$ref": "#/components/responses/OtlpError" },
+          "413": { "$ref": "#/components/responses/OtlpError" },
+          "415": { "$ref": "#/components/responses/OtlpError" },
+          "429": { "$ref": "#/components/responses/OtlpRetry" },
+          "503": { "$ref": "#/components/responses/OtlpRetry" }
+        }
+      }
+    },
+    "/otlp/{appId}/{environment}/v1/logs": {
+      "post": {
+        "tags": ["telemetry"],
+        "operationId": "exportOtlpLogs",
+        "summary": "Project native structured log records into declared input evidence.",
+        "description": "Accepts opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest and returns ExportLogsServiceResponse. Supports latest primitive attributes or structured-body paths selected by event name or exact scalar body. JSON-looking body strings are not parsed.",
+        "security": [{ "oauth2": ["polari.telemetry:ingest"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/OtlpApplicationPath" },
+          { "$ref": "#/components/parameters/OtlpEnvironmentPath" },
+          { "$ref": "#/components/parameters/OtlpEncodingHeader" }
+        ],
+        "requestBody": { "$ref": "#/components/requestBodies/OtlpExport" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/OtlpAcknowledgement" },
+          "400": { "$ref": "#/components/responses/OtlpError" },
+          "401": { "$ref": "#/components/responses/OtlpError" },
+          "403": { "$ref": "#/components/responses/OtlpError" },
+          "413": { "$ref": "#/components/responses/OtlpError" },
+          "415": { "$ref": "#/components/responses/OtlpError" },
+          "429": { "$ref": "#/components/responses/OtlpRetry" },
+          "503": { "$ref": "#/components/responses/OtlpRetry" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "tags": ["health"],
@@ -162,13 +238,28 @@
             "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
             "scopes": {
               "polari.decisions:decide": "Runtime decision evaluation",
-              "polari.exposures:confirm": "Exposure confirmation"
+              "polari.exposures:confirm": "Exposure confirmation",
+              "polari.telemetry:ingest": "Native telemetry ingress under authenticated tenant/application/environment"
             }
           }
         }
       }
     },
     "parameters": {
+      "OtlpApplicationPath": {
+        "name": "appId", "in": "path", "required": true,
+        "description": "Application authorized by the principal, never by telemetry resource attributes.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "OtlpEnvironmentPath": {
+        "name": "environment", "in": "path", "required": true,
+        "description": "Environment authorized by the principal. Tenant comes only from authenticated claims.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "OtlpEncodingHeader": {
+        "name": "Content-Encoding", "in": "header", "required": false,
+        "schema": { "type": "string", "enum": ["gzip", "identity"] }
+      },
       "DecisionKeyPath": {
         "name": "decisionKey",
         "in": "path",
@@ -212,7 +303,30 @@
         "schema": { "type": "integer", "minimum": 0 }
       }
     },
+    "schemas": {
+      "OtlpBinary": { "type": "string", "format": "binary" }
+    },
+    "requestBodies": {
+      "OtlpExport": {
+        "required": true,
+        "description": "Signal-specific upstream Export*ServiceRequest serialized as Protobuf, uncompressed or gzip. Both encoded and decompressed bodies are bounded (default 4 MiB); decoded work defaults to 1,000 records/items. JSON OTLP and gRPC are not supported.",
+        "content": { "application/x-protobuf": { "schema": { "$ref": "#/components/schemas/OtlpBinary" } } }
+      }
+    },
     "responses": {
+      "OtlpAcknowledgement": {
+        "description": "Signal-specific Export*ServiceResponse after accepted projections commit durably. Partial success counts a native record as rejected only when no matching binding accepts it, with bounded binding diagnostics; it is not a retry signal.",
+        "content": { "application/x-protobuf": { "schema": { "$ref": "#/components/schemas/OtlpBinary" } } }
+      },
+      "OtlpError": {
+        "description": "Protobuf google.rpc.Status: malformed/unsupported payload, size bound, or authentication/scope failure. Not Flaggo JSON Problem Details.",
+        "content": { "application/x-protobuf": { "schema": { "$ref": "#/components/schemas/OtlpBinary" } } }
+      },
+      "OtlpRetry": {
+        "description": "Protobuf google.rpc.Status for capacity or durable storage unavailability. Uncommitted observations are not acknowledged.",
+        "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+        "content": { "application/x-protobuf": { "schema": { "$ref": "#/components/schemas/OtlpBinary" } } }
+      },
       "Problem": {
         "description": "RFC 9457 Problem Details error. Programs branch on code and status, never on title or detail.",
         "headers": { "X-Flaggo-Correlation-Id": { "$ref": "#/components/headers/CorrelationId" } },

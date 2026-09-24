@@ -19,10 +19,11 @@ The current contract boundary is deliberately smaller than the long-term
 vision:
 
 ```text
-current bundle-approved path:
-definition + initial authority candidate
-  -> authenticated approval
-  -> governed state
+current manifest-first path:
+JSON manifest
+  -> explicit authenticated publication/approval
+  -> generated catalog + exact approved receipt
+  -> request-owned / materialized OTel inputs + existing governed state
   -> deterministic runtime evaluation
   -> policy + durable audit
   -> decision result
@@ -43,12 +44,16 @@ extension until its proposal and governance contracts are accepted.
 
 ## Current state
 
-The repository contains the accepted Phase 1 executable contracts, the
-TypeScript SDK and .NET service boundaries developed against them, and a
-cloud-free adaptive-worker integration path. The Phase 3 roadmap is
+The repository contains manifest v2 executable contracts, a typed key-based
+TypeScript client, .NET runtime/input-materialization boundaries, and
+cloud-free worker, Tetris, and real Collector integrations. Applications own
+instrumentation and collection; Flaggo owns interpretation of declared evidence.
+The Phase 3 roadmap is
 re-baselined around authenticated bundle approval and the shared activation
 boundary; the implementation is not considered complete until the state,
-bundle, durable-audit, and Tetris integration follow-ups converge.
+bundle-authority and Tetris re-baselining follow-ups converge. #40 owns
+manifest initial authority and activation-ready receipts; those are not
+implemented by current approved-definition publication.
 
 [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3), native issue
 dependencies, and self-contained issue contracts are the authoritative roadmap
@@ -61,7 +66,7 @@ and status source. This page is orientation, not a second roadmap.
 | Why does Flaggo exist, and how should contributors build it? | [Manifesto](MANIFESTO.md) |
 | How do the concepts and system boundaries fit together? | [Architecture overview](architecture/OVERVIEW.md) |
 | What does a decision definition own? | [Decision definition](architecture/DECISION_DEFINITION.md) |
-| How do context, signals, evidence, exposure, and outcomes differ? | [Evidence](architecture/EVIDENCE.md) |
+| How do request inputs, native telemetry, evidence, exposure, and outcomes differ? | [Evidence](architecture/EVIDENCE.md) |
 | How does declared or proposed behavior become runtime authority? | [Authority](architecture/AUTHORITY.md) |
 | How does the data plane produce one decision result? | [Runtime execution](architecture/RUNTIME_EXECUTION.md) |
 | What exact behavior should the first product slice demonstrate? | [Tetris scenario](scenarios/TETRIS.md) |
@@ -99,7 +104,7 @@ override executable contracts.
 
 ### Contract or SDK contributor
 
-1. Read the [Phase 1 API contract proposal](design/API_CONTRACT_PROPOSAL.md).
+1. Read the [API contract baseline](design/API_CONTRACT_PROPOSAL.md).
 2. Read the [shared contracts design](design/shared-contracts/README.md).
 3. Inspect the OpenAPI, schema, fixtures, and conformance gate under
    [`contracts/`](../contracts/README.md).
@@ -125,3 +130,7 @@ override executable contracts.
   experiment, rollout, override, or rollback contracts as current.
 - Remove obsolete documentation paths instead of maintaining compatibility
   copies.
+
+Executable examples: [worker](../examples/adaptive-worker/README.md),
+[Tetris](../examples/tetris-integration/README.md), and
+[native OTel evidence](../examples/otel-evidence/README.md).

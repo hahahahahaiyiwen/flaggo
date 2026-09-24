@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v2.schema.json",
+  "title": "DecisionDefinitionBundle v2",
+  "description": "The sole authored manifest. Registry identity is issued by approval; telemetry production and collection remain application-owned.",
+  "type": "object",
+  "required": ["format", "application", "decisions"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "flaggo.decision-definition-bundle/v2" },
+    "application": {
+      "type": "object", "required": ["id", "environment"], "additionalProperties": false,
+      "properties": { "id": { "$ref": "#/$defs/Name" }, "environment": { "$ref": "#/$defs/Name" } }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "repository": { "type": "string" }, "path": { "type": "string" }, "commit": { "type": "string" } }
+    },
+    "build": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "buildId": { "type": "string" }, "artifactDigest": { "type": "string" }, "version": { "type": "string" } }
+    },
+    "decisions": {
+      "type": "object", "minProperties": 1, "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": { "$ref": "#/$defs/DecisionDefinition" }
+    }
+  },
+  "$defs": {
+    "Name": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "Sha256Digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "ValueType": { "enum": ["boolean", "number", "string"] },
+    "DecisionValue": { "type": ["boolean", "number", "string"] },
+    "Range": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+    "NumberResult": {
+      "type": "object", "required": ["type", "min", "max", "default"], "additionalProperties": false,
+      "properties": {
+        "type": { "const": "number" }, "min": { "type": "number" }, "max": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 }, "default": { "type": "number" }
+      }
+    },
+    "BooleanResult": {
+      "type": "object", "required": ["type", "default"], "additionalProperties": false,
+      "properties": { "type": { "const": "boolean" }, "default": { "type": "boolean" } }
+    },
+    "StringResult": {
+      "type": "object", "required": ["type", "default"], "additionalProperties": false,
+      "properties": {
+        "type": { "const": "string" }, "default": { "type": "string" },
+        "allowedValues": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }
+      }
+    },
+    "Result": {
+      "oneOf": [{ "$ref": "#/$defs/NumberResult" }, { "$ref": "#/$defs/BooleanResult" }, { "$ref": "#/$defs/StringResult" }]
+    },
+    "Context": {
+      "type": "object", "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": {
+        "type": "object", "required": ["type"], "additionalProperties": false,
+        "properties": {
+          "type": { "$ref": "#/$defs/ValueType" }, "required": { "type": "boolean", "default": false },
+          "target": { "$ref": "#/$defs/Name", "not": { "const": "global" } }
+        },
+        "if": { "required": ["target"] },
+        "then": { "properties": { "type": { "const": "string" } } }
+      }
+    },
+    "Targeting": {
+      "type": "object", "required": ["hierarchy", "primary", "fallbackOrder"], "additionalProperties": false,
+      "properties": {
+        "hierarchy": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/Name" } },
+        "primary": { "$ref": "#/$defs/Name" },
+        "fallbackOrder": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/Name" } }
+      }
+    },
+    "RequestInput": {
+      "type": "object", "required": ["source", "type", "meaning"], "additionalProperties": false,
+      "properties": {
+        "source": { "const": "request" }, "type": { "$ref": "#/$defs/ValueType" },
+        "meaning": { "$ref": "#/$defs/Name" }, "unit": { "type": "string" }, "range": { "$ref": "#/$defs/Range" }
+      },
+      "if": { "properties": { "type": { "not": { "const": "number" } } } },
+      "then": { "not": { "anyOf": [{ "required": ["unit"] }, { "required": ["range"] }] } }
+    },
+    "EvidenceInput": {
+      "type": "object", "required": ["source", "binding"], "additionalProperties": false,
+      "properties": { "source": { "const": "evidence" }, "binding": { "$ref": "#/$defs/Name" } }
+    },
+    "Input": { "oneOf": [{ "$ref": "#/$defs/RequestInput" }, { "$ref": "#/$defs/EvidenceInput" }] },
+    "Attributes": {
+      "type": "object", "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": { "$ref": "#/$defs/DecisionValue" }
+    },
+    "Scope": {
+      "type": "object", "required": ["name"], "additionalProperties": false,
+      "properties": { "name": { "$ref": "#/$defs/Name" }, "version": { "type": "string" } }
+    },
+    "AttributeSelector": {
+      "type": "object", "required": ["from", "key"], "additionalProperties": false,
+      "properties": {
+        "from": { "enum": ["resourceAttributes", "attributes", "eventAttributes"] },
+        "key": { "$ref": "#/$defs/Name" }
+      }
+    },
+    "MetricSource": {
+      "type": "object", "required": ["kind", "name", "dataType", "scope", "resourceAttributes", "value"], "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "metric" }, "name": { "$ref": "#/$defs/Name" }, "dataType": { "const": "gauge" },
+        "scope": { "$ref": "#/$defs/Scope" }, "resourceAttributes": { "$ref": "#/$defs/Attributes" },
+        "attributes": { "$ref": "#/$defs/Attributes" },
+        "value": {
+          "type": "object", "required": ["from"], "additionalProperties": false,
+          "properties": { "from": { "const": "value" } }
+        }
+      }
+    },
+    "SpanSource": {
+      "type": "object", "required": ["kind", "name", "scope", "resourceAttributes", "value"], "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "span" }, "name": { "$ref": "#/$defs/Name" },
+        "scope": { "$ref": "#/$defs/Scope" }, "resourceAttributes": { "$ref": "#/$defs/Attributes" },
+        "attributes": { "$ref": "#/$defs/Attributes" }, "eventName": { "$ref": "#/$defs/Name" },
+        "eventAttributes": { "$ref": "#/$defs/Attributes" },
+        "value": {
+          "oneOf": [
+            { "type": "object", "required": ["from"], "additionalProperties": false, "properties": { "from": { "const": "duration" } } },
+            {
+              "type": "object", "required": ["from", "key"], "additionalProperties": false,
+              "properties": { "from": { "enum": ["attributes", "eventAttributes"] }, "key": { "$ref": "#/$defs/Name" } }
+            }
+          ]
+        }
+      },
+      "if": { "required": ["eventName"] },
+      "then": { "properties": { "value": { "properties": { "from": { "const": "eventAttributes" } } } } },
+      "else": {
+        "not": { "required": ["eventAttributes"] },
+        "properties": { "value": { "properties": { "from": { "enum": ["duration", "attributes"] } } } }
+      }
+    },
+    "LogSource": {
+      "type": "object", "required": ["kind", "scope", "resourceAttributes", "value"], "additionalProperties": false,
+      "oneOf": [{ "required": ["eventName"] }, { "required": ["bodyEquals"] }],
+      "properties": {
+        "kind": { "const": "log" }, "scope": { "$ref": "#/$defs/Scope" },
+        "resourceAttributes": { "$ref": "#/$defs/Attributes" }, "attributes": { "$ref": "#/$defs/Attributes" },
+        "eventName": { "$ref": "#/$defs/Name" }, "bodyEquals": { "$ref": "#/$defs/DecisionValue" },
+        "value": {
+          "oneOf": [
+            {
+              "type": "object", "required": ["from", "key"], "additionalProperties": false,
+              "properties": { "from": { "const": "attributes" }, "key": { "$ref": "#/$defs/Name" } }
+            },
+            {
+              "type": "object", "required": ["from", "path"], "additionalProperties": false,
+              "properties": { "from": { "const": "body" }, "path": { "type": "array", "items": { "type": "string" } } }
+            }
+          ]
+        }
+      }
+    },
+    "EvidenceBinding": {
+      "type": "object",
+      "required": ["meaning", "type", "source", "projection", "target", "freshness", "sampling", "attribution"],
+      "additionalProperties": false,
+      "properties": {
+        "meaning": { "$ref": "#/$defs/Name" }, "type": { "$ref": "#/$defs/ValueType" },
+        "unit": { "type": "string" }, "range": { "$ref": "#/$defs/Range" },
+        "source": { "oneOf": [{ "$ref": "#/$defs/MetricSource" }, { "$ref": "#/$defs/SpanSource" }, { "$ref": "#/$defs/LogSource" }] },
+        "projection": {
+          "type": "object", "required": ["kind"], "additionalProperties": false, "properties": { "kind": { "const": "latest" } }
+        },
+        "target": {
+          "oneOf": [
+            { "type": "object", "required": ["type"], "additionalProperties": false, "properties": { "type": { "const": "global" } } },
+            {
+              "type": "object", "required": ["type", "idAttribute"], "additionalProperties": false,
+              "properties": { "type": { "$ref": "#/$defs/Name", "not": { "const": "global" } }, "idAttribute": { "$ref": "#/$defs/AttributeSelector" } }
+            }
+          ]
+        },
+        "freshness": {
+          "type": "object", "required": ["maxAgeSeconds"], "additionalProperties": false,
+          "properties": { "maxAgeSeconds": { "type": "integer", "minimum": 1, "maximum": 922337203685 } }
+        },
+        "sampling": {
+          "type": "object", "required": ["accept"], "additionalProperties": false, "properties": { "accept": { "const": "observed" } }
+        },
+        "attribution": {
+          "oneOf": [
+            { "type": "object", "required": ["kind"], "additionalProperties": false, "properties": { "kind": { "const": "none" } } },
+            {
+              "type": "object", "required": ["kind", "exposureIdAttribute"], "additionalProperties": false,
+              "properties": { "kind": { "const": "confirmed-exposure" }, "exposureIdAttribute": { "$ref": "#/$defs/AttributeSelector" } }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "not": { "const": "number" } } } },
+          "then": { "not": { "anyOf": [{ "required": ["unit"] }, { "required": ["range"] }] } }
+        },
+        {
+          "if": { "properties": { "source": { "properties": { "kind": { "const": "metric" } } } } },
+          "then": {
+            "required": ["unit"],
+            "properties": { "type": { "const": "number" }, "attribution": { "properties": { "kind": { "const": "none" } } } }
+          }
+        },
+        {
+          "if": { "properties": { "source": { "properties": { "kind": { "const": "span" }, "value": { "properties": { "from": { "const": "duration" } } } } } } },
+          "then": { "required": ["unit"], "properties": { "type": { "const": "number" }, "unit": { "const": "ms" } } }
+        }
+      ]
+    },
+    "NumericObjective": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["evidence", "direction"], "additionalProperties": false,
+          "properties": { "evidence": { "$ref": "#/$defs/Name" }, "direction": { "enum": ["minimize", "maximize"] } }
+        },
+        {
+          "type": "object", "required": ["evidence", "direction", "target"], "additionalProperties": false,
+          "properties": { "evidence": { "$ref": "#/$defs/Name" }, "direction": { "const": "target" }, "target": { "type": "number" } }
+        }
+      ]
+    },
+    "Intent": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["type", "text"], "additionalProperties": false,
+          "properties": { "type": { "const": "natural-language" }, "text": { "$ref": "#/$defs/Name" } }
+        },
+        {
+          "type": "object", "required": ["type", "primary"], "additionalProperties": false,
+          "properties": {
+            "type": { "const": "numeric-objective" }, "primary": { "$ref": "#/$defs/NumericObjective" },
+            "secondary": { "type": "array", "items": { "$ref": "#/$defs/NumericObjective" } }, "rationale": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "ClientFallbackPolicy": {
+      "type": "object", "required": ["requiredEvidenceUnavailable"], "additionalProperties": false,
+      "properties": { "requiredEvidenceUnavailable": { "enum": ["allow", "forbid"] } }
+    },
+    "PolicyConstraint": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["kind", "min", "max"], "additionalProperties": false,
+          "properties": { "kind": { "const": "number-bounds" }, "min": { "type": "number" }, "max": { "type": "number" } }
+        },
+        {
+          "type": "object", "required": ["kind", "seconds"], "additionalProperties": false,
+          "properties": { "kind": { "const": "cooldown" }, "seconds": { "type": "number", "minimum": 0 } }
+        },
+        {
+          "type": "object", "required": ["kind", "value"], "additionalProperties": false,
+          "properties": { "kind": { "enum": ["max-delta", "min-sample-size"] }, "value": { "type": "number", "minimum": 0 } }
+        },
+        {
+          "type": "object", "required": ["kind", "value"], "additionalProperties": false,
+          "properties": { "kind": { "enum": ["min-evidence-quality", "max-model-uncertainty", "min-expected-outcome"] }, "value": { "type": "number", "minimum": 0, "maximum": 1 } }
+        },
+        {
+          "type": "object", "required": ["kind", "paused"], "additionalProperties": false,
+          "properties": { "kind": { "const": "pause" }, "paused": { "type": "boolean" } }
+        }
+      ]
+    },
+    "Policy": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["kind", "policyId"], "additionalProperties": false,
+          "properties": { "kind": { "const": "reference" }, "policyId": { "$ref": "#/$defs/Name" } }
+        },
+        {
+          "type": "object", "required": ["kind", "constraints"], "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "inline" }, "constraints": { "type": "array", "items": { "$ref": "#/$defs/PolicyConstraint" } },
+            "clientFallback": { "$ref": "#/$defs/ClientFallbackPolicy" }
+          }
+        }
+      ]
+    },
+    "DecisionDefinition": {
+      "type": "object", "required": ["result", "targeting", "policy"], "additionalProperties": false,
+      "properties": {
+        "result": { "$ref": "#/$defs/Result" }, "context": { "$ref": "#/$defs/Context" },
+        "targeting": { "$ref": "#/$defs/Targeting" }, "policy": { "$ref": "#/$defs/Policy" },
+        "inputs": { "type": "object", "propertyNames": { "$ref": "#/$defs/Name" }, "additionalProperties": { "$ref": "#/$defs/Input" } },
+        "evidence": { "type": "object", "propertyNames": { "$ref": "#/$defs/Name" }, "additionalProperties": { "$ref": "#/$defs/EvidenceBinding" } },
+        "intent": { "$ref": "#/$defs/Intent" }, "owner": { "type": "string" }
+      }
+    }
+  }
+}

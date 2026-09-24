@@ -100,17 +100,37 @@ function expectRequired(schema: JsonSchema, required: string[]): void {
   expect(schema.required).toEqual(expect.arrayContaining(required));
 }
 
-describe("frozen OpenAPI SDK compatibility", () => {
+describe("OpenAPI shared-contract alignment", () => {
   const runtime = yamlDocument("flaggo-runtime-v1.yaml");
   const management = yamlDocument("flaggo-management-v1.yaml");
   const runtimeModels = jsonSchema("runtime-models-v1.schema.json");
   const managementModels = jsonSchema("management-models-v1.schema.json");
   const definitionBundle = jsonSchema(
-    "decision-definition-bundle-v1.schema.json",
+    "decision-definition-bundle-v2.schema.json",
   );
   const problemDetails = jsonSchema("problem-details-v1.schema.json");
 
-  it("keeps the startup apply operation and typed approval response", () => {
+  it.each(["metrics", "traces", "logs"])("documents native binary %s ingress separately from decide", (signal) => {
+    const ingest = operation(runtime, `/otlp/{appId}/{environment}/v1/${signal}`, "post");
+    expectSecurity(ingest, "polari.telemetry:ingest");
+    expectParameters(ingest, [
+      "#/components/parameters/OtlpApplicationPath",
+      "#/components/parameters/OtlpEnvironmentPath",
+      "#/components/parameters/OtlpEncodingHeader",
+    ]);
+    expect(ingest.requestBody?.$ref).toBe("#/components/requestBodies/OtlpExport");
+    expect(runtime.components.requestBodies.OtlpExport?.content?.["application/x-protobuf"]?.schema.$ref)
+      .toBe("#/components/schemas/OtlpBinary");
+    expect(ingest.responses["200"]?.$ref).toBe("#/components/responses/OtlpAcknowledgement");
+    for (const status of ["400", "401", "403", "413", "415"]) {
+      expect(ingest.responses[status]?.$ref).toBe("#/components/responses/OtlpError");
+    }
+    for (const status of ["429", "503"]) {
+      expect(ingest.responses[status]?.$ref).toBe("#/components/responses/OtlpRetry");
+    }
+  });
+
+  it("keeps explicit manifest publication and typed approval responses", () => {
     expect(management.openapi).toBe("3.1.0");
     const apply = operation(
       management,
@@ -128,7 +148,7 @@ describe("frozen OpenAPI SDK compatibility", () => {
     expect(
       management.components.requestBodies.Bundle!.content?.["application/json"]
         ?.schema?.$ref,
-    ).toBe("../schemas/decision-definition-bundle-v1.schema.json");
+    ).toBe("../schemas/decision-definition-bundle-v2.schema.json");
     expectResponseSchema(
       apply,
       "200",
@@ -154,8 +174,7 @@ describe("frozen OpenAPI SDK compatibility", () => {
     expectRequired(definitionBundle, [
       "format",
       "application",
-      "source",
-      "definitions",
+      "decisions",
     ]);
     expectRequired(managementModels.$defs!.RegistrationReceipt!, [
       "application",

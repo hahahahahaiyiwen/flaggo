@@ -5,16 +5,16 @@ This example is the trusted, backend-only integration boundary for
 
 ## Artifacts
 
-- `tetris-definition-bundle.json`: canonical SDK and management bundle.
+- `tetris-definition-bundle.json`: one authored manifest. Compilation emits
+  `generated/definitions.json` and `generated/catalog.ts`; runtime uses the
+  compiled catalog and approved receipt.
 - `strategy-activation.json`: application-neutral governed numeric-rule
   configuration using all four live inputs.
-- `evidence.json`: deterministic local confidence evidence for the activated
-  strategy. The canonical policy requires at least `0.7` evidence quality and
-  forbids client fallback when the active strategy entry is unavailable.
-- `bootstrap.mjs`: applies the bundle with the real SDK, handles typed
+- `bootstrap.mjs`: explicitly applies through the management entry point, handles typed
   `requires-approval`, approves through the management API, retries
-  registration, and atomically publishes receipt-bound state, evidence, and
-  receipt as one generation.
+  publication, and atomically publishes receipt-bound state, an empty
+  policy-evidence artifact, and receipt as one generation. No model-quality
+  fixture is required for this deterministic rule.
 - `run.mjs`: deterministic real-host integration harness.
 - `inspect.mjs`: local audit and linked outcome summary.
 
@@ -32,7 +32,6 @@ authentication and an isolated registry path, then run:
 ```powershell
 node examples\tetris-integration\bootstrap.mjs `
   --control-plane http://127.0.0.1:5081 `
-  --data-plane http://127.0.0.1:5080 `
   --output .flaggo\tetris-bootstrap
 ```
 
@@ -44,8 +43,8 @@ credentials into browser code.
 After applying a server receipt:
 
 1. call `flaggo.exposures.confirm(decisionId, confirmToken)`;
-2. emit `tetris.outcomeObserved` through the configured SDK `TelemetrySink`;
-3. set `decisionId` and `exposureId` from the confirmed result;
+2. emit a native `game.outcome` log through the application's OTel provider;
+3. attach `confirmedExposureAttributes(confirmation)` to the log;
 4. include the applied `dropIntervalMs` and application outcome.
 
 Client fallback and unused receipts have no confirmed exposure and must not
@@ -59,12 +58,13 @@ npm run test:tetris-integration
 
 The harness uses repository-local `.flaggo/integration-*` paths, starts
 separate control/data processes, and removes its generated files afterward.
-It also atomically publishes a complete generation whose evidence lacks the
-active strategy and verifies that the SDK receives fail-closed
-`required-evidence-unavailable` rather than a wire-invalid strategy result.
-That `503` uses an idempotency key; after evidence is restored, the harness
-publishes another complete generation, retries the same key, and verifies a
-fresh successful governed decision.
+It verifies request-input-only inference with empty policy evidence, null
+learned confidence, current weighted `850ms`/`750ms` branches, and the
+`800ms` cooldown fallback. No telemetry producer declaration is needed.
+Required telemetry-input failure/recovery belongs to the separate
+[OTel example](../otel-evidence/README.md) and service materialization tests.
+Initial-authority publication and stronger activation-ready receipts remain
+#40; this bootstrap deliberately provisions an existing local governed rule.
 Each ASP.NET host binds directly to loopback port `0`; the harness enables
 structured JSON console logs and discovers the assigned listening URL before
 making requests. This removes the allocate-close-bind race, including the

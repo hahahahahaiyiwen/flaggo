@@ -41,8 +41,8 @@ public sealed class LocalFileStateStoreTests
             () => exposedInputs[0] =
                 new NumericRuleInput("tampered", 0, 1, 1));
         Assert.Equal(
-            "tetris.boardPressure",
-            first.NumericRule.WeightedInputs[0].SignalKey);
+            "boardPressure",
+            first.NumericRule.WeightedInputs[0].InputKey);
         Assert.Equal(
             new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero),
             second.LastChangedAt);
@@ -447,7 +447,7 @@ public sealed class LocalFileStateStoreTests
         cases.Add(
             "numeric rule without input signal key",
             InvalidDocument(state =>
-                state["numericRule"]!.AsObject().Remove("inputSignalKey")));
+                state["numericRule"]!.AsObject().Remove("inputKey")));
         cases.Add(
             "numeric rule without threshold",
             InvalidDocument(state =>
@@ -472,7 +472,7 @@ public sealed class LocalFileStateStoreTests
             "weighted input without signal key",
             InvalidDocument(state =>
                 state["numericRule"]!["weightedInputs"]![0]!
-                    .AsObject().Remove("signalKey")));
+                    .AsObject().Remove("inputKey")));
         cases.Add(
             "weighted input without minimum",
             InvalidDocument(state =>
@@ -608,13 +608,16 @@ public sealed class LocalFileStateStoreTests
             "active-value",
             new ServerFallbackInfo("server", false, false, null),
             new Dictionary<string, JsonElement>(),
-            [],
+            new Dictionary<string, JsonElement>(),
             null,
             null,
             [],
             ["global"],
             new PolicyEvaluationResult("approved", [], []),
-            new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero));
+            new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero),
+            TenantId: "local-development",
+            RequestInputs: new Dictionary<string, JsonElement>(),
+            InputProvenance: new Dictionary<string, InputProvenance>());
 
     private static async Task<GovernedDecisionState> LoadStateAsync(
         LocalFileStateStore store) =>
@@ -661,7 +664,7 @@ public sealed class LocalFileStateStoreTests
                         strategyId = "strategy-tetris-balanced-v1",
                         numericRule = new
                         {
-                            inputSignalKey = "tetris.boardPressure",
+                            inputKey = "boardPressure",
                             threshold = 0.55,
                             valueAtOrAbove = 850,
                             valueBelow = 750,
@@ -669,28 +672,28 @@ public sealed class LocalFileStateStoreTests
                             {
                                 new
                                 {
-                                    signalKey = "tetris.boardPressure",
+                                    inputKey = "boardPressure",
                                     minimum = 0,
                                     maximum = 1,
                                     weight = 0.45
                                 },
                                 new
                                 {
-                                    signalKey = "tetris.recentPlacementTimeMs",
+                                    inputKey = "recentPlacementTimeMs",
                                     minimum = 0,
                                     maximum = 2000,
                                     weight = 0.25
                                 },
                                 new
                                 {
-                                    signalKey = "tetris.recoveryFailures",
+                                    inputKey = "recoveryFailures",
                                     minimum = 0,
                                     maximum = 5,
                                     weight = 0.20
                                 },
                                 new
                                 {
-                                    signalKey = "tetris.currentLevel",
+                                    inputKey = "currentLevel",
                                     minimum = 0,
                                     maximum = 20,
                                     weight = 0.10

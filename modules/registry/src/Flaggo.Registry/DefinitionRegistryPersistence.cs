@@ -5,13 +5,15 @@ namespace Flaggo.Registry;
 
 public sealed partial class InMemoryDefinitionRegistry
 {
-    private const int PersistenceFormatVersion = 1;
+    private const int PersistenceFormatVersion = 2;
 
     private static readonly JsonSerializerOptions PersistenceJsonOptions =
         new(JsonSerializerDefaults.Web)
         {
             PropertyNameCaseInsensitive = false,
-            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            RespectRequiredConstructorParameters = true,
+            RespectNullableAnnotations = true
         };
 
     internal JsonElement CapturePersistenceState()
@@ -70,12 +72,13 @@ public sealed partial class InMemoryDefinitionRegistry
     internal static InMemoryDefinitionRegistry RestorePersistenceState(
         JsonElement persistedState,
         IDefinitionIdentityGenerator identityGenerator,
-        TimeProvider timeProvider,
-        IEnumerable<RuntimeDecisionDefinition>?
-            legacyRuntimeDefinitions = null,
-        IEnumerable<IntelligenceLifecycleDefinitionSnapshot>?
-            legacyIntelligenceDefinitions = null)
+        TimeProvider timeProvider)
     {
+        if (!persistedState.TryGetProperty("version", out var version) ||
+            !version.TryGetInt32(out var format) || format != PersistenceFormatVersion)
+        {
+            throw new InvalidDataException("The local definition registry requires format version 2.");
+        }
         var state = persistedState.Deserialize<PersistedRegistryState>(
                 PersistenceJsonOptions)
             ?? throw new InvalidDataException(
@@ -86,19 +89,11 @@ public sealed partial class InMemoryDefinitionRegistry
                 $"Unsupported local definition registry format version '{state.Version}'.");
         }
 
-        var runtimeDefinitions = MigrateLegacyRuntimeDefinitions(
-            persistedState,
-            state.Definitions,
-            legacyRuntimeDefinitions ?? []);
-        var intelligenceDefinitions = state.IntelligenceDefinitions ??
-            MatchLegacyIntelligenceDefinitions(
-                runtimeDefinitions,
-                legacyIntelligenceDefinitions ?? []);
         var registry = new InMemoryDefinitionRegistry(
-            runtimeDefinitions,
+            state.Definitions,
             identityGenerator,
             timeProvider,
-            intelligenceDefinitions: intelligenceDefinitions);
+            intelligenceDefinitions: state.IntelligenceDefinitions);
         foreach (var entry in state.ApplyEntries)
         {
             object body = entry.BodyKind switch
@@ -138,134 +133,12 @@ public sealed partial class InMemoryDefinitionRegistry
         return registry;
     }
 
-    private static IReadOnlyList<RuntimeDecisionDefinition>
-        MigrateLegacyRuntimeDefinitions(
-            JsonElement persistedState,
-            IReadOnlyList<RuntimeDecisionDefinition> definitions,
-            IEnumerable<RuntimeDecisionDefinition> legacyRuntimeDefinitions)
-    {
-        if (!persistedState.TryGetProperty("definitions", out var persisted) ||
-            persisted.ValueKind != JsonValueKind.Array ||
-            persisted.GetArrayLength() != definitions.Count)
-        {
-            return definitions;
-        }
-
-        var persistedDefinitions = persisted.EnumerateArray().ToArray();
-        var legacyDocument =
-            !persistedState.TryGetProperty("intelligenceDefinitions", out _);
-        var seedDefinitions = legacyRuntimeDefinitions.ToArray();
-        return definitions.Select((definition, index) =>
-        {
-            var serialized = persistedDefinitions[index];
-            var hasExplicitTargeting =
-                serialized.TryGetProperty("targetHierarchy", out _) ||
-                serialized.TryGetProperty("inferenceTarget", out _) ||
-                serialized.TryGetProperty("fallbackOrder", out _);
-            var migrated = hasExplicitTargeting
-                ? definition
-                : definition with
-                {
-                    RuntimeContext = definition.RuntimeContext
-                        .Select(field => field with
-                        {
-                            TargetType = field.TargetType ??
-                                LegacyTargetType(field.Key)
-                        })
-                        .ToArray(),
-                    FallbackOrder = definition.TargetHierarchy
-                        .SkipWhile(target => !string.Equals(
-                            target,
-                            definition.InferenceTarget,
-                            StringComparison.Ordinal))
-                        .Skip(1)
-                        .ToArray()
-                };
-            if (!legacyDocument)
-            {
-                return migrated;
-            }
-
-            var seed = seedDefinitions.SingleOrDefault(candidate =>
-                SameDefinitionIdentity(candidate, migrated) &&
-                string.Equals(
-                    candidate.LifecycleStatus,
-                    migrated.LifecycleStatus,
-                    StringComparison.Ordinal));
-            return seed is null
-                ? migrated
-                : migrated with
-            {
-                NumberActionSpace =
-                    migrated.NumberActionSpace ?? seed.NumberActionSpace,
-                Policy = migrated.Policy ?? seed.Policy
-            };
-        }).ToArray();
-    }
-
-    private static IReadOnlyList<IntelligenceLifecycleDefinitionSnapshot>
-        MatchLegacyIntelligenceDefinitions(
-            IReadOnlyList<RuntimeDecisionDefinition> runtimeDefinitions,
-            IEnumerable<IntelligenceLifecycleDefinitionSnapshot>
-                legacyIntelligenceDefinitions)
-    {
-        return legacyIntelligenceDefinitions
-            .Where(intelligence => runtimeDefinitions.Any(runtime =>
-                SameDefinitionIdentity(runtime, intelligence) &&
-                string.Equals(
-                    runtime.LifecycleStatus,
-                    intelligence.LifecycleStatus,
-                    StringComparison.Ordinal)))
-            .ToArray();
-    }
-
-    private static bool SameDefinitionIdentity(
-        RuntimeDecisionDefinition left,
-        RuntimeDecisionDefinition right) =>
-        string.Equals(left.AppId, right.AppId, StringComparison.Ordinal) &&
-        string.Equals(
-            left.Environment,
-            right.Environment,
-            StringComparison.Ordinal) &&
-        string.Equals(
-            left.DecisionKey,
-            right.DecisionKey,
-            StringComparison.Ordinal) &&
-        left.Identity == right.Identity;
-
-    private static bool SameDefinitionIdentity(
-        RuntimeDecisionDefinition runtime,
-        IntelligenceLifecycleDefinitionSnapshot intelligence) =>
-        string.Equals(
-            runtime.AppId,
-            intelligence.AppId,
-            StringComparison.Ordinal) &&
-        string.Equals(
-            runtime.Environment,
-            intelligence.Environment,
-            StringComparison.Ordinal) &&
-        string.Equals(
-            runtime.DecisionKey,
-            intelligence.DecisionKey,
-            StringComparison.Ordinal) &&
-        runtime.Identity == intelligence.Identity;
-
-    private static string? LegacyTargetType(string key) =>
-        key switch
-        {
-            "sessionId" => "session",
-            "userId" => "user",
-            "cohort" => "cohort",
-            _ => null
-        };
-
     private sealed record PersistedRegistryState(
         int Version,
         IReadOnlyList<RuntimeDecisionDefinition> Definitions,
         IReadOnlyList<PersistedApplyEntry> ApplyEntries,
         IReadOnlyList<PersistedApprovalEntry> Approvals,
-        IReadOnlyList<IntelligenceLifecycleDefinitionSnapshot>?
-            IntelligenceDefinitions = null);
+        IReadOnlyList<IntelligenceLifecycleDefinitionSnapshot> IntelligenceDefinitions);
 
     private sealed record PersistedApplyEntry(
         string IdempotencyKey,

@@ -10,20 +10,24 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./extractor": {
-      "types": "./dist/extractor.d.ts",
-      "import": "./dist/extractor.js"
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    },
+    "./management": {
+      "types": "./dist/management.d.ts",
+      "import": "./dist/management.js"
     }
   },
   "bin": {
-    "flaggo-extract": "./dist/extract-cli.js"
+    "flaggo-manifest": "./dist/manifest-cli.js"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "check:openapi": "vitest run test/openapi-conformance.test.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"

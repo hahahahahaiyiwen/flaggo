@@ -1,183 +1,139 @@
-# Telemetry and Evidence Design
+# Telemetry and evidence design
 
-## Purpose
+## Boundary
 
-The telemetry/evidence component turns emitted observations into historical
-decision evidence. Live runtime inference inputs travel with the decision
-request; evidence is a separate optional input to runtime policy,
-audit/explanation, and future proposal generation. It does not cross the
-current strategy executor boundary.
+The application owns instrumentation and collection. Flaggo receives native
+OTLP, interprets approved decision-local bindings, and materializes bounded
+scalar input evidence outside decision evaluation. It does not define producer
+schemas, replace application exporters, retain raw telemetry, or infer model
+confidence from observations.
 
-For the MVP, evidence can be simple and local. The design should still preserve a clean `IEvidenceProvider` seam so later implementations can use OpenTelemetry pipelines, metrics stores, or cloud data services.
+| Owner | Contract |
+| --- | --- |
+| Data-plane adapter | OTLP Protobuf decoding, HTTP/authentication, byte/work limits, protocol responses |
+| Registry | Typed approved binding projection under verified scope |
+| Evidence | `IInputTelemetrySink`, `IInputEvidenceReader`, `IInputEvidenceSnapshotStore`, latest-value/freshness semantics |
+| State | `IConfirmedExposureReader` for committed attribution |
+| Reasoning | Required typed input resolution from one pinned generation |
+| Audit | Caller/resolved vectors and provenance, copied into confirmed exposure |
 
-Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
-Phase 1 wire-contract proposal: [API Contract Proposal](../API_CONTRACT_PROPOSAL.md).
+`IEvidenceProvider` remains a separate optional policy-quality port. A
+request-only rule with no evidence-dependent policy reads neither provider.
+The executor sees only resolved primitive values, never either snapshot type.
 
-`ConfidenceReport` is defined in the shared contracts and is reused here so evidence, runtime responses, and proposals do not diverge.
-
-## MVP responsibility
-
-Evidence should provide:
-
-- evidence snapshots/views for a decision definition,
-- freshness and quality status,
-- sample size when available,
-- confidence when available,
-- numeric metrics used by policy, audit, or future proposal generation.
-
-The revised Phase 3 Tetris path does not require an evidence fixture or
-confidence report. It emits linked telemetry for inspection and future
-proposal-managed use. Later paths may use fixture, in-memory, or aggregated
-evidence behind the same port.
-
-## Core port
-
-```ts
-interface IEvidenceProvider {
-  getSnapshot(input: EvidenceRequest): Promise<EvidenceSnapshot>;
-}
-
-type EvidenceRequest = {
-  definition?: DecisionDefinitionRef;
-  evidenceView: EvidenceViewRef;
-  resolutionChain: DecisionTargetRef[];
-  requiredEvidence?: EvidenceRequirement[];
-  now: string;
-};
-```
-
-## Evidence snapshot
-
-```ts
-type EvidenceSnapshot = {
-  evidenceView: EvidenceViewRef;
-  capturedAt: string;
-  freshnessSeconds?: number;
-  sampleSize?: number;
-  confidence?: ConfidenceReport;
-  metrics: Record<string, number>;
-  quality: "missing" | "insufficient" | "sufficient" | "stale" | "conflicting";
-};
-```
-
-## Runtime behavior
+## OTLP/HTTP transport
 
 ```text
-Decision API
-  -> determines whether runtime policy requires evidence
-  -> when required, resolves evidence views and requests snapshots
-  -> passes optional evidence to runtime policy
-  -> records an evidence summary only when evidence participated
-
-decision request
-  -> supplies live inference inputs
-  -> passes StrategyExecutionRequest.inputs to IStrategyExecutor
+POST /otlp/{appId}/{environment}/v1/metrics
+POST /otlp/{appId}/{environment}/v1/traces
+POST /otlp/{appId}/{environment}/v1/logs
 ```
 
-Missing evidence should not crash runtime. It should produce `quality = "missing"` or `quality = "insufficient"` and allow policy to decide whether fallback is required.
+Only binary `application/x-protobuf` with uncompressed/identity or gzip bodies
+is supported. JSON OTLP, gRPC, and profiles are not supported.
+Official protocol models are generated from pinned upstream
+`opentelemetry-proto` v1.11.0; provenance/license are beside the host proto files.
 
-## Reuse across definition changes
+`polari.telemetry:ingest` is separate from decide/confirm authorization.
+Authenticated `polari_tenant_id`, `polari_app_id`, and `polari_environment`
+establish scope. Route app/environment must be authorized; telemetry resource
+attributes cannot broaden it. Trusted development uses the distinct
+`Flaggo-Local-Telemetry` authorization header; never use that bypass publicly.
 
-Different definition revisions serialize authority replacement through one
-stable decision/control-target head, but an immutable active state record can
-execute only for its exact definition identity. Telemetry and evidence may be
-reused when meaning is stable. This reduces cold start without letting a
-strategy approved for one definition control another definition.
-
-| Layer | Reuse rule |
+| HTTP outcome | Native payload and meaning |
 | --- | --- |
-| Raw observations | Reusable across definitions when application, signal key, and target semantics match. |
-| Evidence views | Reusable when signal key, target, window, and filters match. |
-| Authority head | Stable by application, environment, decision key, and control target across semantic revisions. |
-| Decision state/strategy | Not reusable; bound to the exact approved definition identity. |
+| 200 | Signal-specific `Export*ServiceResponse`, only after durable acceptance |
+| 200 partial success | Rejected native record count plus bounded binding diagnostics; not a retry request |
+| 400 | Malformed Protobuf/gzip/native structure |
+| 401/403 | Authentication or authorized-scope failure |
+| 413 | Encoded/decompressed bytes or decoded work limit exceeded |
+| 415 | Unsupported media type or content encoding |
+| 429/503 | Capacity or durable-materialization unavailable; `Retry-After: 1` |
 
-Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.boardPressure` and `tetris.recentPlacementTimeMs` observations because those immutable signal keys did not change. The new `tetris.recoveryFailures` signal starts cold unless historical observations already contain it.
+Errors use Protobuf `google.rpc.Status`, not Flaggo JSON Problem Details.
+Unknown optional Protobuf fields retain native protocol behavior.
+Unmatched records are discarded with counters. If several bindings match a
+record, reject the OTLP record only when none accept it; report individual
+binding failures separately. Diagnostics are bounded to 2,048 response
+characters. Counters distinguish accepted/rejected/unmatched by signal kind.
 
-Evidence view identity should include:
+## Configuration
 
-- immutable signal key,
-- target,
-- time window,
-- filters.
+Host configuration uses `Flaggo:Telemetry:*` (double underscores in environment
+variables). All limits must be positive integers.
 
-If only some required evidence is warm, the evidence provider should surface that as partial quality rather than pretending the new contract is fully ready. Policy can then choose fallback, safe baseline, or limited activation.
-
-## OpenTelemetry relationship
-
-OpenTelemetry should be the preferred telemetry transport, but the MVP evidence provider does not need production-grade aggregation.
-
-Initial options:
-
-| Mode | Behavior |
+| Setting | Default |
 | --- | --- |
-| Fixture | Hard-coded or file-backed evidence snapshots for tests and demo. |
-| In-memory | SDK/demo emits events into a local process or simple store. |
-| OTel-compatible | SDK emits OTel-shaped telemetry; aggregation can be added later. |
+| `MaximumBodyBytes` | 4 MiB, independently bounding encoded and decompressed bodies |
+| `MaximumRecords` | 1,000 decoded records/work items |
+| `MaximumBindings` | 1,000 active projected bindings |
+| `MaximumFrames` | 10,000 retained target/stream frames |
+| `MaximumSnapshotBytes` | 16 MiB |
+| `CommitDescriptorPath` | `data/telemetry/inputs.commit.json`, relative to host content root |
 
-Design rule:
+The complete local
+[Collector configuration](../../../examples/otel-evidence/collector.yaml)
+uses stock `otelcol` 0.161.0 and `otlp_http/flaggo`, encoding `proto`,
+compression `gzip`, and scoped base URL ending in `/otlp/<app>/<environment>`.
+The exporter appends `/v1/<signal>`. Its receiver binds loopback, and independent
+existing-backend pipelines remain configured. Credentials belong to Collector
+environment/configuration, not manifests, catalogs, or browsers.
 
-> Evidence interfaces should not depend on a specific telemetry vendor or cloud provider.
+## Projection and freshness
 
-## Declared metrics and inference inputs
+See [Evidence](../../architecture/EVIDENCE.md) for supported Gauge, span
+duration/attribute, named span-event, and log attribute/structured-body
+projections. Each binding declares meaning, primitive schema, selectors,
+target, latest projection, freshness, observed-only sampling, and attribution.
 
-Values used by runtime strategy evaluation should be declared metrics first, then selected as inference inputs when the decision definition needs them on the hot path.
+Preserve source nanoseconds as decimal strings. Freshness is inclusive and
+based on source time, not ingestion/retry/file time. Missing/future/stale
+observations are unusable. Exact replay and older delivery cannot refresh a
+value. Same-time conflicts or multiple fresh Gauge streams are ambiguous.
+New invalid identifiable observations invalidate the last good value.
 
-The same declared metric may also contribute to an asynchronous
-`EvidenceSnapshot`, but the snapshot and live inference input are distinct
-contracts. Phase 3 does not translate or pass an `EvidenceSnapshot` into
-`IStrategyExecutor`.
+No rolling aggregation, counter conversion, JSON-string parsing, implicit
+zero, complete-population claim, or learned confidence is produced.
 
-A future evidence-consuming runtime strategy requires a separately approved
-bounded strategy kind and executor-port extension. It is not enabled by adding
-an optional snapshot to the current numeric-rule request.
+## Durable publication and recovery
 
-| Concept | Meaning | Example |
-| --- | --- | --- |
-| Declared metric | App-computed or pre-materialized signal with stable semantics. | `boardPressure` |
-| Inference input | Declared metric supplied separately from ordinary context in the decision request. | `inputs["tetris.boardPressure"]` |
-| Decision-record input | Inference input value captured when Flaggo returns a decision. | `decision.boardPressure` |
-| Exposure-captured input | Inference input value copied after the client confirms the value was applied or rendered. | `exposure.boardPressure` |
+Keys include authenticated tenant/application/environment, exact definition
+identity, binding, and resolved target; Gauge frames also retain stream
+identity. New revisions start with their own frames.
 
-Emitted metrics support broad async learning, including windows where no decision was requested. Decision-record inputs support audit of returned values. Exposure-captured inputs support decision-outcome attribution for the exact context in which the application actually applied or rendered a value.
+Ingestion serializes publication through a single writer lease. It pins
+registered bindings, validates a bounded candidate, publishes through
+`CommittedFileSnapshotWriter`, and only then swaps the immutable read view.
+Readers capture one view and evaluation time for all requested inputs.
+Expired frames may be reclaimed on ingestion, but fresh capacity is never
+silently evicted.
 
-The Decision API stores decision-time inputs and copies them into the exposure record when confirmation succeeds. Clients must not resubmit those inputs during confirmation. Later outcome telemetry correlates to `exposureId`; correlating only to a returned-but-unused `decisionId` would bias learning.
+Restart verifies descriptor/path/length/digest/version and the entire snapshot.
+Corruption or uncertain publication invalidates reads until a verified reload.
+Repair/restore the committed artifacts and restart to reload; do not erase an
+existing corrupt store to manufacture an empty success. Competing writers and
+oversized snapshots fail explicitly.
 
-Design rule:
+## Attribution and failure
 
-> If a value should influence runtime strategy evaluation, declare it as a metric and select it as an inference input. The application should send the pre-aggregated current value; the service should not aggregate it on the hot path.
+Only committed exposures can satisfy confirmed-attribution span/log bindings.
+Lookup checks tenant/application/environment, exact definition, and the
+resolved target captured with the decision. Gauge exemplars, sampled trace
+context, pending receipts, and a bare decision ID do not prove application.
 
-Phase 1 does not define a Flaggo-specific telemetry HTTP API. SDK telemetry should use OTLP; any direct/demo ingestion path is non-blocking and must not alter decision or exposure contracts.
+Missing/stale/ambiguous/future/invalid required input evidence yields
+`503 required-evidence-unavailable`, always SDK-fallback-ineligible.
+Policy-quality evidence retains its distinct explicit policy path. Neither
+path grants authority or changes the numeric executor into a telemetry query.
 
-## Tetris telemetry and future evidence
+## Validation and non-goals
 
-Useful metrics:
+Domain/HTTP coverage includes native signal projections, strict scope and
+source matching, freshness boundaries, replay, ambiguity, invalidation,
+durability/restart/corruption, generation pinning, capacity, protobuf/gzip,
+authorization, partial success, audit, and confirmation.
+The [real SDK/Collector example](../../../examples/otel-evidence/README.md)
+proves the complete flow without a cloud account.
 
-- `hardDropRate`,
-- `averagePlacementTimeMs`,
-- `earlyGameOverRate`,
-- `recoveryFailureRate`.
-
-Live runtime values such as `boardPressure`, `recentPlacementTimeMs`, and
-`recoveryFailures` travel exclusively through `DecideRequest.inputs` and
-`StrategyExecutionRequest.inputs` after they are declared as metrics and
-selected as inference inputs. `runtimeContext` remains reserved for target
-bindings and other declared contextual facts. The same metrics can be emitted
-over time, captured in decision records when Flaggo returns a decision, and
-copied into exposure records only after the client confirms
-application/rendering. Aggregated evidence can provide broader confidence and
-sample-size context.
-
-In revised Phase 3, the bundle-approved rule consumes the declared live inputs
-directly and returns no learned confidence. Outcome telemetry is linked but is
-not ingested to create or replace authority. Phase 4 may aggregate these
-observations into evidence for independent proposals.
-
-## MVP non-goals
-
-- Full telemetry warehouse.
-- Complex metric query language.
-- Long-term retention.
-- High-cardinality optimization.
-- Cross-service trace analytics.
-
-Those belong to later telemetry/evidence iterations.
+No warehouse, long-term retention, query DSL, high-cardinality optimization,
+sampling correction, model training, or proposal generation is introduced.

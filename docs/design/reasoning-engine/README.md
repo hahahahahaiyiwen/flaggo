@@ -6,8 +6,9 @@ The reasoning engine hosts two distinct seams: bounded runtime strategy
 execution and optional async decision-intelligence proposal generation. They
 remain separate architectural responsibilities and interfaces.
 
-Phase 3 builds and validates the online strategy executor against
-bundle-approved state. Phase 4 may add a scripted or fixture-based proposal
+The current executor consumes existing governed state. #40 connects manifest
+initial authority to the activation core; #41 re-baselines the integrated
+runtime. Phase 4 may add a scripted or fixture-based proposal
 source; it is not required to establish the Tetris authority.
 
 Shared contract reference: [Shared Contracts](../shared-contracts/README.md).
@@ -36,53 +37,43 @@ inconsistent target bindings, and runtime or governed-state targets outside
 that boundary fail closed before strategy execution.
 
 Async proposal generation receives the separate
-`IntelligenceLifecycleDefinitionSnapshot`, which exposes objectives, signal
-roles, workflow permissions, action space, and safety envelope without
+`IntelligenceLifecycleDefinitionSnapshot`, which exposes intent, declared
+input/evidence semantics, result constraints, and safety envelope without
 granting runtime authority.
 
 ## Online strategy executor port
 
 ```ts
-interface IStrategyExecutor {
-  execute(input: StrategyExecutionRequest): Promise<StrategyExecutionResult>;
+interface INumericRuleExecutor {
+  execute(input: NumericRuleExecutionRequest): Promise<NumericRuleExecutionResult>;
 }
 
-type StrategyExecutionRequest = {
+type NumericRuleExecutionRequest = {
   definition: RuntimeDefinitionProjection;
-  strategy: NumericRuleStrategy;
-  inputs: SignalInput[];
+  rule: NumericRuleStrategy;
+  inputs: Record<string, number | boolean | string>;
 };
 
-type StrategyExecutionResult =
-  | {
-      result: "candidate";
-      value: number;
-      strategyId: string;
-      confidence: null;
-      reason: string;
-    }
-  | {
-      result: "error";
-      code:
-        | "invalid-strategy"
-        | "missing-input"
-        | "duplicate-input"
-        | "invalid-input";
-      reason: string;
-    };
+type NumericRuleExecutionResult = {
+  candidate: number | null;
+  reason: string;
+  failureReason?: string;
+};
 ```
 
 `EvidenceSnapshot` is deliberately absent from this Phase 3 port. The executor
-consumes only the resolved definition, the approved numeric rule, and live
-`SignalInput[]` values from the decision request. Evidence may inform runtime
-policy, audit/explanation, and future proposal generation, but it does not
-become an implicit numeric-rule operand.
+consumes only the resolved definition, the governed numeric rule, and a typed
+primitive map. `DecisionInputResolver` validates request-owned operands and
+resolves evidence-owned operands from one immutable generation under a
+verified scope before execution. The executor cannot query telemetry, change
+an input's ownership, or read a separately changing evidence snapshot.
 
-Bundle-authored strategies return `confidence: null`; authored rationale and
-authenticated approval are provenance, not learned confidence.
+Orchestration owns strategy identity and returns `confidence: null` for
+deterministic rules; authored rationale and authenticated approval are
+provenance, not learned confidence. Neither field is an executor dependency.
 
 The Decision API resolves `active-value` authority directly. It calls
-`IStrategyExecutor` only after finding coherent `numeric-rule` authority and
+`INumericRuleExecutor` only after finding coherent `numeric-rule` authority and
 passes the materialized rule rather than the whole state union. No compatible
 active state at any permitted target is handled before strategy execution and
 may resolve to the registered server fallback. Policy evaluation and fallback
@@ -93,7 +84,7 @@ fallback decisions.
 ## Numeric rule strategy behavior
 
 ```text
-read each declared rule input from validated inputs by signal key
+read each declared rule input from validated inputs by inputKey
   -> normalize each value to [0, 1] using declared minimum/maximum
   -> multiply by its declared weight
   -> divide the weighted sum by total weight
@@ -107,9 +98,9 @@ average, never the unnormalized sum.
 
 Rules:
 
-- Weighted inputs must be declared inference inputs that resolve to
-  app-emitted numeric metrics, with finite ranges and positive total weight.
-- Missing, duplicate, nonnumeric, or nonfinite required inputs make the
+- Weighted inputs must be declared numeric operands, either request-owned or
+  evidence-owned, with finite ranges and positive total weight.
+- Missing, nonnumeric, or nonfinite required inputs make the
   strategy result invalid; they do not silently become zero.
 - Numeric rule operands come only from `StrategyExecutionRequest.inputs`.
 - Normalized input values are clamped to `[0, 1]`.
@@ -120,12 +111,13 @@ Rules:
 
 ## Runtime condition evaluation
 
-The Phase 3 numeric rule consumes only the live inputs declared by
-`inference.inputs`. Evidence-backed or stateful condition languages are not
-part of this rule contract. An evidence-consuming runtime mechanism would
-require a separately approved bounded strategy kind and an explicit
-executor-port extension; it must not be added as an optional evidence
-parameter to the current contract.
+The numeric rule consumes only resolved inputs declared in manifest `inputs`.
+Missing, stale, future, ambiguous, or invalid required input evidence produces
+an explicit 503 before execution; it never becomes zero or an SDK fallback.
+Request-only decisions without evidence-dependent policy read neither evidence
+port. Policy-quality evidence remains separate and does not manufacture
+confidence for a deterministic rule. Arbitrary queries, rolling aggregation,
+and stateful condition languages are not part of this contract.
 
 ## Phase 4 async proposal source
 
@@ -136,7 +128,7 @@ and cannot write active state directly.
 
 ## Tetris MVP strategy
 
-Initial bundle-approved strategy:
+Existing Tetris governed rule (trusted local fixture until #40/#41):
 
 ```text
 score =

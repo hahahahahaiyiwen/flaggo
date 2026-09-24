@@ -9,7 +9,7 @@ public sealed record DecisionEvidenceRequest(
     RuntimeDecisionDefinition Definition,
     GovernedDecisionState State,
     IReadOnlyDictionary<string, JsonElement> RuntimeContext,
-    IReadOnlyList<SignalInput> Inputs);
+    IReadOnlyDictionary<string, JsonElement> Inputs);
 
 public interface IEvidenceProvider
 {

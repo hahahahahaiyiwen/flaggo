@@ -36,7 +36,11 @@ application
     -> emits exposure-linked outcomes
 ```
 
-The current Phase 3 path starts from a bundle-authored authority candidate.
+The current manifest-first slice publishes a JSON decision contract separately
+from runtime client initialization and consumes existing governed state.
+Local examples provision that state in a trusted harness. The Phase 3
+bundle-authored initial-authority and ready-after-activation extension belongs
+to #40; it is not an implemented field of manifest v2.
 Future Phase 4 work may produce a bounded proposal from evidence or another
 authorized source, but governance must still activate state before runtime can
 consume it.
@@ -46,10 +50,10 @@ consume it.
 | Concept | Primary question | Ownership |
 | --- | --- | --- |
 | Decision key | Which runtime decision family did application code delegate? | Stable developer-facing name such as `tetris.dropInterval`. |
-| Decision definition | What may be decided for this semantic revision? | Versioned targets, signals, intent, inference inputs, output contract, policy, fallback, and authority workflow. |
+| Decision definition | What may be decided for this semantic revision? | Result/default, context/targeting, request/evidence inputs, native OTel bindings, intent, and policy. |
 | Runtime identity | Which exact registered contract does this request expect? | `{ definitionId, revision, contractDigest }`. |
-| Decision evidence | What is known now or historically? | Context, live signal inputs, observations, evidence views, quality, provenance, decision records, exposures, and outcomes. |
-| Authority candidate | What bounded behavior is requesting approval? | Bundle-declared initial authority now; a future `DecisionProposal` later. |
+| Decision evidence | What is known now or historically? | Live request operands, scoped materialized observations, provenance, and separate optional policy-quality evidence. |
+| Authority candidate | What bounded behavior is requesting approval? | State activation core; bundle initial authority follows in #40, independent proposals later. |
 | Governed decision state | Which behavior is authorized for runtime use? | Immutable `active-value` or `numeric-rule` authority plus activation lineage. |
 | Runtime decision execution | How is approved behavior applied to this request? | Deterministic active-value resolution, numeric-rule evaluation, policy, fallback, and audit. |
 | Runtime decision result | What did this request receive? | Value, mode, fallback, targets, policy, confidence, decision ID, and audit ID. |
@@ -63,8 +67,8 @@ it is one audited data-plane outcome.
 
 | Layer | Owns | Does not own |
 | --- | --- | --- |
-| Definition | Semantic contract, target hierarchy, signal roles, action space, policy, fallback, and authority workflow. | Telemetry history, approved state, or runtime results. |
-| Evidence | Runtime facts, signals, observations, evidence views, quality, provenance, decisions, exposures, and outcomes. | Approval or active authority. |
+| Definition | One manifest with typed input ownership, OTel interpretations, targeting, result, and policy. | Producers, collection, telemetry history, approved state, or runtime results. |
+| Evidence | Bounded native observation projection, immutable input generations, freshness, and provenance. | Instrumentation, approval, active authority, or invented statistical confidence. |
 | Authority | Authenticated approval, activation, stable-head concurrency, replay, supersession, and readiness. | Per-request value selection. |
 | Runtime | Applying compatible authority to one request, runtime policy, fallback, audit, and result construction. | Proposal generation or state mutation. |
 | Application | Supplying context and inputs, applying the result, confirming exposure, and emitting outcomes. | Granting itself authority. |
@@ -74,7 +78,7 @@ out of the request path.
 
 ## Authority and runtime flows
 
-### Bundle-approved authority
+### Bundle-approved authority (planned manifest extension)
 
 ```text
 definition + initial authority candidate
@@ -109,7 +113,7 @@ same governed-state boundary unless a later contract explicitly extends it.
 ```text
 exact registered identity
   + runtime target and context
-  + live declared inputs
+  + resolved request/evidence inputs
   + compatible governed state
   + runtime policy
   -> active value, numeric rule, or governed fallback
@@ -128,7 +132,7 @@ may differ, but each responsibility has one owning boundary.
 
 | # | Component | Responsibility | Detailed design |
 | --- | --- | --- | --- |
-| 1 | Client library | Code-first definitions, extraction, control-plane registration, typed runtime calls, exposure confirmation, and optional availability fallback. | [Client library](../design/client-library/README.md) |
+| 1 | Client library | Manifest compilation and separate publication, typed key-based runtime calls, confirmation, and opt-in availability fallback. | [Client library](../design/client-library/README.md) |
 | 2 | Decision API | Validate exact runtime requests, resolve dependencies, execute authority, apply policy, persist audit, and return results. | [Decision API](../design/decision-api/README.md) |
 | 3 | Telemetry and evidence | Ingest observations and expose evidence/provenance boundaries. | [Telemetry and evidence](../design/telemetry-evidence/README.md) |
 | 4 | Contract and registry | Validate and store canonical definitions, revisions, policies, and runtime projections. | [Contract and registry](../design/contract-registry/README.md) |
@@ -152,7 +156,7 @@ a specific target role instead of overloading one generic "scope".
 | Runtime target | Concrete entity receiving this decision now. | `session:game-456` |
 | Learning target | Population selected for future analysis. | `cohort:new_players` |
 | Control target | Boundary where authority is approved and stored. | `cohort:new_players` |
-| Evidence target | Boundary used by an evidence view. | `cohort:new_players` over 24 hours |
+| Evidence target | Exact target of a declared materialized observation; separate quality views may use other windows. | Latest observed scalar for `session:game-456` |
 | Fallback target | Broader permitted level used by resolution. | `global` |
 | Policy scope | Boundary where a policy applies. | environment or decision target |
 
@@ -164,20 +168,20 @@ undeclared levels or arbitrate overlapping selectors.
 
 | Boundary | Owns |
 | --- | --- |
-| Control plane | Bundle validation/apply, immutable definition publication, authenticated approval, activation, supersession, state, and registration readiness. |
-| Data plane | Exact-identity decide, active-value resolution, numeric-rule evaluation, governed fallback, durable decision audit, and exposure confirmation. |
+| Control plane | Manifest validation/apply, immutable definition publication, authenticated approval; #40 connects initial authority to activation/readiness. |
+| Data plane | Exact-identity decide, declared input resolution, numeric execution, policy/audit, explicit confirmation, and scoped native OTLP materialization. |
 | Application deployment | Building and deploying application code; remains outside Flaggo ownership. |
 
-For the MVP, trusted application/bootstrap startup acts as a control-plane
-client. Browser code must not contain management credentials. Runtime decide
-never registers or changes a definition.
+Trusted management code explicitly publishes the manifest. Browser code must
+not contain management or ingest credentials. The runtime client never
+registers a definition or creates an OTel provider/exporter.
 
 ```text
-code-first declaration
-  -> static extraction
+one JSON manifest
+  -> normalized bundle + generated typed catalog
   -> independent application deployment
   -> trusted control-plane registration and approval
-  -> ready runtime binding
+  -> approved receipt + immutable runtime binding
   -> data-plane decision calls
 ```
 
@@ -202,8 +206,8 @@ a changed head is a stale conflict, not an alternate mutation path.
 
 | Layer | Reuse rule |
 | --- | --- |
-| Raw observations | Reusable when immutable signal semantics match. |
-| Evidence views | Reusable when signal, target, window, and filters match. |
+| Application observations | Existing producers and Collector pipelines may serve many consumers. |
+| Materialized input frames | Partitioned by authenticated tenant/app/environment, exact definition, binding, and target; no implicit cross-revision reuse. |
 | Stable authority head | Shared across semantic revisions at one authority address. |
 | Governed state | Never silently reused across exact runtime identities. |
 | Decision, audit, exposure, and outcome records | Bound to the exact identity used by the request. |

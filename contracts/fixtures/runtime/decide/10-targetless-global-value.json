@@ -71,7 +71,7 @@
       "exposure": {
         "confirmationRequired": false
       },
-      "reason": "Returned the approved global value.",
+      "reason": "Returned the active governed value.",
       "auditId": "audit-global-1"
     }
   }

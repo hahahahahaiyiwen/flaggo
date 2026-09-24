@@ -2,10 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  RequiresApprovalError,
-  createFlaggoClient,
-} from "../../packages/sdk-typescript/dist/index.js";
+import { publishLocalManifest } from "../shared/publish-local-manifest.mjs";
 import {
   publishJsonGeneration,
   writeJsonAtomic,
@@ -27,11 +24,6 @@ export const strategyActivationPath = resolve(
   exampleDirectory,
   "strategy-activation.json",
 );
-export const canonicalEvidencePath = resolve(
-  exampleDirectory,
-  "evidence.json",
-);
-
 export async function loadCanonicalBundle(signal) {
   return JSON.parse(await readFile(canonicalBundlePath, { encoding: "utf8", signal }));
 }
@@ -74,7 +66,6 @@ export async function createActivatedState(
 
 export async function bootstrapTetris({
   controlPlaneUrl,
-  dataPlaneUrl = "http://127.0.0.1:0",
   publicationPath,
   fetchImpl = globalThis.fetch,
   now = new Date(),
@@ -88,59 +79,15 @@ export async function bootstrapTetris({
       input,
       signal === undefined ? init : { ...init, signal },
     );
-  const config = {
-    appId: bundle.application.id,
-    environment: bundle.application.environment,
-    dataPlaneUrl,
-    controlPlane: {
-      mode: "startup-register",
-      url: controlPlaneUrl,
-      bundle,
-      credential: { mode: "local-development" },
-    },
-    dataPlaneCredential: { mode: "local-development" },
+  const publicationResult = await publishLocalManifest({
+    controlPlaneUrl,
+    bundle,
     fetch: fetchWithAbort,
-  };
-  let approvalRequired = false;
-  let approvalRequestId;
-  let client;
-  try {
-    client = await createFlaggoClient(config);
-  } catch (error) {
-    if (!(error instanceof RequiresApprovalError)) {
-      throw error;
-    }
-    approvalRequired = true;
-    approvalRequestId = error.approvalRequestId;
-    const response = await fetchWithAbort(
-      `${controlPlaneUrl.replace(/\/$/, "")}/v1/definition-bundle-approvals/${encodeURIComponent(error.approvalRequestId)}:approve`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Flaggo-Local-Development",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          expectedBundleDigest: error.bundleDigest,
-          comment: "Trusted Phase 3 Tetris local bootstrap.",
-        }),
-      },
-    );
-    const approval = await response.json();
-    if (!response.ok || approval.status !== "approved") {
-      throw new Error(
-        `Tetris definition approval failed with HTTP ${response.status}: ${JSON.stringify(approval)}`,
-      );
-    }
-    client = await createFlaggoClient(config);
-  }
-
-  const receipt = client.definitions.getRegistrationReceipt();
+  });
+  const { receipt } = publicationResult;
   signal?.throwIfAborted();
   const state = await createActivatedState(receipt, now, signal);
-  const evidence = JSON.parse(
-    await readFile(canonicalEvidencePath, { encoding: "utf8", signal }),
-  );
+  const evidence = { version: 1, evidenceByStrategy: {} };
   const publication = await publishGeneration(
     publicationPath,
     { evidence, receipt, state },
@@ -148,8 +95,7 @@ export async function bootstrapTetris({
   );
   signal?.throwIfAborted();
   return {
-    approvalRequired,
-    approvalRequestId,
+    ...publicationResult,
     receipt,
     state,
     evidence,
@@ -175,12 +121,11 @@ async function main() {
   const publicationPath = values.get("output");
   if (publicationPath === undefined) {
     throw new Error(
-      "Usage: node bootstrap.mjs --control-plane URL --output PATH [--data-plane URL]",
+      "Usage: node bootstrap.mjs --control-plane URL --output PATH",
     );
   }
   const result = await bootstrapTetris({
     controlPlaneUrl: values.get("control-plane") ?? "http://127.0.0.1:5081",
-    dataPlaneUrl: values.get("data-plane") ?? "http://127.0.0.1:5080",
     publicationPath,
   });
   process.stdout.write(`${JSON.stringify({

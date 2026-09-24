@@ -1,8 +1,7 @@
 {
   "name": "decide-duplicate-inference-input",
   "scenario": 10,
-  "invariant": "Duplicate signal keys within inputs return 400 duplicate-signal-input; deterministic ordering does not make conflicting values valid.",
-  "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+  "invariant": "Legacy signal-reference input arrays are rejected, not translated; plain input maps are required.",
   "responseSchema": "problem-details-v1.schema.json",
   "request": {
     "method": "POST",
@@ -14,9 +13,9 @@
     "body": {
       "expectedContract": {
         "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-        "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
+        "contractDigest": "sha256:ed9b49a622db7d8cec274c8a990c140edbeda55b00ea917c06df46d5e34da377",
         "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-        "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+        "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
         "buildId": "tetris-web-2026-07-25.1",
         "deploymentId": "tetris-web-dev-a"
       },
@@ -33,13 +32,13 @@
       "inputs": [
         {
           "signal": {
-            "key": "tetris.boardPressure"
+            "key": "boardPressure"
           },
           "value": 0.82
         },
         {
           "signal": {
-            "key": "tetris.boardPressure"
+            "key": "boardPressure"
           },
           "value": 0.4
         }
@@ -59,13 +58,13 @@
       "X-Flaggo-Correlation-Id": "srv-duplicate-signal-input"
     },
     "body": {
-      "type": "https://flaggo.dev/problems/duplicate-signal-input",
-      "title": "Duplicate signal input",
+      "type": "https://flaggo.dev/problems/malformed-json",
+      "title": "Malformed json",
       "status": 400,
-      "code": "duplicate-signal-input",
+      "code": "malformed-json",
       "instance": "/v1/decisions/tetris.dropInterval:decide",
       "correlationId": "srv-duplicate-signal-input",
-      "detail": "The inputs array contains duplicate signal keys."
+      "detail": "The legacy inputs array does not match the runtime contract."
     }
   }
 }

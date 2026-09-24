@@ -1082,6 +1082,7 @@ public sealed class LocalFileAuditSink :
             string.IsNullOrWhiteSpace(record.AuditId) ||
             string.IsNullOrWhiteSpace(record.DecisionId) ||
             string.IsNullOrWhiteSpace(record.DecisionKey) ||
+            string.IsNullOrWhiteSpace(record.TenantId) ||
             string.IsNullOrWhiteSpace(record.AppId) ||
             string.IsNullOrWhiteSpace(record.Environment) ||
             record.Contract is null ||
@@ -1090,6 +1091,8 @@ public sealed class LocalFileAuditSink :
             record.Policy is null ||
             record.RuntimeContext is null ||
             record.Inputs is null ||
+            record.RequestInputs is null ||
+            record.InputProvenance is null ||
             record.TargetProvenance is null ||
             record.ResolutionChain is null ||
             record.RecordedAt == default ||
@@ -1097,10 +1100,7 @@ public sealed class LocalFileAuditSink :
             !IsValidPolicy(record.Policy) ||
             !IsValidRuntimeContext(record.RuntimeContext) ||
             record.Inputs.Any(input => !IsValidInput(input)) ||
-            record.Inputs
-                .Select(input => input.Signal.Key)
-                .Distinct(StringComparer.Ordinal)
-                .Count() != record.Inputs.Count ||
+            !IsValidInputProvenance(record) ||
             record.TargetProvenance.Any(item => !IsValidTargetProvenance(item)) ||
             record.ResolutionChain.Any(string.IsNullOrWhiteSpace) ||
             !IsValidTarget(record.RuntimeTarget) ||
@@ -1147,6 +1147,8 @@ public sealed class LocalFileAuditSink :
             "fallback",
             "runtimeContext",
             "inputs",
+            "requestInputs",
+            "inputProvenance",
             "targetProvenance",
             "resolutionChain",
             "policy",
@@ -1209,11 +1211,9 @@ public sealed class LocalFileAuditSink :
         }
 
         var inputs = record.GetProperty("inputs");
-        if (inputs.ValueKind != JsonValueKind.Array ||
-            inputs.EnumerateArray().Any(
-                input => input.ValueKind != JsonValueKind.Object ||
-                         !input.TryGetProperty("value", out var value) ||
-                         !IsRuntimePrimitive(value)))
+        if (inputs.ValueKind != JsonValueKind.Object ||
+            inputs.EnumerateObject().Any(
+                input => string.IsNullOrWhiteSpace(input.Name) || !IsRuntimePrimitive(input.Value)))
         {
             throw new InvalidDataException(
                 "The local audit file contains an invalid decision record.");
@@ -1324,18 +1324,39 @@ public sealed class LocalFileAuditSink :
             item => !string.IsNullOrWhiteSpace(item.Key) &&
                     IsRuntimePrimitive(item.Value));
 
-    private static bool IsValidInput(SignalInput? input) =>
-        input?.Signal is not null &&
-        !string.IsNullOrWhiteSpace(input.Signal.Key) &&
+    private static bool IsValidInput(KeyValuePair<string, JsonElement> input) =>
+        !string.IsNullOrWhiteSpace(input.Key) &&
         IsRuntimePrimitive(input.Value);
 
-    private static bool IsRuntimePrimitive(JsonElement value) =>
-        value.ValueKind is
-            JsonValueKind.True or
-            JsonValueKind.False or
-            JsonValueKind.String ||
-        value.ValueKind == JsonValueKind.Number &&
-        CanonicalJson.IsIeee754CompatibleNumber(value);
+    private static bool IsRuntimePrimitive(JsonElement value) => DecisionValues.IsScalar(value);
+
+    private static bool IsValidInputProvenance(DecisionAuditRecord record)
+    {
+        var provenance = record.InputProvenance!;
+        var requested = record.RequestInputs!;
+        if (provenance.Count != record.Inputs.Count ||
+            requested.Any(input => !record.Inputs.TryGetValue(input.Key, out var resolved) ||
+                !JsonElement.DeepEquals(input.Value, resolved)))
+            return false;
+        foreach (var key in record.Inputs.Keys)
+        {
+            if (!provenance.TryGetValue(key, out var source) || source is null) return false;
+            if (source.Source == "request")
+            {
+                if (!requested.ContainsKey(key) || source != new InputProvenance("request")) return false;
+            }
+            else if (source.Source != "evidence" || requested.ContainsKey(key) ||
+                string.IsNullOrWhiteSpace(source.Binding) || string.IsNullOrWhiteSpace(source.Generation) ||
+                !ulong.TryParse(source.ObservedTimeUnixNano, NumberStyles.None, CultureInfo.InvariantCulture, out var timestamp) ||
+                timestamp == 0 || source.MaterializedAt is null || source.Coverage != "observed" ||
+                !Sha256DigestPattern.IsMatch(source.SourceFingerprint ?? "") ||
+                source.ExposureId is not null && string.IsNullOrWhiteSpace(source.ExposureId))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
 
     private static bool IsValidTarget(DecisionTargetRef? target) =>
         target is null ||
@@ -1384,11 +1405,10 @@ public sealed class LocalFileAuditSink :
                 record.Policy.Result == "approved",
             "strategy" or "experiment" =>
                 !string.IsNullOrWhiteSpace(record.StrategyId) &&
-                record.Evidence is not null &&
-                IsValidConfidence(record.Confidence) &&
-                IsConfidenceConsistent(
-                    record.Evidence,
-                    record.Confidence!) &&
+                (record.Confidence is null ||
+                 record.Evidence is not null &&
+                 IsValidConfidence(record.Confidence) &&
+                 IsConfidenceConsistent(record.Evidence, record.Confidence)) &&
                 !record.Fallback.DecisionFallbackUsed &&
                 record.Policy.Result == "approved",
             "fallback" =>

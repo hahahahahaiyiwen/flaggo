@@ -4,14 +4,30 @@
   "workspaces": [
     "packages/*"
   ],
+  "devDependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/api-logs": "0.222.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "0.222.0",
+    "@opentelemetry/exporter-metrics-otlp-proto": "0.222.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.222.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-logs": "0.222.0",
+    "@opentelemetry/sdk-metrics": "2.11.0",
+    "@opentelemetry/sdk-trace": "2.11.0"
+  },
   "scripts": {
     "build": "npm run build --workspaces",
-    "build:adaptive-worker": "npm run build --workspace @flaggo/sdk && npm run extract:adaptive-worker && tsc -p examples/adaptive-worker/tsconfig.json",
+    "build:adaptive-worker": "npm run build --workspace @flaggo/sdk && npm run manifest:adaptive-worker && tsc -p examples/adaptive-worker/tsconfig.json",
+    "build:tetris-integration": "npm run build --workspace @flaggo/sdk && npm run manifest:tetris && tsc examples/tetris-integration/generated/catalog.ts --outDir examples/tetris-integration/dist --module NodeNext --moduleResolution NodeNext --target es2022 --skipLibCheck",
+    "build:otel-evidence": "npm run build --workspace @flaggo/sdk && npm run manifest:otel-evidence && tsc examples/otel-evidence/generated/catalog.ts --outDir examples/otel-evidence/dist --module NodeNext --moduleResolution NodeNext --target es2022 --skipLibCheck",
     "check:openapi": "npm run check:openapi --workspace @flaggo/sdk",
-    "extract:adaptive-worker": "node packages/sdk-typescript/dist/extract-cli.js --project examples/adaptive-worker/tsconfig.json --app adaptive-worker-demo --environment dev --out examples/adaptive-worker/generated/definitions.json --repository github.com/hahahahahaiyiwen/flaggo --source-path examples/adaptive-worker/src",
+    "manifest:adaptive-worker": "node packages/sdk-typescript/dist/manifest-cli.js build examples/adaptive-worker/decision-manifest.json --bundle examples/adaptive-worker/generated/definitions.json --catalog examples/adaptive-worker/src/generated/catalog.ts",
+    "manifest:tetris": "node packages/sdk-typescript/dist/manifest-cli.js build examples/tetris-integration/tetris-definition-bundle.json --bundle examples/tetris-integration/generated/definitions.json --catalog examples/tetris-integration/generated/catalog.ts",
+    "manifest:otel-evidence": "node packages/sdk-typescript/dist/manifest-cli.js build examples/otel-evidence/decision-manifest.json --bundle examples/otel-evidence/generated/definitions.json --catalog examples/otel-evidence/generated/catalog.ts",
     "test": "npm run test --workspaces",
     "test:adaptive-worker": "npm run build:adaptive-worker && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/adaptive-worker/smoke.mjs",
-    "test:tetris-integration": "npm run build --workspace @flaggo/sdk && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/tetris-integration/run.mjs",
+    "test:otel-evidence": "npm run build:otel-evidence && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/otel-evidence/run.mjs",
+    "test:tetris-integration": "npm run build:tetris-integration && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/tetris-integration/run.mjs",
     "typecheck": "npm run typecheck --workspaces"
   }
 }

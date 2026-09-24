@@ -87,8 +87,8 @@ strategy identity.
 
 Runtime lookup receives an ordered set of exact targets from reasoning after
 the registry-owned runtime projection has authorized the target kinds. The
-resolver starts with the exact primary `inference.target`, then appends only
-the exact target kinds named by `inference.fallbackOrder`. For Tetris that is
+resolver starts with the exact `targeting.primary`, then appends only
+the exact target kinds named by `targeting.fallbackOrder`. For Tetris that is
 `session -> cohort -> global`; `user` is not inserted implicitly.
 
 `IStateStore` owns storage and exact tuple matching; it does not derive
@@ -212,25 +212,25 @@ Example active state:
     "valueBelow": 750,
     "weightedInputs": [
       {
-        "signal": { "key": "tetris.boardPressure" },
+        "inputKey": "boardPressure",
         "minimum": 0,
         "maximum": 1,
         "weight": 0.45
       },
       {
-        "signal": { "key": "tetris.recentPlacementTimeMs" },
+        "inputKey": "recentPlacementTimeMs",
         "minimum": 0,
         "maximum": 2000,
         "weight": 0.25
       },
       {
-        "signal": { "key": "tetris.recoveryFailures" },
+        "inputKey": "recoveryFailures",
         "minimum": 0,
         "maximum": 5,
         "weight": 0.2
       },
       {
-        "signal": { "key": "tetris.currentLevel" },
+        "inputKey": "currentLevel",
         "minimum": 0,
         "maximum": 20,
         "weight": 0.1
@@ -258,9 +258,25 @@ Rules:
 - A request for an older registered revision never consumes the newer
   strategy. If no permitted authority head contains an exact compatible state,
   it receives the audited server fallback.
-- Raw telemetry and compatible evidence views may be reused to avoid cold
-  start, but an active strategy/state record is never copied or reinterpreted
-  under another definition identity.
+- Existing producers may feed multiple definitions. Materialized input frames
+  and active state remain bound to exact semantic identities; neither is
+  implicitly copied or reinterpreted across revisions.
+
+The public manifest does not yet declare initial authority. The control-plane
+activation/readiness flow above is the #40 extension of the current activation
+core, not a second authoring contract.
+
+## Confirmed exposure read boundary
+
+`IConfirmedExposureReader` returns completed confirmation facts for the exact
+tenant/application/environment. Pending receipts and audit-only preparations
+are not exposures. Attribution also checks exact definition and resolved
+target. The immutable decision snapshot retains caller and resolved inputs
+plus source provenance; confirmation accepts no replacement vector.
+
+The current confirmation store is in-memory. Restart preserves already
+materialized verified frames but cannot authorize new observations referring
+to lost confirmation state. Durable confirmation recovery is future work.
 
 ## MVP non-goals
 

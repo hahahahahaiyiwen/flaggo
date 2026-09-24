@@ -12,31 +12,26 @@ public sealed class DecisionPortTests
     [Fact]
     public async Task NumericRuleExecutor_DerivesCandidateFromRuntimeInput()
     {
-        var executor = new DeterministicStrategyExecutor();
+        var executor = new NumericRuleExecutor();
         var state = State() with
         {
             Mode = "strategy",
             StrategyId = "strategy-test",
             NumericRule = new NumericRuleStrategy(
-                "tetris.boardPressure",
+                "boardPressure",
                 0.75,
                 700,
                 800)
         };
-        var evidence = Evidence(0.82);
-
         var result = await executor.ExecuteAsync(
-            new StrategyExecutionRequest(
-                state,
-                [new SignalInput(
-                    new SignalRef("tetris.boardPressure"),
-                    JsonSerializer.SerializeToElement(0.82))],
-                evidence),
+            new NumericRuleExecutionRequest(
+                ExecutionDefinition(),
+                state.NumericRule!,
+                new Dictionary<string, JsonElement> { ["boardPressure"] = JsonSerializer.SerializeToElement(0.82) }),
             CancellationToken.None);
 
         Assert.Equal(700, result.Candidate!.Value.GetInt32());
-        Assert.Equal("strategy", result.Mode);
-        Assert.Equal(0.82, result.Confidence!.EvidenceQuality);
+        Assert.Null(result.FailureReason);
     }
 
     [Theory]
@@ -49,7 +44,7 @@ public sealed class DecisionPortTests
         double currentLevel,
         int expected)
     {
-        var executor = new DeterministicStrategyExecutor();
+        var executor = new NumericRuleExecutor();
         var state = State() with
         {
             Mode = "strategy",
@@ -58,26 +53,26 @@ public sealed class DecisionPortTests
         };
 
         var result = await executor.ExecuteAsync(
-            new StrategyExecutionRequest(
-                state,
-                [
-                    Input("tetris.boardPressure", boardPressure),
-                    Input("tetris.recentPlacementTimeMs", placementTime),
-                    Input("tetris.recoveryFailures", recoveryFailures),
-                    Input("tetris.currentLevel", currentLevel)
-                ],
-                Evidence(0.82)),
+            new NumericRuleExecutionRequest(
+                ExecutionDefinition(),
+                state.NumericRule!,
+                new[]
+                {
+                    Input("boardPressure", boardPressure),
+                    Input("recentPlacementTimeMs", placementTime),
+                    Input("recoveryFailures", recoveryFailures),
+                    Input("currentLevel", currentLevel)
+                }.ToDictionary()),
             CancellationToken.None);
 
         Assert.Equal(expected, result.Candidate!.Value.GetInt32());
         Assert.Null(result.FailureReason);
-        Assert.NotNull(result.Confidence);
     }
 
     [Fact]
     public async Task NumericRuleExecutor_NormalizesWeightsBeforeThreshold()
     {
-        var executor = new DeterministicStrategyExecutor();
+        var executor = new NumericRuleExecutor();
         var state = State() with
         {
             Mode = "strategy",
@@ -94,13 +89,14 @@ public sealed class DecisionPortTests
         };
 
         var result = await executor.ExecuteAsync(
-            new StrategyExecutionRequest(
-                state,
-                [
+            new NumericRuleExecutionRequest(
+                ExecutionDefinition(),
+                state.NumericRule!,
+                new[]
+                {
                     Input("first", 0.4),
                     Input("second", 0.4)
-                ],
-                Evidence(0.82)),
+                }.ToDictionary()),
             CancellationToken.None);
 
         Assert.Equal(0, result.Candidate!.Value.GetInt32());
@@ -108,9 +104,9 @@ public sealed class DecisionPortTests
     }
 
     [Fact]
-    public async Task NumericRuleExecutor_FailsClosedWithoutConfidenceEvidence()
+    public async Task NumericRuleExecutor_HasNoEvidenceOrLifecycleDependency()
     {
-        var executor = new DeterministicStrategyExecutor();
+        var executor = new NumericRuleExecutor();
         var state = State() with
         {
             Mode = "strategy",
@@ -119,26 +115,28 @@ public sealed class DecisionPortTests
         };
 
         var result = await executor.ExecuteAsync(
-            new StrategyExecutionRequest(
-                state,
-                [
-                    Input("tetris.boardPressure", 0.9),
-                    Input("tetris.recentPlacementTimeMs", 1600),
-                    Input("tetris.recoveryFailures", 3),
-                    Input("tetris.currentLevel", 8)
-                ],
-                null),
+            new NumericRuleExecutionRequest(
+                ExecutionDefinition(),
+                state.NumericRule!,
+                new[]
+                {
+                    Input("boardPressure", 0.9),
+                    Input("recentPlacementTimeMs", 1600),
+                    Input("recoveryFailures", 3),
+                    Input("currentLevel", 8)
+                }.ToDictionary()),
             CancellationToken.None);
 
-        Assert.Null(result.Candidate);
-        Assert.Null(result.Confidence);
-        Assert.Equal("strategy_confidence_unavailable", result.FailureReason);
+        Assert.Equal(850, result.Candidate!.Value.GetInt32());
+        Assert.Null(result.FailureReason);
+        Assert.Equal(["Definition", "Inputs", "Rule"],
+            typeof(NumericRuleExecutionRequest).GetProperties().Select(property => property.Name).Order());
     }
 
     [Fact]
     public async Task NumericRuleExecutor_FailsClosedWhenWeightedInputIsMissing()
     {
-        var executor = new DeterministicStrategyExecutor();
+        var executor = new NumericRuleExecutor();
         var state = State() with
         {
             Mode = "strategy",
@@ -147,14 +145,15 @@ public sealed class DecisionPortTests
         };
 
         var result = await executor.ExecuteAsync(
-            new StrategyExecutionRequest(
-                state,
-                [
-                    Input("tetris.boardPressure", 0.9),
-                    Input("tetris.recentPlacementTimeMs", 1600),
-                    Input("tetris.recoveryFailures", 3)
-                ],
-                null),
+            new NumericRuleExecutionRequest(
+                ExecutionDefinition(),
+                state.NumericRule!,
+                new[]
+                {
+                    Input("boardPressure", 0.9),
+                    Input("recentPlacementTimeMs", 1600),
+                    Input("recoveryFailures", 3)
+                }.ToDictionary()),
             CancellationToken.None);
 
         Assert.Null(result.Candidate);
@@ -904,20 +903,24 @@ public sealed class DecisionPortTests
             FallbackOrder: fallbackOrder);
 
     private static NumericRuleStrategy TetrisRule() => new(
-        "tetris.boardPressure",
+        "boardPressure",
         0.55,
         850,
         750,
         [
-            new NumericRuleInput("tetris.boardPressure", 0, 1, 0.45),
-            new NumericRuleInput("tetris.recentPlacementTimeMs", 0, 2000, 0.25),
-            new NumericRuleInput("tetris.recoveryFailures", 0, 5, 0.20),
-            new NumericRuleInput("tetris.currentLevel", 0, 20, 0.10)
+            new NumericRuleInput("boardPressure", 0, 1, 0.45),
+            new NumericRuleInput("recentPlacementTimeMs", 0, 2000, 0.25),
+            new NumericRuleInput("recoveryFailures", 0, 5, 0.20),
+            new NumericRuleInput("currentLevel", 0, 20, 0.10)
         ]);
 
-    private static SignalInput Input(string key, double value) => new(
-        new SignalRef(key),
-        JsonSerializer.SerializeToElement(value));
+    private static KeyValuePair<string, JsonElement> Input(string key, double value) =>
+        KeyValuePair.Create(key, JsonSerializer.SerializeToElement(value));
+
+    private static RuntimeDecisionDefinition ExecutionDefinition() => new(
+        "demo", "test", "limit", new RuntimeContractIdentity("def", $"sha256:{new string('a', 64)}", "rev"),
+        "number", JsonSerializer.SerializeToElement(800), "safe-default", [], [],
+        TargetHierarchy: ["global"], InferenceTarget: "global", FallbackOrder: []);
 
     private static DecisionEvidenceSnapshot Evidence(double quality) =>
         new(

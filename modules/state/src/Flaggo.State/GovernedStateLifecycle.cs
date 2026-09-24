@@ -678,7 +678,7 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
     private static void ValidateNumericStrategy(NumericRuleStrategy strategy)
     {
         ArgumentNullException.ThrowIfNull(strategy);
-        if (string.IsNullOrWhiteSpace(strategy.InputSignalKey) ||
+        if (string.IsNullOrWhiteSpace(strategy.InputKey) ||
             !double.IsFinite(strategy.Threshold) ||
             !double.IsFinite(strategy.ValueAtOrAbove) ||
             !double.IsFinite(strategy.ValueBelow))
@@ -706,8 +706,8 @@ public sealed partial class InMemoryGovernedStateLifecycleStore :
         var totalWeight = 0d;
         foreach (var input in weightedInputs)
         {
-            if (string.IsNullOrWhiteSpace(input.SignalKey) ||
-                !keys.Add(input.SignalKey) ||
+            if (string.IsNullOrWhiteSpace(input.InputKey) ||
+                !keys.Add(input.InputKey) ||
                 !double.IsFinite(input.Minimum) ||
                 !double.IsFinite(input.Maximum) ||
                 input.Maximum <= input.Minimum ||

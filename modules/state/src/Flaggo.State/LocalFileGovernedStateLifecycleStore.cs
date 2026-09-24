@@ -451,13 +451,13 @@ internal static partial class GovernedStatePersistence
         rule is null
             ? null
             : new PersistedNumericRule(
-                rule.InputSignalKey,
+                rule.InputKey,
                 JsonSerializer.SerializeToElement(rule.Threshold),
                 JsonSerializer.SerializeToElement(rule.ValueAtOrAbove),
                 JsonSerializer.SerializeToElement(rule.ValueBelow),
                 rule.WeightedInputs?.Select(input =>
                     new PersistedNumericRuleInput(
-                        input.SignalKey,
+                        input.InputKey,
                         JsonSerializer.SerializeToElement(input.Minimum),
                         JsonSerializer.SerializeToElement(input.Maximum),
                         JsonSerializer.SerializeToElement(input.Weight)))
@@ -471,7 +471,7 @@ internal static partial class GovernedStatePersistence
             return null;
         }
 
-        if (string.IsNullOrWhiteSpace(rule.InputSignalKey) ||
+        if (string.IsNullOrWhiteSpace(rule.InputKey) ||
             !TryGetCanonicalDouble(rule.Threshold, out var threshold) ||
             !TryGetCanonicalDouble(
                 rule.ValueAtOrAbove,
@@ -485,7 +485,7 @@ internal static partial class GovernedStatePersistence
         if (rule.WeightedInputs is null)
         {
             return new NumericRuleStrategy(
-                rule.InputSignalKey,
+                rule.InputKey,
                 threshold,
                 valueAtOrAbove,
                 valueBelow,
@@ -514,14 +514,14 @@ internal static partial class GovernedStatePersistence
 
             mappedInputs.Add(
                 new NumericRuleInput(
-                    input.SignalKey ?? string.Empty,
+                    input.InputKey ?? string.Empty,
                     minimum,
                     maximum,
                     weight));
         }
 
         return new NumericRuleStrategy(
-            rule.InputSignalKey,
+            rule.InputKey,
             threshold,
             valueAtOrAbove,
             valueBelow,
@@ -545,7 +545,7 @@ internal static partial class GovernedStatePersistence
 
     private static void ValidateNumericRule(NumericRuleStrategy rule)
     {
-        if (string.IsNullOrWhiteSpace(rule.InputSignalKey) ||
+        if (string.IsNullOrWhiteSpace(rule.InputKey) ||
             !double.IsFinite(rule.Threshold) ||
             !double.IsFinite(rule.ValueAtOrAbove) ||
             !double.IsFinite(rule.ValueBelow))
@@ -571,8 +571,8 @@ internal static partial class GovernedStatePersistence
         var totalWeight = 0d;
         foreach (var input in inputs)
         {
-            if (string.IsNullOrWhiteSpace(input.SignalKey) ||
-                !keys.Add(input.SignalKey) ||
+            if (string.IsNullOrWhiteSpace(input.InputKey) ||
+                !keys.Add(input.InputKey) ||
                 !double.IsFinite(input.Minimum) ||
                 !double.IsFinite(input.Maximum) ||
                 input.Maximum <= input.Minimum ||
@@ -693,14 +693,14 @@ internal static partial class GovernedStatePersistence
         string? LifecycleStatus);
 
     private sealed record PersistedNumericRule(
-        string? InputSignalKey,
+        string? InputKey,
         JsonElement? Threshold,
         JsonElement? ValueAtOrAbove,
         JsonElement? ValueBelow,
         IReadOnlyList<PersistedNumericRuleInput?>? WeightedInputs);
 
     private sealed record PersistedNumericRuleInput(
-        string? SignalKey,
+        string? InputKey,
         JsonElement? Minimum,
         JsonElement? Maximum,
         JsonElement? Weight);

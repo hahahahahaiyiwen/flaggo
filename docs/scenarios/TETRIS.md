@@ -17,7 +17,9 @@ details live in their canonical documents.
 
 ## Current boundary
 
-The Phase 3 scenario uses a bundle-authored deterministic numeric rule. It does
+The current integration uses a manifest-authored decision and an existing
+governed deterministic numeric rule. Trusted local bootstrap publishes state;
+#40/#41 own remaining initial-authority and runtime-policy re-baselining. It does
 not claim telemetry learning, evidence-backed proposal generation,
 experimentation, rollout, or request-time AI.
 
@@ -30,7 +32,7 @@ experimentation, rollout, or request-time AI.
 | Live inputs | `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, `currentLevel` |
 | Output contract | Number from `200ms` through `1500ms`, step `50ms` |
 | Fixed default | `800ms` |
-| Authority | Bundle-approved `numeric-rule` |
+| Authority | Existing governed numeric rule; local fixture, not a runtime/client authoring surface |
 | Policy | Bounds, step, fixed-default `max-delta = 50`, and declared runtime constraints |
 | Audit | Durable decision audit committed before success |
 | Attribution | Exposure confirmation returns `exposureId`; outcomes link to it |
@@ -38,11 +40,12 @@ experimentation, rollout, or request-time AI.
 ## End-to-end flow
 
 ```text
-developer declares definition + initial numeric rule
+developer authors one decision manifest
   -> trusted control-plane client applies bundle
   -> authenticated actor approves exact snapshot
-  -> service activates governed state
-  -> registration becomes ready
+  -> approved definition receipt
+  -> trusted local fixture provisions receipt-bound governed state
+  -> generated catalog + receipt initialize runtime client
 
 game sends exact identity + session context + live inputs
   -> Flaggo resolves cohort authority
@@ -76,14 +79,28 @@ The accepted weights are:
 
 | Input | Range | Weight |
 | --- | --- | --- |
-| `tetris.boardPressure` | `0..1` | `0.45` |
-| `tetris.recentPlacementTimeMs` | `0..2000` | `0.25` |
-| `tetris.recoveryFailures` | `0..5` | `0.20` |
-| `tetris.currentLevel` | `0..20` | `0.10` |
+| `boardPressure` | `0..1` | `0.45` |
+| `recentPlacementTimeMs` | `0..2000` | `0.25` |
+| `recoveryFailures` | `0..5` | `0.20` |
+| `currentLevel` | `0..20` | `0.10` |
 
 The runtime executor consumes only the runtime definition projection, approved
-numeric rule, and live signal inputs. It does not consume an
-`EvidenceSnapshot`, and the bundle-authored result reports `confidence: null`.
+numeric rule, and resolved primitive inputs. This scenario's operands are live
+request-owned values, not telemetry handles. It needs neither input evidence
+nor a canned quality fixture and reports `confidence: null`.
+
+```ts
+const decision = await flaggo.tune.number("tetris.dropInterval", {
+  context: { sessionId, userId, cohort, deviceType },
+  inputs: { boardPressure, recentPlacementTimeMs, recoveryFailures, currentLevel }
+});
+```
+
+The client was initialized from a generated catalog and approved receipt. The
+manifest, not the call, owns type/range/meaning, targeting, and policy.
+Application telemetry remains ordinary OTel; after application and explicit
+confirmation, `confirmedExposureAttributes` may attach confirmed context to
+the existing logger. Collector outage does not affect these live operands.
 
 ## Required behavior
 
@@ -104,8 +121,9 @@ abs(850 - 800) = 50
 ```
 
 Both branches are valid independently. A `750ms` result followed by an `850ms`
-result is therefore valid under the current policy. Cooldown, hysteresis, and
-previous-result stabilization are future work.
+result is therefore valid under the current delta policy. The existing
+last-change cooldown fixture still proves audited `800ms` server fallback;
+this is not hysteresis or previous-result stabilization.
 
 ## Audit and attribution
 
@@ -129,11 +147,11 @@ raw and unlinked.
 
 The complete scenario proves that:
 
-1. A developer can declare a bounded decision and initial authority candidate.
+1. A developer authors one bounded JSON manifest and uses generated typed keys.
 2. An authenticated actor approves the exact bundle snapshot.
-3. Activation is replayable and cannot overwrite a changed stable authority
-   head.
-4. Registration is not ready until required authority is active.
+3. Trusted bootstrap provisions governed state from the exact approved receipt.
+4. Runtime initialization uses that receipt and catalog, never registration or
+   telemetry producer declarations.
 5. Runtime returns exact `750ms` or `850ms` rule branches from live inputs.
 6. Policy evaluates both branches against fixed default `800ms`.
 7. A ready service durably audits before returning success.
@@ -147,6 +165,12 @@ Phase 4 may add an evidence-backed proposal producer and independent governance
 through the shared activation boundary. Detailed proposal, experiment, rollout,
 operator, rollback, and learned-strategy behavior is outside this scenario and
 owned by later accepted designs.
+
+Bundle-declared initial authority, activation-converged receipts, and their
+replay/readiness acceptance criteria remain #40. The independent
+[OTel evidence example](../../examples/otel-evidence/README.md) proves native
+telemetry bindings without substituting delayed observations for Tetris's
+current game state.
 
 ## Related documents
 

@@ -9,8 +9,12 @@ namespace Flaggo.Shared.Contracts;
 
 public static class CanonicalJson
 {
-    public static string ContractDigest(JsonElement definition) =>
-        Digest(NormalizeDefinition(definition, semanticIdentity: true));
+    public static string ContractDigest(string key, JsonElement definition) =>
+        Digest(new JsonObject
+        {
+            ["key"] = key,
+            ["contract"] = NormalizeDefinition(definition, semanticIdentity: true)
+        });
 
     public static string BundleDigest(JsonElement bundle) =>
         Digest(NormalizeBundle(bundle));
@@ -43,65 +47,47 @@ public static class CanonicalJson
             original == roundTripped;
     }
 
+    public static bool IsStepAligned(JsonElement value, JsonElement minimum, JsonElement step)
+    {
+        if (!IsIeee754CompatibleNumber(value) ||
+            !IsIeee754CompatibleNumber(minimum) ||
+            !IsIeee754CompatibleNumber(step) ||
+            !TryNormalizeDecimal(value.GetRawText(), out var number) ||
+            !TryNormalizeDecimal(minimum.GetRawText(), out var origin) ||
+            !TryNormalizeDecimal(step.GetRawText(), out var increment) ||
+            increment.Coefficient <= 0)
+        {
+            return false;
+        }
+        var exponent = Math.Min(number.Exponent, Math.Min(origin.Exponent, increment.Exponent));
+        var difference = number.Coefficient * BigInteger.Pow(10, number.Exponent - exponent)
+            - origin.Coefficient * BigInteger.Pow(10, origin.Exponent - exponent);
+        var divisor = increment.Coefficient * BigInteger.Pow(10, increment.Exponent - exponent);
+        return difference % divisor == 0;
+    }
+
     private static JsonNode NormalizeDefinition(
         JsonElement definition,
         bool semanticIdentity)
     {
-        var normalized = JsonNode.Parse(definition.GetRawText())?.AsObject()
+        StrictJson.Validate(Encoding.UTF8.GetBytes(definition.GetRawText()));
+        var normalized = JsonNode.Parse(definition.GetRawText()) as JsonObject
             ?? throw new JsonException("A decision definition must be an object.");
-        normalized.Remove("contractDigest");
-        normalized.Remove("revision");
-        normalized.Remove("schemaDigest");
         if (semanticIdentity)
         {
-            normalized.Remove("definitionId");
             normalized.Remove("owner");
         }
 
-        var signalKeys = new HashSet<string>(StringComparer.Ordinal);
-        if (normalized["signals"] is JsonObject signals)
+        foreach (var name in new[] { "context", "inputs", "evidence" })
         {
-            foreach (var role in new[] { "evidence", "guardrails" })
-            {
-                if (signals[role] is JsonArray references)
-                {
-                    signals[role] = NormalizeSignalReferences(references, signalKeys);
-                }
-            }
+            if (!normalized.ContainsKey(name)) normalized[name] = new JsonObject();
+            if (normalized[name] is not JsonObject) throw new JsonException($"{name} must be a map.");
         }
-
-        if (normalized["inference"] is JsonObject inference &&
-            inference["inputs"] is JsonArray inputs)
+        foreach (var field in normalized["context"]!.AsObject())
         {
-            inference["inputs"] = NormalizeSignalReferences(inputs, signalKeys);
-        }
-
-        CollectObjectiveSignalKeys(normalized["intent"], signalKeys);
-        if (normalized["signals"] is not JsonObject normalizedSignals &&
-            signalKeys.Count > 0)
-        {
-            normalizedSignals = [];
-            normalized["signals"] = normalizedSignals;
-        }
-
-        if (normalized["signals"] is JsonObject finalSignals)
-        {
-            if (signalKeys.Count > 0)
-            {
-                finalSignals["allowed"] = new JsonArray(
-                    signalKeys.Order(StringComparer.Ordinal)
-                        .Select(key => (JsonNode)new JsonObject { ["key"] = key })
-                        .ToArray());
-            }
-            else
-            {
-                finalSignals.Remove("allowed");
-            }
-
-            if (finalSignals.Count == 0)
-            {
-                normalized.Remove("signals");
-            }
+            var schema = field.Value as JsonObject
+                ?? throw new JsonException("A context field must be an object.");
+            if (!schema.ContainsKey("required")) schema["required"] = false;
         }
 
         if (normalized["policy"] is JsonObject policy &&
@@ -148,128 +134,25 @@ public static class CanonicalJson
 
     private static JsonObject NormalizeBundle(JsonElement bundle)
     {
-        var normalized = JsonNode.Parse(bundle.GetRawText())?.AsObject()
-            ?? throw new JsonException("A definition bundle must be an object.");
-
-        if (normalized["signals"] is JsonArray declarations)
+        StrictJson.Validate(Encoding.UTF8.GetBytes(bundle.GetRawText()));
+        if (bundle.ValueKind != JsonValueKind.Object ||
+            !bundle.TryGetProperty("format", out var format) ||
+            format.ValueKind != JsonValueKind.String ||
+            format.GetString() != "flaggo.decision-definition-bundle/v2" ||
+            !bundle.TryGetProperty("decisions", out var decisions) ||
+            decisions.ValueKind != JsonValueKind.Object)
         {
-            var signals = new SortedDictionary<string, JsonNode>(StringComparer.Ordinal);
-            var digests = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var item in declarations)
-            {
-                var declaration = item?.DeepClone().AsObject()
-                    ?? throw new JsonException("Signal declarations cannot contain null.");
-                declaration.Remove("schemaDigest");
-                var key = declaration["key"]?.GetValue<string>()
-                    ?? throw new JsonException("Signal key is required.");
-                var digest = Digest(declaration);
-                if (digests.TryGetValue(key, out var previousDigest))
-                {
-                    if (!string.Equals(previousDigest, digest, StringComparison.Ordinal))
-                    {
-                        throw new JsonException($"Conflicting signal declaration: {key}.");
-                    }
-
-                    throw new JsonException($"Duplicate signal declaration: {key}.");
-                }
-
-                signals.Add(key, declaration);
-                digests.Add(key, digest);
-            }
-
-            normalized["signals"] = new JsonArray(signals.Values.ToArray());
+            throw new JsonException("A v2 manifest with a decisions map is required.");
         }
 
-        var definitionArray = normalized["definitions"] as JsonArray
-            ?? throw new JsonException("Bundle definitions are required.");
-        var definitions = new SortedDictionary<string, JsonNode>(StringComparer.Ordinal);
-        var definitionDigests = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var item in definitionArray)
+        var normalized = JsonNode.Parse(bundle.GetRawText())!.AsObject();
+        var definitions = new JsonObject();
+        foreach (var item in decisions.EnumerateObject())
         {
-            if (item is null)
-            {
-                throw new JsonException("Definitions cannot contain null.");
-            }
-
-            using var document = JsonDocument.Parse(item.ToJsonString());
-            var candidate = NormalizeDefinition(document.RootElement, semanticIdentity: false);
-            var key = candidate["key"]?.GetValue<string>()
-                ?? throw new JsonException("Decision key is required.");
-            using var candidateDocument = JsonDocument.Parse(candidate.ToJsonString());
-            var digest = ContractDigest(candidateDocument.RootElement);
-            if (definitionDigests.TryGetValue(key, out var previousDigest))
-            {
-                if (!string.Equals(previousDigest, digest, StringComparison.Ordinal))
-                {
-                    throw new JsonException($"Conflicting decision definition key: {key}.");
-                }
-
-                if (!Serialize(definitions[key]).SequenceEqual(Serialize(candidate)))
-                {
-                    throw new JsonException(
-                        $"Metadata-conflicting duplicate decision key: {key}.");
-                }
-
-                continue;
-            }
-
-            definitions.Add(key, candidate);
-            definitionDigests.Add(key, digest);
+            definitions.Add(item.Name, NormalizeDefinition(item.Value, semanticIdentity: false));
         }
-
-        normalized["definitions"] = new JsonArray(definitions.Values.ToArray());
+        normalized["decisions"] = definitions;
         return normalized;
-    }
-
-    private static JsonArray NormalizeSignalReferences(
-        JsonArray references,
-        ISet<string> collectedKeys)
-    {
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in references)
-        {
-            var key = item?["key"]?.GetValue<string>()
-                ?? throw new JsonException("Signal reference key is required.");
-            if (!keys.Add(key))
-            {
-                throw new JsonException($"Duplicate signal reference: {key}.");
-            }
-
-            collectedKeys.Add(key);
-        }
-
-        return new JsonArray(
-            keys.Order(StringComparer.Ordinal)
-                .Select(key => (JsonNode)new JsonObject { ["key"] = key })
-                .ToArray());
-    }
-
-    private static void CollectObjectiveSignalKeys(JsonNode? node, ISet<string> keys)
-    {
-        switch (node)
-        {
-            case JsonObject value:
-                if (value["signal"] is JsonObject signal &&
-                    signal["key"] is JsonValue keyValue &&
-                    keyValue.TryGetValue<string>(out var key))
-                {
-                    keys.Add(key);
-                }
-
-                foreach (var child in value)
-                {
-                    CollectObjectiveSignalKeys(child.Value, keys);
-                }
-
-                break;
-            case JsonArray values:
-                foreach (var child in values)
-                {
-                    CollectObjectiveSignalKeys(child, keys);
-                }
-
-                break;
-        }
     }
 
     private static string Digest(JsonNode value) =>

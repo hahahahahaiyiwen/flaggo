@@ -1,0 +1,278 @@
+{
+  "format": "flaggo.decision-definition-bundle/v2",
+  "application": {
+    "id": "otel-worker",
+    "environment": "dev"
+  },
+  "decisions": {
+    "worker.batchSize": {
+      "result": {
+        "type": "number",
+        "min": 1,
+        "max": 10,
+        "step": 1,
+        "default": 3
+      },
+      "context": {
+        "sessionId": {
+          "type": "string",
+          "target": "session",
+          "required": true
+        }
+      },
+      "targeting": {
+        "hierarchy": [
+          "session",
+          "global"
+        ],
+        "primary": "session",
+        "fallbackOrder": [
+          "global"
+        ]
+      },
+      "inputs": {
+        "pressure": {
+          "source": "evidence",
+          "binding": "queuePressure"
+        },
+        "durationMs": {
+          "source": "evidence",
+          "binding": "processingTime"
+        },
+        "retries": {
+          "source": "evidence",
+          "binding": "retryCount"
+        },
+        "failures": {
+          "source": "evidence",
+          "binding": "failureCount"
+        }
+      },
+      "evidence": {
+        "queuePressure": {
+          "meaning": "Latest received queue-pressure Gauge for this worker session, not a population estimate.",
+          "type": "number",
+          "unit": "1",
+          "range": [
+            0,
+            1
+          ],
+          "source": {
+            "kind": "metric",
+            "name": "work.queue.pressure",
+            "dataType": "gauge",
+            "scope": {
+              "name": "example.worker",
+              "version": "1"
+            },
+            "resourceAttributes": {
+              "service.name": "otel-worker"
+            },
+            "value": {
+              "from": "value"
+            }
+          },
+          "projection": {
+            "kind": "latest"
+          },
+          "target": {
+            "type": "session",
+            "idAttribute": {
+              "from": "attributes",
+              "key": "session.id"
+            }
+          },
+          "freshness": {
+            "maxAgeSeconds": 60
+          },
+          "sampling": {
+            "accept": "observed"
+          },
+          "attribution": {
+            "kind": "none"
+          }
+        },
+        "processingTime": {
+          "meaning": "Duration of the latest received completed work span, in milliseconds.",
+          "type": "number",
+          "unit": "ms",
+          "range": [
+            0,
+            1000
+          ],
+          "source": {
+            "kind": "span",
+            "name": "work.process",
+            "scope": {
+              "name": "example.worker",
+              "version": "1"
+            },
+            "resourceAttributes": {
+              "service.name": "otel-worker"
+            },
+            "value": {
+              "from": "duration"
+            }
+          },
+          "projection": {
+            "kind": "latest"
+          },
+          "target": {
+            "type": "session",
+            "idAttribute": {
+              "from": "attributes",
+              "key": "session.id"
+            }
+          },
+          "freshness": {
+            "maxAgeSeconds": 60
+          },
+          "sampling": {
+            "accept": "observed"
+          },
+          "attribution": {
+            "kind": "none"
+          }
+        },
+        "retryCount": {
+          "meaning": "Retry count on the latest received work.retry span event.",
+          "type": "number",
+          "range": [
+            0,
+            10
+          ],
+          "source": {
+            "kind": "span",
+            "name": "work.process",
+            "eventName": "work.retry",
+            "scope": {
+              "name": "example.worker",
+              "version": "1"
+            },
+            "resourceAttributes": {
+              "service.name": "otel-worker"
+            },
+            "value": {
+              "from": "eventAttributes",
+              "key": "retry.count"
+            }
+          },
+          "projection": {
+            "kind": "latest"
+          },
+          "target": {
+            "type": "session",
+            "idAttribute": {
+              "from": "attributes",
+              "key": "session.id"
+            }
+          },
+          "freshness": {
+            "maxAgeSeconds": 60
+          },
+          "sampling": {
+            "accept": "observed"
+          },
+          "attribution": {
+            "kind": "none"
+          }
+        },
+        "failureCount": {
+          "meaning": "Failure count in the latest received structured work.summary log body.",
+          "type": "number",
+          "range": [
+            0,
+            10
+          ],
+          "source": {
+            "kind": "log",
+            "eventName": "work.summary",
+            "scope": {
+              "name": "example.worker",
+              "version": "1"
+            },
+            "resourceAttributes": {
+              "service.name": "otel-worker"
+            },
+            "value": {
+              "from": "body",
+              "path": [
+                "counts",
+                "failures"
+              ]
+            }
+          },
+          "projection": {
+            "kind": "latest"
+          },
+          "target": {
+            "type": "session",
+            "idAttribute": {
+              "from": "attributes",
+              "key": "session.id"
+            }
+          },
+          "freshness": {
+            "maxAgeSeconds": 60
+          },
+          "sampling": {
+            "accept": "observed"
+          },
+          "attribution": {
+            "kind": "none"
+          }
+        },
+        "appliedOutcome": {
+          "meaning": "Processed item count linked to an explicitly confirmed application of this exact decision.",
+          "type": "number",
+          "range": [
+            0,
+            10
+          ],
+          "source": {
+            "kind": "log",
+            "eventName": "work.completed",
+            "scope": {
+              "name": "example.worker",
+              "version": "1"
+            },
+            "resourceAttributes": {
+              "service.name": "otel-worker"
+            },
+            "value": {
+              "from": "attributes",
+              "key": "processed.count"
+            }
+          },
+          "projection": {
+            "kind": "latest"
+          },
+          "target": {
+            "type": "session",
+            "idAttribute": {
+              "from": "attributes",
+              "key": "session.id"
+            }
+          },
+          "freshness": {
+            "maxAgeSeconds": 60
+          },
+          "sampling": {
+            "accept": "observed"
+          },
+          "attribution": {
+            "kind": "confirmed-exposure",
+            "exposureIdAttribute": {
+              "from": "attributes",
+              "key": "flaggo.exposure.id"
+            }
+          }
+        }
+      },
+      "policy": {
+        "kind": "inline",
+        "constraints": []
+      }
+    }
+  }
+}

@@ -26,10 +26,10 @@ exactly one folder:
 
 | # | High-level component | Design folder | Purpose |
 |---|---|---|---|
-| 1 | Client library | [client-library](client-library/README.md) | Developer-facing SDK for telemetry, decision declarations, runtime context, and decision calls. |
+| 1 | Client library | [client-library](client-library/README.md) | Manifest compilation, generated typing, separate publication, key-based decisions, and confirmation. |
 | 2 | Decision API service | [decision-api](decision-api/README.md) | Runtime service API that evaluates definitions, governed state, live inputs, policy, and optional evidence. |
-| 3 | Telemetry and evidence service | [telemetry-evidence](telemetry-evidence/README.md) | Telemetry ingestion, evidence aggregation, OpenTelemetry integration, and evidence snapshots. |
-| 4 | Contract and registry service | [contract-registry](contract-registry/README.md) | Versioned storage for decision definitions, output contracts, signal declarations, inference configuration, policies, and fallbacks. |
+| 3 | Telemetry and evidence service | [telemetry-evidence](telemetry-evidence/README.md) | Native OTel ingestion, latest-value materialization, typed input snapshots, and provenance. |
+| 4 | Contract and registry service | [contract-registry](contract-registry/README.md) | Manifest validation, immutable definition identity, exact approval, and input/evidence projections. |
 | 5 | Policy service | [policy](policy/README.md) | Deterministic safety gate for action-space, runtime, authority, and conditional evidence constraints. |
 | 6 | State service | [state](state/README.md) | Active authority, state identity/generation, activation lineage, CAS, replay, and runtime projection. |
 | 7 | Decision reasoning engine | [reasoning-engine](reasoning-engine/README.md) | Bounded runtime strategy execution plus optional future proposal generation. |
@@ -47,5 +47,6 @@ The [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md) maps those domain 
 
 The [Phase 3 Tetris Integration](tetris-integration/README.md) composes these
 component boundaries into the cloud-free hero scenario using authenticated
-bundle approval and the shared governed-state activation boundary without
-moving management authority into the browser.
+manifest publication and trusted local governed state without moving
+management authority into the browser. Initial-authority/activation-ready
+publication remains the #40/#41 extension.

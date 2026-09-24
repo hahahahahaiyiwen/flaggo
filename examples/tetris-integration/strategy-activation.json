@@ -8,31 +8,31 @@
   "mode": "strategy",
   "strategyId": "strategy-tetris-balanced-v1",
   "numericRule": {
-    "inputSignalKey": "tetris.boardPressure",
+    "inputKey": "boardPressure",
     "threshold": 0.55,
     "valueAtOrAbove": 850,
     "valueBelow": 750,
     "weightedInputs": [
       {
-        "signalKey": "tetris.boardPressure",
+        "inputKey": "boardPressure",
         "minimum": 0,
         "maximum": 1,
         "weight": 0.45
       },
       {
-        "signalKey": "tetris.recentPlacementTimeMs",
+        "inputKey": "recentPlacementTimeMs",
         "minimum": 0,
         "maximum": 2000,
         "weight": 0.25
       },
       {
-        "signalKey": "tetris.recoveryFailures",
+        "inputKey": "recoveryFailures",
         "minimum": 0,
         "maximum": 5,
         "weight": 0.2
       },
       {
-        "signalKey": "tetris.currentLevel",
+        "inputKey": "currentLevel",
         "minimum": 0,
         "maximum": 20,
         "weight": 0.1

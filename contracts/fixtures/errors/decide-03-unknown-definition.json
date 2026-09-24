@@ -27,14 +27,12 @@
         "cohort": "new_players",
         "deviceType": "mobile"
       },
-      "inputs": [
-        {
-          "signal": {
-            "key": "tetris.boardPressure"
-          },
-          "value": 0.82
-        }
-      ],
+      "inputs": {
+        "boardPressure": 0.82,
+        "currentLevel": 1,
+        "recentPlacementTimeMs": 1200,
+        "recoveryFailures": 0
+      },
       "client": {
         "appId": "tetris-demo",
         "environment": "dev",

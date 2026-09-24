@@ -22,6 +22,8 @@ Audit records should capture:
 - requested runtime targets, resolved control targets, and policy targets,
 - contract version,
 - runtime context summary,
+- authenticated tenant/application/environment, original caller inputs, resolved
+  input values and per-input ownership/binding/generation/source timestamps,
 - evidence snapshot summary when evidence participated,
 - whether authority was selected and which current authority kind participated,
 - required state ID, generation, proposal, activation, and approval lineage for
@@ -98,6 +100,14 @@ The exposure confirm token is an authorization capability, not audit data. The D
 
 ## Tetris MVP audit example
 
+The expanded state-summary example below is the accepted final Phase 3 audit
+target, not the current persisted envelope. #41 owns that remaining
+authority-lineage re-baseline. Current `DecisionAuditRecord` persists
+tenant/app/environment, exact contract, targets, policy/fallback, reason,
+`inputs` (resolved values), `requestInputs`, and `inputProvenance`, including
+binding/generation/source nanoseconds and observed-only correlation when used.
+It never copies unrelated raw telemetry or a confirmation capability.
+
 ```json
 {
   "auditId": "audit-789",
@@ -114,12 +124,12 @@ The exposure confirm token is an authorization capability, not audit data. The D
       "userId": "user-123",
       "cohort": "new_players"
     },
-    "inputs": [
-      { "signal": { "key": "tetris.boardPressure" }, "value": 0.82 },
-      { "signal": { "key": "tetris.currentLevel" }, "value": 3 },
-      { "signal": { "key": "tetris.recentPlacementTimeMs" }, "value": 1420 },
-      { "signal": { "key": "tetris.recoveryFailures" }, "value": 2 }
-    ],
+    "inputs": {
+      "boardPressure": 0.82,
+      "currentLevel": 3,
+      "recentPlacementTimeMs": 1420,
+      "recoveryFailures": 2
+    },
     "expectedContract": {
       "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
       "contractDigest": "sha256:contract...",

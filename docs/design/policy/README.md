@@ -136,9 +136,12 @@ For `tetris.dropInterval`:
 - min: `200`
 - max: `1500`
 - step: `50`
-- max delta from contract baseline `actionSpace.default = 800`: `50`
+- max delta from manifest baseline `result.default = 800`: `50`
 - fallback: `800`
 
 The strategy executor may calculate `750ms` or `850ms`, but policy is still
 responsible for verifying the value before it is returned. This
-bundle-authored rule has no evidence-quality or model-uncertainty requirement.
+manifest-declared input-only rule has no evidence-quality or model-uncertainty
+requirement. Required evidence-owned operands are resolved before policy;
+missing or unusable operands always fail explicitly rather than being
+substituted by policy or SDK fallback.

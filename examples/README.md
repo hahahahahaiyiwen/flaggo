@@ -12,11 +12,18 @@ run path.
 the canonical definition bundle, trusted approval-aware bootstrap, governed
 state activation template, real-host SDK/REST harness, and local audit and
 telemetry inspection commands. It intentionally contains no frontend game
-behavior. Its strategy policy requires confidence evidence and the harness
-proves missing active-strategy evidence fails closed.
+behavior. Four plain live inputs drive exact `850ms`/`750ms` branches with
+null learned confidence. It verifies a separate `800ms` cooldown fallback and
+explicit confirmation followed by an ordinary application OTel outcome log.
 
 `adaptive-worker` is the Phase 2.5 SDK-to-service acceptance application. It
-extracts its decision contract from TypeScript, registers it with the local
-control plane, processes a deterministic in-memory queue through the data
+compiles one JSON manifest into a bundle and typed catalog. Trusted tooling
+publishes the contract separately; the runtime processes a deterministic in-memory queue through the data
 plane, confirms exposures only after applying each batch size, and records
-local telemetry without cloud services.
+native application OTel logs without cloud services.
+
+`otel-evidence` sends actual application OTel metrics, traces/span events, and
+structured logs through a pinned stock Collector. Existing export pipelines
+remain intact while a new branch materializes four required evidence inputs
+and a confirmed outcome. It verifies durable source provenance and runtime
+consumption without replacing telemetry producers.

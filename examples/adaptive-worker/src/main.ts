@@ -4,20 +4,18 @@ import { pathToFileURL } from "node:url";
 
 import {
   createFlaggoClient,
-  type DecisionDefinitionBundle,
+  type RegistrationReceipt,
 } from "@flaggo/sdk";
 
 import { AdaptiveWorker } from "./adaptive-worker.js";
-import { LocalTelemetrySink } from "./telemetry.js";
-
-interface ExtractionArtifact {
-  bundle: DecisionDefinitionBundle;
-}
+import { LocalOtelLogs } from "./telemetry.js";
+import { catalog } from "./generated/catalog.js";
 
 interface ServiceConnection {
   controlPlaneUrl: string;
   dataPlaneUrl: string;
   telemetryPath: string;
+  receipt: RegistrationReceipt;
 }
 
 function hasArgument(name: string): boolean {
@@ -34,56 +32,49 @@ export async function runMain(): Promise<void> {
   const repositoryRoot = resolve(exampleRoot, "../..");
   const serviceFile = argumentValue("--service-file") ??
     resolve(repositoryRoot, ".flaggo/adaptive-worker/service.json");
-  const artifact = JSON.parse(
-    await readFile(
-      resolve(exampleRoot, "generated/definitions.json"),
-      "utf8",
-    ),
-  ) as ExtractionArtifact;
   const service = JSON.parse(
     await readFile(serviceFile, "utf8"),
   ) as ServiceConnection;
   const allowLocalFallback = hasArgument("--allow-local-fallback");
-  const client = await createFlaggoClient({
-    appId: artifact.bundle.application.id,
-    environment: artifact.bundle.application.environment,
+  const client = createFlaggoClient({
+    catalog,
+    receipt: service.receipt,
     dataPlaneUrl: service.dataPlaneUrl,
     dataPlaneCredential: { mode: "local-development" },
-    controlPlane: {
-      mode: "startup-register",
-      url: service.controlPlaneUrl,
-      bundle: artifact.bundle,
-      credential: { mode: "local-development" },
-    },
     availabilityFallback: allowLocalFallback
       ? { mode: "local-default", retries: 0 }
       : { mode: "disabled", retries: 0 },
   });
-  const telemetry = new LocalTelemetrySink(service.telemetryPath);
-  const worker = new AdaptiveWorker(client, telemetry);
-  const results = await worker.runProfiles([
-    "steady",
-    "burst",
-    "slow-downstream",
-    "recovery",
-  ]);
+  const telemetry = new LocalOtelLogs(service.telemetryPath);
+  try {
+    const worker = new AdaptiveWorker(client, telemetry);
+    const results = await worker.runProfiles([
+      "steady",
+      "burst",
+      "slow-downstream",
+      "recovery",
+    ]);
 
-  process.stdout.write(`${JSON.stringify({
-    status: "completed",
-    receipt: client.definitions.getRegistrationReceipt(),
-    profiles: results.map((result) => ({
-      profile: result.profile,
-      queuePressure: result.queuePressure,
-      appliedBatchSize: result.appliedBatchSize,
-      processedCount: result.processedItemIds.length,
-      queueDepthAfter: result.queueDepthAfter,
-      source: result.decision.source,
-      decisionMode: result.decision.decisionMode,
-      exposureId: result.confirmation?.exposureId,
-    })),
-    telemetryEvents: telemetry.events.length,
-    telemetryPath: service.telemetryPath,
-  }, null, 2)}\n`);
+    await telemetry.flush();
+    process.stdout.write(`${JSON.stringify({
+      status: "completed",
+      receipt: service.receipt,
+      profiles: results.map((result) => ({
+        profile: result.profile,
+        queuePressure: result.queuePressure,
+        appliedBatchSize: result.appliedBatchSize,
+        processedCount: result.processedItemIds.length,
+        queueDepthAfter: result.queueDepthAfter,
+        source: result.decision.source,
+        decisionMode: result.decision.decisionMode,
+        exposureId: result.confirmation?.exposureId,
+      })),
+      telemetryEvents: telemetry.events.length,
+      telemetryPath: service.telemetryPath,
+    }, null, 2)}\n`);
+  } finally {
+    await telemetry.shutdown();
+  }
 }
 
 if (

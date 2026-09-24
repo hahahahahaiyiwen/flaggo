@@ -1434,7 +1434,7 @@ public sealed class LocalFileAuditSinkTests
         await ReplaceSegmentRecordsAsync(
             existingFile.Path,
             [DecisionEnvelope(record =>
-                record["inputs"]![0]!["value"] = JsonNode.Parse(rawValue))]);
+                record["inputs"]!["boardPressure"] = JsonNode.Parse(rawValue))]);
         using var existingSink = new LocalFileAuditSink(
             new LocalFileAuditSinkOptions(existingFile.Path));
 
@@ -1487,12 +1487,17 @@ public sealed class LocalFileAuditSinkTests
                             "unknown")));
             }));
         cases.Add(
-            "duplicate signal input",
+            "input without provenance",
             DecisionEnvelope(record =>
             {
-                var inputs = record["inputs"]!.AsArray();
-                inputs.Add(inputs[0]!.DeepClone());
+                record["inputs"]!["unknown"] = 1;
             }));
+        cases.Add(
+            "caller input differs from resolved value",
+            DecisionEnvelope(record => record["requestInputs"]!["boardPressure"] = 0.1));
+        cases.Add(
+            "incomplete evidence provenance",
+            DecisionEnvelope(record => record["inputProvenance"]!["boardPressure"]!["source"] = "evidence"));
         return cases;
     }
 
@@ -1527,12 +1532,8 @@ public sealed class LocalFileAuditSinkTests
                 ["enabled"] = JsonSerializer.SerializeToElement(true),
                 ["cohort"] = JsonSerializer.SerializeToElement("new_players")
             },
-            Inputs =
-            [
-                new SignalInput(
-                    new SignalRef("tetris.boardPressure"),
-                    negativeBoundary)
-            ]
+            Inputs = new Dictionary<string, JsonElement> { ["boardPressure"] = negativeBoundary },
+            RequestInputs = new Dictionary<string, JsonElement> { ["boardPressure"] = negativeBoundary }
         };
         using (var writer = new LocalFileAuditSink(
                    new LocalFileAuditSinkOptions(file.Path)))
@@ -1637,13 +1638,13 @@ public sealed class LocalFileAuditSinkTests
             CancellationToken.None);
 
         await Assert.ThrowsAnyAsync<IOException>(
-            () => service.ConfirmAsync(
+            () => service.ConfirmAsync("local-development",
                 "decision-atomic",
                 request,
                 appIds,
                 environments,
                 CancellationToken.None));
-        var preparedReplay = await store.FindReplayAsync(
+        var preparedReplay = await store.FindReplayAsync("local-development",
             "decision-atomic",
             request,
             appIds,
@@ -1656,13 +1657,13 @@ public sealed class LocalFileAuditSinkTests
         Directory.CreateDirectory(blockedParent.Path);
         try
         {
-            var first = await service.ConfirmAsync(
+            var first = await service.ConfirmAsync("local-development",
                 "decision-atomic",
                 request,
                 appIds,
                 environments,
                 CancellationToken.None);
-            var replay = await service.ConfirmAsync(
+            var replay = await service.ConfirmAsync("local-development",
                 "decision-atomic",
                 request,
                 appIds,
@@ -1693,17 +1694,14 @@ public sealed class LocalFileAuditSinkTests
         "strategy",
         new ServerFallbackInfo("server", false, false, null),
         new Dictionary<string, JsonElement>(),
-        [
-            new SignalInput(
-                new SignalRef("tetris.boardPressure"),
-                JsonSerializer.SerializeToElement(0.9))
-        ],
+        new Dictionary<string, JsonElement> { ["boardPressure"] = JsonSerializer.SerializeToElement(0.9) },
         new DecisionTargetRef("session", "game-1"),
         new DecisionTargetRef("cohort", "new_players"),
         [],
         ["session:game-1", "cohort:new_players", "global"],
         new PolicyEvaluationResult("approved", [], ["number-bounds", "max-delta"]),
         new DateTimeOffset(2026, 8, 6, 0, 0, 0, TimeSpan.Zero),
+        TenantId: "local-development",
         Evidence: new DecisionEvidenceSnapshot(
             0.82,
             0.2,
@@ -1715,7 +1713,9 @@ public sealed class LocalFileAuditSinkTests
                     "phase3-local-fixture")
             }),
         Confidence: new ConfidenceReport(0.82, 0.2, 0.74),
-        StrategyId: "strategy-tetris-balanced-v1");
+        StrategyId: "strategy-tetris-balanced-v1",
+        RequestInputs: new Dictionary<string, JsonElement> { ["boardPressure"] = JsonSerializer.SerializeToElement(0.9) },
+        InputProvenance: new Dictionary<string, InputProvenance> { ["boardPressure"] = new("request") });
 
     private static ExposureAuditRecord ExposureRecord(string exposureId) =>
         new(
@@ -1779,6 +1779,7 @@ public sealed class LocalFileAuditSinkTests
     }
 
     private static DecisionSnapshot Snapshot() => new(
+        "local-development",
         "tetris-demo",
         "dev",
         new RuntimeContractIdentity(
@@ -1789,7 +1790,7 @@ public sealed class LocalFileAuditSinkTests
         "number",
         new ServerFallbackInfo("server", false, false, null),
         new Dictionary<string, JsonElement>(),
-        [],
+        new Dictionary<string, JsonElement>(),
         new DecisionTargetRef("session", "game-1"),
         new DecisionTargetRef("cohort", "new_players"),
         [],

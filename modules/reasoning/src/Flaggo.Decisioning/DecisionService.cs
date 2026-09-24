@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 using Flaggo.Audit;
 using Flaggo.Evidence;
@@ -40,15 +41,20 @@ public sealed class DecisionService(
     TimeProvider timeProvider,
     ITargetResolver targetResolver,
     IEvidenceProvider evidenceProvider,
-    IStrategyExecutor strategyExecutor,
+    INumericRuleExecutor numericRuleExecutor,
+    DecisionInputResolver inputResolver,
     IPolicyEvaluator policyEvaluator,
     ILogger<DecisionService> logger)
 {
     public async Task<ServerDecisionResult> DecideAsync(
+        ApplicationScope scope,
         string decisionKey,
         DecideRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(scope.TenantId) ||
+            scope.AppId != request.Client.AppId || scope.Environment != request.Client.Environment)
+            throw new DecisionContractException(403, "scope-mismatch", "The verified scope does not match the decision request.");
         var lookup = await definitionRegistry.ResolveRuntimeAsync(
             request.Client.AppId,
             request.Client.Environment,
@@ -81,13 +87,16 @@ public sealed class DecisionService(
 
         VerifyIdentity(definition.Identity, request.ExpectedContract);
         VerifyRuntimeContext(definition.RuntimeContext, request.RuntimeContext);
-        VerifyInputs(definition.Inputs, request.Inputs);
-
         var targetPlan = await targetResolver.ResolveAsync(
             definition,
             request.RuntimeTarget,
             request.RuntimeContext,
             cancellationToken);
+        var evaluatedAt = timeProvider.GetUtcNow();
+        var resolvedInputs = await inputResolver.ResolveAsync(
+            scope, definition, targetPlan, request.Inputs, evaluatedAt, cancellationToken);
+        var callerInputs = (request.Inputs ?? FrozenDictionary<string, JsonElement>.Empty)
+            .ToFrozenDictionary(pair => pair.Key, pair => pair.Value.Clone(), StringComparer.Ordinal);
         var state = await stateStore.GetActiveAsync(
             decisionKey,
             definition.Identity.DefinitionId,
@@ -111,7 +120,9 @@ public sealed class DecisionService(
         }
 
         DecisionEvidenceSnapshot? evidence = null;
-        StrategyExecutionResult? execution = null;
+        JsonElement? candidate = null;
+        var executionReason = "Returned the active governed value.";
+        string? executionFailure = null;
         PolicyDecision policyDecision;
         if (state is null)
         {
@@ -127,24 +138,21 @@ public sealed class DecisionService(
             var effectivePolicy = EffectivePolicy(
                 definition.Policy,
                 state.Mode);
-            try
+            if (effectivePolicy?.RequiresEvidence == true)
             {
-                evidence = await evidenceProvider.GetEvidenceAsync(
-                    new DecisionEvidenceRequest(
-                        definition,
-                        state,
-                        request.RuntimeContext,
-                        request.Inputs ?? []),
-                    cancellationToken);
-            }
-            catch (EvidenceUnavailableException error)
-            {
-                logger.LogWarning(
-                    error,
-                    "Evidence is unavailable for decision {DecisionKey} and strategy {StrategyId}",
-                    decisionKey,
-                    state.StrategyId);
-                evidence = null;
+                try
+                {
+                    evidence = await evidenceProvider.GetEvidenceAsync(
+                        new DecisionEvidenceRequest(
+                            definition, state, request.RuntimeContext, resolvedInputs.Values),
+                        cancellationToken);
+                }
+                catch (EvidenceUnavailableException error)
+                {
+                    logger.LogWarning(error,
+                        "Policy evidence is unavailable for decision {DecisionKey} and strategy {StrategyId}",
+                        decisionKey, state.StrategyId);
+                }
             }
 
             if (evidence is null && effectivePolicy?.RequiresEvidence == true)
@@ -152,46 +160,42 @@ public sealed class DecisionService(
                 throw RequiredEvidenceUnavailable(effectivePolicy);
             }
 
-            execution = await strategyExecutor.ExecuteAsync(
-                new StrategyExecutionRequest(
-                    state,
-                    request.Inputs ?? [],
-                    evidence),
-                cancellationToken);
-            if (execution.Candidate is not null &&
-                execution.Mode is "strategy" or "experiment" &&
-                execution.Confidence is null)
+            if (state.NumericRule is null)
             {
-                execution = execution with
-                {
-                    Candidate = null,
-                    Reason = "The strategy result omitted required confidence.",
-                    FailureReason = "strategy_confidence_unavailable"
-                };
+                candidate = state.Value;
+            }
+            else
+            {
+                var execution = await numericRuleExecutor.ExecuteAsync(
+                    new NumericRuleExecutionRequest(definition, state.NumericRule, resolvedInputs.Values),
+                    cancellationToken);
+                candidate = execution.Candidate;
+                executionReason = execution.Reason;
+                executionFailure = execution.FailureReason;
             }
 
             policyDecision = await policyEvaluator.EvaluateAsync(
                 new PolicyEvaluationRequest(
-                    execution.Candidate,
+                    candidate,
                     state.Value,
                     definition.NumberActionSpace,
                     effectivePolicy,
                     evidence,
                     state.LastChangedAt,
-                    execution.FailureReason),
+                    executionFailure),
                 cancellationToken);
         }
 
         var usesFallback = state is null || !policyDecision.Approved;
         var value = usesFallback
             ? definition.FallbackValue
-            : execution!.Candidate!.Value;
+            : candidate!.Value;
         VerifyValueType(definition.ValueType, value);
 
         var decisionId = idGenerator.CreateDecisionId();
         var auditId = idGenerator.CreateAuditId();
-        var mode = usesFallback ? "fallback" : execution!.Mode;
-        var confidence = usesFallback ? null : execution!.Confidence;
+        var mode = usesFallback ? "fallback" : state!.NumericRule is null ? state.Mode : "strategy";
+        ConfidenceReport? confidence = null;
         var controlTarget = state?.ControlTarget;
         var selectedTargetIndex = state is null
             ? -1
@@ -222,8 +226,9 @@ public sealed class DecisionService(
             ? state is null
                 ? "No governed state exists; returned the configured fallback value."
                 : "No safe adaptive candidate; returned the configured fallback value."
-            : execution!.Reason;
+            : executionReason;
         var snapshot = new DecisionSnapshot(
+            scope.TenantId,
             definition.AppId,
             definition.Environment,
             definition.Identity,
@@ -231,14 +236,17 @@ public sealed class DecisionService(
             definition.ValueType,
             fallback,
             request.RuntimeContext,
-            request.Inputs ?? [],
+            resolvedInputs.Values,
             request.RuntimeTarget,
             controlTarget,
             targetProvenance,
             resolutionChain,
             policy,
             evidence,
-            confidence);
+            confidence,
+            callerInputs,
+            resolvedInputs.Provenance,
+            targetPlan.ResolvedTargets ?? []);
 
         if (confirmToken is not null)
         {
@@ -264,17 +272,20 @@ public sealed class DecisionService(
                     mode,
                     fallback,
                     request.RuntimeContext,
-                    request.Inputs ?? [],
+                    resolvedInputs.Values,
                     request.RuntimeTarget,
                     controlTarget,
                     targetProvenance,
                     resolutionChain,
                     policy,
-                    timeProvider.GetUtcNow(),
+                    evaluatedAt,
+                    scope.TenantId,
                     evidence,
                     confidence,
-                    execution?.StrategyId,
-                    reason),
+                    state?.StrategyId,
+                    reason,
+                    callerInputs,
+                    resolvedInputs.Provenance),
                 cancellationToken);
         }
         catch
@@ -326,7 +337,7 @@ public sealed class DecisionService(
             auditId,
             request.RuntimeTarget,
             controlTarget,
-            usesFallback ? null : execution!.StrategyId);
+            usesFallback ? null : state!.StrategyId);
     }
 
     private static DecisionContractException RequiredEvidenceUnavailable(
@@ -347,87 +358,6 @@ public sealed class DecisionService(
                 eligible
                     ? "policy-permitted-required-evidence-unavailable"
                     : "policy-forbids-required-evidence-unavailable"));
-    }
-
-    private static void VerifyInputs(
-        IReadOnlyList<RegisteredSignalInput> registeredInputs,
-        IReadOnlyList<SignalInput>? inputs)
-    {
-        if (inputs is null)
-        {
-            return;
-        }
-
-        var duplicate = inputs.GroupBy(
-                input => input.Signal.Key,
-                StringComparer.Ordinal)
-            .FirstOrDefault(group => group.Count() > 1);
-        if (duplicate is not null)
-        {
-            throw new DecisionContractException(
-                400,
-                "duplicate-signal-input",
-                "The inputs array contains duplicate signal keys.");
-        }
-
-        var contracts = registeredInputs.ToDictionary(input => input.Key, StringComparer.Ordinal);
-        var issues = new List<ProblemIssue>();
-        for (var index = 0; index < inputs.Count; index++)
-        {
-            var input = inputs[index];
-            if (!contracts.TryGetValue(input.Signal.Key, out var contract))
-            {
-                issues.Add(new ProblemIssue(
-                    "signal-not-declared",
-                    "error",
-                    $"/inputs/{index}/signal/key",
-                    $"Signal {input.Signal.Key} is not declared for inference.",
-                    SignalKey: input.Signal.Key));
-                continue;
-            }
-
-            var typeMatches = contract.ValueType switch
-            {
-                "boolean" => input.Value.ValueKind is JsonValueKind.True or JsonValueKind.False,
-                "number" => input.Value.ValueKind is JsonValueKind.Number,
-                "string" => input.Value.ValueKind is JsonValueKind.String,
-                _ => false
-            };
-            if (!typeMatches)
-            {
-                issues.Add(new ProblemIssue(
-                    "signal-type-mismatch",
-                    "error",
-                    $"/inputs/{index}/value",
-                    $"Expected a {contract.ValueType} for {input.Signal.Key}.",
-                    SignalKey: input.Signal.Key));
-                continue;
-            }
-
-            if (contract.ValueType == "number")
-            {
-                var value = input.Value.GetDouble();
-                if ((contract.Minimum is not null && value < contract.Minimum) ||
-                    (contract.Maximum is not null && value > contract.Maximum))
-                {
-                    issues.Add(new ProblemIssue(
-                        "signal-range-violation",
-                        "error",
-                        $"/inputs/{index}/value",
-                        $"Value for {input.Signal.Key} is outside its declared range.",
-                        SignalKey: input.Signal.Key));
-                }
-            }
-        }
-
-        if (issues.Count > 0)
-        {
-            throw new DecisionContractException(
-                422,
-                "invalid-inference-input",
-                "One or more inputs do not conform to the registered decision definition.",
-                issues);
-        }
     }
 
     private static void VerifyRuntimeContext(
@@ -456,13 +386,7 @@ public sealed class DecisionService(
                     $"Runtime context field '{key}' is not registered.");
             }
 
-            var matches = contract.ValueType switch
-            {
-                "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
-                "number" => value.ValueKind is JsonValueKind.Number,
-                "string" => value.ValueKind is JsonValueKind.String,
-                _ => false
-            };
+            var matches = DecisionValues.Matches(value, contract.ValueType);
             if (!matches)
             {
                 throw new DecisionContractException(

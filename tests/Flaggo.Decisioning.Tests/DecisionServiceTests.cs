@@ -30,7 +30,7 @@ public sealed class DecisionServiceTests
                 Identity.ContractDigest,
                 JsonSerializer.SerializeToElement(700)));
 
-        var result = await service.DecideAsync("tetris.dropInterval", CreateRequest());
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", CreateRequest());
 
         Assert.Equal("active-value", result.DecisionMode);
         Assert.Equal(700, result.Value.GetInt32());
@@ -53,7 +53,7 @@ public sealed class DecisionServiceTests
         var audit = new InMemoryAuditSink();
         var service = CreateService(audit);
 
-        var result = await service.DecideAsync("tetris.dropInterval", CreateRequest());
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", CreateRequest());
 
         Assert.Equal("fallback", result.DecisionMode);
         Assert.Equal(800, result.Value.GetInt32());
@@ -75,7 +75,7 @@ public sealed class DecisionServiceTests
         };
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", request));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request));
 
         Assert.Equal(409, error.Status);
         Assert.Equal("contract-conflict", error.Code);
@@ -88,24 +88,22 @@ public sealed class DecisionServiceTests
         var service = CreateService(new FailingAuditSink());
 
         var error = await Assert.ThrowsAsync<IOException>(
-            () => service.DecideAsync("tetris.dropInterval", CreateRequest()));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", CreateRequest()));
 
         Assert.Equal("audit unavailable", error.Message);
     }
 
     [Fact]
-    public async Task DecideAsync_RejectsDuplicateInferenceInputs()
+    public async Task DecideAsync_RejectsMissingRequiredInferenceInputs()
     {
         var service = CreateService(new InMemoryAuditSink());
-        var input = new SignalInput(
-            new SignalRef("tetris.boardPressure"),
-            JsonSerializer.SerializeToElement(0.5));
-        var request = CreateRequest() with { Inputs = [input, input] };
+        var request = CreateRequest() with { Inputs = new Dictionary<string, JsonElement>() };
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", request));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request));
 
-        Assert.Equal("duplicate-signal-input", error.Code);
+        Assert.Equal("invalid-inference-input", error.Code);
+        Assert.Equal(422, error.Status);
     }
 
     [Fact]
@@ -114,19 +112,14 @@ public sealed class DecisionServiceTests
         var service = CreateService(new InMemoryAuditSink());
         var request = CreateRequest() with
         {
-            Inputs =
-            [
-                new SignalInput(
-                    new SignalRef("tetris.boardPressure"),
-                    JsonSerializer.SerializeToElement("high"))
-            ]
+            Inputs = new Dictionary<string, JsonElement> { ["boardPressure"] = JsonSerializer.SerializeToElement("high") }
         };
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", request));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request));
 
         Assert.Equal("invalid-inference-input", error.Code);
-        Assert.Equal("signal-type-mismatch", Assert.Single(error.Issues!).Code);
+        Assert.Equal("invalid-inference-input", Assert.Single(error.Issues!).Code);
     }
 
     [Fact]
@@ -142,7 +135,7 @@ public sealed class DecisionServiceTests
         };
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", request));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request));
 
         Assert.Equal("invalid-runtime-context", error.Code);
     }
@@ -162,7 +155,7 @@ public sealed class DecisionServiceTests
             ]);
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", CreateRequest()));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", CreateRequest()));
 
         Assert.Equal(422, error.Status);
         Assert.Equal("invalid-runtime-context", error.Code);
@@ -179,7 +172,7 @@ public sealed class DecisionServiceTests
             fallbackOrder: ["global"]);
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", CreateRequest()));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", CreateRequest()));
 
         Assert.Equal(422, error.Status);
         Assert.Equal("invalid-runtime-target", error.Code);
@@ -206,7 +199,7 @@ public sealed class DecisionServiceTests
         };
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", request));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request));
 
         Assert.Equal("invalid-runtime-context", error.Code);
     }
@@ -228,7 +221,7 @@ public sealed class DecisionServiceTests
             fallbackOrder: ["global"]);
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync("tetris.dropInterval", CreateRequest()));
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", CreateRequest()));
 
         Assert.Equal(409, error.Status);
         Assert.Equal("contract-conflict", error.Code);
@@ -256,7 +249,7 @@ public sealed class DecisionServiceTests
             }
         };
 
-        var result = await service.DecideAsync("tetris.dropInterval", request);
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request);
         var pending = exposure.Find(result.DecisionId);
 
         Assert.Equal("cohort", pending!.Snapshot.ControlTarget!.Type);
@@ -287,7 +280,7 @@ public sealed class DecisionServiceTests
             RuntimeContext = new Dictionary<string, JsonElement>()
         };
 
-        var result = await service.DecideAsync("tetris.dropInterval", request);
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request);
 
         Assert.Null(result.ControlTarget);
         Assert.False(result.Exposure.ConfirmationRequired);
@@ -313,7 +306,7 @@ public sealed class DecisionServiceTests
             }
         };
 
-        var result = await service.DecideAsync("tetris.dropInterval", request);
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request);
 
         Assert.Equal("fallback", result.DecisionMode);
         Assert.Null(result.ControlTarget);
@@ -338,7 +331,7 @@ public sealed class DecisionServiceTests
             }
         };
 
-        var result = await service.DecideAsync("tetris.dropInterval", request);
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request);
 
         Assert.True(result.Fallback.ResolutionFallbackUsed);
         Assert.Equal("resolution_fallback_broader_target", result.Fallback.Reason);
@@ -368,7 +361,7 @@ public sealed class DecisionServiceTests
             "numeric-rule",
             "strategy-test",
             new NumericRuleStrategy(
-                "tetris.boardPressure",
+                "boardPressure",
                 0.75,
                 700,
                 800),
@@ -396,20 +389,15 @@ public sealed class DecisionServiceTests
             {
                 ["cohort"] = JsonSerializer.SerializeToElement("new_players")
             },
-            Inputs =
-            [
-                new SignalInput(
-                    new SignalRef("tetris.boardPressure"),
-                    JsonSerializer.SerializeToElement(0.82))
-            ]
+            Inputs = new Dictionary<string, JsonElement> { ["boardPressure"] = JsonSerializer.SerializeToElement(0.82) }
         };
 
-        var result = await service.DecideAsync("tetris.dropInterval", request);
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request);
 
         Assert.Equal("strategy", result.DecisionMode);
         Assert.Equal(700, result.Value.GetInt32());
         Assert.Equal("strategy-test", result.StrategyId);
-        Assert.Equal(0.82, result.Confidence!.EvidenceQuality);
+        Assert.Null(result.Confidence);
         Assert.Equal("approved", result.Policy.Result);
         Assert.Equal(evidence, Assert.Single(audit.Records).Evidence);
     }
@@ -425,7 +413,7 @@ public sealed class DecisionServiceTests
             Mode: "strategy",
             StrategyId: "strategy-test",
             NumericRule: new NumericRuleStrategy(
-                "tetris.boardPressure",
+                "boardPressure",
                 0.75,
                 700,
                 800));
@@ -441,15 +429,10 @@ public sealed class DecisionServiceTests
             policy: new DecisionPolicyContract(MinimumEvidenceQuality: 0.7));
         var request = CreateRequest() with
         {
-            Inputs =
-            [
-                new SignalInput(
-                    new SignalRef("tetris.boardPressure"),
-                    JsonSerializer.SerializeToElement(0.82))
-            ]
+            Inputs = new Dictionary<string, JsonElement> { ["boardPressure"] = JsonSerializer.SerializeToElement(0.82) }
         };
 
-        var result = await service.DecideAsync("tetris.dropInterval", request);
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"), "tetris.dropInterval", request);
 
         Assert.Equal("fallback", result.DecisionMode);
         Assert.Equal(800, result.Value.GetInt32());
@@ -484,7 +467,7 @@ public sealed class DecisionServiceTests
                 RequiredEvidenceUnavailable: requiredEvidenceUnavailable));
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync(
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"),
                 "tetris.dropInterval",
                 CreateRequest()));
 
@@ -508,7 +491,7 @@ public sealed class DecisionServiceTests
             Mode: "strategy",
             StrategyId: "strategy-test",
             NumericRule: new NumericRuleStrategy(
-                "tetris.boardPressure",
+                "boardPressure",
                 0.5,
                 700,
                 800));
@@ -521,7 +504,7 @@ public sealed class DecisionServiceTests
                 RequiredEvidenceUnavailable: requiredEvidenceUnavailable));
 
         var error = await Assert.ThrowsAsync<DecisionContractException>(
-            () => service.DecideAsync(
+            () => service.DecideAsync(new("tetris-demo", "dev", "local-development"),
                 "tetris.dropInterval",
                 CreateRequest()));
 
@@ -531,7 +514,7 @@ public sealed class DecisionServiceTests
     }
 
     [Fact]
-    public async Task DecideAsync_FallsBackWhenStrategyExecutorOmitsRequiredConfidence()
+    public async Task DecideAsync_RunsRequestOnlyRulesWithoutEitherEvidenceBackend()
     {
         var state = new GovernedDecisionState(
             Identity.DefinitionId,
@@ -541,23 +524,24 @@ public sealed class DecisionServiceTests
             Mode: "strategy",
             StrategyId: "strategy-test",
             NumericRule: new NumericRuleStrategy(
-                "tetris.boardPressure",
+                "boardPressure",
                 0.5,
                 700,
                 800));
         var service = CreateService(
             new InMemoryAuditSink(),
             state,
-            strategyExecutor: new InvalidConfidenceStrategyExecutor());
+            evidenceProvider: new ThrowingEvidenceProvider());
 
-        var result = await service.DecideAsync(
+        var result = await service.DecideAsync(new("tetris-demo", "dev", "local-development"),
             "tetris.dropInterval",
             CreateRequest());
 
-        Assert.Equal("fallback", result.DecisionMode);
+        Assert.Equal("strategy", result.DecisionMode);
+        Assert.Equal(700, result.Value.GetInt32());
         Assert.Null(result.Confidence);
-        Assert.Null(result.StrategyId);
-        Assert.Contains("strategy_confidence_unavailable", result.Policy.Reasons);
+        Assert.Equal("strategy-test", result.StrategyId);
+        Assert.Equal("approved", result.Policy.Result);
     }
 
     private static DecisionService CreateService(
@@ -567,7 +551,7 @@ public sealed class DecisionServiceTests
         IEvidenceProvider? evidenceProvider = null,
         NumberActionSpaceContract? numberActionSpace = null,
         DecisionPolicyContract? policy = null,
-        IStrategyExecutor? strategyExecutor = null,
+        INumericRuleExecutor? strategyExecutor = null,
         IReadOnlyList<RegisteredRuntimeContextField>? runtimeContext = null,
         IReadOnlyList<string>? targetHierarchy = null,
         string inferenceTarget = "session",
@@ -582,7 +566,7 @@ public sealed class DecisionServiceTests
             "number",
             JsonSerializer.SerializeToElement(800),
             "safe-default",
-            [new RegisteredSignalInput("tetris.boardPressure", "number", 0, 1)],
+            [new RegisteredInput("boardPressure", "number", "request", "Current occupancy.", 0, 1)],
             runtimeContext ??
             [
                 new RegisteredRuntimeContextField(
@@ -625,7 +609,8 @@ public sealed class DecisionServiceTests
                     ["new_players"] = "new_players"
                 }),
             evidenceProvider ?? new InMemoryEvidenceProvider(),
-            strategyExecutor ?? new DeterministicStrategyExecutor(),
+            strategyExecutor ?? new NumericRuleExecutor(),
+            new DecisionInputResolver(new UnexpectedInputEvidenceReader()),
             new DefaultPolicyEvaluator(new FixedTimeProvider()),
             NullLogger<DecisionService>.Instance);
     }
@@ -634,7 +619,8 @@ public sealed class DecisionServiceTests
         Identity,
         new Dictionary<string, JsonElement>(),
         new DecisionClient("tetris-demo", "dev"),
-        new DecisionTargetRef("session", "game-123"));
+        new DecisionTargetRef("session", "game-123"),
+        new Dictionary<string, JsonElement> { ["boardPressure"] = JsonSerializer.SerializeToElement(0.82) });
 
     private sealed class TestIdGenerator : IRuntimeIdGenerator
     {
@@ -683,17 +669,11 @@ public sealed class DecisionServiceTests
                     new IOException("evidence file unavailable")));
     }
 
-    private sealed class InvalidConfidenceStrategyExecutor : IStrategyExecutor
+    private sealed class UnexpectedInputEvidenceReader : IInputEvidenceReader
     {
-        public Task<StrategyExecutionResult> ExecuteAsync(
-            StrategyExecutionRequest request,
+        public Task<InputEvidenceResult> ReadInputsAsync(
+            InputEvidenceRequest request,
             CancellationToken cancellationToken) =>
-            Task.FromResult(
-                new StrategyExecutionResult(
-                    JsonSerializer.SerializeToElement(700),
-                    "strategy",
-                    "strategy-test",
-                    null,
-                    "Invalid test strategy result."));
+            throw new InvalidOperationException("Request-only definitions must not read input evidence.");
     }
 }

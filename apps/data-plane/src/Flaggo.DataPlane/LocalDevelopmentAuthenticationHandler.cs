@@ -18,7 +18,9 @@ public sealed class LocalDevelopmentAuthenticationHandler(
             LocalDevelopmentIdentityHosting.FromConfiguration(configuration);
         var principal = LocalDevelopmentIdentityHosting.CreatePrincipal(
             resource,
-            "polari.decisions:decide polari.exposures:confirm",
+            Request.Headers.Authorization == "Flaggo-Local-Telemetry"
+                ? "polari.telemetry:ingest"
+                : "polari.decisions:decide polari.exposures:confirm",
             Scheme.Name);
         return Task.FromResult(
             AuthenticateResult.Success(

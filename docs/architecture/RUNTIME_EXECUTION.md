@@ -36,6 +36,7 @@ application request
   -> validate { definitionId, revision, contractDigest }
   -> validate registration and dependency readiness
   -> resolve ordered exact targets
+  -> resolve required request/evidence inputs from one immutable generation
   -> select the first compatible governed state
   -> resolve active value, evaluate numeric rule, or select governed fallback
   -> apply runtime policy
@@ -83,18 +84,19 @@ approved value
 
 ### Numeric rule
 
-`numeric-rule` authority evaluates declared live `SignalInput[]` through the
+`numeric-rule` authority evaluates declared resolved primitive inputs through the
 approved deterministic rule. The executor boundary is exactly:
 
 ```text
 RuntimeDefinitionProjection
   + NumericRuleStrategy
-  + SignalInput[]
+  + input-name-to-primitive-value map
   -> numeric candidate or execution error
 ```
 
-`EvidenceSnapshot` does not cross this executor boundary. Evidence remains
-available to policy, audit/explanation, and future proposal producers.
+No evidence snapshot crosses this executor boundary. A reasoning-owned resolver
+supplies request operands and evidence-owned values before execution. The
+executor does not query telemetry or receive lifecycle state.
 
 For each weighted input:
 
@@ -116,11 +118,11 @@ score >= threshold -> valueAtOrAbove
 score < threshold  -> valueBelow
 ```
 
-Both branches are validated during bundle and activation processing. Runtime
+Both branches are validated against the registered result and active rule. Runtime
 passes the exact selected branch to policy. It never clamps, step-aligns, or
 repairs an invalid persisted branch into a third value.
 
-Bundle-authored rules report `confidence: null`; they do not fabricate model
+Deterministic rules report `confidence: null`; they do not fabricate model
 confidence or evidence quality.
 
 ### Governed fallback
@@ -147,9 +149,11 @@ safe. Current checks include:
 - fallback requirements.
 
 For Phase 3, `max-delta` compares every candidate with the fixed
-`actionSpace.default`. With default `800` and delta `50`, both `750` and `850`
-are valid independently, including a `750 -> 850` request sequence. Cooldown,
-hysteresis, and previous-result stabilization remain separate future work.
+manifest `result.default`. With default `800` and delta `50`, both `750` and
+`850` are valid independently, including a `750 -> 850` request sequence. The
+current separately declared cooldown guard uses governed last-change time;
+it is not previous-result stabilization. #41 re-baselines remaining runtime
+policy behavior.
 
 Policy may approve the exact candidate, return governed fallback, or reject it.
 Policy cannot widen authority or synthesize a repaired candidate.
@@ -169,8 +173,9 @@ A successful `RuntimeDecisionResult` includes:
 - decision and audit IDs;
 - explanation summary.
 
-Governed state identity and activation lineage remain in the audit state
-summary; the current runtime response does not expose `stateId`.
+The current runtime response does not expose `stateId`. Complete governed-state
+and activation lineage in the final audit state summary remains the #41
+re-baseline; current audit preserves exact contract and strategy/target identity.
 
 The result records what this request received. It is not future authority.
 
@@ -180,9 +185,9 @@ A ready service must commit the decision audit to storage that survives process
 failure before returning success. Console and in-memory sinks are limited to
 tests or explicitly non-ready debugging.
 
-The audit captures the exact runtime identity, request inputs, targets, selected
-state and activation lineage, authority kind, exact candidate, policy outcome,
-fallback status, result, and timestamp.
+The audit captures authenticated tenant/application/environment, exact runtime
+identity, original caller inputs, resolved inputs and per-input provenance,
+targets, strategy/mode, policy outcome, fallback status, result, and timestamp.
 
 A returned result is not proof that the application used it:
 
@@ -207,11 +212,20 @@ telemetry remains unlinked when it was not caused by an applied decision.
 | Contract error | Missing, unknown, conflicting, or retired exact identity; never fallback-eligible. |
 | Readiness error | Required activation, state, audit, or persistence dependency is not ready; never a decision value. |
 | Invalid decision state | Persisted authority is corrupt or incompatible; never repaired or converted to fallback. |
+| Required input evidence unavailable | Missing, stale, future, ambiguous, invalid, or unavailable declared operands; 503 with SDK fallback forbidden. |
+
+The host passes a verified scope to input resolution. Each evidence read pins
+one generation and evaluation time. Successful retained idempotent replay keeps
+the original result/provenance rather than re-reading changed telemetry.
+Request-only decisions without evidence-dependent policy access neither
+evidence port. Trace sampling flags do not create learned confidence.
 
 ## Future extension boundary
 
-Experiment assignment, rollout routing, override, and evidence-backed runtime
-strategies are not current mechanisms. Each requires explicit state, lifecycle,
+Experiment assignment, rollout routing, override, and new learned runtime
+strategies are not current mechanisms. The current deterministic rule may
+consume declared materialized observations without becoming a learned strategy.
+New mechanisms require explicit state, lifecycle,
 policy, result, audit, and bounded-executor contracts before it can enter the
 request path.
 

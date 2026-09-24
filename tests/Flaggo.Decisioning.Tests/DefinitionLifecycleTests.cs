@@ -11,7 +11,7 @@ public sealed class DefinitionLifecycleTests
     private const string DefinitionId = "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A";
     private const string ActiveRevision = "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3";
     private const string ActiveDigest =
-        "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9";
+        "sha256:ed9b49a622db7d8cec274c8a990c140edbeda55b00ea917c06df46d5e34da377";
     private const string PreviousRevision = "rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K";
     private const string PreviousDigest =
         "sha256:313cf567ee322f3f7028a48095cd4da6016d9d99759761d5651ac4ce84f3ff4e";
@@ -22,11 +22,11 @@ public sealed class DefinitionLifecycleTests
         var bundle = FixtureBody("definition-bundle", "04-apply-approved-receipt.json");
 
         Assert.Equal(
-            "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
+            "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
             CanonicalJson.BundleDigest(bundle));
         Assert.Equal(
             ActiveDigest,
-            CanonicalJson.ContractDigest(bundle.GetProperty("definitions")[0]));
+            CanonicalJson.ContractDigest("tetris.dropInterval", bundle.GetProperty("decisions").GetProperty("tetris.dropInterval")));
     }
 
     [Fact]
@@ -72,8 +72,19 @@ public sealed class DefinitionLifecycleTests
             {
                 Assert.Equal(
                     expected,
-                    CanonicalJson.ContractDigest(variant.GetProperty("definition")));
+                    CanonicalJson.ContractDigest(
+                        testCase.GetProperty("key").GetString()!,
+                        variant.GetProperty("definition")));
             }
+        }
+
+        foreach (var testCase in vectors.RootElement.GetProperty("inequivalentDefinitionCases").EnumerateArray())
+        {
+            var left = testCase.GetProperty("left");
+            var right = testCase.GetProperty("right");
+            Assert.NotEqual(
+                CanonicalJson.ContractDigest(left.GetProperty("key").GetString()!, left.GetProperty("definition")),
+                CanonicalJson.ContractDigest(right.GetProperty("key").GetString()!, right.GetProperty("definition")));
         }
 
         foreach (var testCase in vectors.RootElement
@@ -113,7 +124,7 @@ public sealed class DefinitionLifecycleTests
             FixtureBody(
                 "definition-bundle",
                 "10-validate-new-key-omitted-lineage.json").GetRawText())!.AsObject();
-        var constraints = node["definitions"]![0]!["policy"]!["constraints"]!
+        var constraints = node["decisions"]!.AsObject().First().Value!["policy"]!["constraints"]!
             .AsArray();
         constraints.Single(item => item!["kind"]!.GetValue<string>() == "cooldown")![
             "seconds"] = double.MaxValue;
@@ -129,7 +140,7 @@ public sealed class DefinitionLifecycleTests
     }
 
     [Fact]
-    public async Task ValidateAsync_ReportsUnknownSignalWithoutMutation()
+    public async Task ValidateAsync_ReportsUnknownEvidenceBindingWithoutMutation()
     {
         var registry = CreateRegistry(ActiveRevision, ActiveDigest);
         var bundle = FixtureBody("definition-bundle", "02-validate-invalid.json");
@@ -139,8 +150,8 @@ public sealed class DefinitionLifecycleTests
         Assert.Equal("invalid", result.Status);
         Assert.Contains(
             result.Issues,
-            issue => issue.Code == "unknown-signal" &&
-                     issue.Path == "/definitions/0/inference/inputs/0");
+            issue => issue.Code == "invalid-definition" &&
+                     issue.Path == "/decisions/tetris.dropInterval/inputs/boardPressure");
         var lookup = await registry.ResolveRuntimeAsync(
             "tetris-demo",
             "dev",
@@ -152,7 +163,7 @@ public sealed class DefinitionLifecycleTests
     }
 
     [Fact]
-    public async Task ValidateAsync_ReturnsEveryStableSemanticIssueCategory()
+    public async Task ValidateAsync_ReturnsInputSpecificSemanticIssues()
     {
         var registry = CreateRegistry(ActiveRevision, ActiveDigest);
         var bundle = FixtureBody(
@@ -165,12 +176,13 @@ public sealed class DefinitionLifecycleTests
         Assert.Equal(
             [
                 "invalid-definition",
-                "invalid-objective",
-                "invalid-policy",
-                "invalid-signal-schema",
-                "invalid-strategy"
+                "invalid-definition",
+                "invalid-definition",
+                "invalid-definition",
+                "invalid-definition"
             ],
             result.Issues.Select(issue => issue.Code).Order());
+        Assert.Equal(5, result.Issues.Select(issue => issue.Path).Distinct().Count());
     }
 
     [Fact]
@@ -317,8 +329,8 @@ public sealed class DefinitionLifecycleTests
             "definition-bundle",
             "06-apply-requires-approval.json");
         var competingNode = JsonNode.Parse(original.GetRawText())!.AsObject();
-        competingNode["definitions"]![0]!["fallback"]!["value"] = 850;
-        competingNode["definitions"]![0]!["actionSpace"]!["default"] = 850;
+        competingNode["decisions"]!.AsObject().First().Value!["result"]!["default"] = 850;
+        competingNode["decisions"]!.AsObject().First().Value!["result"]!["default"] = 850;
         using var competingDocument = JsonDocument.Parse(competingNode.ToJsonString());
         var competing = competingDocument.RootElement.Clone();
         var originalPending = Assert.IsType<RequiresApprovalResult>(
@@ -362,8 +374,8 @@ public sealed class DefinitionLifecycleTests
             FixtureBody(
                 "definition-bundle",
                 "06-apply-requires-approval.json").GetRawText())!.AsObject();
-        pendingNode["definitions"]![0]!["fallback"]!["value"] = 850;
-        pendingNode["definitions"]![0]!["actionSpace"]!["default"] = 850;
+        pendingNode["decisions"]!.AsObject().First().Value!["result"]!["default"] = 850;
+        pendingNode["decisions"]!.AsObject().First().Value!["result"]!["default"] = 850;
         using var pendingDocument = JsonDocument.Parse(pendingNode.ToJsonString());
         var pending = Assert.IsType<RequiresApprovalResult>(
             (await registry.ApplyAsync(
@@ -398,7 +410,7 @@ public sealed class DefinitionLifecycleTests
             FixtureBody(
                 "definition-bundle",
                 "01-validate-identical.json").GetRawText())!.AsObject();
-        node["definitions"]![0]!["policy"] = new JsonObject
+        node["decisions"]!.AsObject().First().Value!["policy"] = new JsonObject
         {
             ["kind"] = "reference",
             ["policyId"] = "policy-unresolved"
@@ -419,13 +431,14 @@ public sealed class DefinitionLifecycleTests
             FixtureBody(
                 "definition-bundle",
                 "01-validate-identical.json").GetRawText())!.AsObject();
-        node["definitions"]![0]!.AsObject().Remove("policy");
+        node["decisions"]!.AsObject().First().Value!.AsObject().Remove("policy");
         using var document = JsonDocument.Parse(node.ToJsonString());
 
         var result = await registry.ValidateAsync(document.RootElement);
 
         Assert.Equal("invalid", result.Status);
-        Assert.Contains(result.Issues, issue => issue.Code == "invalid-policy");
+        Assert.Contains(result.Issues, issue => issue.Code == "invalid-definition" &&
+            issue.Path == "/decisions/tetris.dropInterval");
     }
 
     [Fact]
@@ -436,7 +449,7 @@ public sealed class DefinitionLifecycleTests
             FixtureBody(
                 "definition-bundle",
                 "01-validate-identical.json").GetRawText())!.AsObject();
-        node["definitions"]![0]!["policy"]!["clientFallback"] = new JsonObject
+        node["decisions"]!.AsObject().First().Value!["policy"]!["clientFallback"] = new JsonObject
         {
             ["requiredEvidenceUnavailable"] = "sometimes"
         };
@@ -445,7 +458,8 @@ public sealed class DefinitionLifecycleTests
         var result = await registry.ValidateAsync(document.RootElement);
 
         Assert.Equal("invalid", result.Status);
-        Assert.Contains(result.Issues, issue => issue.Code == "invalid-policy");
+        Assert.Contains(result.Issues, issue => issue.Code == "invalid-definition" &&
+            issue.Path == "/decisions/tetris.dropInterval/policy/clientFallback/requiredEvidenceUnavailable");
     }
 
     private static InMemoryDefinitionRegistry CreateRegistry(
@@ -462,13 +476,16 @@ public sealed class DefinitionLifecycleTests
                     digest,
                     revision,
                     digest == ActiveDigest
-                        ? "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f"
+                        ? "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c"
                         : "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 "number",
                 JsonSerializer.SerializeToElement(800),
                 "safe_default_drop_interval",
                 [],
-                [])
+                [],
+                TargetHierarchy: ["global"],
+                InferenceTarget: "global",
+                FallbackOrder: [])
         ],
         new SequenceDefinitionIdentityGenerator());
 

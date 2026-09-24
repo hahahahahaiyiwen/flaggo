@@ -1,11 +1,13 @@
-import type {
-  DecisionResult,
-  ExposureConfirmationResult,
-  FlaggoClient,
-  TelemetrySink,
+import {
+  confirmedExposureAttributes,
+  type DecisionResult,
+  type ExposureConfirmationResult,
+  type FlaggoClient,
 } from "@flaggo/sdk";
-
-import { createAdaptiveWorkerSignals } from "./signals.js";
+import type {
+  ApplicationLogger,
+} from "./telemetry.js";
+import type { catalog } from "./generated/catalog.js";
 
 export interface WorkItem {
   id: string;
@@ -74,21 +76,18 @@ const profileDefinitions: Record<WorkloadProfile, ProfileDefinition> = {
 
 export class AdaptiveWorker {
   private readonly queue: QueuedWorkItem[] = [];
-  private readonly signals;
   private pendingConfirmation: PendingConfirmation | undefined;
   private tickNumber = 0;
 
   constructor(
-    private readonly flaggo: FlaggoClient,
-    telemetry: TelemetrySink,
+    private readonly flaggo: FlaggoClient<typeof catalog>,
+    private readonly telemetry: ApplicationLogger,
     private readonly clock: WorkerClock = new DeterministicWorkerClock(),
     private readonly queueCapacity = 8,
     private readonly targetLatencyMs = 100,
     private readonly workerId = "adaptive-worker-1",
     private readonly claimedCohort = "worker-canary",
-  ) {
-    this.signals = createAdaptiveWorkerSignals(telemetry);
-  }
+  ) {}
 
   get queueDepth(): number {
     return this.queue.length;
@@ -115,88 +114,14 @@ export class AdaptiveWorker {
     await this.retryPendingConfirmation();
     this.enqueue(profile);
     const queueDepthBefore = this.queue.length;
-    this.signals.queueDepth.emit(queueDepthBefore);
+    this.telemetry.emit({ eventName: "worker.queue.depth", body: queueDepthBefore });
     const queuePressure = this.calculateQueuePressure();
-    this.signals.queuePressure.emit(queuePressure);
+    this.telemetry.emit({ eventName: "worker.queue.pressure", body: queuePressure });
     const flaggo = this.flaggo;
 
     const decision = await flaggo.tune.numberDetailed(
       "demo.workerBatchSize",
       {
-        definition: {
-          key: "demo.workerBatchSize",
-          valueType: "number",
-          actionSpace: {
-            type: "number",
-            min: 1,
-            max: 10,
-            step: 1,
-            default: 3,
-          },
-          fallback: {
-            value: 3,
-            reason: "safe_default_worker_batch_size",
-          },
-          runtimeContextSchema: {
-            workerId: {
-              type: "string",
-              required: true,
-            },
-            cohort: {
-              type: "string",
-              target: "cohort",
-            },
-          },
-          targetHierarchy: [
-            "cohort",
-            "global",
-          ],
-          signals: {
-            allowed: [
-              { key: "demo.queuePressure" },
-            ],
-          },
-          inference: {
-            target: "cohort",
-            inputs: [
-              { key: "demo.queuePressure" },
-            ],
-            fallbackOrder: [
-              "global",
-            ],
-          },
-          onlineStrategy: {
-            mode: "approved-strategy",
-            liveInputs: [
-              "queuePressure",
-            ],
-          },
-          policy: {
-            kind: "inline",
-            constraints: [
-              {
-                kind: "number-bounds",
-                min: 1,
-                max: 10,
-              },
-              {
-                kind: "max-delta",
-                value: 3,
-              },
-              {
-                kind: "cooldown",
-                seconds: 1,
-              },
-              {
-                kind: "min-evidence-quality",
-                value: 0.8,
-              },
-            ],
-            clientFallback: {
-              requiredEvidenceUnavailable: "allow",
-            },
-          },
-        },
         runtimeTarget: {
           type: "cohort",
           id: this.claimedCohort,
@@ -205,9 +130,7 @@ export class AdaptiveWorker {
           workerId: this.workerId,
           cohort: this.claimedCohort,
         },
-        inputs: [
-          this.signals.queuePressure.input(queuePressure),
-        ],
+        inputs: { queuePressure },
         idempotencyKey:
           `adaptive-worker:${this.workerId}:${this.tickNumber}`,
       },
@@ -232,9 +155,14 @@ export class AdaptiveWorker {
         throw new Error("The pending exposure confirmation was not retained.");
       }
       operations.push(`exposure-confirmed:${confirmation.exposureId}`);
+      this.telemetry.emit({
+        eventName: "worker.batch.applied",
+        body: { batchSize: decision.value, processedCount: processedItemIds.length },
+        attributes: confirmedExposureAttributes(confirmation),
+      });
     }
 
-    this.signals.queueDepth.emit(this.queue.length);
+    this.telemetry.emit({ eventName: "worker.queue.depth", body: this.queue.length });
     return {
       profile,
       queuePressure,
@@ -272,10 +200,9 @@ export class AdaptiveWorker {
         item,
         enqueuedAtMs: this.clock.now(),
       });
-      this.signals.itemEnqueued.emit({
-        itemId: item.id,
-        processingMs: item.processingMs,
-        shouldFail: item.shouldFail,
+      this.telemetry.emit({
+        eventName: "worker.item.enqueued",
+        body: { itemId: item.id, processingMs: item.processingMs, shouldFail: item.shouldFail },
       });
     }
   }
@@ -303,10 +230,10 @@ export class AdaptiveWorker {
       this.clock.advance(queued.item.processingMs);
       const processingLatencyMs =
         this.clock.now() - queued.enqueuedAtMs;
-      this.signals.processingLatencyMs.emit(processingLatencyMs);
-      this.signals.itemCompleted.emit({
-        itemId: queued.item.id,
-        succeeded: !queued.item.shouldFail,
+      this.telemetry.emit({ eventName: "worker.processing.latency", body: processingLatencyMs });
+      this.telemetry.emit({
+        eventName: "worker.item.completed",
+        body: { itemId: queued.item.id, succeeded: !queued.item.shouldFail },
       });
       processed.push(queued.item.id);
     }

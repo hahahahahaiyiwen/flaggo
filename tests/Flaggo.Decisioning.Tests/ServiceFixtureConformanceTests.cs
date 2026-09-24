@@ -177,6 +177,9 @@ public sealed class ServiceFixtureConformanceTests
             case FixtureHost.SchemaNegative:
                 await ExecuteRawJsonNegativeCasesAsync(fixture);
                 break;
+            case FixtureHost.Otlp:
+                await OtlpHostTests.ExecuteScopeFixtureAsync(fixture);
+                break;
             default:
                 throw new ArgumentOutOfRangeException();
         }
@@ -379,7 +382,7 @@ public sealed class ServiceFixtureConformanceTests
                     : null;
             var confirmationService =
                 services.GetRequiredService<IExposureConfirmationService>();
-            await confirmationService.ConfirmAsync(
+            await confirmationService.ConfirmAsync("fixture-tenant",
                 "decision-123",
                 new ExposureConfirmationRequest(confirmToken, appliedAt),
                 new HashSet<string>(StringComparer.Ordinal) { "tetris-demo" },
@@ -881,7 +884,7 @@ public sealed class ServiceFixtureConformanceTests
                 receipt.GetProperty("bundleDigest").GetString(),
                 actualReceipt.GetProperty("bundleDigest").GetString());
             var snapshotDefinition = ApprovalSnapshotBundle()
-                .GetProperty("definitions")[0];
+                .GetProperty("decisions").EnumerateObject().First().Value;
             foreach (var definition in receipt.GetProperty("acceptedDefinitions")
                          .EnumerateObject())
             {
@@ -896,7 +899,7 @@ public sealed class ServiceFixtureConformanceTests
                     expectedIdentity.GetProperty("revision").GetString(),
                     actualIdentity.GetProperty("revision").GetString());
                 Assert.Equal(
-                    CanonicalJson.ContractDigest(snapshotDefinition),
+                    CanonicalJson.ContractDigest(definition.Name, snapshotDefinition),
                     actualIdentity.GetProperty("contractDigest").GetString());
             }
         }
@@ -1077,7 +1080,10 @@ public sealed class ServiceFixtureConformanceTests
                 : "strategy",
             body.TryGetProperty("strategyId", out var strategy)
                 ? strategy.GetString()
-                : "fixture-strategy");
+                : null,
+            NumericRule: body.TryGetProperty("decisionMode", out mode) && mode.GetString() == "strategy"
+                ? new NumericRuleStrategy("boardPressure", 0.5, 850, 750)
+                : null);
     }
 
     private static InMemoryDefinitionRegistry ControlRegistry(
@@ -1097,7 +1103,10 @@ public sealed class ServiceFixtureConformanceTests
                 [PreviousDefinition()],
             SetupKind.MultiDefinition => MultiDefinitions(fixture),
             SetupKind.LineageMismatch => LineageMismatchDefinitions(),
-            SetupKind.MetadataOnly => LocalRegistryHosting.DefaultDefinitions(),
+            SetupKind.MetadataOnly => [IdenticalDefinition() with
+            {
+                Identity = IdenticalDefinition().Identity with { BundleDigest = $"sha256:{new string('f', 64)}" }
+            }],
             _ => [IdenticalDefinition()]
         };
         return new InMemoryDefinitionRegistry(
@@ -1114,7 +1123,7 @@ public sealed class ServiceFixtureConformanceTests
             Identity = definition.Identity with
             {
                 BundleDigest =
-                    "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f"
+                    "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c"
             }
         };
     }
@@ -1136,31 +1145,11 @@ public sealed class ServiceFixtureConformanceTests
         JsonElement fixture)
     {
         var bundle = fixture.GetProperty("request").GetProperty("body");
-        var accepted = fixture.GetProperty("expected")
+        var receipt = fixture.GetProperty("expected")
             .GetProperty("body")
-            .GetProperty("acceptedDefinitions");
-        return bundle.GetProperty("definitions").EnumerateArray().Select(definition =>
-        {
-            var key = definition.GetProperty("key").GetString()!;
-            var identity = accepted.GetProperty(key);
-            return new RuntimeDecisionDefinition(
-                "tetris-demo",
-                "dev",
-                key,
-                new RuntimeContractIdentity(
-                    identity.GetProperty("definitionId").GetString()!,
-                    identity.GetProperty("contractDigest").GetString()!,
-                    identity.GetProperty("revision").GetString()!,
-                    fixture.GetProperty("expected")
-                        .GetProperty("body")
-                        .GetProperty("bundleDigest")
-                        .GetString()),
-                definition.GetProperty("valueType").GetString()!,
-                definition.GetProperty("fallback").GetProperty("value").Clone(),
-                "fixture",
-                [],
-                []);
-        }).ToArray();
+            .Deserialize<RegistrationReceipt>(RuntimeHttp.JsonOptions)!;
+        return InMemoryDefinitionRegistry.ProjectApprovedManifest(bundle, receipt)
+            .Select(projection => projection.Runtime).ToArray();
     }
 
     private static IReadOnlyList<RuntimeDecisionDefinition>
@@ -1242,6 +1231,7 @@ public sealed class ServiceFixtureConformanceTests
 
     private static DecisionSnapshot ExposureSnapshot() =>
         new(
+            "fixture-tenant",
             "tetris-demo",
             "dev",
             LocalRegistryHosting.DefaultDefinitions()[0].Identity,
@@ -1249,7 +1239,7 @@ public sealed class ServiceFixtureConformanceTests
             "number",
             new ServerFallbackInfo("server", false, false, null),
             new Dictionary<string, JsonElement>(),
-            [],
+            new Dictionary<string, JsonElement>(),
             null,
             new DecisionTargetRef("cohort", "new_players"),
             [],
@@ -1304,6 +1294,9 @@ public sealed class ServiceFixtureConformanceTests
     private static IReadOnlyDictionary<string, FixturePlan> BuildPlans() =>
         new Dictionary<string, FixturePlan>(StringComparer.Ordinal)
         {
+            ["otlp-metrics-insufficient-scope"] = new(FixtureHost.Otlp, SetupKind.OtlpScopeDenied),
+            ["otlp-traces-insufficient-scope"] = new(FixtureHost.Otlp, SetupKind.OtlpScopeDenied),
+            ["otlp-logs-insufficient-scope"] = new(FixtureHost.Otlp, SetupKind.OtlpScopeDenied),
             ["decide-active-fixed-value"] = Data(SetupKind.RuntimeDecision),
             ["decide-active-numeric-strategy"] = Data(SetupKind.RuntimeDecision),
             ["decide-targetless-global-value"] = Data(SetupKind.RuntimeDecision),
@@ -1402,6 +1395,8 @@ public sealed class ServiceFixtureConformanceTests
             builder.UseEnvironment("Development");
             builder.UseSetting("Flaggo:Authentication:LocalDevelopmentBypass", "true");
             builder.UseSetting("Flaggo:Registry:LocalFilePath", registryPath);
+            builder.UseSetting("Flaggo:Telemetry:CommitDescriptorPath",
+                Path.Combine(Path.GetDirectoryName(registryPath)!, "telemetry", "inputs.commit.json"));
             builder.ConfigureTestServices(services =>
             {
                 ConfigureAuthentication(services, fixture, plan);
@@ -1410,6 +1405,10 @@ public sealed class ServiceFixtureConformanceTests
                 services.RemoveAll<IRegistryHealth>();
                 var registry = RuntimeRegistry(fixture, plan);
                 services.AddSingleton(registry);
+                services.RemoveAll<IEvidenceBindingReader>();
+                services.AddSingleton<IEvidenceBindingReader>(
+                    registry as IEvidenceBindingReader
+                    ?? throw new InvalidOperationException("Fixture registry must expose approved evidence bindings."));
                 services.AddSingleton<IRegistryHealth>(
                     registry as IRegistryHealth ?? new AvailableRegistryHealth());
 
@@ -1423,8 +1422,8 @@ public sealed class ServiceFixtureConformanceTests
                 services.RemoveAll<IRuntimeIdGenerator>();
                 services.AddSingleton<IRuntimeIdGenerator>(
                     new FixtureRuntimeIdGenerator(fixture));
-                services.RemoveAll<IStrategyExecutor>();
-                services.AddSingleton<IStrategyExecutor>(
+                services.RemoveAll<INumericRuleExecutor>();
+                services.AddSingleton<INumericRuleExecutor>(
                     new FixtureStrategyExecutor(fixture));
                 services.RemoveAll<IPolicyEvaluator>();
                 services.AddSingleton<IPolicyEvaluator>(
@@ -1569,11 +1568,13 @@ public sealed class ServiceFixtureConformanceTests
         DataPlane,
         ControlPlane,
         SdkLocal,
-        SchemaNegative
+        SchemaNegative,
+        Otlp
     }
 
     private enum SetupKind
     {
+        OtlpScopeDenied,
         RuntimeDecision,
         UnknownKey,
         UnknownDefinition,
@@ -1714,35 +1715,23 @@ public sealed class ServiceFixtureConformanceTests
     }
 
     private sealed class FixtureStrategyExecutor(JsonElement fixture) :
-        IStrategyExecutor
+        INumericRuleExecutor
     {
         private readonly JsonElement _body = fixture.GetProperty("expected")
             .TryGetProperty("body", out var body)
             ? body
             : default;
 
-        public Task<StrategyExecutionResult> ExecuteAsync(
-            StrategyExecutionRequest request,
+        public Task<NumericRuleExecutionResult> ExecuteAsync(
+            NumericRuleExecutionRequest request,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var confidence = _body.ValueKind == JsonValueKind.Object &&
-                             _body.TryGetProperty("confidence", out var report) &&
-                             report.ValueKind == JsonValueKind.Object
-                ? report.Deserialize<ConfidenceReport>(RuntimeHttp.JsonOptions)
-                : null;
             return Task.FromResult(
-                new StrategyExecutionResult(
+                new NumericRuleExecutionResult(
                     _body.TryGetProperty("value", out var value)
                         ? value.Clone()
-                        : request.State.Value,
-                    _body.TryGetProperty("decisionMode", out var mode)
-                        ? mode.GetString()!
-                        : request.State.Mode,
-                    _body.TryGetProperty("strategyId", out var strategy)
-                        ? strategy.GetString()
-                                : null,
-                    confidence,
+                        : request.Definition.FallbackValue,
                     _body.TryGetProperty("reason", out var reason)
                         ? reason.GetString()!
                         : "Fixture strategy completed."));
@@ -1772,8 +1761,12 @@ public sealed class ServiceFixtureConformanceTests
     }
 
     private sealed class ThrowingRegistry(Exception exception) :
-        IRuntimeDefinitionReader
+        IRuntimeDefinitionReader, IEvidenceBindingReader
     {
+        public Task<IReadOnlyList<EvidenceBindingProjection>> ReadBindingsAsync(
+            ApplicationScope scope, CancellationToken cancellationToken) =>
+            Task.FromException<IReadOnlyList<EvidenceBindingProjection>>(exception);
+
         public Task<RuntimeDefinitionLookup> ResolveRuntimeAsync(
             string appId,
             string environment,

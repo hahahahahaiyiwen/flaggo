@@ -1,0 +1,39 @@
+{
+  "format": "flaggo.decision-definition-bundle/v2",
+  "application": { "id": "adaptive-worker-demo", "environment": "dev" },
+  "source": {
+    "repository": "github.com/hahahahahaiyiwen/flaggo",
+    "path": "examples/adaptive-worker/decision-manifest.json"
+  },
+  "decisions": {
+    "demo.workerBatchSize": {
+      "result": { "type": "number", "min": 1, "max": 10, "step": 1, "default": 3 },
+      "context": {
+        "workerId": { "type": "string", "required": true },
+        "cohort": { "type": "string", "target": "cohort" }
+      },
+      "targeting": {
+        "hierarchy": ["cohort", "global"],
+        "primary": "cohort",
+        "fallbackOrder": ["global"]
+      },
+      "inputs": {
+        "queuePressure": {
+          "source": "request",
+          "type": "number",
+          "meaning": "Current normalized queue pressure computed by the worker.",
+          "unit": "1",
+          "range": [0, 1]
+        }
+      },
+      "policy": {
+        "kind": "inline",
+        "constraints": [
+          { "kind": "number-bounds", "min": 1, "max": 10 },
+          { "kind": "max-delta", "value": 3 },
+          { "kind": "cooldown", "seconds": 1 }
+        ]
+      }
+    }
+  }
+}

@@ -4,13 +4,13 @@ using Flaggo.Shared.Contracts;
 namespace Flaggo.State;
 
 public sealed record NumericRuleInput(
-    string SignalKey,
+    string InputKey,
     double Minimum,
     double Maximum,
     double Weight);
 
 public sealed record NumericRuleStrategy(
-    string InputSignalKey,
+    string InputKey,
     double Threshold,
     double ValueAtOrAbove,
     double ValueBelow,
@@ -258,6 +258,7 @@ public sealed record ExposureConfirmationPreparation(
     bool AlreadyConfirmed);
 
 public sealed record DecisionSnapshot(
+    string TenantId,
     string AppId,
     string Environment,
     RuntimeContractIdentity Contract,
@@ -265,14 +266,17 @@ public sealed record DecisionSnapshot(
     string ValueType,
     ServerFallbackInfo Fallback,
     IReadOnlyDictionary<string, JsonElement> RuntimeContext,
-    IReadOnlyList<SignalInput> Inputs,
+    IReadOnlyDictionary<string, JsonElement> Inputs,
     DecisionTargetRef? RuntimeTarget,
     DecisionTargetRef? ControlTarget,
     IReadOnlyList<TargetResolutionProvenance> TargetProvenance,
     IReadOnlyList<string> ResolutionChain,
     PolicyEvaluationResult Policy,
     DecisionEvidenceSnapshot? Evidence = null,
-    ConfidenceReport? Confidence = null);
+    ConfidenceReport? Confidence = null,
+    IReadOnlyDictionary<string, JsonElement>? RequestInputs = null,
+    IReadOnlyDictionary<string, InputProvenance>? InputProvenance = null,
+    IReadOnlyList<DecisionTargetRef>? ResolvedTargets = null);
 
 public sealed class ExposureNotFoundException : Exception;
 
@@ -291,6 +295,7 @@ public interface IExposureStore
         CancellationToken cancellationToken);
 
     Task<ExposureConfirmationOutcome?> FindReplayAsync(
+        string tenantId,
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -298,6 +303,7 @@ public interface IExposureStore
         CancellationToken cancellationToken);
 
     Task<ExposureConfirmationPreparation> PrepareConfirmationAsync(
+        string tenantId,
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -310,11 +316,24 @@ public interface IExposureStore
         CancellationToken cancellationToken);
 }
 
+public sealed record ConfirmedExposure(
+    ExposureConfirmationResult Confirmation,
+    DecisionSnapshot Snapshot);
+
+public interface IConfirmedExposureReader
+{
+    Task<ConfirmedExposure?> FindConfirmedAsync(
+        string exposureId,
+        ApplicationScope scope,
+        CancellationToken cancellationToken);
+}
+
 public sealed class InMemoryExposureStore(
     TimeProvider timeProvider,
-    Func<string> createExposureId) : IExposureStore
+    Func<string> createExposureId) : IExposureStore, IConfirmedExposureReader
 {
     private readonly Dictionary<string, PendingExposure> _exposures = [];
+    private readonly Dictionary<string, string> _confirmedIds = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
     public PendingExposure? Find(string decisionId)
@@ -356,6 +375,7 @@ public sealed class InMemoryExposureStore(
     }
 
     public Task<ExposureConfirmationPreparation> PrepareConfirmationAsync(
+        string tenantId,
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -366,6 +386,7 @@ public sealed class InMemoryExposureStore(
         lock (_gate)
         {
             if (!_exposures.TryGetValue(decisionId, out var exposure) ||
+                exposure.Snapshot.TenantId != tenantId ||
                 !appIds.Contains(exposure.Snapshot.AppId) ||
                 !environments.Contains(exposure.Snapshot.Environment) ||
                 !string.Equals(exposure.ConfirmToken, request.ConfirmToken, StringComparison.Ordinal))
@@ -463,6 +484,10 @@ public sealed class InMemoryExposureStore(
                 throw new ExposureConfirmationConflictException();
             }
 
+            if (_confirmedIds.TryGetValue(exposureId, out var owner) && owner != decisionId)
+            {
+                throw new ExposureConfirmationConflictException();
+            }
             _exposures[decisionId] = exposure with
             {
                 AppliedAt = exposure.PreparedAppliedAt,
@@ -470,11 +495,35 @@ public sealed class InMemoryExposureStore(
                 PreparedAppliedAt = null,
                 PreparedConfirmation = null
             };
+            _confirmedIds.Add(exposureId, decisionId);
             return Task.CompletedTask;
         }
     }
 
+    public Task<ConfirmedExposure?> FindConfirmedAsync(
+        string exposureId,
+        ApplicationScope scope,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (!_confirmedIds.TryGetValue(exposureId, out var decisionId) ||
+                !_exposures.TryGetValue(decisionId, out var exposure) ||
+                exposure.Confirmation is null ||
+                exposure.Snapshot.TenantId != scope.TenantId ||
+                exposure.Snapshot.AppId != scope.AppId ||
+                exposure.Snapshot.Environment != scope.Environment)
+            {
+                return Task.FromResult<ConfirmedExposure?>(null);
+            }
+            return Task.FromResult<ConfirmedExposure?>(
+                new ConfirmedExposure(exposure.Confirmation, exposure.Snapshot));
+        }
+    }
+
     public Task<ExposureConfirmationOutcome?> FindReplayAsync(
+        string tenantId,
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -485,6 +534,7 @@ public sealed class InMemoryExposureStore(
         lock (_gate)
         {
             if (!_exposures.TryGetValue(decisionId, out var exposure) ||
+                exposure.Snapshot.TenantId != tenantId ||
                 !appIds.Contains(exposure.Snapshot.AppId) ||
                 !environments.Contains(exposure.Snapshot.Environment) ||
                 !string.Equals(exposure.ConfirmToken, request.ConfirmToken, StringComparison.Ordinal))

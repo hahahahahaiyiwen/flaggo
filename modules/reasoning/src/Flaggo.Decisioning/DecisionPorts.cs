@@ -17,7 +17,8 @@ public sealed record TargetResolutionPlan(
     IReadOnlyDictionary<string, string>? TargetContextKeys = null,
     IReadOnlyList<bool>? StateTargetFallbacks = null,
     IReadOnlySet<string>? AuthoritativelyResolvedTargetTypes = null,
-    IReadOnlySet<int>? ServerDerivedTargetIndexes = null)
+    IReadOnlySet<int>? ServerDerivedTargetIndexes = null,
+    IReadOnlyList<DecisionTargetRef>? ResolvedTargets = null)
 {
     public TargetResolutionDescription Describe(
         DecisionTargetRef? controlTarget,
@@ -361,6 +362,28 @@ public sealed class DefaultTargetResolver(
             targetFallbacks.Add(targetlessGlobalFallback);
         }
 
+        var resolvedTargets = new List<DecisionTargetRef>();
+        foreach (var type in definition.TargetHierarchy)
+        {
+            if (type == "global")
+            {
+                resolvedTargets.Add(new DecisionTargetRef("global", "global"));
+                continue;
+            }
+            var claimedId = runtimeTarget?.Type == type ? runtimeTarget.Id :
+                contextTargets.GetValueOrDefault(type);
+            if (claimedId is null) continue;
+            if (type == "cohort")
+            {
+                if (_authoritativeCohorts.TryGetValue(claimedId, out var authoritative))
+                    resolvedTargets.Add(new DecisionTargetRef(type, authoritative));
+            }
+            else
+            {
+                resolvedTargets.Add(new DecisionTargetRef(type, claimedId));
+            }
+        }
+
         return Task.FromResult(
             new TargetResolutionPlan(
                 targets,
@@ -370,7 +393,8 @@ public sealed class DefaultTargetResolver(
                 targetContextKeys,
                 targetFallbacks,
                 authoritativelyResolvedTargetTypes,
-                serverDerivedTargetIndexes));
+                serverDerivedTargetIndexes,
+                resolvedTargets));
     }
 
     private static void ValidateRuntimeTarget(
@@ -409,66 +433,48 @@ public sealed class DefaultTargetResolver(
     }
 }
 
-public sealed record StrategyExecutionRequest(
-    GovernedDecisionState State,
-    IReadOnlyList<SignalInput> Inputs,
-    DecisionEvidenceSnapshot? Evidence);
+public sealed record NumericRuleExecutionRequest(
+    RuntimeDecisionDefinition Definition,
+    NumericRuleStrategy Rule,
+    IReadOnlyDictionary<string, JsonElement> Inputs);
 
-public sealed record StrategyExecutionResult(
+public sealed record NumericRuleExecutionResult(
     JsonElement? Candidate,
-    string Mode,
-    string? StrategyId,
-    ConfidenceReport? Confidence,
     string Reason,
     string? FailureReason = null);
 
-public interface IStrategyExecutor
+public interface INumericRuleExecutor
 {
-    Task<StrategyExecutionResult> ExecuteAsync(
-        StrategyExecutionRequest request,
+    Task<NumericRuleExecutionResult> ExecuteAsync(
+        NumericRuleExecutionRequest request,
         CancellationToken cancellationToken);
 }
 
-public sealed class DeterministicStrategyExecutor : IStrategyExecutor
+public sealed class NumericRuleExecutor : INumericRuleExecutor
 {
-    public Task<StrategyExecutionResult> ExecuteAsync(
-        StrategyExecutionRequest request,
+    public Task<NumericRuleExecutionResult> ExecuteAsync(
+        NumericRuleExecutionRequest request,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (request.State.NumericRule is null)
-        {
-            return Task.FromResult(
-                new StrategyExecutionResult(
-                    request.State.Value,
-                    request.State.Mode,
-                    request.State.StrategyId,
-                    null,
-                    "Returned the active governed value."));
-        }
-
-        if (request.State.NumericRule.WeightedInputs is { Count: > 0 } weightedInputs)
+        if (request.Definition.ValueType != "number") return Task.FromResult(Invalid());
+        if (request.Rule.WeightedInputs is { Count: > 0 } weightedInputs)
         {
             var score = 0d;
             var totalWeight = 0d;
             foreach (var ruleInput in weightedInputs)
             {
-                var matching = request.Inputs.Where(value =>
-                        string.Equals(
-                            value.Signal.Key,
-                            ruleInput.SignalKey,
-                            StringComparison.Ordinal))
-                    .ToArray();
-                if (matching.Length != 1 ||
-                    matching[0].Value.ValueKind != JsonValueKind.Number ||
-                    !matching[0].Value.TryGetDouble(out var weightedInputValue) ||
-                    !double.IsFinite(weightedInputValue))
+                if (!request.Inputs.TryGetValue(ruleInput.InputKey, out var input) ||
+                    !DecisionValues.Matches(input, "number") ||
+                    !double.IsFinite(ruleInput.Minimum) || !double.IsFinite(ruleInput.Maximum) ||
+                    ruleInput.Minimum >= ruleInput.Maximum || !double.IsFinite(ruleInput.Weight) ||
+                    ruleInput.Weight < 0)
                 {
-                    return Task.FromResult(InvalidNumericRuleResult(request.State));
+                    return Task.FromResult(Invalid());
                 }
 
                 var normalized = Math.Clamp(
-                    (weightedInputValue - ruleInput.Minimum) /
+                    (input.GetDouble() - ruleInput.Minimum) /
                     (ruleInput.Maximum - ruleInput.Minimum),
                     0,
                     1);
@@ -476,78 +482,50 @@ public sealed class DeterministicStrategyExecutor : IStrategyExecutor
                 totalWeight += ruleInput.Weight;
             }
 
-            if (!double.IsFinite(totalWeight) || totalWeight <= 0)
+            if (!double.IsFinite(totalWeight) || totalWeight <= 0 || !double.IsFinite(score))
             {
-                return Task.FromResult(InvalidNumericRuleResult(request.State));
+                return Task.FromResult(Invalid());
             }
 
             score /= totalWeight;
             return Task.FromResult(
-                NumericRuleResult(
-                    request,
-                    score >= request.State.NumericRule.Threshold
-                        ? request.State.NumericRule.ValueAtOrAbove
-                        : request.State.NumericRule.ValueBelow,
+                Result(
+                    score >= request.Rule.Threshold
+                        ? request.Rule.ValueAtOrAbove
+                        : request.Rule.ValueBelow,
                     "Applied the active weighted numeric rule strategy."));
         }
 
-        var input = request.Inputs.FirstOrDefault(value =>
-            string.Equals(
-                value.Signal.Key,
-                request.State.NumericRule.InputSignalKey,
-                StringComparison.Ordinal));
-        if (input is null ||
-            input.Value.ValueKind != JsonValueKind.Number ||
-            !input.Value.TryGetDouble(out var inputValue) ||
-            !double.IsFinite(inputValue))
+        if (!request.Inputs.TryGetValue(request.Rule.InputKey, out var scalar) ||
+            !DecisionValues.Matches(scalar, "number"))
         {
-            return Task.FromResult(InvalidNumericRuleResult(request.State));
+            return Task.FromResult(Invalid());
         }
 
-        var candidate = inputValue >= request.State.NumericRule.Threshold
-            ? request.State.NumericRule.ValueAtOrAbove
-            : request.State.NumericRule.ValueBelow;
+        var candidate = scalar.GetDouble() >= request.Rule.Threshold
+            ? request.Rule.ValueAtOrAbove
+            : request.Rule.ValueBelow;
         return Task.FromResult(
-            NumericRuleResult(
-                request,
+            Result(
                 candidate,
                 "Applied the active numeric rule strategy."));
     }
 
-    private static StrategyExecutionResult NumericRuleResult(
-        StrategyExecutionRequest request,
+    private static NumericRuleExecutionResult Result(
         double candidate,
         string reason)
     {
-        if (request.Evidence is null)
+        if (!double.IsFinite(candidate))
         {
-            return new StrategyExecutionResult(
-                null,
-                "strategy",
-                request.State.StrategyId,
-                null,
-                "The strategy cannot return a result without confidence evidence.",
-                "strategy_confidence_unavailable");
+            return Invalid();
         }
-
-        var confidence = new ConfidenceReport(
-            request.Evidence.EvidenceQuality,
-            request.Evidence.ModelUncertainty,
-            request.Evidence.ExpectedOutcome);
-        return new StrategyExecutionResult(
+        return new NumericRuleExecutionResult(
             JsonSerializer.SerializeToElement(candidate),
-            "strategy",
-            request.State.StrategyId,
-            confidence,
             reason);
     }
 
-    private static StrategyExecutionResult InvalidNumericRuleResult(
-        GovernedDecisionState state) =>
+    private static NumericRuleExecutionResult Invalid() =>
         new(
-            null,
-            "strategy",
-            state.StrategyId,
             null,
             "The numeric rule did not receive every required valid input.",
             "invalid_strategy_input");

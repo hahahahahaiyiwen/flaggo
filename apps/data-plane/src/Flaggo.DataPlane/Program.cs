@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Flaggo.Audit;
 using Flaggo.DataPlane;
+using Flaggo.DataPlane.Telemetry;
 using Flaggo.Decisioning;
 using Flaggo.Evidence;
 using Flaggo.Hosting;
@@ -71,6 +72,10 @@ builder.Services.AddAuthorization(options =>
             .RequireAuthenticatedUser()
             .RequireAssertion(context =>
                 RuntimeHttp.HasScope(context.User, "polari.exposures:confirm")));
+    options.AddPolicy(
+        "TelemetryIngest",
+        policy => policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            RuntimeHttp.HasScope(context.User, "polari.telemetry:ingest")));
 });
 
 var contractIdentity = LocalRegistryHosting.DefaultDefinitions()
@@ -103,13 +108,15 @@ LocalRuntimeAdapterHosting.AddEvidenceAdapter(
 builder.Services.AddSingleton<IRuntimeIdGenerator, GuidRuntimeIdGenerator>();
 builder.Services.AddSingleton<IDecideIdempotencyStore>(provider =>
     new InMemoryDecideIdempotencyStore(provider.GetRequiredService<TimeProvider>()));
-builder.Services.AddSingleton<IExposureStore>(provider =>
+builder.Services.AddSingleton<InMemoryExposureStore>(provider =>
 {
     var ids = provider.GetRequiredService<IRuntimeIdGenerator>();
     return new InMemoryExposureStore(
         provider.GetRequiredService<TimeProvider>(),
         ids.CreateExposureId);
 });
+builder.Services.AddSingleton<IExposureStore>(provider => provider.GetRequiredService<InMemoryExposureStore>());
+OtlpHttp.AddInputEvidence(builder.Services, builder.Configuration, builder.Environment.ContentRootPath);
 builder.Services.AddSingleton<IPostAuditExposureCommitPolicy>(provider =>
     new BoundedPostAuditExposureCommitPolicy(
         TimeSpan.FromSeconds(5),
@@ -125,7 +132,8 @@ builder.Services.AddSingleton<ITargetResolver>(
     new DefaultTargetResolver(
         LocalTargetingHosting.CreateAuthoritativeCohorts(
             builder.Configuration)));
-builder.Services.AddSingleton<IStrategyExecutor, DeterministicStrategyExecutor>();
+builder.Services.AddSingleton<INumericRuleExecutor, NumericRuleExecutor>();
+builder.Services.AddSingleton<DecisionInputResolver>();
 builder.Services.AddSingleton<IPolicyEvaluator>(provider =>
     new DefaultPolicyEvaluator(provider.GetRequiredService<TimeProvider>()));
 builder.Services.AddScoped<DecisionService>();
@@ -158,6 +166,13 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     var detail = availabilityFailure
         ? "The data plane is temporarily unavailable."
         : "The data plane encountered an unexpected error.";
+    if (OtlpHttp.IsTelemetry(context))
+    {
+        if (availabilityFailure) context.Response.Headers.RetryAfter = "1";
+        await OtlpHttp.WriteErrorAsync(context,
+            exception is BadHttpRequestException requestError ? requestError.StatusCode : status, detail);
+        return;
+    }
     context.Response.StatusCode = status;
     context.Response.ContentType = "application/problem+json";
     if (availabilityFailure)
@@ -190,6 +205,12 @@ app.Use(async (context, next) =>
 app.UseStatusCodePages(async statusContext =>
 {
     var context = statusContext.HttpContext;
+    if (OtlpHttp.IsTelemetry(context))
+    {
+        await OtlpHttp.WriteErrorAsync(context, context.Response.StatusCode,
+            context.Response.StatusCode == 401 ? "Authentication is required." : "The telemetry request is not permitted.");
+        return;
+    }
     var (code, detail) = context.Response.StatusCode switch
     {
         401 => ("authentication-required", "A valid bearer token is required."),
@@ -204,6 +225,7 @@ app.UseStatusCodePages(async statusContext =>
 });
 app.UseAuthentication();
 app.UseAuthorization();
+OtlpHttp.MapRoutes(app);
 
 app.MapPost(
         "/v1/decisions/{decisionKey}:decide",
@@ -253,27 +275,22 @@ app.MapPost(
 
             try
             {
+                var tenantId = context.User.FindFirst("polari_tenant_id")?.Value;
+                if (string.IsNullOrWhiteSpace(tenantId))
+                {
+                    return RuntimeHttp.ProblemResult(context, RuntimeHttp.Problem(
+                        context, 403, "scope-mismatch", "Token is not authorized for a tenant resource scope."));
+                }
                 var idempotencyKey = context.Request.Headers["Idempotency-Key"].FirstOrDefault();
                 if (string.IsNullOrWhiteSpace(idempotencyKey))
                 {
                     var outcome = await EvaluateDecisionAsync(
+                        tenantId,
                         decisionKey,
                         request,
                         decisionService,
                         cancellationToken);
                     return RenderOutcome(context, outcome);
-                }
-
-                var tenantId = context.User.FindFirst("polari_tenant_id")?.Value;
-                if (string.IsNullOrWhiteSpace(tenantId))
-                {
-                    return RuntimeHttp.ProblemResult(
-                        context,
-                        RuntimeHttp.Problem(
-                            context,
-                            403,
-                            "scope-mismatch",
-                            "Token is not authorized for a tenant resource scope."));
                 }
 
                 var namespaceApp = request.Client?.AppId ?? "invalid";
@@ -284,7 +301,7 @@ app.MapPost(
                     idempotencyNamespace,
                     idempotencyKey,
                     RuntimeHttp.Fingerprint(parsed.Body, decisionKey),
-                    token => EvaluateDecisionAsync(decisionKey, request, decisionService, token),
+                    token => EvaluateDecisionAsync(tenantId, decisionKey, request, decisionService, token),
                     cancellationToken);
                 if (retained.ExpiresAt is { } expiresAt)
                 {
@@ -367,7 +384,8 @@ app.MapPost(
             var environments = context.User.FindAll("polari_environment")
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal);
-            if (appIds.Count == 0 || environments.Count == 0)
+            var tenantId = context.User.FindFirst("polari_tenant_id")?.Value;
+            if (string.IsNullOrWhiteSpace(tenantId) || appIds.Count == 0 || environments.Count == 0)
             {
                 return RuntimeHttp.ProblemResult(
                     context,
@@ -381,6 +399,7 @@ app.MapPost(
             try
             {
                 var replay = await exposureStore.FindReplayAsync(
+                    tenantId,
                     decisionId,
                     request,
                     appIds,
@@ -415,6 +434,7 @@ app.MapPost(
                 }
 
                 var outcome = await exposureConfirmationService.ConfirmAsync(
+                    tenantId,
                     decisionId,
                     request,
                     appIds,
@@ -495,6 +515,7 @@ app.MapGet(
 app.Run();
 
 static async Task<DecideTerminalOutcome> EvaluateDecisionAsync(
+    string tenantId,
     string decisionKey,
     DecideRequest request,
     DecisionService decisionService,
@@ -509,7 +530,8 @@ static async Task<DecideTerminalOutcome> EvaluateDecisionAsync(
     try
     {
         return DecideTerminalOutcome.Success(
-            await decisionService.DecideAsync(decisionKey, request, cancellationToken));
+            await decisionService.DecideAsync(
+                new(request.Client.AppId, request.Client.Environment, tenantId), decisionKey, request, cancellationToken));
     }
     catch (DecisionContractException error)
     {
@@ -561,14 +583,18 @@ static DecisionFailure? ValidateDecideRequest(DecideRequest request)
         request.RuntimeContext.Values.Any(value => !RuntimeHttp.IsRuntimeContextValue(value)) ||
         (request.RuntimeTarget is not null &&
          (string.IsNullOrWhiteSpace(request.RuntimeTarget.Type) ||
-          string.IsNullOrWhiteSpace(request.RuntimeTarget.Id))) ||
-        (request.Inputs?.Any(input =>
-            !RuntimeHttp.IsValidSignalInput(input)) ?? false))
+          string.IsNullOrWhiteSpace(request.RuntimeTarget.Id))))
     {
         return new DecisionFailure(
             422,
             "invalid-runtime-context",
-            "runtimeContext, runtimeTarget, or inputs do not match the runtime contract.");
+            "runtimeContext or runtimeTarget does not match the runtime contract.");
+    }
+
+    if (request.Inputs?.Any(input =>
+        string.IsNullOrWhiteSpace(input.Key) || !DecisionValues.IsScalar(input.Value)) == true)
+    {
+        return new DecisionFailure(422, "invalid-inference-input", "Inputs must contain named finite primitive values.");
     }
 
     return null;
@@ -608,7 +634,8 @@ public partial class Program
 internal enum DataPlaneOperation
 {
     Decide,
-    ExposureConfirmation
+    ExposureConfirmation,
+    TelemetryIngest
 }
 
 internal sealed record DataPlaneOperationMetadata(DataPlaneOperation Operation)

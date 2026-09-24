@@ -1,4 +1,5 @@
 import type {
+  ContractIssue,
   ProblemDetails,
   RequiresApprovalResult,
   Sha256Digest,
@@ -32,12 +33,12 @@ export class MissingAcceptedDefinitionError extends FlaggoError {
   }
 }
 
-export class MissingStaticDefinitionError extends FlaggoError {
-  constructor(readonly decisionKey: string) {
-    super(
-      `No static definition exists for '${decisionKey}'. `
-        + "Supply its extracted bundle at startup or pass definition explicitly.",
-    );
+export class InvalidDecisionInputError extends FlaggoError {
+  readonly issues: ContractIssue[];
+
+  constructor(path: string, message: string, code = "invalid-inference-input") {
+    super(`${path}: ${message}`);
+    this.issues = [{ code, severity: "error", path, message }];
   }
 }
 

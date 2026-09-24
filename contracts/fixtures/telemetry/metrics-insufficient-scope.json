@@ -1,0 +1,23 @@
+{
+  "name": "otlp-metrics-insufficient-scope",
+  "scenario": 25,
+  "protocol": "otlp-protobuf",
+  "authorizationCase": "insufficient-scope",
+  "invariant": "Decide/confirm permission cannot ingest metrics; the error is binary google.rpc.Status.",
+  "request": {
+    "method": "POST", "path": "/otlp/worker/dev/v1/metrics",
+    "headers": {
+      "Authorization": "Bearer decide", "Content-Type": "application/x-protobuf",
+      "X-Flaggo-Correlation-Id": "otlp-metrics-denied"
+    },
+    "protobuf": {}
+  },
+  "expected": {
+    "status": 403,
+    "headers": {
+      "Content-Type": "application/x-protobuf",
+      "X-Flaggo-Correlation-Id": "otlp-metrics-denied"
+    },
+    "protobuf": { "code": 7, "message": "The telemetry request is not permitted." }
+  }
+}

@@ -6,6 +6,11 @@
     <ProjectReference Include="..\..\..\..\modules\registry\src\Flaggo.Registry\Flaggo.Registry.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\..\contracts\fixtures\management\definition-bundle\04-apply-approved-receipt.json"
+                      LogicalName="Flaggo.Hosting.ApprovedLocalManifest.json" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

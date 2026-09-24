@@ -103,6 +103,34 @@ jobs:
       - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
       - run: npm run test:adaptive-worker
 
+  otel-evidence-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: npm ci
+      - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
+      - name: Install pinned stock Collector
+        shell: bash
+        run: |
+          directory="$RUNNER_TEMP/otelcol-0.161.0"
+          mkdir -p "$directory"
+          archive="$directory/otelcol_0.161.0_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.161.0/otelcol_0.161.0_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 6c2af0731a53691e3771d82a4b71e2941a46de27af191e40c697b6ed8643e50e "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$directory"
+          echo "FLAGGO_OTELCOL_PATH=$directory/otelcol" >> "$GITHUB_ENV"
+      - run: npm run test:otel-evidence
+
   windows-durability:
     runs-on: windows-latest
     timeout-minutes: 15

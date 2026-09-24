@@ -12,7 +12,7 @@
       "Content-Type": "application/json"
     },
     "body": {
-      "expectedBundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
+      "expectedBundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
       "reasonCode": "operator-rejected"
     }
   },
