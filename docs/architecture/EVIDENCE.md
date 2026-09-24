@@ -118,6 +118,12 @@ definition identity, and the resolved target. Unused receipts, pending
 confirmations, foreign identities, and mere trace/baggage correlation are not
 proof of exposure. Gauge/exemplar attribution is rejected.
 
+Confirmed-exposure bindings are outcome/objective evidence, not required
+runtime input sources. Manifest validation rejects that circular dependency:
+the first decision cannot require its own already-confirmed exposure.
+Runtime evidence inputs require `attribution.kind: none`; no implicit initial
+value or weakened exposure identity is used to initialize them.
+
 The audit and exposure snapshot preserve caller inputs, resolved inputs, and
 per-input provenance: binding, generation, source time/fingerprint,
 materialization time, observed coverage, trace/span IDs and flags where

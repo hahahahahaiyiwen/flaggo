@@ -43,6 +43,9 @@ bounds and step alignment or string allowed-values membership. Numeric
 objectives reference numeric evidence bindings. Evidence-owned operands inherit
 the binding type/meaning/range; missing bindings, unsupported projections,
 invalid attribution, and freshness overflow fail explicitly.
+Required runtime inputs cannot reference confirmed-exposure bindings: no first
+decision could create the prerequisite exposure of its exact definition.
+Those bindings remain available for outcome/objective evidence.
 
 Approvals compare the expected bundle digest before atomically committing a
 new runtime revision and replacing the original apply idempotency outcome with

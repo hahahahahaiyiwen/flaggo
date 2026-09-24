@@ -4385,6 +4385,68 @@
       "expectedErrors": []
     }
   ],
+  "definitionValidationCases": [
+    {
+      "name": "confirmed-outcome-is-not-a-runtime-prerequisite",
+      "definition": {
+        "result": { "type": "number", "min": 0, "max": 1, "default": 0 },
+        "targeting": { "hierarchy": ["global"], "primary": "global", "fallbackOrder": [] },
+        "inputs": { "pressure": { "source": "evidence", "binding": "lastOutcome" } },
+        "evidence": {
+          "lastOutcome": {
+            "meaning": "Latest pressure attributed to a confirmed application.",
+            "type": "number",
+            "source": {
+              "kind": "log", "eventName": "work.completed",
+              "scope": { "name": "worker" },
+              "resourceAttributes": {},
+              "value": { "from": "attributes", "key": "pressure" }
+            },
+            "projection": { "kind": "latest" },
+            "target": { "type": "global" },
+            "freshness": { "maxAgeSeconds": 30 },
+            "sampling": { "accept": "observed" },
+            "attribution": {
+              "kind": "confirmed-exposure",
+              "exposureIdAttribute": { "from": "attributes", "key": "flaggo.exposure.id" }
+            }
+          }
+        },
+        "policy": { "kind": "inline", "constraints": [] }
+      },
+      "expectedErrors": ["circular-exposure-input"]
+    },
+    {
+      "name": "confirmed-outcome-remains-valid-for-objectives",
+      "definition": {
+        "result": { "type": "number", "min": 0, "max": 1, "default": 0 },
+        "targeting": { "hierarchy": ["global"], "primary": "global", "fallbackOrder": [] },
+        "evidence": {
+          "lastOutcome": {
+            "meaning": "Latest pressure attributed to a confirmed application.",
+            "type": "number",
+            "source": {
+              "kind": "log", "eventName": "work.completed",
+              "scope": { "name": "worker" },
+              "resourceAttributes": {},
+              "value": { "from": "attributes", "key": "pressure" }
+            },
+            "projection": { "kind": "latest" },
+            "target": { "type": "global" },
+            "freshness": { "maxAgeSeconds": 30 },
+            "sampling": { "accept": "observed" },
+            "attribution": {
+              "kind": "confirmed-exposure",
+              "exposureIdAttribute": { "from": "attributes", "key": "flaggo.exposure.id" }
+            }
+          }
+        },
+        "intent": { "type": "numeric-objective", "primary": { "evidence": "lastOutcome", "direction": "minimize" } },
+        "policy": { "kind": "inline", "constraints": [] }
+      },
+      "expectedErrors": []
+    }
+  ],
   "normalizationErrorCases": [
     {
       "name": "obsolete-v1",

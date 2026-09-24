@@ -101,6 +101,11 @@ internal static class DecisionManifest
                 {
                     issues.Add(Issue(inputPath, "Unknown evidence binding."));
                 }
+                else if (binding.ExposureIdAttribute is not null)
+                {
+                    issues.Add(Issue(inputPath,
+                        "Confirmed-exposure bindings are outcome evidence, not required runtime inputs: the first decision cannot create its own prerequisite exposure."));
+                }
                 else if (binding.TargetType != "global" &&
                          !context.Any(field => field.TargetType == binding.TargetType && field.Required))
                 {

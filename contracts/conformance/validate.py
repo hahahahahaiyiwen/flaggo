@@ -483,6 +483,8 @@ def definition_contract_errors(definition: dict) -> set[str]:
         binding = bindings.get(item["binding"])
         if binding is None:
             errors.add("unknown-evidence-binding")
+        elif binding["attribution"]["kind"] == "confirmed-exposure":
+            errors.add("circular-exposure-input")
         elif binding["target"]["type"] != "global" and not any(
             field.get("target") == binding["target"]["type"] and field.get("required") is True
             for field in context.values()
@@ -536,8 +538,17 @@ def validate_strict_json_vectors(rep: Report) -> None:
         )
 
 
-def validate_semantic_digest_vectors(rep: Report) -> None:
+def validate_semantic_digest_vectors(registry: Registry, rep: Report) -> None:
     document = load_json(SEMANTIC_DIGEST_VECTORS)
+    for case in document["definitionValidationCases"]:
+        validate_body(
+            case["definition"], "decision-definition-bundle-v2.schema.json#/$defs/DecisionDefinition",
+            registry, rep, f"definition validation vector '{case['name']}'",
+        )
+        rep.check(
+            definition_contract_errors(case["definition"]) == set(case["expectedErrors"]),
+            f"definition validation vector '{case['name']}' semantic errors mismatch",
+        )
     definition_cases = document.get("definitionCases", [])
     inequivalent_definition_cases = document.get("inequivalentDefinitionCases", [])
     bundle_cases = document.get("bundleCases", [])
@@ -1055,7 +1066,7 @@ def main() -> int:
     registry = build_registry(rep)
     validate_canonicalization_vectors(rep)
     validate_strict_json_vectors(rep)
-    validate_semantic_digest_vectors(rep)
+    validate_semantic_digest_vectors(registry, rep)
     validate_canonical_example_artifacts(registry, rep)
 
     # 4. OpenAPI documents

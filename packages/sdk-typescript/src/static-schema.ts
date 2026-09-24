@@ -355,7 +355,11 @@ export function assertManifest(value: unknown): asserts value is DecisionDefinit
       if (item.source !== "evidence") continue;
       check(typeof item.binding === "string" && Object.hasOwn(evidence, item.binding),
         `${path}/inputs/${pointer(key)}`, "Unknown evidence binding.");
-      const target = object(object(evidence[item.binding], path).target, path);
+      const selectedBinding = object(evidence[item.binding], path);
+      check(object(selectedBinding.attribution, path).kind === "none",
+        `${path}/inputs/${pointer(key)}`,
+        "Confirmed-exposure bindings are outcome evidence, not required runtime inputs: the first decision cannot create its own prerequisite exposure.");
+      const target = object(selectedBinding.target, path);
       check(target.type === "global" || Object.values(fields).some((field) => {
         const candidate = object(field, path);
         return candidate.target === target.type && candidate.required === true;

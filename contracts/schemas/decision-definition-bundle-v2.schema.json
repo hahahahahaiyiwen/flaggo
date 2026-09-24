@@ -82,6 +82,7 @@
       "then": { "not": { "anyOf": [{ "required": ["unit"] }, { "required": ["range"] }] } }
     },
     "EvidenceInput": {
+      "description": "Required runtime operand. Semantic validation requires a binding with attribution.kind none; confirmed-exposure bindings are outcome/objective evidence, not first-decision prerequisites.",
       "type": "object", "required": ["source", "binding"], "additionalProperties": false,
       "properties": { "source": { "const": "evidence" }, "binding": { "$ref": "#/$defs/Name" } }
     },

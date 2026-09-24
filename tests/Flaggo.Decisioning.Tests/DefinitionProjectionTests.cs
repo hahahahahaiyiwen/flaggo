@@ -74,6 +74,35 @@ public sealed class DefinitionProjectionTests
     }
 
     [Fact]
+    public async Task SharedDefinitionValidationCases_RejectCircularInputsAndPreserveOutcomeBindings()
+    {
+        using var vectors = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(TestPaths.RepositoryRoot,
+            "contracts", "conformance", "semantic-digest-vectors-v1.json")));
+        foreach (var item in vectors.RootElement.GetProperty("definitionValidationCases").EnumerateArray())
+        {
+            var node = JsonNode.Parse(FixtureBody().GetRawText())!.AsObject();
+            node["decisions"] = new JsonObject { [Key] = JsonNode.Parse(item.GetProperty("definition").GetRawText()) };
+            var bundle = JsonSerializer.SerializeToElement(node);
+            var registry = new InMemoryDefinitionRegistry([], new SequenceDefinitionIdentityGenerator());
+            if (item.GetProperty("expectedErrors").GetArrayLength() == 0)
+            {
+                var runtime = await ApproveAsync(registry, bundle);
+                Assert.Empty(runtime.Inputs);
+                Assert.NotNull(Assert.Single(runtime.Evidence).ExposureIdAttribute);
+            }
+            else
+            {
+                var validation = await registry.ValidateAsync(bundle);
+                Assert.Equal("invalid", validation.Status);
+                Assert.Contains(validation.Issues, issue => issue.Path == $"/decisions/{Key}/inputs/pressure" &&
+                    issue.Message.Contains("Confirmed-exposure bindings are outcome evidence", StringComparison.Ordinal));
+                await Assert.ThrowsAsync<DefinitionLifecycleException>(() => registry.ApplyAsync("circular", bundle));
+                Assert.Empty(await registry.ReadBindingsAsync(new("tetris-demo", "dev", "local-development"), CancellationToken.None));
+            }
+        }
+    }
+
+    [Fact]
     public async Task LocalRegistry_RestartPreservesBothProjectionsAndScopedBindings()
     {
         using var file = new TestRegistryFile();

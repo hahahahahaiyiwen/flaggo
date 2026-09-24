@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, it } from "vitest";
 import { bundleDigest, contractDigest, normalizeBundle } from "../src/canonical.js";
+import { compileManifest } from "../src/manifest.js";
 import type { DecisionDefinition, DecisionDefinitionBundle } from "../src/types.js";
 
 interface Vectors {
@@ -14,9 +15,21 @@ interface Vectors {
   }[];
   bundleCases: { name: string; variants: { bundle: DecisionDefinitionBundle }[]; expectedBundleDigest: string }[];
   normalizationErrorCases: { name: string; bundle: DecisionDefinitionBundle }[];
+  definitionValidationCases: { name: string; definition: DecisionDefinition; expectedErrors: string[] }[];
 }
 const vectors = JSON.parse(readFileSync(resolve(import.meta.dirname,
   "../../../contracts/conformance/semantic-digest-vectors-v1.json"), "utf8")) as Vectors;
+
+for (const item of vectors.definitionValidationCases) {
+  it(`validates shared evidence ownership semantics: ${item.name}`, () => {
+    const compile = () => compileManifest({
+      format: "flaggo.decision-definition-bundle/v2", application: { id: "worker", environment: "test" },
+      decisions: { pressure: item.definition },
+    });
+    if (item.expectedErrors.length === 0) expect(compile).not.toThrow();
+    else expect(compile).toThrow("Confirmed-exposure bindings are outcome evidence");
+  });
+}
 
 for (const item of vectors.definitionCases) {
   it(`agrees with the shared semantic contract: ${item.name}`, () => {
