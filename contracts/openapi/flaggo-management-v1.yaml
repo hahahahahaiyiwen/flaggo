@@ -3,7 +3,7 @@
   "info": {
     "title": "Flaggo Management API",
     "version": "1.0.0",
-    "description": "Phase 1 control-plane contract: bundle validate/apply and semantic-revision approval lifecycle. Strict wire models live in ../schemas/management-models-v1.schema.json, ../schemas/decision-definition-bundle-v1.schema.json, and ../schemas/problem-details-v1.schema.json.",
+    "description": "Phase 1 control-plane contract: bundle validate/apply and semantic-revision approval lifecycle. Strict wire models live in ../schemas/management-models-v1.schema.json, ../schemas/decision-definition-bundle-v2.schema.json, and ../schemas/problem-details-v1.schema.json.",
     "license": { "name": "Apache-2.0" }
   },
   "servers": [
@@ -120,7 +120,7 @@
             },
             "content": {
               "application/json": {
-                "schema": { "$ref": "../schemas/decision-definition-bundle-v1.schema.json" }
+                "schema": { "$ref": "../schemas/decision-definition-bundle-v2.schema.json" }
               }
             }
           },
@@ -241,7 +241,7 @@
       "ETag": {
         "description": "Quoted opaque entity tag holding the project sha256:<lowercase-hex> value.",
         "schema": { "type": "string", "pattern": "^\"sha256:[0-9a-f]{64}\"$" },
-        "example": "\"sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f\""
+        "example": "\"sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c\""
       },
       "ContentDigest": {
         "description": "RFC 9530 Content-Digest over the same canonical bytes. Base64 of the raw 32-byte SHA-256, never the project sha256:<hex> string.",
@@ -254,7 +254,7 @@
         "required": true,
         "content": {
           "application/json": {
-            "schema": { "$ref": "../schemas/decision-definition-bundle-v1.schema.json" }
+            "schema": { "$ref": "../schemas/decision-definition-bundle-v2.schema.json" }
           }
         }
       }

@@ -13,10 +13,10 @@ export async function inspectIntegration(auditPath, telemetryPath) {
     .filter(({ kind }) => kind === "exposure")
     .map(({ record }) => record);
   const linkedOutcomes = telemetry.filter((event) =>
-    event.signal?.key === "tetris.outcomeObserved"
+    event.eventName === "game.outcome"
     && exposures.some((exposure) =>
-      exposure.exposureId === event.value?.exposureId
-      && exposure.decisionId === event.value?.decisionId
+      exposure.exposureId === event.attributes?.["flaggo.exposure.id"]
+      && exposure.decisionId === event.attributes?.["flaggo.decision.id"]
     )
   );
   return {
@@ -28,20 +28,22 @@ export async function inspectIntegration(auditPath, telemetryPath) {
     )],
     decisionInputs: decisions.map(({ decisionId, inputs }) => ({
       decisionId,
-      signalKeys: inputs.map(({ signal }) => signal.key),
+      inputKeys: Object.keys(inputs),
     })),
     decisionDetails: decisions.map(({
       decisionId,
       inputs,
       strategyId,
       reason,
+      requestInputs,
+      inputProvenance,
     }) => ({
       decisionId,
       strategyId,
       reason,
-      inputs: Object.fromEntries(
-        inputs.map(({ signal, value }) => [signal.key, value]),
-      ),
+      inputs,
+      requestInputs,
+      inputProvenance,
     })),
     policyResults: decisions.map(({ decisionId, policy, fallback }) => ({
       decisionId,

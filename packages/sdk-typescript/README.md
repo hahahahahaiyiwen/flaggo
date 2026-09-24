@@ -1,175 +1,154 @@
 # TypeScript SDK
 
-> **Current executable baseline:** The implementation below predates #44's
-> manifest-first client redesign and #40's server contract migration. The
-> target runtime SDK consumes generated decision-key/input/result bindings and
-> live data only; trusted deployment tooling publishes the hand-authored
-> manifest to Contract Service, and the application owns OTel instrumentation
-> and export. Static extraction, SDK-owned registration, typed signal producers,
-> and Policy/Audit-named fields are removed by those issues without
-> compatibility aliases.
+`@flaggo/sdk` owns typed decision calls, exact catalog/receipt binding,
+availability fallback, and explicit exposure confirmation. It does not own
+telemetry instrumentation, collection, approval, strategy selection, or
+server-side constraint evaluation.
 
-`@flaggo/sdk` owns the TypeScript application boundary for Flaggo decisions:
-canonical bundle registration, accepted runtime bindings, numeric decision
-calls, exposure confirmation, typed signals, and telemetry emission. It does
-not implement policy, strategy selection, approval, or server state.
+The manifest-first client is implemented. #49 aligns executable server
+boundaries and current Policy/Audit-named fields; #40 adds initial-authority
+publication and activation-ready receipts. No obsolete producer or extraction
+API is retained for that future work.
 
-## Client lifecycle
+## Author and compile
+
+Author one JSON manifest using
+[`flaggo.decision-definition-bundle/v2`](../../contracts/schemas/decision-definition-bundle-v2.schema.json).
+Each decision has one result/default, explicit targeting and policy, and
+optional typed context, inputs, evidence bindings, and intent.
+
+```powershell
+flaggo-manifest build .\decision-manifest.json `
+  --bundle .\generated\definitions.json --catalog .\src\generated\catalog.ts
+flaggo-manifest check .\decision-manifest.json `
+  --bundle .\generated\definitions.json --catalog .\src\generated\catalog.ts
+```
+
+`build` emits a normalized bundle and a literal-key TypeScript runtime catalog.
+`check` fails for stale generated artifacts. Neither evaluates application
+source. Inputs are plain required values owned by `request` or `evidence`;
+evidence inputs inherit their binding schema and cannot be supplied by callers.
+Runtime input bindings require `attribution.kind: none`. Confirmed-exposure
+bindings remain available for outcome/objective evidence, but cannot be a
+prerequisite for the decision that would create their first exposure.
+Dynamic keys must remain correlated with their required context and inputs:
+narrow a union key before calling, or pass a discriminated key/request tuple.
+The same typing applies to `number` and `numberDetailed`.
+
+## Publish separately
+
+Trusted management code, not a browser or runtime client, publishes the bundle:
 
 ```ts
-import { createFlaggoClient } from "@flaggo/sdk";
+import { applyManifest } from "@flaggo/sdk/management";
 
-const flaggo = await createFlaggoClient({
-  appId: "tetris-demo",
-  environment: "dev",
-  dataPlaneUrl: "http://localhost:8080",
-  controlPlane: {
-    mode: "startup-register",
-    url: "http://localhost:8081",
-    bundle,
-    credential: { mode: "local-development" },
-  },
+const receipt = await applyManifest({
+  controlPlaneUrl,
+  bundle,
+  credential: managementCredential
+});
+```
+
+`RequiresApprovalError` carries the pending approval identity and digest.
+An authorized reviewer approves the exact snapshot; retrying apply obtains the
+receipt. Neither `applyManifest` nor `createFlaggoClient` grants approval.
+Publication uses a deterministic application/environment/bundle idempotency key.
+Unresolved policy references fail explicitly; no policy catalog is implied.
+
+## Runtime client
+
+```ts
+import { createFlaggoClient, confirmedExposureAttributes } from "@flaggo/sdk";
+import { catalog } from "./generated/catalog.js";
+
+const flaggo = createFlaggoClient({
+  catalog,
+  receipt,
+  dataPlaneUrl,
+  dataPlaneCredential: { mode: "bearer", getToken },
+  availabilityFallback: { mode: "local-default", retries: 1 }
 });
 
 const decision = await flaggo.tune.number("tetris.dropInterval", {
-  definition: bundle.definitions[0],
-  context: { sessionId: "game-456" },
-  correlationId: "game-loop-123",
-  idempotencyKey: "tick-456",
+  context: { sessionId },
+  inputs: { boardPressure, recentPlacementTimeMs, recoveryFailures, currentLevel }
 });
+
+gameEngine.updateConfig({ dropInterval: decision.value });
+if (decision.source === "server" && decision.exposure.confirmationRequired) {
+  const confirmed = await flaggo.exposures.confirm(
+    decision.decisionId, decision.exposure.confirmToken
+  );
+  applicationLogger.emit({
+    eventName: "game.outcome",
+    body: "Applied drop interval.",
+    attributes: confirmedExposureAttributes(confirmed)
+  });
+}
 ```
 
-Startup registration must finish before a client is returned. A semantic
-change requiring approval rejects initialization with `RequiresApprovalError`.
-Production callers can use `{ mode: "bearer", getToken }` credentials.
-`local-development` is an explicit insecure bypass for trusted local use.
-Already registered workloads may instead pass a registration receipt with
-`controlPlane.mode: "pre-registered"`.
+The factory is synchronous and performs no network registration or hashing.
+It validates and defensively captures the catalog and receipt: exact
+application/environment, bundle digest, key set, and definition digests.
+The receipt supplies each opaque definition ID and revision. Calls never
+select an implicit latest revision or accept inline definitions.
 
-Registration receipts and `requires-approval` responses are validated as
-strict wire contracts before their identity or metadata is trusted. An
-approved receipt must contain exactly one accepted binding for every submitted
-definition, with matching canonical contract digests.
-Approval-required responses accept both newly created definitions and
-semantic changes as reviewable contract changes; metadata-only change sets
-cannot masquerade as a new-contract approval.
-Digest and RFC 3339 validators require exact whole-string matches; encoded
-trailing line breaks or other boundary characters are not accepted.
+Generated types reject unknown/non-numeric keys, missing or wrongly typed
+required caller data, and evidence-owned inputs. Runtime validation repeats
+those checks before network access or fallback. Calls without required caller
+fields may omit the request object. Request operands do not emit telemetry.
+The runtime import graph is browser-compatible; compiler and hashing code
+belong to tooling/management entry points.
 
-At startup, the client normalizes the supplied bundle and caches each numeric
-definition and contract digest. Runtime calls use that static binding and
-compare it with `receipt.acceptedDefinitions[decisionKey]` before network
-access or fallback. When a static bundle is configured, a call's `definition`
-property remains authoring input for extraction but is not hashed or consumed
-at runtime; the registered bundle is authoritative. Callers using a
-pre-registered receipt without its bundle may pass `definition` explicitly;
-that compatibility path validates the definition on each call.
+`tune.number` returns a compact receipt. `tune.numberDetailed` adds policy,
+target-resolution, confidence, and fallback details. Deterministic numeric
+rules return `confidence: null`. Server result identity and integrity are
+verified before use. `correlationId` sets `X-Flaggo-Correlation-Id`;
+`idempotencyKey` separately sets `Idempotency-Key`.
 
-## Static extraction
+## Fallback and retries
 
-`flaggo-extract` scans TypeScript application sources before compilation and
-emits `flaggo.static-extraction/v1`, containing a canonical definition bundle,
-its digest, and source-located decision descriptors. Configure startup
-registration with the generated `bundle`:
+Availability fallback is disabled by default. `local-default` permits the
+catalog's one result default only after configured retries for recognized
+DNS/connection failures, connection/read timeouts, intermediary HTTP 502/504,
+or valid explicitly eligible Flaggo 5xx problems (excluding 500/501/505).
+Cancellation, TLS, authentication/configuration, malformed responses,
+contract/identity errors, and ineligible problems never fall back.
+
+Required input evidence unavailable is always fallback-ineligible. Separately
+configured policy-quality evidence follows its explicit server eligibility;
+it is not a source of implicit input defaults. Client fallback has no server
+decision, policy, audit, or exposure identity. Governed server fallback remains
+an audited server outcome.
+
+Retries reuse one idempotency key and body; the default is one retry, with
+zero through two configurable. `Retry-After` waits are capped at one second.
+`409 idempotency-in-progress` permits retry within that budget, never fallback.
+Successful retained replays do not re-resolve evidence.
+
+## OpenTelemetry boundary
+
+Use the application's OTel APIs, providers, exporters, and Collector.
+`confirmedExposureAttributes` is a pure helper returning only
+`flaggo.exposure.id` and `flaggo.decision.id` from an explicit confirmation.
+It creates no provider, exporter, event schema, or ambient context.
+Confirmation must follow application of the value and remains an operational
+API call even when telemetry is sampled.
+
+For received-telemetry inputs, declare native OTel evidence bindings in the
+manifest and add a scoped exporter to the application's Collector. See the
+[OTel example](../../examples/otel-evidence/README.md). There is no producer,
+extractor, startup-registration, or v1 compatibility path.
+
+## Development
 
 ```powershell
-flaggo-extract --project .\tsconfig.json --app tetris-demo `
-  --environment dev --out .\.flaggo\definitions.json
+npm run build
+npm run typecheck
+npm test
 ```
 
-The MVP extractor accepts direct `flaggo.tune.number("literal-key", { ... })`
-calls whose `definition` is an object literal composed only of JSON literals,
-literal arrays, and literal objects. Directly imported signal-handle constants
-are allowed where the frozen contract expects a signal reference; extraction
-resolves them to `{ key }` and includes their literal declarations. Supported
-factories are `createSignalHandle`, `createInferenceSignalHandle`, and
-`createDerivedMetricHandle`. Parentheses, `as const`, and `satisfies` wrappers
-are allowed.
-
-Extraction fails the build for dynamic decision keys, spreads, computed or
-shorthand properties, method declarations, function calls inside static
-definitions, non-literal definition references, conditional or loop-dependent
-decision calls, and schema-invalid definitions. Identical definitions for one
-key deduplicate in the bundle; different canonical digests for one key fail
-with `contract-conflict`.
-Authored cooldown constraints may use any finite nonnegative number, preserving
-the frozen v1 contract. Static extraction rejects negative and nonfinite values
-before emitting an artifact.
-Runtime expressions remain in `context`, `runtimeTarget`, and `inputs`; they
-are never evaluated by extraction or included in definition identity.
-
-The data-plane request contains only compact accepted identity and runtime
-values; full definitions are never sent. Its client identity reads
-`sdkVersion` from this package's metadata so release version bumps cannot
-drift from runtime telemetry.
-
-## Results and fallback
-
-`tune.number` returns a compact `DecisionReceipt<number>`.
-`tune.numberDetailed` returns provenance, policy, confidence, fallback, and
-target-resolution details. Server results are accepted only when the returned
-definition ID, revision, digest, bundle/build/deployment identity, and
-integrity match the expected binding.
-
-Availability fallback is disabled by default. Enabling
-`availabilityFallback: { mode: "local-default" }` permits the declared default
-only after retries are exhausted for DNS, refused/reset connection, or
-connection/read timeout failures; intermediary HTTP 502/504 responses; or a
-valid Flaggo 5xx Problem Details response with
-`clientFallback.eligible: true`, except HTTP 500, 501, and 505.
-For `required-evidence-unavailable`, both the definition's effective
-client-fallback policy and this SDK availability configuration must permit the
-local default; either side forbidding fallback surfaces `FlaggoHttpError`.
-Cancellation, TLS/certificate, proxy/authentication/configuration, malformed
-response, contract, and identity errors never fall back. A client fallback has
-no server decision, policy, audit, or exposure identity.
-
-The default is one retry after the initial attempt. Configure zero, one, or two
-with `availabilityFallback.retries`. Retries reuse a caller-supplied
-`Idempotency-Key`, or one generated for that decision call, and honor
-`Retry-After` for at most one second.
-
-`409 idempotency-in-progress` is retry-only: the SDK waits within the same
-retry budget and resends the identical body and key, then surfaces the 409 if
-the budget is exhausted. It never authorizes local fallback.
-
-Correlation and retry identity remain separate:
-
-- `correlationId` becomes only `X-Flaggo-Correlation-Id`.
-- `idempotencyKey` becomes only `Idempotency-Key`.
-
-## Signals and telemetry
-
-`createSignalHandle` creates event or app-emitted metric producers whose value
-types are inferred from the declaration. `createInferenceSignalHandle` accepts
-only app-emitted primitive metrics and creates runtime inputs of that metric's
-declared type. `createDerivedMetricHandle` creates a non-emitting
-derived-metric identity whose `valueType` cannot disagree with its declaration.
-All handles verify a supplied `schemaDigest`.
-
-Definition authoring types expose boolean, number, and string action-space
-unions. Reference policies require `policyId`; inline policies require a
-typed constraint array and optionally declare governed client fallback.
-
-Telemetry is emitted through the `TelemetrySink` interface. Use
-`createOpenTelemetrySink(logger)` with a structurally compatible OpenTelemetry
-logger, or provide a direct sink for local development and tests.
-
-The Phase 3 Tetris contract declares `tetris.outcomeObserved`. After applying a
-server decision and confirming its exposure, the frontend emits this event
-through a configured `TelemetrySink` with the confirmed `decisionId` and
-`exposureId`. This preserves explicit attribution without adding an
-incompatible runtime endpoint. Client-fallback results and unused receipts
-have no exposure identity and must not emit a linked outcome.
-
-## Contract maintenance
-
-`npm run check:openapi` parses both frozen OpenAPI YAML documents and verifies
-the startup apply, decide, and exposure operations, OAuth scopes, headers, and
-the external request/response schemas required by the SDK. `npm test` also runs
-this gate. Any wire-semantic change must update OpenAPI, JSON Schema, fixtures,
-and conformance before this package.
-Keep canonical normalization aligned with
-`contracts/conformance/validate.py`, add fixture-driven tests for behavior
-changes, and update this README whenever public API, fallback, extraction, or
-release behavior changes.
+Build removes this package's generated `dist` before compiling. Tests include
+manifest freshness, generated typing, semantic vectors, browser isolation,
+management/runtime wire behavior, and OpenAPI alignment. Shared contract
+changes must also update .NET/Python conformance, fixtures, and canonical docs.

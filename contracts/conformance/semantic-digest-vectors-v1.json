@@ -1,255 +1,330 @@
 {
-  "description": "Executable normalization vectors for definition and bundle identity.",
+  "description": "Independent manifest v2 semantic identities; expected SHA-256 uses RFC 8785.",
   "definitionCases": [
     {
-      "name": "combined-and-explicit-authoring-equivalence",
-      "expectedContractDigest": "sha256:5be71f0c4b612f9915a46497385bfb2bac40d7f503f0571480c8c4fd476719bd",
+      "name": "maps-requiredness-policy-order-and-owner",
+      "key": "demo.limit",
       "variants": [
         {
-          "label": "combined-generated-authoring",
+          "label": "explicit",
           "definition": {
-            "definitionId": "def_generated",
-            "owner": "checkout-team",
-            "key": "checkout.routing",
-            "valueType": "string",
-            "actionSpace": {
-              "type": "string",
-              "allowedValues": ["control", "new"],
-              "default": "control"
+            "result": {
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "step": 5,
+              "default": 20
             },
-            "runtimeContextSchema": {
-              "userId": {
+            "context": {
+              "sessionId": {
                 "type": "string",
-                "target": "user"
+                "target": "session",
+                "required": false
               }
             },
-            "signals": {
-              "evidence": [
-                { "key": "checkout.latency" },
-                { "key": "checkout.errorRate" }
+            "targeting": {
+              "hierarchy": [
+                "session",
+                "global"
               ],
-              "guardrails": [
-                { "key": "checkout.errorRate" }
-              ]
+              "primary": "global",
+              "fallbackOrder": []
             },
-            "inference": {
-              "target": "user",
-              "inputs": [
-                { "key": "checkout.latency" },
-                { "key": "checkout.errorRate" }
-              ]
+            "inputs": {
+              "pressure": {
+                "source": "request",
+                "type": "number",
+                "unit": "1",
+                "range": [
+                  0,
+                  1
+                ],
+                "meaning": "Current occupancy."
+              }
+            },
+            "evidence": {
+              "placement": {
+                "meaning": "Latest completed placement duration observed by existing instrumentation.",
+                "type": "number",
+                "unit": "ms",
+                "range": [
+                  0,
+                  5000
+                ],
+                "source": {
+                  "kind": "span",
+                  "name": "game.place",
+                  "scope": {
+                    "name": "game.instrumentation"
+                  },
+                  "resourceAttributes": {
+                    "service.name": "demo"
+                  },
+                  "value": {
+                    "from": "duration"
+                  }
+                },
+                "projection": {
+                  "kind": "latest"
+                },
+                "target": {
+                  "type": "global"
+                },
+                "freshness": {
+                  "maxAgeSeconds": 30
+                },
+                "sampling": {
+                  "accept": "observed"
+                },
+                "attribution": {
+                  "kind": "none"
+                }
+              }
             },
             "intent": {
-              "type": "metric-objective",
+              "type": "numeric-objective",
               "primary": {
-                "signal": { "key": "checkout.errorRate" },
+                "evidence": "placement",
                 "direction": "minimize"
-              },
-              "secondary": [
-                {
-                  "signal": { "key": "checkout.latency" },
-                  "direction": "minimize"
-                }
-              ]
-            },
-            "fallback": {
-              "value": "control"
+              }
             },
             "policy": {
               "kind": "inline",
               "constraints": [
-                { "kind": "max-model-uncertainty", "value": 0.3 },
-                { "kind": "cooldown", "seconds": 10 }
+                {
+                  "kind": "max-delta",
+                  "value": 10
+                },
+                {
+                  "kind": "number-bounds",
+                  "min": 0,
+                  "max": 100
+                }
               ]
             }
           }
         },
         {
-          "label": "explicit-canonical-authoring",
+          "label": "implicit-requiredness",
           "definition": {
-            "owner": "different-display-owner",
-            "key": "checkout.routing",
-            "valueType": "string",
-            "actionSpace": {
-              "type": "string",
-              "allowedValues": ["control", "new"],
-              "default": "control"
+            "result": {
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "step": 5,
+              "default": 20
             },
-            "runtimeContextSchema": {
-              "userId": {
+            "context": {
+              "sessionId": {
                 "type": "string",
-                "target": "user"
+                "target": "session"
               }
             },
-            "signals": {
-              "allowed": [
-                { "key": "checkout.errorRate" },
-                { "key": "checkout.latency" }
+            "targeting": {
+              "hierarchy": [
+                "session",
+                "global"
               ],
-              "evidence": [
-                { "key": "checkout.errorRate" },
-                { "key": "checkout.latency" }
-              ],
-              "guardrails": [
-                { "key": "checkout.errorRate" }
-              ]
+              "primary": "global",
+              "fallbackOrder": []
             },
-            "inference": {
-              "target": "user",
-              "inputs": [
-                { "key": "checkout.errorRate" },
-                { "key": "checkout.latency" }
-              ]
+            "inputs": {
+              "pressure": {
+                "source": "request",
+                "type": "number",
+                "unit": "1",
+                "range": [
+                  0,
+                  1
+                ],
+                "meaning": "Current occupancy."
+              }
+            },
+            "evidence": {
+              "placement": {
+                "meaning": "Latest completed placement duration observed by existing instrumentation.",
+                "type": "number",
+                "unit": "ms",
+                "range": [
+                  0,
+                  5000
+                ],
+                "source": {
+                  "kind": "span",
+                  "name": "game.place",
+                  "scope": {
+                    "name": "game.instrumentation"
+                  },
+                  "resourceAttributes": {
+                    "service.name": "demo"
+                  },
+                  "value": {
+                    "from": "duration"
+                  }
+                },
+                "projection": {
+                  "kind": "latest"
+                },
+                "target": {
+                  "type": "global"
+                },
+                "freshness": {
+                  "maxAgeSeconds": 30
+                },
+                "sampling": {
+                  "accept": "observed"
+                },
+                "attribution": {
+                  "kind": "none"
+                }
+              }
             },
             "intent": {
-              "type": "metric-objective",
+              "type": "numeric-objective",
               "primary": {
-                "signal": { "key": "checkout.errorRate" },
+                "evidence": "placement",
                 "direction": "minimize"
-              },
-              "secondary": [
-                {
-                  "signal": { "key": "checkout.latency" },
-                  "direction": "minimize"
-                }
-              ]
-            },
-            "fallback": {
-              "value": "control"
+              }
             },
             "policy": {
               "kind": "inline",
               "constraints": [
-                { "kind": "cooldown", "seconds": 10 },
-                { "kind": "max-model-uncertainty", "value": 0.3 }
+                {
+                  "kind": "number-bounds",
+                  "min": 0,
+                  "max": 100
+                },
+                {
+                  "kind": "max-delta",
+                  "value": 10
+                }
               ]
             }
           }
-        }
-      ]
-    },
-    {
-      "name": "generated-fields-and-metadata-exclusion",
-      "expectedContractDigest": "sha256:c56f6b0e83ca76cf112c2cb5720f7223679ca3d136cf4ff0958b941bb8d8d36c",
-      "variants": [
+        },
         {
-          "label": "generated-fields-present",
+          "label": "nonsemantic-owner-and-forbid",
           "definition": {
-            "definitionId": "def_one",
-            "owner": "team-one",
-            "contractDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-            "revision": "rev_one",
-            "key": "global.enabled",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
+            "result": {
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "step": 5,
+              "default": 20
             },
-            "signals": {
-              "allowed": [
-                { "key": "system.health" },
-                { "key": "stale.generated.entry" }
+            "context": {
+              "sessionId": {
+                "type": "string",
+                "target": "session",
+                "required": false
+              }
+            },
+            "targeting": {
+              "hierarchy": [
+                "session",
+                "global"
               ],
-              "evidence": [
-                { "key": "system.health" }
-              ]
+              "primary": "global",
+              "fallbackOrder": []
             },
-            "fallback": {
-              "value": false
+            "inputs": {
+              "pressure": {
+                "source": "request",
+                "type": "number",
+                "unit": "1",
+                "range": [
+                  0,
+                  1
+                ],
+                "meaning": "Current occupancy."
+              }
             },
-            "policy": {
-              "kind": "inline",
-              "constraints": []
-            }
-          }
-        },
-        {
-          "label": "generated-fields-omitted",
-          "definition": {
-            "definitionId": "def_two",
-            "owner": "team-two",
-            "key": "global.enabled",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
+            "evidence": {
+              "placement": {
+                "meaning": "Latest completed placement duration observed by existing instrumentation.",
+                "type": "number",
+                "unit": "ms",
+                "range": [
+                  0,
+                  5000
+                ],
+                "source": {
+                  "kind": "span",
+                  "name": "game.place",
+                  "scope": {
+                    "name": "game.instrumentation"
+                  },
+                  "resourceAttributes": {
+                    "service.name": "demo"
+                  },
+                  "value": {
+                    "from": "duration"
+                  }
+                },
+                "projection": {
+                  "kind": "latest"
+                },
+                "target": {
+                  "type": "global"
+                },
+                "freshness": {
+                  "maxAgeSeconds": 30
+                },
+                "sampling": {
+                  "accept": "observed"
+                },
+                "attribution": {
+                  "kind": "none"
+                }
+              }
             },
-            "signals": {
-              "evidence": [
-                { "key": "system.health" }
-              ]
-            },
-            "fallback": {
-              "value": false
-            },
-            "policy": {
-              "kind": "inline",
-              "constraints": []
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "explicit-default-policy-equivalence",
-      "expectedContractDigest": "sha256:53bb9aca09ce2af38b686cdee0c275db56adf549ee58ee99e76fc0af299cd696",
-      "variants": [
-        {
-          "label": "default-omitted",
-          "definition": {
-            "key": "global.defaultPolicy",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
-            },
-            "fallback": {
-              "value": false
-            },
-            "policy": {
-              "kind": "inline",
-              "constraints": []
-            }
-          }
-        },
-        {
-          "label": "default-explicit",
-          "definition": {
-            "key": "global.defaultPolicy",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
-            },
-            "fallback": {
-              "value": false
+            "intent": {
+              "type": "numeric-objective",
+              "primary": {
+                "evidence": "placement",
+                "direction": "minimize"
+              }
             },
             "policy": {
               "kind": "inline",
-              "constraints": [],
+              "constraints": [
+                {
+                  "kind": "max-delta",
+                  "value": 10
+                },
+                {
+                  "kind": "number-bounds",
+                  "min": 0,
+                  "max": 100
+                }
+              ],
               "clientFallback": {
                 "requiredEvidenceUnavailable": "forbid"
               }
-            }
+            },
+            "owner": "display-only owner"
           }
         }
-      ]
+      ],
+      "expectedContractDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa"
     },
     {
-      "name": "allowlist-only-generated-field-equivalence",
-      "expectedContractDigest": "sha256:4499d74da1ac6165575c46ddb9d8004d2c8d364a84ec7a90e75dcbe1c85d2380",
+      "name": "empty-maps-have-one-meaning",
+      "key": "demo.enabled",
       "variants": [
         {
-          "label": "generated-allowlist-omitted",
+          "label": "omitted",
           "definition": {
-            "key": "global.noSignals",
-            "valueType": "boolean",
-            "actionSpace": {
+            "result": {
               "type": "boolean",
               "default": false
             },
-            "fallback": {
-              "value": false
+            "targeting": {
+              "hierarchy": [
+                "global"
+              ],
+              "primary": "global",
+              "fallbackOrder": []
             },
             "policy": {
               "kind": "inline",
@@ -258,608 +333,4373 @@
           }
         },
         {
-          "label": "stale-generated-allowlist-present",
+          "label": "explicit",
           "definition": {
-            "key": "global.noSignals",
-            "valueType": "boolean",
-            "actionSpace": {
+            "result": {
               "type": "boolean",
               "default": false
             },
-            "signals": {
-              "allowed": [
-                { "key": "stale.generated.entry" }
-              ]
-            },
-            "fallback": {
-              "value": false
+            "targeting": {
+              "hierarchy": [
+                "global"
+              ],
+              "primary": "global",
+              "fallbackOrder": []
             },
             "policy": {
               "kind": "inline",
               "constraints": []
-            }
+            },
+            "context": {},
+            "inputs": {},
+            "evidence": {}
           }
         }
-      ]
+      ],
+      "expectedContractDigest": "sha256:6a0edd938dcd55589626c74487b1df3a776f5c42fcb8944d7f39b741759d0e6b"
     }
   ],
   "inequivalentDefinitionCases": [
     {
-      "name": "nested-contract-like-field-names-remain-semantic",
-      "expectedLeftDigest": "sha256:9f857badc59c2c4aa0781cef28d37e3eedd7d248f635e21b29fafe667cd3be16",
-      "expectedRightDigest": "sha256:1131f4aa25671d28256f10847fd1291ea4d999f3a13f15f8d6b979de1b79111e",
+      "name": "decision-key",
       "left": {
-        "key": "global.contextField",
-        "valueType": "boolean",
-        "actionSpace": {
-          "type": "boolean",
-          "default": false
-        },
-        "fallback": {
-          "value": false
-        },
-        "runtimeContextSchema": {
-          "revision": {
-            "type": "string"
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
           }
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
         }
       },
       "right": {
-        "key": "global.contextField",
-        "valueType": "boolean",
-        "actionSpace": {
-          "type": "boolean",
-          "default": false
-        },
-        "fallback": {
-          "value": false
-        },
-        "runtimeContextSchema": {
-          "contractDigest": {
-            "type": "string"
+        "key": "demo.other",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
           }
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
         }
-      }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:0ba7fae9bb366f5ad8aa6f7668278f93b637226808b835fb134a775948d261a2"
+    },
+    {
+      "name": "safe-default",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 25
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:f338485d382446a732302d505bae6ed869bb97c7a866f9fcf64d1bd4833770fc"
+    },
+    {
+      "name": "context-requiredness",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": true
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:1d043889014104aa7a09a80f35114f88986fd1b3adfb0b7edd0fd0a7118a6d10"
+    },
+    {
+      "name": "request-meaning",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "A different live fact."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:37459fc11f2d31df19de241e086d6d034b150c445716c51bc954d04b03a7b65c"
+    },
+    {
+      "name": "request-unit",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "%",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:639ed129fd7b26aa6cac408bcf91cbe5d0f9f219e8eeb8c2818082cdac8701be"
+    },
+    {
+      "name": "request-range",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                2
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:186710807c8e7fc497855a469e260bf0890ce4070b2a871a6843d5310ef180af"
+    },
+    {
+      "name": "input-ownership",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "evidence",
+              "binding": "placement"
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:40d9efa0144692ccdf30b92275c01c37ca5438ac25a04156040dadd9a4a60a79"
+    },
+    {
+      "name": "binding-meaning",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "A different observed quantity.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:b4c32586fa9c9be050b891daec3be8b557e6b036c39144685697d393889643d6"
+    },
+    {
+      "name": "span-name",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.recover",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:eda26f653e0ab4900eb31415a260ff1e6ff0fa71d6654a0d8acea8785561f996"
+    },
+    {
+      "name": "instrumentation-scope",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "other.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:8bdb89b176290699951b05357efe57cf2c600c3f843c01e69cff46fbf524061c"
+    },
+    {
+      "name": "scope-version",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation",
+                  "version": "1.2.3"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:0eaeb46694c84542d8a76380bdd56c086ef45311e45d66715f981ec70a2437f7"
+    },
+    {
+      "name": "resource-selector",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "other"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:3f8f288e5d350d0a3377f57290292b73ce26238ede48771f65947f3733beb48a"
+    },
+    {
+      "name": "record-selector",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                },
+                "attributes": {
+                  "operation": "recovery"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:5ff5fec27868a0e7c6b0f5e111a2132c3423b6968bfe26cde67acb03c4681a32"
+    },
+    {
+      "name": "attribute-selection",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "attributes",
+                  "key": "placement.ms"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:6a4649d4b235388e95ec89b12418a6403b71e7d291c544b7d60f0fe9258f5b1f"
+    },
+    {
+      "name": "freshness",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 60
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:72d00c5d018b1e9b85408007623fbe318ca57d3e40fc3eb8178ce0d28c0407f8"
+    },
+    {
+      "name": "attribution",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "confirmed-exposure",
+                "exposureIdAttribute": {
+                  "from": "attributes",
+                  "key": "flaggo.exposure.id"
+                }
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:d968330ea434eafce165863359c20460428d1cd31cb4bb275b803233ab667de3"
+    },
+    {
+      "name": "policy-envelope",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 15
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:65348b99fba7a90d36126e5085851892260c6af2f2419702d7e7f61e36096a09"
+    },
+    {
+      "name": "natural-language-intent",
+      "left": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "numeric-objective",
+            "primary": {
+              "evidence": "placement",
+              "direction": "minimize"
+            }
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "right": {
+        "key": "demo.limit",
+        "definition": {
+          "result": {
+            "type": "number",
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "default": 20
+          },
+          "context": {
+            "sessionId": {
+              "type": "string",
+              "target": "session",
+              "required": false
+            }
+          },
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "global"
+            ],
+            "primary": "global",
+            "fallbackOrder": []
+          },
+          "inputs": {
+            "pressure": {
+              "source": "request",
+              "type": "number",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ],
+              "meaning": "Current occupancy."
+            }
+          },
+          "evidence": {
+            "placement": {
+              "meaning": "Latest completed placement duration observed by existing instrumentation.",
+              "type": "number",
+              "unit": "ms",
+              "range": [
+                0,
+                5000
+              ],
+              "source": {
+                "kind": "span",
+                "name": "game.place",
+                "scope": {
+                  "name": "game.instrumentation"
+                },
+                "resourceAttributes": {
+                  "service.name": "demo"
+                },
+                "value": {
+                  "from": "duration"
+                }
+              },
+              "projection": {
+                "kind": "latest"
+              },
+              "target": {
+                "type": "global"
+              },
+              "freshness": {
+                "maxAgeSeconds": 30
+              },
+              "sampling": {
+                "accept": "observed"
+              },
+              "attribution": {
+                "kind": "none"
+              }
+            }
+          },
+          "intent": {
+            "type": "natural-language",
+            "text": "Prefer lower pressure."
+          },
+          "policy": {
+            "kind": "inline",
+            "constraints": [
+              {
+                "kind": "max-delta",
+                "value": 10
+              },
+              {
+                "kind": "number-bounds",
+                "min": 0,
+                "max": 100
+              }
+            ]
+          }
+        }
+      },
+      "expectedLeftDigest": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+      "expectedRightDigest": "sha256:89bd1ad264b1ff894a12b4f268c4d3c3f7a13bc9fb50fc0a8b201d005681f10d"
     }
   ],
-  "signalDeclarationCases": [
+  "bundleCases": [
     {
-      "name": "event-schema-digest-excludes-generated-digest",
-      "expectedSchemaDigest": "sha256:d4a6acb6e2a53e08cd22a85e96c55fcd87cefa83f91de2840c259dc5354ced60",
+      "name": "manifest-map-order-and-default-normalization",
       "variants": [
         {
-          "kind": "event",
-          "key": "game.piecePlaced",
-          "fields": {
-            "hardDrop": "boolean",
-            "placementTimeMs": "number"
-          },
-          "units": {
-            "placementTimeMs": "ms"
+          "label": "original",
+          "bundle": {
+            "format": "flaggo.decision-definition-bundle/v2",
+            "application": {
+              "id": "demo",
+              "environment": "test"
+            },
+            "decisions": {
+              "demo.limit": {
+                "result": {
+                  "type": "number",
+                  "min": 0,
+                  "max": 100,
+                  "step": 5,
+                  "default": 20
+                },
+                "context": {
+                  "sessionId": {
+                    "type": "string",
+                    "target": "session",
+                    "required": false
+                  }
+                },
+                "targeting": {
+                  "hierarchy": [
+                    "session",
+                    "global"
+                  ],
+                  "primary": "global",
+                  "fallbackOrder": []
+                },
+                "inputs": {
+                  "pressure": {
+                    "source": "request",
+                    "type": "number",
+                    "unit": "1",
+                    "range": [
+                      0,
+                      1
+                    ],
+                    "meaning": "Current occupancy."
+                  }
+                },
+                "evidence": {
+                  "placement": {
+                    "meaning": "Latest completed placement duration observed by existing instrumentation.",
+                    "type": "number",
+                    "unit": "ms",
+                    "range": [
+                      0,
+                      5000
+                    ],
+                    "source": {
+                      "kind": "span",
+                      "name": "game.place",
+                      "scope": {
+                        "name": "game.instrumentation"
+                      },
+                      "resourceAttributes": {
+                        "service.name": "demo"
+                      },
+                      "value": {
+                        "from": "duration"
+                      }
+                    },
+                    "projection": {
+                      "kind": "latest"
+                    },
+                    "target": {
+                      "type": "global"
+                    },
+                    "freshness": {
+                      "maxAgeSeconds": 30
+                    },
+                    "sampling": {
+                      "accept": "observed"
+                    },
+                    "attribution": {
+                      "kind": "none"
+                    }
+                  }
+                },
+                "intent": {
+                  "type": "numeric-objective",
+                  "primary": {
+                    "evidence": "placement",
+                    "direction": "minimize"
+                  }
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": [
+                    {
+                      "kind": "max-delta",
+                      "value": 10
+                    },
+                    {
+                      "kind": "number-bounds",
+                      "min": 0,
+                      "max": 100
+                    }
+                  ]
+                }
+              },
+              "demo.enabled": {
+                "result": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "targeting": {
+                  "hierarchy": [
+                    "global"
+                  ],
+                  "primary": "global",
+                  "fallbackOrder": []
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": []
+                }
+              }
+            }
           }
         },
         {
-          "schemaDigest": "sha256:d4a6acb6e2a53e08cd22a85e96c55fcd87cefa83f91de2840c259dc5354ced60",
-          "units": {
-            "placementTimeMs": "ms"
-          },
-          "fields": {
-            "placementTimeMs": "number",
-            "hardDrop": "boolean"
-          },
-          "key": "game.piecePlaced",
-          "kind": "event"
+          "label": "reordered",
+          "bundle": {
+            "format": "flaggo.decision-definition-bundle/v2",
+            "application": {
+              "id": "demo",
+              "environment": "test"
+            },
+            "decisions": {
+              "demo.enabled": {
+                "result": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "targeting": {
+                  "hierarchy": [
+                    "global"
+                  ],
+                  "primary": "global",
+                  "fallbackOrder": []
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": []
+                }
+              },
+              "demo.limit": {
+                "result": {
+                  "type": "number",
+                  "min": 0,
+                  "max": 100,
+                  "step": 5,
+                  "default": 20
+                },
+                "context": {
+                  "sessionId": {
+                    "type": "string",
+                    "target": "session"
+                  }
+                },
+                "targeting": {
+                  "hierarchy": [
+                    "session",
+                    "global"
+                  ],
+                  "primary": "global",
+                  "fallbackOrder": []
+                },
+                "inputs": {
+                  "pressure": {
+                    "source": "request",
+                    "type": "number",
+                    "unit": "1",
+                    "range": [
+                      0,
+                      1
+                    ],
+                    "meaning": "Current occupancy."
+                  }
+                },
+                "evidence": {
+                  "placement": {
+                    "meaning": "Latest completed placement duration observed by existing instrumentation.",
+                    "type": "number",
+                    "unit": "ms",
+                    "range": [
+                      0,
+                      5000
+                    ],
+                    "source": {
+                      "kind": "span",
+                      "name": "game.place",
+                      "scope": {
+                        "name": "game.instrumentation"
+                      },
+                      "resourceAttributes": {
+                        "service.name": "demo"
+                      },
+                      "value": {
+                        "from": "duration"
+                      }
+                    },
+                    "projection": {
+                      "kind": "latest"
+                    },
+                    "target": {
+                      "type": "global"
+                    },
+                    "freshness": {
+                      "maxAgeSeconds": 30
+                    },
+                    "sampling": {
+                      "accept": "observed"
+                    },
+                    "attribution": {
+                      "kind": "none"
+                    }
+                  }
+                },
+                "intent": {
+                  "type": "numeric-objective",
+                  "primary": {
+                    "evidence": "placement",
+                    "direction": "minimize"
+                  }
+                },
+                "policy": {
+                  "kind": "inline",
+                  "constraints": [
+                    {
+                      "kind": "number-bounds",
+                      "min": 0,
+                      "max": 100
+                    },
+                    {
+                      "kind": "max-delta",
+                      "value": 10
+                    }
+                  ]
+                }
+              }
+            }
+          }
         }
-      ]
-    },
-    {
-      "name": "derived-metric-schema-digest",
-      "expectedSchemaDigest": "sha256:67035f1693cc2d6563b668a1256ea947d6feca6d195ac0fa7fb0f15502f913e5",
-      "variants": [
-        {
-          "kind": "metric",
-          "key": "game.lossRate24h",
-          "type": "number",
-          "source": "derived",
-          "from": [
-            { "key": "game.sessionEnded" }
-          ],
-          "aggregation": "rate(endReason == 'loss')",
-          "window": "24h",
-          "range": [0, 1]
-        }
-      ]
-    }
-  ],
-  "normalizationErrorCases": [
-    {
-      "name": "supplied-signal-schema-digest-mismatch",
-      "expectedError": "schema digest mismatch for signal key",
-      "bundle": {
-        "format": "flaggo.decision-definition-bundle/v1",
-        "application": {
-          "id": "digest-vectors",
-          "environment": "test"
-        },
-        "source": {},
-        "signals": [
-          {
-            "kind": "metric",
-            "key": "system.load",
-            "type": "number",
-            "source": "app-emitted",
-            "schemaDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-          }
-        ],
-        "definitions": [
-          {
-            "key": "global.enabled",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
-            },
-            "fallback": {
-              "value": false
-            },
-            "policy": {
-              "kind": "inline",
-              "constraints": []
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "same-key-signal-schema-conflict",
-      "expectedError": "conflicting signal declaration for key",
-      "bundle": {
-        "format": "flaggo.decision-definition-bundle/v1",
-        "application": {
-          "id": "digest-vectors",
-          "environment": "test"
-        },
-        "source": {},
-        "signals": [
-          {
-            "kind": "metric",
-            "key": "system.load",
-            "type": "number",
-            "source": "app-emitted"
-          },
-          {
-            "kind": "metric",
-            "key": "system.load",
-            "type": "string",
-            "source": "app-emitted"
-          }
-        ],
-        "definitions": [
-          {
-            "key": "global.enabled",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
-            },
-            "fallback": {
-              "value": false
-            },
-            "policy": {
-              "kind": "inline",
-              "constraints": []
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "duplicate-definition-metadata-conflict",
-      "expectedError": "metadata-conflicting duplicate decision key",
-      "bundle": {
-        "format": "flaggo.decision-definition-bundle/v1",
-        "application": {
-          "id": "digest-vectors",
-          "environment": "test"
-        },
-        "source": {},
-        "definitions": [
-          {
-            "definitionId": "def_one",
-            "owner": "team-one",
-            "key": "duplicate.key",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
-            },
-            "fallback": {
-              "value": false
-            },
-            "policy": {
-              "kind": "inline",
-              "constraints": []
-            }
-          },
-          {
-            "definitionId": "def_two",
-            "owner": "team-two",
-            "key": "duplicate.key",
-            "valueType": "boolean",
-            "actionSpace": {
-              "type": "boolean",
-              "default": false
-            },
-            "fallback": {
-              "value": false
-            },
-            "policy": {
-              "kind": "inline",
-              "constraints": []
-            }
-          }
-        ]
+      ],
+      "expectedBundleDigest": "sha256:a65b27633d23620dfe85340bc1923efced155bbbe8bafd3c8f948aaf71674b8d",
+      "expectedContractDigests": {
+        "demo.limit": "sha256:26aa22d1da64f52b916cf0305f16d90153592c986d4d389f6441d950a3eaeffa",
+        "demo.enabled": "sha256:6a0edd938dcd55589626c74487b1df3a776f5c42fcb8944d7f39b741759d0e6b"
       }
     }
   ],
   "valueContractCases": [
     {
-      "name": "number-bounds-must-ascend",
-      "expectedErrors": ["invalid-bounds", "invalid-default", "invalid-fallback"],
+      "name": "valid-step",
       "definition": {
-        "key": "invalid.bounds",
-        "valueType": "number",
-        "actionSpace": {
+        "result": {
+          "type": "number",
+          "min": 0,
+          "max": 1,
+          "step": 0.1,
+          "default": 0.3
+        }
+      },
+      "expectedErrors": []
+    },
+    {
+      "name": "non-aligned-default",
+      "definition": {
+        "result": {
+          "type": "number",
+          "min": 0,
+          "max": 1,
+          "step": 0.2,
+          "default": 0.3
+        }
+      },
+      "expectedErrors": [
+        "invalid-default-step"
+      ]
+    },
+    {
+      "name": "descending-bounds",
+      "definition": {
+        "result": {
           "type": "number",
           "min": 10,
+          "max": 0,
+          "default": 5
+        }
+      },
+      "expectedErrors": [
+        "invalid-bounds",
+        "invalid-default"
+      ]
+    },
+    {
+      "name": "outside-default",
+      "definition": {
+        "result": {
+          "type": "number",
+          "min": 0,
           "max": 1,
-          "default": 5
-        },
-        "fallback": {
-          "value": 5
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
+          "default": 2
         }
-      }
+      },
+      "expectedErrors": [
+        "invalid-default"
+      ]
     },
     {
-      "name": "number-default-and-fallback-must-be-in-range",
-      "expectedErrors": ["invalid-default", "invalid-fallback"],
+      "name": "nonpositive-step",
       "definition": {
-        "key": "invalid.defaults",
-        "valueType": "number",
-        "actionSpace": {
+        "result": {
           "type": "number",
           "min": 0,
-          "max": 10,
-          "default": 11
-        },
-        "fallback": {
-          "value": -1
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
-        }
-      }
-    },
-    {
-      "name": "number-step-must-be-positive",
-      "expectedErrors": ["invalid-step"],
-      "definition": {
-        "key": "invalid.step",
-        "valueType": "number",
-        "actionSpace": {
-          "type": "number",
-          "min": 0,
-          "max": 10,
+          "max": 1,
           "step": 0,
-          "default": 5
-        },
-        "fallback": {
-          "value": 5
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
+          "default": 0
         }
-      }
+      },
+      "expectedErrors": [
+        "invalid-step"
+      ]
     },
     {
-      "name": "number-default-and-fallback-must-align-to-step",
-      "expectedErrors": ["invalid-default-step", "invalid-fallback-step"],
+      "name": "allowed-string",
       "definition": {
-        "key": "invalid.stepAlignment",
-        "valueType": "number",
-        "actionSpace": {
-          "type": "number",
-          "min": 0,
-          "max": 10,
-          "step": 2,
-          "default": 3
-        },
-        "fallback": {
-          "value": 5
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
-        }
-      }
-    },
-    {
-      "name": "number-step-alignment-is-exact",
-      "expectedErrors": ["invalid-default-step", "invalid-fallback-step"],
-      "definition": {
-        "key": "invalid.preciseStepAlignment",
-        "valueType": "number",
-        "actionSpace": {
-          "type": "number",
-          "min": 0,
-          "max": 10,
-          "step": 1,
-          "default": 1.0000000005
-        },
-        "fallback": {
-          "value": 2.0000000005
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
-        }
-      }
-    },
-    {
-      "name": "string-default-and-fallback-must-be-allowed",
-      "expectedErrors": ["invalid-default", "invalid-fallback"],
-      "definition": {
-        "key": "invalid.allowedValues",
-        "valueType": "string",
-        "actionSpace": {
+        "result": {
           "type": "string",
-          "allowedValues": ["a", "b"],
-          "default": "c"
-        },
-        "fallback": {
-          "value": "d"
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
+          "default": "a",
+          "allowedValues": [
+            "a",
+            "b"
+          ]
         }
-      }
+      },
+      "expectedErrors": []
     },
     {
-      "name": "valid-number-value-contract",
-      "expectedErrors": [],
+      "name": "unknown-string",
       "definition": {
-        "key": "valid.number",
-        "valueType": "number",
-        "actionSpace": {
-          "type": "number",
-          "min": 0,
-          "max": 10,
-          "step": 2,
-          "default": 4
-        },
-        "fallback": {
-          "value": 2
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
+        "result": {
+          "type": "string",
+          "default": "c",
+          "allowedValues": [
+            "a",
+            "b"
+          ]
         }
-      }
+      },
+      "expectedErrors": [
+        "invalid-default"
+      ]
+    },
+    {
+      "name": "boolean-default",
+      "definition": {
+        "result": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "expectedErrors": []
     }
   ],
-  "bundleCases": [
+  "definitionValidationCases": [
     {
-      "name": "bundle-sorting-and-per-definition-digests",
-      "expectedBundleDigest": "sha256:3c8c73ffe8b404a9cde33bf4311586ecb34b8befc22ae3d211261787b79c5a81",
-      "expectedContractDigests": {
-        "global.enabled": "sha256:c56f6b0e83ca76cf112c2cb5720f7223679ca3d136cf4ff0958b941bb8d8d36c",
-        "tuning.limit": "sha256:f1183dd907519be55e66ae13819e69c959f53b48c2613171f706a6b68def9731"
-      },
-      "variants": [
-        {
-          "label": "reverse-order",
-          "bundle": {
-            "format": "flaggo.decision-definition-bundle/v1",
-            "application": {
-              "id": "digest-vectors",
-              "environment": "test"
-            },
-            "build": {
-              "buildId": "build-1"
-            },
+      "name": "confirmed-outcome-is-not-a-runtime-prerequisite",
+      "definition": {
+        "result": { "type": "number", "min": 0, "max": 1, "default": 0 },
+        "targeting": { "hierarchy": ["global"], "primary": "global", "fallbackOrder": [] },
+        "inputs": { "pressure": { "source": "evidence", "binding": "lastOutcome" } },
+        "evidence": {
+          "lastOutcome": {
+            "meaning": "Latest pressure attributed to a confirmed application.",
+            "type": "number",
             "source": {
-              "repository": "github.com/example/digest-vectors",
-              "path": "contracts",
-              "commit": "abc123"
+              "kind": "log", "eventName": "work.completed",
+              "scope": { "name": "worker" },
+              "resourceAttributes": {},
+              "value": { "from": "attributes", "key": "pressure" }
             },
-            "signals": [
-              {
-                "kind": "metric",
-                "key": "system.load",
-                "type": "number",
-                "source": "app-emitted",
-                "schemaDigest": "sha256:0b803288518debd9387d9f4358472c4ab3675415b96e0f34d8ed95e6d22329e9"
-              },
-              {
-                "kind": "metric",
-                "key": "system.health",
-                "type": "boolean",
-                "source": "app-emitted"
-              }
-            ],
-            "definitions": [
-              {
-                "definitionId": "def_limit",
-                "key": "tuning.limit",
-                "valueType": "number",
-                "actionSpace": {
-                  "type": "number",
-                  "min": 1,
-                  "max": 10,
-                  "step": 1,
-                  "default": 5
-                },
-                "signals": {
-                  "evidence": [
-                    { "key": "system.load" },
-                    { "key": "system.health" }
-                  ]
-                },
-                "inference": {
-                  "target": "global",
-                  "inputs": [
-                    { "key": "system.load" },
-                    { "key": "system.health" }
-                  ]
-                },
-                "fallback": {
-                  "value": 5
-                },
-                "policy": {
-                  "kind": "inline",
-                  "constraints": [
-                    { "kind": "max-delta", "value": 1 },
-                    { "kind": "cooldown", "seconds": 5 }
-                  ]
-                }
-              },
-              {
-                "definitionId": "def_enabled",
-                "key": "global.enabled",
-                "valueType": "boolean",
-                "actionSpace": {
-                  "type": "boolean",
-                  "default": false
-                },
-                "signals": {
-                  "evidence": [
-                    { "key": "system.health" }
-                  ]
-                },
-                "fallback": {
-                  "value": false
-                },
-                "policy": {
-                  "kind": "inline",
-                  "constraints": []
-                }
-              }
-            ]
+            "projection": { "kind": "latest" },
+            "target": { "type": "global" },
+            "freshness": { "maxAgeSeconds": 30 },
+            "sampling": { "accept": "observed" },
+            "attribution": {
+              "kind": "confirmed-exposure",
+              "exposureIdAttribute": { "from": "attributes", "key": "flaggo.exposure.id" }
+            }
           }
         },
-        {
-          "label": "canonical-order",
-          "bundle": {
-            "format": "flaggo.decision-definition-bundle/v1",
-            "application": {
-              "id": "digest-vectors",
-              "environment": "test"
-            },
-            "build": {
-              "buildId": "build-1"
-            },
+        "policy": { "kind": "inline", "constraints": [] }
+      },
+      "expectedErrors": ["circular-exposure-input"]
+    },
+    {
+      "name": "confirmed-outcome-remains-valid-for-objectives",
+      "definition": {
+        "result": { "type": "number", "min": 0, "max": 1, "default": 0 },
+        "targeting": { "hierarchy": ["global"], "primary": "global", "fallbackOrder": [] },
+        "evidence": {
+          "lastOutcome": {
+            "meaning": "Latest pressure attributed to a confirmed application.",
+            "type": "number",
             "source": {
-              "repository": "github.com/example/digest-vectors",
-              "path": "contracts",
-              "commit": "abc123"
+              "kind": "log", "eventName": "work.completed",
+              "scope": { "name": "worker" },
+              "resourceAttributes": {},
+              "value": { "from": "attributes", "key": "pressure" }
             },
-            "signals": [
-              {
-                "kind": "metric",
-                "key": "system.health",
-                "type": "boolean",
-                "source": "app-emitted"
-              },
-              {
-                "kind": "metric",
-                "key": "system.load",
+            "projection": { "kind": "latest" },
+            "target": { "type": "global" },
+            "freshness": { "maxAgeSeconds": 30 },
+            "sampling": { "accept": "observed" },
+            "attribution": {
+              "kind": "confirmed-exposure",
+              "exposureIdAttribute": { "from": "attributes", "key": "flaggo.exposure.id" }
+            }
+          }
+        },
+        "intent": { "type": "numeric-objective", "primary": { "evidence": "lastOutcome", "direction": "minimize" } },
+        "policy": { "kind": "inline", "constraints": [] }
+      },
+      "expectedErrors": []
+    }
+  ],
+  "normalizationErrorCases": [
+    {
+      "name": "obsolete-v1",
+      "bundle": {
+        "format": "flaggo.decision-definition-bundle/v1",
+        "definitions": []
+      },
+      "expectedError": "v2 manifest"
+    },
+    {
+      "name": "duplicate-policy",
+      "bundle": {
+        "format": "flaggo.decision-definition-bundle/v2",
+        "application": {
+          "id": "demo",
+          "environment": "test"
+        },
+        "decisions": {
+          "demo.limit": {
+            "result": {
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "step": 5,
+              "default": 20
+            },
+            "context": {
+              "sessionId": {
+                "type": "string",
+                "target": "session",
+                "required": false
+              }
+            },
+            "targeting": {
+              "hierarchy": [
+                "session",
+                "global"
+              ],
+              "primary": "global",
+              "fallbackOrder": []
+            },
+            "inputs": {
+              "pressure": {
+                "source": "request",
                 "type": "number",
-                "source": "app-emitted"
+                "unit": "1",
+                "range": [
+                  0,
+                  1
+                ],
+                "meaning": "Current occupancy."
               }
-            ],
-            "definitions": [
-              {
-                "definitionId": "def_enabled",
-                "key": "global.enabled",
-                "valueType": "boolean",
-                "actionSpace": {
-                  "type": "boolean",
-                  "default": false
+            },
+            "evidence": {
+              "placement": {
+                "meaning": "Latest completed placement duration observed by existing instrumentation.",
+                "type": "number",
+                "unit": "ms",
+                "range": [
+                  0,
+                  5000
+                ],
+                "source": {
+                  "kind": "span",
+                  "name": "game.place",
+                  "scope": {
+                    "name": "game.instrumentation"
+                  },
+                  "resourceAttributes": {
+                    "service.name": "demo"
+                  },
+                  "value": {
+                    "from": "duration"
+                  }
                 },
-                "signals": {
-                  "allowed": [
-                    { "key": "system.health" }
-                  ],
-                  "evidence": [
-                    { "key": "system.health" }
-                  ]
+                "projection": {
+                  "kind": "latest"
                 },
-                "fallback": {
-                  "value": false
+                "target": {
+                  "type": "global"
                 },
-                "policy": {
-                  "kind": "inline",
-                  "constraints": []
-                }
-              },
-              {
-                "definitionId": "def_limit",
-                "key": "tuning.limit",
-                "valueType": "number",
-                "actionSpace": {
-                  "type": "number",
-                  "min": 1,
-                  "max": 10,
-                  "step": 1,
-                  "default": 5
+                "freshness": {
+                  "maxAgeSeconds": 30
                 },
-                "signals": {
-                  "allowed": [
-                    { "key": "system.health" },
-                    { "key": "system.load" }
-                  ],
-                  "evidence": [
-                    { "key": "system.health" },
-                    { "key": "system.load" }
-                  ]
+                "sampling": {
+                  "accept": "observed"
                 },
-                "inference": {
-                  "target": "global",
-                  "inputs": [
-                    { "key": "system.health" },
-                    { "key": "system.load" }
-                  ]
-                },
-                "fallback": {
-                  "value": 5
-                },
-                "policy": {
-                  "kind": "inline",
-                  "constraints": [
-                    { "kind": "cooldown", "seconds": 5 },
-                    { "kind": "max-delta", "value": 1 }
-                  ]
+                "attribution": {
+                  "kind": "none"
                 }
               }
-            ]
+            },
+            "intent": {
+              "type": "numeric-objective",
+              "primary": {
+                "evidence": "placement",
+                "direction": "minimize"
+              }
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": [
+                {
+                  "kind": "max-delta",
+                  "value": 1
+                },
+                {
+                  "kind": "max-delta",
+                  "value": 2
+                }
+              ]
+            }
+          },
+          "demo.enabled": {
+            "result": {
+              "type": "boolean",
+              "default": false
+            },
+            "targeting": {
+              "hierarchy": [
+                "global"
+              ],
+              "primary": "global",
+              "fallbackOrder": []
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
           }
         }
-      ]
+      },
+      "expectedError": "duplicate inline policy constraint"
+    },
+    {
+      "name": "non-map-context",
+      "bundle": {
+        "format": "flaggo.decision-definition-bundle/v2",
+        "application": {
+          "id": "demo",
+          "environment": "test"
+        },
+        "decisions": {
+          "demo.limit": {
+            "result": {
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "step": 5,
+              "default": 20
+            },
+            "context": [],
+            "targeting": {
+              "hierarchy": [
+                "session",
+                "global"
+              ],
+              "primary": "global",
+              "fallbackOrder": []
+            },
+            "inputs": {
+              "pressure": {
+                "source": "request",
+                "type": "number",
+                "unit": "1",
+                "range": [
+                  0,
+                  1
+                ],
+                "meaning": "Current occupancy."
+              }
+            },
+            "evidence": {
+              "placement": {
+                "meaning": "Latest completed placement duration observed by existing instrumentation.",
+                "type": "number",
+                "unit": "ms",
+                "range": [
+                  0,
+                  5000
+                ],
+                "source": {
+                  "kind": "span",
+                  "name": "game.place",
+                  "scope": {
+                    "name": "game.instrumentation"
+                  },
+                  "resourceAttributes": {
+                    "service.name": "demo"
+                  },
+                  "value": {
+                    "from": "duration"
+                  }
+                },
+                "projection": {
+                  "kind": "latest"
+                },
+                "target": {
+                  "type": "global"
+                },
+                "freshness": {
+                  "maxAgeSeconds": 30
+                },
+                "sampling": {
+                  "accept": "observed"
+                },
+                "attribution": {
+                  "kind": "none"
+                }
+              }
+            },
+            "intent": {
+              "type": "numeric-objective",
+              "primary": {
+                "evidence": "placement",
+                "direction": "minimize"
+              }
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": [
+                {
+                  "kind": "max-delta",
+                  "value": 10
+                },
+                {
+                  "kind": "number-bounds",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            }
+          },
+          "demo.enabled": {
+            "result": {
+              "type": "boolean",
+              "default": false
+            },
+            "targeting": {
+              "hierarchy": [
+                "global"
+              ],
+              "primary": "global",
+              "fallbackOrder": []
+            },
+            "policy": {
+              "kind": "inline",
+              "constraints": []
+            }
+          }
+        }
+      },
+      "expectedError": "context must be a map"
     }
   ]
 }

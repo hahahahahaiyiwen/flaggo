@@ -433,6 +433,21 @@ export function startHost(
   repositoryRoot,
   configuration,
 ) {
+  return startManagedProcess(
+    name, "dotnet", [assembly], logPath, repositoryRoot,
+    createHostEnvironment(configuration),
+  );
+}
+
+export function startManagedProcess(
+  name,
+  executable,
+  arguments_,
+  logPath,
+  repositoryRoot,
+  environment,
+  knownUrl,
+) {
   const log = createWriteStream(logPath, { flags: "a" });
   let logError;
   const logClosed = new Promise((resolvePromise) => {
@@ -442,9 +457,9 @@ export function startHost(
       resolvePromise();
     });
   });
-  const child = spawn("dotnet", [assembly], {
+  const child = spawn(executable, arguments_, {
     cwd: repositoryRoot,
-    env: createHostEnvironment(configuration),
+    env: environment,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -457,6 +472,10 @@ export function startHost(
   const listeningUrl = new Promise((resolvePromise, reject) => {
     resolveListening = resolvePromise;
     rejectListening = reject;
+    if (knownUrl !== undefined) {
+      listeningSettled = true;
+      resolvePromise(knownUrl);
+    }
   });
   const observer = createStructuredLogObserver((url) => {
     if (!listeningSettled) {

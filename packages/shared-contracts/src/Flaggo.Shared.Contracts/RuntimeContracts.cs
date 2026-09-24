@@ -24,10 +24,40 @@ public sealed record DecisionClient(
     string? SdkVersion = null);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record SignalRef(string Key);
+public sealed record ApplicationScope(string AppId, string Environment, string TenantId);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record SignalInput(SignalRef Signal, JsonElement Value);
+public sealed record InputProvenance(
+    string Source,
+    string? Binding = null,
+    string? Generation = null,
+    string? ObservedTimeUnixNano = null,
+    DateTimeOffset? MaterializedAt = null,
+    string? Coverage = null,
+    string? SourceFingerprint = null,
+    string? TraceId = null,
+    string? SpanId = null,
+    uint? SamplingFlags = null,
+    string? ExposureId = null,
+    TargetResolutionProvenance? TargetResolution = null);
+
+public static class DecisionValues
+{
+    public static bool IsScalar(JsonElement value) =>
+        value.ValueKind is JsonValueKind.String or JsonValueKind.True or JsonValueKind.False ||
+        CanonicalJson.IsIeee754CompatibleNumber(value);
+
+    public static bool Matches(JsonElement value, string type, double? minimum = null, double? maximum = null) =>
+        type switch
+        {
+            "number" => CanonicalJson.IsIeee754CompatibleNumber(value) &&
+                (minimum is null || value.GetDouble() >= minimum) &&
+                (maximum is null || value.GetDouble() <= maximum),
+            "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+            "string" => value.ValueKind == JsonValueKind.String,
+            _ => false
+        };
+}
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ProblemIssue(
@@ -36,7 +66,7 @@ public sealed record ProblemIssue(
     string Path,
     string Message,
     string? DecisionKey = null,
-    string? SignalKey = null);
+    string? InputKey = null);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ClientFallbackEligibility(
@@ -49,7 +79,7 @@ public sealed record DecideRequest(
     IReadOnlyDictionary<string, JsonElement> RuntimeContext,
     DecisionClient Client,
     DecisionTargetRef? RuntimeTarget = null,
-    IReadOnlyList<SignalInput>? Inputs = null);
+    IReadOnlyDictionary<string, JsonElement>? Inputs = null);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DecisionDefinitionRef(

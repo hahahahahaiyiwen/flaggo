@@ -406,7 +406,10 @@ public sealed class LocalFileEvidenceProviderTests
             System.Text.Json.JsonSerializer.SerializeToElement(800),
             "fallback",
             [],
-            []),
+            [],
+            TargetHierarchy: ["global"],
+            InferenceTarget: "global",
+            FallbackOrder: []),
         new GovernedDecisionState(
             "definition",
             "revision",
@@ -414,5 +417,5 @@ public sealed class LocalFileEvidenceProviderTests
             System.Text.Json.JsonSerializer.SerializeToElement(800),
             StrategyId: strategyId),
         new Dictionary<string, System.Text.Json.JsonElement>(),
-        []);
+        new Dictionary<string, JsonElement>());
 }

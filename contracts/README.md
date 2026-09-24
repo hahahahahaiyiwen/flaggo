@@ -1,8 +1,8 @@
-# Phase 1 Executable Contracts
+# Executable Contracts
 
-This directory is the executable projection of the accepted Phase 1 design in
+This directory is the executable projection of the accepted API design in
 [`docs/design/API_CONTRACT_PROPOSAL.md`](../docs/design/API_CONTRACT_PROPOSAL.md).
-The OpenAPI documents and JSON Schemas are the accepted Phase 1 authority for
+The OpenAPI documents and JSON Schemas are the authority for
 wire behavior. Their conformance gate must remain green for every change.
 
 ## Layout
@@ -16,9 +16,22 @@ contracts/
   mock/          Fixture-backed development server
 ```
 
-The fixture manifest indexes 72 cases covering all 43 required scenarios from
+The fixture manifest indexes 75 cases covering all 43 required scenarios from
 the proposal. SDK and service implementations must use the same artifacts
 rather than maintain independent wire DTOs.
+
+The current breaking replacement is manifest
+`flaggo.decision-definition-bundle/v2`: one result/default, typed request or
+evidence inputs, and decision-local native OTel bindings. Producer schemas,
+inline declarations/extraction, old input arrays, and v1 manifests are removed.
+Deterministic rules permit null confidence. Current publication returns an
+approved-definition receipt; initial-authority activation/readiness is #40.
+
+Three native scope-denial fixtures use `protocol: "otlp-protobuf"` and
+`protobuf` message projections rather than JSON wire bodies. The exhaustive
+.NET fixture runner encodes generated OTLP requests and compares binary
+`google.rpc.Status` responses. Python verifies route/media/status/scope
+coverage; the JSON mock does not advertise these native fixtures.
 
 Approval-required change sets contain at least one newly `created` definition
 or `semantic-change`; metadata-only changes remain immediately applicable and
@@ -44,8 +57,8 @@ reviewed change.
 It does not start network services or access remote schema registries.
 
 The `Contracts` GitHub Actions workflow runs the local Tetris host harness in a
-separate required `tetris-integration` job rather than folding it into the
-workspace `npm test` gate.
+separate `tetris-integration` job rather than folding it into the workspace
+`npm test` gate. Worker and stock-Collector integrations have their own jobs.
 
 ## Run the mock
 
@@ -60,5 +73,5 @@ selection and discovery endpoints.
 
 Contract changes must update the affected schema, OpenAPI operation, fixtures,
 manifest, proposal compatibility notes, and conformance checks together. The
-accepted Phase 1 baseline changes only through an explicit compatible revision
-or a documented breaking-version decision.
+baseline changes only through an accepted contract revision with aligned
+consumers. This repository intentionally provides no obsolete-format adapter.

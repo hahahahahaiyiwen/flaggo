@@ -559,7 +559,7 @@ public sealed class LocalFileGovernedStateLifecycleStoreTests
                 {
                     new
                     {
-                        signalKey = "pressure",
+                        inputKey = "pressure",
                         minimum = 0,
                         maximum = 1,
                         weight = 1

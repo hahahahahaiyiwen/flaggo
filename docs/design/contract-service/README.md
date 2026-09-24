@@ -9,6 +9,12 @@ authority candidates into active decision state.
 It owns the management API and the Contract Store boundary. It is the only
 server service allowed to orchestrate authority activation.
 
+This document separates target activation ownership from current publication:
+manifest v2 currently publishes approved definitions and typed bindings.
+#49 aligns executable services/stores; #40 adds bundle initial authority and
+activation-converged receipts. Current local state bootstrap is trusted
+tooling, not a second public manifest or a completed readiness contract.
+
 ## Responsibilities
 
 Contract Service:
@@ -70,9 +76,53 @@ range, allowed values, step, fixed-baseline delta, target eligibility, required
 inputs, and fallback.
 
 Contract Service validates complete definition-owned constraints and candidate
-compatibility before approval and activation. Phase 3 has no separately
+compatibility before approval and activation. The target Phase 3 contract has no separately
 resolved environment/operator constraint layer and no standalone Policy
 service.
+
+## Implemented manifest and approval contract
+
+The sole authored input is
+[`flaggo.decision-definition-bundle/v2`](../../../contracts/schemas/decision-definition-bundle-v2.schema.json).
+Definitions own one result/default, context/targeting, required request/evidence
+inputs, native OTel bindings, intent and current `policy` constraint data.
+No producers, AST extraction, implicit hierarchy or rate/query DSL is present.
+
+Read-only validation and apply enforce strict JSON/schema plus semantic checks:
+duplicate/unknown fields, invalid defaults/steps, target conflicts, unknown
+bindings, unsupported projections, source/type/unit/range/attribution errors,
+freshness overflow and nonnumeric objectives are rejected. Required inputs
+cannot use confirmed-exposure bindings, which would prevent the first decision
+from creating its prerequisite exposure. Outcomes/objectives can still use
+those bindings. The current reference-policy shape is rejected, not resolved.
+
+Digests cover normalized `{ key, contract }`; owner/build/source metadata is
+publication provenance. Opaque lineage/revision are server-issued.
+New/changed semantics become immutable pending approval; identical or
+metadata-only apply retains semantic identity. Exact approved apply replay
+returns the stored receipt, including after restart. Reusing a key for another
+canonical bundle conflicts.
+
+Approval checks the exact digest and captured active-definition baseline.
+Opposite terminal actions, expiry and stale baselines fail explicitly.
+Expired resubmission is revalidated into one linked replacement request.
+Current publication yields `status: "approved"` and exact accepted identities,
+not future initial-authority activation facts.
+
+Runtime, analysis and ingestion consume separate registry-owned typed
+projections (`IRuntimeDefinitionReader`, `IIntelligenceDefinitionReader`,
+`IEvidenceBindingReader`), never approval/persistence JSON. Both runtime and
+analysis projections retain the same identity. Registry lookup remains
+application/environment scoped; ingestion carries verified tenant scope into
+materialization and never authorizes resource-attribute claims.
+
+`LocalFileDefinitionRegistry` uses an exclusive cross-process lease, reloads
+the complete state per operation and publishes atomically. Persistence version
+2 retains both projections, apply outcomes, pending snapshots, baselines and
+terminal decisions. Corrupt/old/unsupported/inaccessible storage fails closed,
+without migration, seeded-field repair or fallback to a seed.
+The [API baseline](../API_CONTRACT_PROPOSAL.md#management-api) lists exact
+operations and snapshot integrity headers.
 
 ## Runtime projection
 
@@ -96,10 +146,10 @@ binding when required authority is absent.
 
 ## Current implementation mapping
 
-The current `Flaggo.Registry` and control-plane host are implementation modules
-that provide parts of this boundary. Issue #40 owns executable consolidation
-and contract migration. This document defines logical ownership, not a required
-deployment split or assembly name.
+The current `Flaggo.Registry` and control-plane host implement publication and
+approval. #49 owns executable service/store/terminology alignment; #40 consumes
+that baseline for initial-authority activation. Logical ownership does not
+require one assembly or deployment per boundary.
 
 ## Related documents
 

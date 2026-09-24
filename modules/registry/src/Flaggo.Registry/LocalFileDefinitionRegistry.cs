@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Flaggo.Shared.Contracts;
 
 namespace Flaggo.Registry;
 
@@ -11,6 +12,7 @@ public sealed record LocalFileDefinitionRegistryOptions(
 public sealed class LocalFileDefinitionRegistry :
     IRuntimeDefinitionReader,
     IIntelligenceDefinitionReader,
+    IEvidenceBindingReader,
     IRegistryHealth,
     IDefinitionBundleManager,
     IDefinitionApprovalManager
@@ -103,6 +105,11 @@ public sealed class LocalFileDefinitionRegistry :
                 revision,
                 cancellationToken),
             cancellationToken);
+
+    public Task<IReadOnlyList<EvidenceBindingProjection>> ReadBindingsAsync(
+        ApplicationScope scope,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(false, registry => registry.ReadBindingsAsync(scope, cancellationToken), cancellationToken);
 
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
     {
@@ -291,9 +298,7 @@ public sealed class LocalFileDefinitionRegistry :
         return InMemoryDefinitionRegistry.RestorePersistenceState(
             document.RootElement,
             _identityGenerator,
-            _timeProvider,
-            _seedDefinitions,
-            _seedIntelligenceDefinitions);
+            _timeProvider);
     }
 
     private async Task SaveAsync(

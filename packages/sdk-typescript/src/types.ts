@@ -2,15 +2,6 @@ export type DecisionValue = boolean | number | string;
 export type RuntimeContextValue = DecisionValue | null;
 export type Sha256Digest = `sha256:${string}`;
 
-export interface SignalRef {
-  key: string;
-}
-
-export interface SignalInput {
-  signal: SignalRef;
-  value: RuntimeContextValue;
-}
-
 export interface DecisionTargetRef {
   type: string;
   id: string;
@@ -60,108 +51,122 @@ export interface InlinePolicy {
 
 export type DecisionPolicy = ReferencePolicy | InlinePolicy;
 
-interface DecisionDefinitionCommon {
-  definitionId?: string;
-  owner?: string;
+export type PrimitiveType = "boolean" | "number" | "string";
+
+export type InputSchema =
+  | { type: "number"; unit?: string; range?: readonly [number, number] }
+  | { type: "boolean" | "string" };
+
+export type RequestInput = InputSchema & {
+  source: "request";
+  meaning: string;
+};
+
+export interface EvidenceInput {
+  source: "evidence";
+  binding: string;
+}
+
+export type DecisionInput = RequestInput | EvidenceInput;
+
+export interface ContextField {
+  type: PrimitiveType;
+  required?: boolean;
+  target?: string;
+}
+
+export interface AttributeSelector {
+  from: "resourceAttributes" | "attributes" | "eventAttributes";
   key: string;
-  runtimeContextSchema?: Record<
-    string,
-    {
-      type: "boolean" | "number" | "string";
-      required?: boolean;
-      target?: string;
+}
+
+export interface TelemetryScope {
+  name: string;
+  version?: string;
+}
+
+interface TelemetrySelector {
+  scope: TelemetryScope;
+  resourceAttributes: Readonly<Record<string, DecisionValue>>;
+  attributes?: Readonly<Record<string, DecisionValue>>;
+}
+
+export type TelemetrySource = TelemetrySelector & (
+  | {
+      kind: "metric";
+      name: string;
+      dataType: "gauge";
+      value: { from: "value" };
     }
-  >;
-  targetHierarchy?: string[];
-  signals?: {
-    allowed?: SignalRef[];
-    evidence?: SignalRef[];
-    guardrails?: SignalRef[];
+  | {
+      kind: "span";
+      name: string;
+      value: { from: "duration" } | { from: "attributes"; key: string };
+    }
+  | {
+      kind: "span";
+      name: string;
+      eventName: string;
+      eventAttributes?: Readonly<Record<string, DecisionValue>>;
+      value: { from: "eventAttributes"; key: string };
+    }
+  | ({
+      kind: "log";
+      value: { from: "attributes"; key: string } | { from: "body"; path: readonly string[] };
+    } & (
+      | { eventName: string; bodyEquals?: never }
+      | { eventName?: never; bodyEquals: DecisionValue }
+    ))
+);
+
+export type EvidenceBinding = InputSchema & {
+  meaning: string;
+  source: TelemetrySource;
+  projection: { kind: "latest" };
+  target:
+    | { type: "global" }
+    | { type: string; idAttribute: AttributeSelector };
+  freshness: { maxAgeSeconds: number };
+  sampling: { accept: "observed" };
+  attribution:
+    | { kind: "none" }
+    | { kind: "confirmed-exposure"; exposureIdAttribute: AttributeSelector };
+};
+
+export type NumericObjective =
+  | { evidence: string; direction: "minimize" | "maximize" }
+  | { evidence: string; direction: "target"; target: number };
+
+export type DecisionIntent =
+  | { type: "natural-language"; text: string }
+  | {
+      type: "numeric-objective";
+      primary: NumericObjective;
+      secondary?: readonly NumericObjective[];
+      rationale?: string;
+    };
+
+export interface DecisionDefinition {
+  result: NumberActionSpace | BooleanActionSpace | StringActionSpace;
+  context?: Readonly<Record<string, ContextField>>;
+  targeting: {
+    hierarchy: readonly string[];
+    primary: string;
+    fallbackOrder: readonly string[];
   };
-  inference?: {
-    target: string;
-    inputs?: SignalRef[];
-    fallbackOrder?: string[];
-  };
-  intent?: Record<string, unknown>;
-  onlineStrategy?: Record<string, unknown>;
+  inputs?: Readonly<Record<string, DecisionInput>>;
+  evidence?: Readonly<Record<string, EvidenceBinding>>;
+  intent?: DecisionIntent;
   policy: DecisionPolicy;
-  requestedApproval?: "automatic" | "human" | "policy-default";
-  revision?: string;
-  contractDigest?: Sha256Digest;
-  schemaDigest?: Sha256Digest;
+  owner?: string;
 }
 
-export interface BooleanDecisionDefinition extends DecisionDefinitionCommon {
-  valueType: "boolean";
-  actionSpace: BooleanActionSpace;
-  fallback: {
-    value: boolean;
-    reason?: string;
-  };
+export interface NumberDecisionDefinition extends DecisionDefinition {
+  result: NumberActionSpace;
 }
-
-export interface NumberDecisionDefinition extends DecisionDefinitionCommon {
-  valueType: "number";
-  actionSpace: NumberActionSpace;
-  fallback: {
-    value: number;
-    reason?: string;
-  };
-}
-
-export interface StringDecisionDefinition extends DecisionDefinitionCommon {
-  valueType: "string";
-  actionSpace: StringActionSpace;
-  fallback: {
-    value: string;
-    reason?: string;
-  };
-}
-
-export type DecisionDefinition =
-  | BooleanDecisionDefinition
-  | NumberDecisionDefinition
-  | StringDecisionDefinition;
-
-interface SignalDeclarationBase {
-  key: string;
-  schemaDigest?: Sha256Digest;
-}
-
-export interface EventSignalDeclaration extends SignalDeclarationBase {
-  kind: "event";
-  fields: Record<string, "boolean" | "number" | "string">;
-  units?: Record<string, string>;
-}
-
-export interface AppEmittedMetricSignalDeclaration
-  extends SignalDeclarationBase {
-  kind: "metric";
-  type: "boolean" | "number" | "string";
-  source: "app-emitted";
-  unit?: string;
-  range?: [number, number];
-}
-
-export interface DerivedMetricSignalDeclaration extends SignalDeclarationBase {
-  kind: "metric";
-  type: "boolean" | "number" | "string";
-  source: "derived";
-  unit?: string;
-  from: SignalRef[];
-  aggregation: string;
-  window: string;
-  range?: [number, number];
-}
-
-export type SignalDeclaration =
-  | EventSignalDeclaration
-  | AppEmittedMetricSignalDeclaration
-  | DerivedMetricSignalDeclaration;
 
 export interface DecisionDefinitionBundle {
-  format: "flaggo.decision-definition-bundle/v1";
+  format: "flaggo.decision-definition-bundle/v2";
   application: {
     id: string;
     environment: string;
@@ -171,13 +176,26 @@ export interface DecisionDefinitionBundle {
     artifactDigest?: string;
     version?: string;
   };
-  source: {
+  source?: {
     repository?: string;
     path?: string;
     commit?: string;
   };
-  signals?: SignalDeclaration[];
-  definitions: DecisionDefinition[];
+  decisions: Readonly<Record<string, DecisionDefinition>>;
+}
+
+export interface CatalogDecision {
+  result: DecisionDefinition["result"];
+  context: Readonly<Record<string, ContextField>>;
+  inputs: Readonly<Record<string, DecisionInput>>;
+  contractDigest: Sha256Digest;
+}
+
+export interface RuntimeCatalog {
+  format: "flaggo.runtime-catalog/v1";
+  application: { id: string; environment: string };
+  bundleDigest: Sha256Digest;
+  decisions: Readonly<Record<string, CatalogDecision>>;
 }
 
 export interface AcceptedDefinition {
@@ -205,7 +223,7 @@ export interface ContractIssue {
   path: string;
   message: string;
   decisionKey?: string;
-  signalKey?: string;
+  inputKey?: string;
 }
 
 export interface RequiresApprovalResult {
@@ -326,7 +344,7 @@ interface ActiveValueDecision {
 interface StrategyDecision {
   decisionMode: "strategy" | "experiment";
   strategyId: string;
-  confidence: ConfidenceReport;
+  confidence: ConfidenceReport | null;
   fallback: {
     source: "server";
     resolutionFallbackUsed: boolean;
@@ -411,10 +429,9 @@ export type DecisionReceipt<T extends DecisionValue = DecisionValue> =
     };
 
 export interface NumberTuneRequest {
-  definition?: NumberDecisionDefinition;
-  context: Record<string, RuntimeContextValue>;
+  context?: Record<string, RuntimeContextValue>;
   runtimeTarget?: DecisionTargetRef;
-  inputs?: SignalInput[];
+  inputs?: Record<string, DecisionValue>;
   idempotencyKey?: string;
   correlationId?: string;
 }

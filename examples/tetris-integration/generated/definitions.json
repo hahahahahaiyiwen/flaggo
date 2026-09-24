@@ -1,0 +1,119 @@
+{
+  "application": {
+    "id": "tetris-demo",
+    "environment": "dev"
+  },
+  "build": {
+    "buildId": "tetris-phase3-local",
+    "version": "0.3.0"
+  },
+  "source": {
+    "repository": "github.com/hahahahahaiyiwen/flaggo",
+    "path": "examples/tetris-integration/tetris-definition-bundle.json"
+  },
+  "format": "flaggo.decision-definition-bundle/v2",
+  "decisions": {
+    "tetris.dropInterval": {
+      "result": {
+        "type": "number",
+        "min": 200,
+        "max": 1500,
+        "step": 50,
+        "default": 800
+      },
+      "context": {
+        "userId": {
+          "type": "string",
+          "target": "user",
+          "required": false
+        },
+        "sessionId": {
+          "type": "string",
+          "target": "session",
+          "required": false
+        },
+        "cohort": {
+          "type": "string",
+          "target": "cohort",
+          "required": false
+        },
+        "deviceType": {
+          "type": "string",
+          "required": false
+        }
+      },
+      "targeting": {
+        "hierarchy": [
+          "session",
+          "user",
+          "cohort",
+          "global"
+        ],
+        "primary": "session",
+        "fallbackOrder": [
+          "cohort",
+          "global"
+        ]
+      },
+      "inputs": {
+        "boardPressure": {
+          "source": "request",
+          "type": "number",
+          "meaning": "Current occupied-board fraction.",
+          "unit": "1",
+          "range": [
+            0,
+            1
+          ]
+        },
+        "currentLevel": {
+          "source": "request",
+          "type": "number",
+          "meaning": "Current game level.",
+          "range": [
+            0,
+            20
+          ]
+        },
+        "recentPlacementTimeMs": {
+          "source": "request",
+          "type": "number",
+          "meaning": "Application's current placement-time estimate.",
+          "unit": "ms",
+          "range": [
+            0,
+            2000
+          ]
+        },
+        "recoveryFailures": {
+          "source": "request",
+          "type": "number",
+          "meaning": "Current recovery-failure count supplied by the game.",
+          "range": [
+            0,
+            5
+          ]
+        }
+      },
+      "evidence": {},
+      "policy": {
+        "kind": "inline",
+        "constraints": [
+          {
+            "kind": "cooldown",
+            "seconds": 20
+          },
+          {
+            "kind": "max-delta",
+            "value": 50
+          },
+          {
+            "kind": "number-bounds",
+            "min": 200,
+            "max": 1500
+          }
+        ]
+      }
+    }
+  }
+}

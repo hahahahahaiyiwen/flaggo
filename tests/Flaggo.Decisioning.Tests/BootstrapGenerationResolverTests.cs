@@ -324,10 +324,13 @@ public sealed class BootstrapGenerationResolverTests
                 JsonSerializer.SerializeToElement(800),
                 "safe-default",
                 [],
-                []),
+                [],
+                TargetHierarchy: ["global"],
+                InferenceTarget: "global",
+                FallbackOrder: []),
             state,
             new Dictionary<string, JsonElement>(),
-            []);
+            new Dictionary<string, JsonElement>());
 
     private sealed class TestGenerationDirectory : IDisposable
     {
@@ -388,7 +391,7 @@ public sealed class BootstrapGenerationResolverTests
                       "mode": "strategy",
                       "strategyId": "strategy-phase3",
                       "numericRule": {
-                        "inputSignalKey": "tetris.boardPressure",
+                        "inputKey": "boardPressure",
                         "threshold": 0.5,
                         "valueAtOrAbove": 900,
                         "valueBelow": 700

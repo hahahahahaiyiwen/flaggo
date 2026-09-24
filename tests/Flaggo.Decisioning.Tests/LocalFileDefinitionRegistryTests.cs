@@ -177,7 +177,10 @@ public sealed class LocalFileDefinitionRegistryTests
             JsonSerializer.SerializeToElement(800),
             "safe_default_drop_interval",
             [],
-            []);
+            [],
+            TargetHierarchy: ["global"],
+            InferenceTarget: "global",
+            FallbackOrder: []);
 
     private static JsonElement FixtureBody(string group, string file)
     {

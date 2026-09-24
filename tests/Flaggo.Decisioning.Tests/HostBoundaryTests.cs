@@ -106,8 +106,7 @@ public sealed class HostBoundaryTests
                 .GetProperty("request")
                 .GetProperty("body")
                 .GetRawText())!.AsObject();
-        bundle["definitions"]![0]!["fallback"]!["value"] = 850;
-        bundle["definitions"]![0]!["actionSpace"]!["default"] = 850;
+        bundle["decisions"]!.AsObject().First().Value!["result"]!["default"] = 850;
         using var applyRequest = new HttpRequestMessage(
             HttpMethod.Post,
             "/v1/definition-bundles:apply")
@@ -146,6 +145,7 @@ public sealed class HostBoundaryTests
                 bundleDigest
             },
             runtimeContext = new { },
+            inputs = new { boardPressure = 0.8, currentLevel = 3, recentPlacementTimeMs = 1200, recoveryFailures = 2 },
             client = new
             {
                 appId = "tetris-demo",
@@ -327,7 +327,7 @@ public sealed class HostBoundaryTests
             new DecisionTargetRef("cohort", "new_players"),
             "strategy",
             "strategy-test",
-            new NumericRuleStrategy("tetris.boardPressure", 0.5, 850, 750));
+            new NumericRuleStrategy("boardPressure", 0.5, 850, 750));
         var registry = new InMemoryDefinitionRegistry([definition]);
         var stateStore = new InMemoryStateStore(
             [("tetris.dropInterval", state)]);
@@ -359,14 +359,7 @@ public sealed class HostBoundaryTests
                 },
                 runtimeContext = new { },
                 runtimeTarget = new { type = "cohort", id = "new_players" },
-                inputs = new[]
-                {
-                    new
-                    {
-                        signal = new { key = "tetris.boardPressure" },
-                        value = 0.8
-                    }
-                },
+                inputs = new { boardPressure = 0.8 },
                 client = new { appId = "tetris-demo", environment = "dev" }
             });
 
@@ -402,7 +395,7 @@ public sealed class HostBoundaryTests
             new DecisionTargetRef("cohort", "new_players"),
             "strategy",
             "strategy-test",
-            new NumericRuleStrategy("tetris.boardPressure", 0.5, 850, 750));
+            new NumericRuleStrategy("boardPressure", 0.5, 850, 750));
         await using var factory =
             new LocalHostFactory<DataPlaneAssemblyMarker>(
                 registryFile.Path,
@@ -431,14 +424,7 @@ public sealed class HostBoundaryTests
                 },
                 runtimeContext = new { },
                 runtimeTarget = new { type = "cohort", id = "new_players" },
-                inputs = new[]
-                {
-                    new
-                    {
-                        signal = new { key = "tetris.boardPressure" },
-                        value = 0.8
-                    }
-                },
+                inputs = new { boardPressure = 0.8 },
                 client = new { appId = "tetris-demo", environment = "dev" }
             },
             RuntimeHttp.JsonOptions);
@@ -525,6 +511,7 @@ public sealed class HostBoundaryTests
                     },
                     runtimeContext = new { },
                     runtimeTarget = new { type = "cohort", id = "new_players" },
+                    inputs = new { boardPressure = 0.8, currentLevel = 3, recentPlacementTimeMs = 1200, recoveryFailures = 2 },
                     client = new { appId = "tetris-demo", environment = "dev" }
                 })
         };
@@ -624,6 +611,7 @@ public sealed class HostBoundaryTests
         };
 
     private static DecisionSnapshot Snapshot() => new(
+        "local-development",
         "tetris-demo",
         "dev",
         new RuntimeContractIdentity(
@@ -634,7 +622,7 @@ public sealed class HostBoundaryTests
         "number",
         new ServerFallbackInfo("server", false, false, null),
         new Dictionary<string, JsonElement>(),
-        [],
+        new Dictionary<string, JsonElement>(),
         new DecisionTargetRef("session", "game-1"),
         new DecisionTargetRef("cohort", "new_players"),
         [],
@@ -654,7 +642,7 @@ public sealed class HostBoundaryTests
             "number",
             JsonSerializer.SerializeToElement(800),
             "safe-default",
-            [new RegisteredSignalInput("tetris.boardPressure", "number", 0, 1)],
+            [new RegisteredInput("boardPressure", "number", "request", "Current occupancy.", 0, 1)],
             [],
             NumberActionSpace: new NumberActionSpaceContract(700, 900),
             Policy: new DecisionPolicyContract(
@@ -679,6 +667,8 @@ public sealed class HostBoundaryTests
             builder.UseSetting(
                 "Flaggo:Registry:LocalFilePath",
                 registryPath);
+            builder.UseSetting("Flaggo:Telemetry:CommitDescriptorPath",
+                Path.Combine(Path.GetDirectoryName(registryPath)!, "telemetry", "inputs.commit.json"));
             if (configureServices is not null)
             {
                 builder.ConfigureServices(configureServices);

@@ -19,7 +19,14 @@ returned reason so inspection does not reconstruct strategy reasoning.
 Constructor-injected `ITargetResolver` and
 `IStrategyExecutor` ports plus evidence-module
 `IEvidenceProvider` and policy-module `IPolicyEvaluator` ports isolate all
-cross-module collaboration. Numeric candidates are checked against action
+cross-module collaboration. `DecisionInputResolver` consumes verified scope,
+typed request values, and `IInputEvidenceReader` to resolve all required operands
+from one immutable generation before execution. Missing/invalid request data
+is a contract error; callers cannot override evidence inputs. Missing, stale,
+future, ambiguous, or invalid required input evidence is always
+`required-evidence-unavailable` with SDK fallback forbidden.
+
+Numeric candidates are checked against action
 bounds and step plus max delta, cooldown, evidence quality, uncertainty,
 expected outcome, sample size, and pause constraints. A blocked candidate is
 never returned; orchestration returns the governed fallback with null
@@ -29,18 +36,23 @@ orchestration returns `required-evidence-unavailable` instead of producing a
 server fallback. The definition's client-fallback policy determines whether
 the Problem Details response permits SDK-local availability fallback.
 Provider-reported evidence unavailability follows this same policy path, so
-file I/O cannot bypass a fail-closed definition. A strategy or experiment
-candidate without the confidence required by the frozen response contract is
-blocked and converted to server fallback rather than serialized successfully.
+file I/O cannot bypass a fail-closed definition. This policy-quality path is
+distinct from input evidence. Request-only decisions with no quality
+constraints query neither provider. Numeric execution returns `confidence: null`.
 
 For Phase 3, deterministic numeric rules can normalize and weight multiple
-declared signal inputs before comparing the aggregate score with the governed
+declared scalar inputs before comparing the aggregate score with the governed
 threshold. This keeps the Tetris rule explicit in activated state while the
 executor remains application-neutral. Missing, nonnumeric, nonfinite, or
-duplicate required rule inputs produce `invalid_strategy_input`.
+duplicate required rule references produce `invalid_strategy_input`.
+The executor receives only the runtime definition, rule, and resolved values;
+it does not receive lifecycle state or an evidence snapshot.
 
 Runtime responses expose compact confidence and provenance. Audit and pending
-exposure snapshots retain the full evidence view. Cohort claims resolved by the
+exposure snapshots retain original request inputs, resolved inputs, per-input
+provenance, and any participating policy-quality view. Each evidence input
+retains its resolved target and resolution provenance independently of the
+selected state target. Cohort claims resolved by the
 target adapter are marked `client-verified` when unchanged and
 `server-replaced` when an authoritative mapping changes them. Broader target
 selection records server-derived resolution fallback; global fallback retains
@@ -54,7 +66,7 @@ Target resolution is definition-driven. Reasoning consumes the registry-owned
 runtime projection, validates the request target and target-bearing context
 against its hierarchy, uses a supplied permitted runtime target as the primary
 lookup target (otherwise the declared inference target), and then probes only
-the target kinds listed in `inference.fallbackOrder`, in that order.
+the target kinds listed in manifest `targeting.fallbackOrder`, in that order.
 Missing required context and inconsistent target bindings fail closed before
 state lookup. Returned governed state must match one of the permitted
 resolution targets; a store cannot widen the definition by returning an
@@ -93,6 +105,10 @@ the request open. The durable audit already exists when such a wait ends.
 Retry reconciles either the still-prepared state or a possibly late successful
 commit with the same decision/exposure identity; late failures are observed
 and logged rather than becoming unobserved task exceptions.
+
+Confirmation, replay, and confirmed-attribution lookup enforce authenticated
+tenant as well as application/environment. Confirmations preserve the original
+resolved vector and cannot be replaced by sampled telemetry.
 
 Future candidate selection and proposal generation across experiments,
 statistical methods, and approved AI-assisted strategies belongs to Async

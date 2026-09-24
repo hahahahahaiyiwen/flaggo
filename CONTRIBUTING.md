@@ -128,12 +128,14 @@ boundaries. Assembly count does not define product components or deployments.
 ### Parallel contract implementation
 
 Executable API artifacts merge before client and service implementations
-diverge. The client track owns manifest-derived key/input/result typing, request
-serialization, runtime identity propagation, exposure confirmation, and
-configured availability fallback. Trusted deployment tooling owns manifest
-publication. The application owns OTel instrumentation and export. The service
+diverge. The client track owns JSON manifest compilation, generated typed
+catalogs, canonical normalization/digesting, separate trusted publication,
+plain request serialization, runtime identity propagation, exposure
+confirmation, and configured availability fallback. Application OTel
+instrumentation and Collector pipelines remain application-owned.
+Trusted deployment tooling, not the runtime client, publishes manifests. The service
 track owns management/runtime endpoints, contract-integrity verification,
-resolved-input delivery, authority and strategy execution, decision
+target and input resolution, authority and strategy execution, decision
 constraints, durable decision records, exposure/outcome attribution, local
 adapters, and health.
 
@@ -149,15 +151,16 @@ Extensions must use the owning seam instead of bypassing it:
 
 - add a result primitive only through an accepted shared and wire contract;
 - add strategy behavior through the strategy contract and executor;
-- add evidence sources through `IEvidenceProvider`;
+- add input projections through the evidence module's `IInputTelemetrySink`
+  and `IInputEvidenceReader`; keep constraint-quality evidence behind `IEvidenceProvider`;
 - add storage through Contract Store lifecycle/read ports, `IStateStore`, or
   Evidence Store append/query ports;
 - add decision constraints through the current `IPolicyEvaluator` seam until
-  issue #40 completes the executable rename;
+  issue #49 completes executable server alignment;
 - add asynchronous reasoning as an authorized proposal producer feeding the
   Contract Service activation boundary;
 - add telemetry transports through the application SDK/OTel pipeline and OTel
-  Ingestion boundary; and
+  Ingestion host adapter, not the runtime decision client; and
 - add cloud providers through adapters behind existing ports.
 
 ### When to split a repository

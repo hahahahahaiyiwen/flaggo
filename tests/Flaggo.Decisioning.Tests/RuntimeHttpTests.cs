@@ -31,9 +31,9 @@ public sealed class RuntimeHttpTests
     }
 
     [Fact]
-    public void IsValidSignalInput_RejectsNullEntry()
+    public void DecisionValues_RejectsNullInput()
     {
-        Assert.False(RuntimeHttp.IsValidSignalInput(null));
+        Assert.False(DecisionValues.IsScalar(System.Text.Json.JsonSerializer.SerializeToElement<object?>(null)));
     }
 
     [Fact]

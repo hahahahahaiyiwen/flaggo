@@ -1,0 +1,45 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: ${env:OTEL_RECEIVER_ENDPOINT}
+
+exporters:
+  debug/existing:
+    verbosity: detailed
+  otlp_http/flaggo:
+    endpoint: ${env:FLAGGO_OTLP_BASE_URL}
+    encoding: proto
+    compression: gzip
+    headers:
+      Authorization: ${env:FLAGGO_OTLP_AUTHORIZATION}
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: none
+  pipelines:
+    metrics/existing:
+      receivers: [otlp]
+      exporters: [debug/existing]
+    traces/existing:
+      receivers: [otlp]
+      exporters: [debug/existing]
+    logs/existing:
+      receivers: [otlp]
+      exporters: [debug/existing]
+    metrics/flaggo:
+      receivers: [otlp]
+      exporters: [otlp_http/flaggo]
+    traces/flaggo:
+      receivers: [otlp]
+      exporters: [otlp_http/flaggo]
+    logs/flaggo:
+      receivers: [otlp]
+      exporters: [otlp_http/flaggo]

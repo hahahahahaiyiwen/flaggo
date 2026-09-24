@@ -23,6 +23,17 @@ every frozen canonicalization and semantic-digest vector. Numbers that would
 change mathematical value when converted to the RFC 8785 IEEE-754 domain are
 rejected, preventing distinct inputs from collapsing to one digest.
 
+Runtime inputs are primitive maps, not producer-reference arrays.
+`ApplicationScope` carries verified tenant/application/environment identity;
+telemetry attributes and client JSON cannot set the tenant. `InputProvenance`
+preserves source ownership, exact binding/generation, nanosecond observation
+time as a decimal string, observed-only coverage, and available correlation.
+Manifest v2 hashes `{ key, contract: normalizedDefinition }`; optional empty
+maps and context requiredness normalize consistently in TypeScript, .NET, and
+Python. The manifest has no signal declarations, producer digest, or duplicate
+default. Native OTLP generated wire types belong to the host adapter, not this
+package.
+
 The package also owns the strict JSON structural validator shared by HTTP and
 local persistence adapters. It requires exactly one complete root value,
 permits only JSON whitespace after that value, rejects malformed trailing data, and

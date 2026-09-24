@@ -139,11 +139,6 @@ public static class RuntimeHttp
         value.ValueKind == JsonValueKind.Number &&
         CanonicalJson.IsIeee754CompatibleNumber(value);
 
-    public static bool IsValidSignalInput(SignalInput? input) =>
-        input?.Signal is not null &&
-        !string.IsNullOrWhiteSpace(input.Signal.Key) &&
-        IsRuntimeContextValue(input.Value);
-
     public static void SetCorrelationId(HttpContext context, string correlationId)
     {
         context.Items[CorrelationIdItemKey] = correlationId;
@@ -208,20 +203,6 @@ public static class RuntimeHttp
                     "sdk",
                     "sdkVersion");
                 RejectNestedNullProperties(document.RootElement, "runtimeTarget", "type", "id");
-                if (document.RootElement.TryGetProperty("inputs", out var inputs) &&
-                    inputs.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var input in inputs.EnumerateArray())
-                    {
-                        if (input.ValueKind == JsonValueKind.Null)
-                        {
-                            throw new JsonException("Input entries cannot be null.");
-                        }
-
-                        RejectNullProperties(input, "signal");
-                        RejectNestedNullProperties(input, "signal", "key");
-                    }
-                }
             }
             else if (typeof(T) == typeof(ExposureConfirmationRequest))
             {

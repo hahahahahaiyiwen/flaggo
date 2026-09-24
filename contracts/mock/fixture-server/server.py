@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Fixture-backed mock server for the Flaggo Phase 1 contract.
+"""Fixture-backed JSON mock server for the Flaggo contracts.
 
 Selects a golden fixture by the `X-Flaggo-Fixture` request header, verifies that
 the incoming method and path match the fixture's recorded request, and replays
-the fixture's expected status, headers, and body. It is dependency-free (Python
-standard library only) and reads the same golden fixtures the SDK and service
-consume, so it never invents responses.
+the fixture's expected status, headers, and body. It uses the declared
+conformance dependencies and reads the same golden JSON fixtures the SDK and
+service consume. Native Protobuf fixtures execute against the real receiver.
 
 Usage:
     python contracts/mock/fixture-server/server.py --port 8080
@@ -39,7 +39,7 @@ SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 SCHEMA_FILES = [
     "runtime-models-v1.schema.json",
     "management-models-v1.schema.json",
-    "decision-definition-bundle-v1.schema.json",
+    "decision-definition-bundle-v2.schema.json",
     "problem-details-v1.schema.json",
 ]
 
@@ -91,8 +91,8 @@ def load_fixtures() -> None:
     for path in sorted(FIXTURES_DIR.rglob("*.json")):
         with path.open(encoding="utf-8") as fh:
             fx = json.load(fh)
-        # Only fixtures that model a real HTTP exchange are selectable.
-        if fx.get("sdkLocal") or fx.get("schemaNegative"):
+        # Native Protobuf fixtures execute against the real .NET receiver.
+        if fx.get("sdkLocal") or fx.get("schemaNegative") or fx.get("protocol") == "otlp-protobuf":
             continue
         FIXTURES[fx["name"]] = fx
 

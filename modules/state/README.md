@@ -3,8 +3,9 @@
 This current internal library implements the State Store boundary. It is not a
 separate server component.
 
-Owns governed decision state, decide idempotency, and exposure confirmation
-state.
+The current implementation owns governed decision state, decide idempotency
+and exposure confirmation state. In the logical architecture, confirmed
+exposure records belong to Evidence Store; #49 owns that executable alignment.
 
 Governed authority is ordered at the stable application, environment,
 decision-key, and control-target address. Each immutable state remains bound to
@@ -88,10 +89,18 @@ non-cooperative call succeeds after its caller's bounded wait has ended; a
 different exposure identity still conflicts.
 
 Pending exposures retain the immutable decision-time attribution snapshot.
-The snapshot includes application/environment ownership, returned treatment
-value/type, fallback attribution, policy result, confidence, and full evidence;
+The snapshot includes tenant/application/environment ownership, returned treatment value/type,
+original caller inputs, resolved inputs and provenance, fallback attribution,
+policy result, and separately selected policy-quality evidence;
 confirmation hides records from
 credentials outside that ownership scope.
+`IConfirmedExposureReader` exposes only completed confirmations for the exact
+authenticated scope. A pending receipt or an audit append without the final
+confirmation commit cannot authorize attributed telemetry. The input
+materializer additionally verifies definition identity and resolved target.
+This store remains in memory: after restart, newly arriving observations
+cannot resolve lost confirmations. Already verified durable input frames
+retain their captured attribution; there is no audit-based reconstruction.
 Accepted confirmations and identical prepared confirmations are recognized
 before first-confirmation clock validation, preserving retryability and the
 original exposure identity after an audit failure. A changed observation still
@@ -160,7 +169,8 @@ targets, nonprimitive values, and nonfinite rule parameters make state health
 unavailable.
 
 Numeric-rule state may declare normalized weighted inputs. Every declared
-input field is required and finite. Persisted decision numbers and every
+operand uses a definition-local `inputKey`, not a telemetry instrument or
+producer handle. Every declared input field is required and finite. Persisted decision numbers and every
 numeric-rule scalar are retained as raw JSON until the shared `CanonicalJson`
 IEEE-754 compatibility check succeeds, so integers or decimals that would
 silently round during typed deserialization are rejected. Relevant range

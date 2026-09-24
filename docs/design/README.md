@@ -48,5 +48,8 @@ consumers.
 The [Phase 1 API contract proposal](API_CONTRACT_PROPOSAL.md) and executable
 [`contracts/`](../../contracts/README.md) describe current wire behavior.
 
-The [Tetris integration](tetris-integration/README.md) composes the boundaries
-into the cloud-free hero scenario.
+The [Tetris integration](tetris-integration/README.md) composes these
+service/store boundaries into the cloud-free hero scenario using authenticated
+manifest publication and trusted local governed state without moving
+management authority into the browser. Initial-authority/activation-ready
+publication remains the #40/#41 extension.

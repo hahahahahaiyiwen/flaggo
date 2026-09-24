@@ -1,95 +1,91 @@
-# Phase 3 Tetris integration
+# Tetris integration
 
-## Goal
+## Goal and ownership
 
-Prove `tetris.dropInterval` end to end through Contract Service, Decision
-Service, State Store, Evidence Store, OTel Ingestion, a trusted manifest
-publisher, and the key-based runtime SDK.
+Prove `tetris.dropInterval` with the real control/data-plane hosts, generated
+TypeScript client, explicit confirmation, application-owned OTel logs and
+inspectable durable records. The harness is cloud-free and keeps management
+credentials outside browser/runtime code.
 
-The integration remains cloud-free and does not place management credentials,
-static definitions, or trusted registration behavior in browser/runtime code.
+Logical ownership follows Contract Service, Decision Service, State Store,
+Evidence Store and OTel Ingestion. Current assemblies are implementation
+libraries, not standalone Policy, Audit, Reasoning or Operator Console services.
 
-## Ownership
+`examples/tetris-integration/tetris-definition-bundle.json` is the sole
+authored manifest. Compilation generates its normalized bundle and typed
+catalog. Four request inputs and result/context/target/constraint semantics
+belong to the manifest; call sites contain only keys and live data.
 
-- `examples/tetris-integration` owns the canonical hand-authored manifest,
-  trusted publication command, local harness, and store inspection workflow.
-- Contract Service validates the manifest, records authenticated approval, and
-  orchestrates State Store activation.
-- State Store owns the stable authority head, immutable state, replay, CAS, and
-  lineage.
-- Decision Service executes the approved weighted rule, evaluates definition
-  constraints, appends a DecisionRecord, and confirms exposures.
-- OTel Ingestion validates exposure-linked outcome attribution. Evidence Store
-  owns the resulting observations, DecisionRecords, exposure records, and
-  Outcome records.
-- The application owns its OTel provider/exporter and sends data to OTel
-  Ingestion.
+Current trusted tooling publishes the manifest, handles `RequiresApprovalError`
+with explicit exact-snapshot local approval, reapplies, and provisions
+receipt-bound existing state. Runtime initializes synchronously without
+registration. This local state bootstrap is not another public definition
+format or an activation-ready receipt.
 
-## Local lifecycle
+#49 aligns executable server boundaries; #40 adds manifest initial authority
+and activation-converged registration; #41 owns the final bundle-approved
+Tetris run. Their outcomes are not claimed by the current harness.
 
-1. Start Contract Service against isolated Contract and State Stores.
-2. Publish the canonical manifest through trusted deployment/control-plane
-   tooling.
-3. Approve the exact immutable snapshot when required.
-4. Contract Service activates the initial numeric rule through expected-head
-   compare-and-swap and returns a ready binding.
-5. Start Decision Service against the same stores and durable Evidence Store.
-6. Use the runtime SDK or direct REST with the decision key plus live target,
-   context, and input values.
-7. Confirm only applied results, emit exposure-linked outcomes through the
-   application's OTel pipeline, and inspect durable store records.
+## Current local flow
 
-## Acceptance criteria
+1. Start isolated Contract Service publication and explicitly apply/approve.
+2. Publish one digest-pinned generation of receipt, local state and empty
+   quality evidence, then start the data plane against it.
+3. Initialize the runtime client from generated catalog and approved receipt.
+4. Drive SDK and direct REST calls with plain live input maps.
+5. Apply a result, confirm it, and attach confirmed attributes to an ordinary
+   `game.outcome` OTel log using the application's logger/provider.
+6. Inspect decision, exposure and telemetry files through local tools.
 
-- The hand-authored manifest is the sole static definition source.
-- Runtime call sites contain only the decision key and live target/context/input
-  values; no inline definition, signal handle, AST extraction, or management
-  credential is present.
-- SDK and direct REST requests produce contract-equivalent decisions.
-- The manifest is rejected when its rule references undeclared or invalid
-  inputs, violates target/action/fallback semantics, or conflicts with
-  definition constraints.
-- Registration remains non-ready until approved authority is active.
-- Exact publication retry returns the same activation, state, generation, and
-  numeric-rule strategy identity.
-- A stale baseline cannot overwrite newer authority.
-- The real host normalizes and weights all four inputs:
-  - a `0.9` pressure vector with other inputs at minimum scores `0.405` and
-    selects `750ms`;
-  - a `0.4` pressure vector with other inputs at maximum scores `0.73` and
-    selects `850ms`.
-- Paired vectors independently move placement time, recovery failures, and
-  level across the `0.55` threshold.
-- High pressure plus slow placement returns exact approved `850ms`; recovery
-  returns exact approved `750ms`.
-- Both branches independently satisfy fixed-default `max-delta = 50` against
-  `800ms`.
-- No compatible authority or a constraint-required fallback returns the
-  governed `800ms` with explicit server provenance.
-- Decision Service unavailability may produce configured SDK-local `800ms`
-  with no server decision, record, or exposure identity.
-- Pending activation, corrupt stores, invalid state, and non-ready durable
-  append fail readiness rather than returning a value.
-- Before server success, Evidence Store contains a DecisionRecord with exact
-  identity, state/activation lineage, all four inputs, constraint result,
-  fallback provenance, and returned value.
-- Applying and confirming a result creates one exposure record; an unused
-  result creates none.
-- Outcome telemetry references the confirmed `exposureId`; ordinary telemetry
-  remains raw and unlinked.
-- Bundle-authored authority records rationale and approval provenance but no
-  learned confidence or evidence claim.
-- Malformed or torn Evidence Store files fail readiness. Append failure cannot
-  produce a successful response or committed exposure.
-- Failed activation publication is atomic: readers see the complete previous or
-  replacement state.
-- No production route exposes local Contract, State, or Evidence Store
-  internals.
-- The harness contains no standalone Policy, Audit, Reasoning, or Operator
-  Console service dependency.
+No exporter is initialized by the Flaggo client. The
+[separate Collector example](../../../examples/otel-evidence/README.md)
+proves materialized evidence operands and attributed outcome bindings without
+substituting delayed telemetry for current game state.
 
-## Maintenance
+## Implemented acceptance boundaries
 
-Contract-breaking changes update manifest schema, OpenAPI, fixtures, SDK,
-services, and conformance together. Internal adapter changes require
-behavior-boundary tests and corresponding module documentation.
+- Generated compiler/catalog artifacts stay fresh; SDK and REST share exact
+  identities and plain-input semantics.
+- High pressure/slow placement returns exactly `850ms`; recovery returns
+  `750ms`, independently within delta `50` of default `800ms`.
+- All four normalizations matter: pressure `0.9` with other inputs at minimum
+  scores `0.405` and selects `750ms`; pressure `0.4` with others at maximum
+  scores `0.73` and selects `850ms`. Paired vectors independently move placement
+  time, failures and level across threshold `0.55`.
+- Rules return null learned confidence. Direct-live-input calls depend on
+  neither materialization nor an empty quality fixture.
+- The existing last-change cooldown fixture returns a recorded `800ms` server
+  fallback. A separate outage proves explicitly enabled SDK `800ms` fallback
+  without fabricated server IDs or exposure.
+- Records retain caller/resolved values, input provenance, constraint result,
+  reason and target/strategy identity. Confirmation copies immutable
+  decision-time facts. Exactly one explicitly applied/confirmed result creates
+  exposure and correlated native outcome telemetry; unused receipts do not.
+- Append failure cannot create a newly confirmed exposure. Malformed/torn
+  persistence is not repaired into success.
+- Bootstrap publication is atomic, cleanup is ownership-scoped and unexpected
+  host exit fails the harness.
+
+## Final Phase 3 extension
+
+The later integrated path must also prove:
+
+1. Contract Service validates the manifest's initial rule/targets/constraints,
+   approves the exact snapshot, activates via State Store CAS and withholds
+   readiness until required authority is active.
+2. Publication replay preserves approval, activation, state, generation and
+   derived strategy identities; a stale baseline cannot replace newer authority.
+3. State and record failures remain explicit, and publication exposes either
+   the complete previous or replacement generation.
+4. Evidence Store records complete state/activation lineage and confirmed
+   outcomes under the aligned contracts, without standalone Policy/Audit
+   service dependencies.
+5. The real Tetris application uses the canonical service/store boundaries,
+   trusted publisher, key-based SDK and its existing OTel pipeline.
+
+Those #49/#40/#41 obligations retain the guarantees in
+[Authority](../../architecture/AUTHORITY.md). No dormant initial-authority
+flag or compatibility layer is added to claim their completion.
+
+Keep this document, [run instructions](../../../examples/tetris-integration/README.md),
+generated artifacts, harness assertions and owning module contracts aligned.

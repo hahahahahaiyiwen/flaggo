@@ -15,7 +15,7 @@ namespace Flaggo.Decisioning.Tests;
 public sealed class ManagementEndpointTests
 {
     [Fact]
-    public async Task ValidateAndApply_ExposeSdkStartupContract()
+    public async Task ValidateAndApply_ExposeExplicitPublicationContract()
     {
         using var registryFile = new TestRegistryFile();
         await using var factory = new FlaggoApplicationFactory(registryFile.Path);
@@ -29,7 +29,7 @@ public sealed class ManagementEndpointTests
         Assert.Equal(HttpStatusCode.OK, validation.StatusCode);
         var validationBody = await validation.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("valid", validationBody.GetProperty("status").GetString());
-        Assert.Equal("metadata-only", validationBody.GetProperty("compatibility").GetString());
+        Assert.Equal("identical", validationBody.GetProperty("compatibility").GetString());
 
         using var applyRequest = new HttpRequestMessage(
             HttpMethod.Post,
@@ -44,7 +44,7 @@ public sealed class ManagementEndpointTests
         var receipt = await apply.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("approved", receipt.GetProperty("status").GetString());
         Assert.Equal(
-            "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
+            "sha256:ed9b49a622db7d8cec274c8a990c140edbeda55b00ea917c06df46d5e34da377",
             receipt.GetProperty("acceptedDefinitions")
                 .GetProperty("tetris.dropInterval")
                 .GetProperty("contractDigest")
@@ -176,7 +176,10 @@ public sealed class ManagementEndpointTests
                             JsonSerializer.SerializeToElement(800),
                             "safe_default_drop_interval",
                             [],
-                            [])
+                            [],
+                            TargetHierarchy: ["global"],
+                            InferenceTarget: "global",
+                            FallbackOrder: [])
                     ],
                     new SequenceDefinitionIdentityGenerator()));
                 services.AddSingleton<IDefinitionBundleManager>(

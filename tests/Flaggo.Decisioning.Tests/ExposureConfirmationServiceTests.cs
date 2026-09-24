@@ -30,7 +30,7 @@ public sealed class ExposureConfirmationServiceTests
             Snapshot(),
             CancellationToken.None);
 
-        var first = await service.ConfirmAsync(
+        var first = await service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -40,7 +40,7 @@ public sealed class ExposureConfirmationServiceTests
         Assert.Equal(1, audit.Attempts);
 
         audit.FailWrites = true;
-        var replay = await service.ConfirmAsync(
+        var replay = await service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -51,7 +51,7 @@ public sealed class ExposureConfirmationServiceTests
         Assert.Single(audit.Records);
         Assert.Equal(1, audit.Attempts);
         await Assert.ThrowsAsync<ExposureConfirmationConflictException>(
-            () => service.ConfirmAsync(
+            () => service.ConfirmAsync("local-development",
                 "decision-1",
                 request with { AppliedAt = "2026-08-06T00:00:02Z" },
                 AppIds,
@@ -81,7 +81,7 @@ public sealed class ExposureConfirmationServiceTests
             CancellationToken.None);
 
         await Assert.ThrowsAsync<IOException>(
-            () => service.ConfirmAsync(
+            () => service.ConfirmAsync("local-development",
                 "decision-1",
                 request,
                 AppIds,
@@ -91,7 +91,7 @@ public sealed class ExposureConfirmationServiceTests
         Assert.Null(store.Find("decision-1")!.Confirmation);
         Assert.NotNull(store.Find("decision-1")!.PreparedConfirmation);
 
-        var retried = await service.ConfirmAsync(
+        var retried = await service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -131,7 +131,7 @@ public sealed class ExposureConfirmationServiceTests
             CancellationToken.None);
 
         await Assert.ThrowsAsync<ExposureAuditConflictException>(
-            () => service.ConfirmAsync(
+            () => service.ConfirmAsync("local-development",
                 "decision-1",
                 request,
                 AppIds,
@@ -164,7 +164,7 @@ public sealed class ExposureConfirmationServiceTests
             Snapshot(),
             CancellationToken.None);
 
-        var outcome = await service.ConfirmAsync(
+        var outcome = await service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -195,7 +195,7 @@ public sealed class ExposureConfirmationServiceTests
             Snapshot(),
             CancellationToken.None);
 
-        var confirmation = service.ConfirmAsync(
+        var confirmation = service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -237,7 +237,7 @@ public sealed class ExposureConfirmationServiceTests
             Snapshot(),
             CancellationToken.None);
 
-        var confirmation = service.ConfirmAsync(
+        var confirmation = service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -283,7 +283,7 @@ public sealed class ExposureConfirmationServiceTests
             Snapshot(),
             CancellationToken.None);
 
-        var confirmation = service.ConfirmAsync(
+        var confirmation = service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -297,7 +297,7 @@ public sealed class ExposureConfirmationServiceTests
         Assert.NotNull(prepared);
 
         var retryAttempt = store.BlockNextCommit();
-        var retry = service.ConfirmAsync(
+        var retry = service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -347,7 +347,7 @@ public sealed class ExposureConfirmationServiceTests
             Snapshot(),
             CancellationToken.None);
 
-        var confirmation = service.ConfirmAsync(
+        var confirmation = service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -365,7 +365,7 @@ public sealed class ExposureConfirmationServiceTests
             "late non-cooperative commit failure",
             observed.GetBaseException().Message);
 
-        var retried = await service.ConfirmAsync(
+        var retried = await service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -407,7 +407,7 @@ public sealed class ExposureConfirmationServiceTests
             Snapshot(),
             CancellationToken.None);
 
-        var confirmation = service.ConfirmAsync(
+        var confirmation = service.ConfirmAsync("local-development",
             "decision-1",
             request,
             AppIds,
@@ -452,6 +452,7 @@ public sealed class ExposureConfirmationServiceTests
         new HashSet<string>(StringComparer.Ordinal) { "dev" };
 
     private static DecisionSnapshot Snapshot() => new(
+        "local-development",
         "tetris-demo",
         "dev",
         new RuntimeContractIdentity(
@@ -462,7 +463,7 @@ public sealed class ExposureConfirmationServiceTests
         "number",
         new ServerFallbackInfo("server", false, false, null),
         new Dictionary<string, JsonElement>(),
-        [],
+        new Dictionary<string, JsonElement>(),
         new DecisionTargetRef("session", "game-1"),
         new DecisionTargetRef("cohort", "new_players"),
         [],
@@ -583,12 +584,13 @@ public sealed class ExposureConfirmationServiceTests
             inner.RemovePendingAsync(decisionId, cancellationToken);
 
         public Task<ExposureConfirmationOutcome?> FindReplayAsync(
+            string tenantId,
             string decisionId,
             ExposureConfirmationRequest request,
             IReadOnlySet<string> appIds,
             IReadOnlySet<string> environments,
             CancellationToken cancellationToken) =>
-            inner.FindReplayAsync(
+            inner.FindReplayAsync(tenantId,
                 decisionId,
                 request,
                 appIds,
@@ -596,12 +598,13 @@ public sealed class ExposureConfirmationServiceTests
                 cancellationToken);
 
         public Task<ExposureConfirmationPreparation> PrepareConfirmationAsync(
+            string tenantId,
             string decisionId,
             ExposureConfirmationRequest request,
             IReadOnlySet<string> appIds,
             IReadOnlySet<string> environments,
             CancellationToken cancellationToken) =>
-            inner.PrepareConfirmationAsync(
+            inner.PrepareConfirmationAsync(tenantId,
                 decisionId,
                 request,
                 appIds,
@@ -658,12 +661,13 @@ public sealed class ExposureConfirmationServiceTests
             inner.RemovePendingAsync(decisionId, cancellationToken);
 
         public Task<ExposureConfirmationOutcome?> FindReplayAsync(
+            string tenantId,
             string decisionId,
             ExposureConfirmationRequest request,
             IReadOnlySet<string> appIds,
             IReadOnlySet<string> environments,
             CancellationToken cancellationToken) =>
-            inner.FindReplayAsync(
+            inner.FindReplayAsync(tenantId,
                 decisionId,
                 request,
                 appIds,
@@ -671,12 +675,13 @@ public sealed class ExposureConfirmationServiceTests
                 cancellationToken);
 
         public Task<ExposureConfirmationPreparation> PrepareConfirmationAsync(
+            string tenantId,
             string decisionId,
             ExposureConfirmationRequest request,
             IReadOnlySet<string> appIds,
             IReadOnlySet<string> environments,
             CancellationToken cancellationToken) =>
-            inner.PrepareConfirmationAsync(
+            inner.PrepareConfirmationAsync(tenantId,
                 decisionId,
                 request,
                 appIds,

@@ -12,7 +12,7 @@
       "Content-Type": "application/json"
     },
     "body": {
-      "expectedBundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
+      "expectedBundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
       "reasonCode": "operator-rejected",
       "comment": "The new required signal has not completed warmup."
     }
@@ -27,7 +27,7 @@
       "approvalRequestId": "apr_01JQ91C2D3E4F5G6H7J8K9M0N1",
       "application": "tetris-demo",
       "environment": "dev",
-      "bundleDigest": "sha256:b906aceba616dda027d6001cb8cd94a72cd96bc10a37b983a9a7c0fefd8e9a6f",
+      "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
       "createdAt": "2026-07-30T18:30:00Z",
       "expiresAt": "2026-08-06T18:30:00Z",
       "snapshotUrl": "/v1/definition-bundle-approvals/apr_01JQ91C2D3E4F5G6H7J8K9M0N1/bundle",
@@ -49,7 +49,7 @@
               "op": "add",
               "path": "/inference/inputs/2",
               "after": {
-                "key": "tetris.recoveryFailures"
+                "key": "recoveryFailures"
               }
             }
           ]

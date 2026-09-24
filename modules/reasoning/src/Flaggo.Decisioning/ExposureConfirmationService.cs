@@ -8,6 +8,7 @@ namespace Flaggo.Decisioning;
 public interface IExposureConfirmationService
 {
     Task<ExposureConfirmationOutcome> ConfirmAsync(
+        string tenantId,
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -121,6 +122,7 @@ public sealed class ExposureConfirmationService(
     : IExposureConfirmationService
 {
     public async Task<ExposureConfirmationOutcome> ConfirmAsync(
+        string tenantId,
         string decisionId,
         ExposureConfirmationRequest request,
         IReadOnlySet<string> appIds,
@@ -128,6 +130,7 @@ public sealed class ExposureConfirmationService(
         CancellationToken cancellationToken)
     {
         var preparation = await exposureStore.PrepareConfirmationAsync(
+            tenantId,
             decisionId,
             request,
             appIds,

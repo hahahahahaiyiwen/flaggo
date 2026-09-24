@@ -1,115 +1,117 @@
 # Tetris drop-speed scenario
 
-## Purpose
+## Purpose and current boundary
 
-The first Flaggo product slice delegates:
+The game delegates `tetris.dropInterval` while retaining execution and
+telemetry ownership. Flaggo returns a deterministic value inside an explicit
+definition, approved authority, constraints, durable recording, fallback and
+attribution boundary.
 
-```text
-tetris.dropInterval
-```
+The current manifest-first integration uses existing approved numeric-rule
+state provisioned by trusted local bootstrap. #49 aligns executable server
+boundaries, #40 adds initial-authority/activation-ready publication, and #41
+verifies the final bundle-approved path. No telemetry learning, proposal
+generation, experiments, rollout or request-time AI is claimed.
 
-The game adapts drop speed to the current session while remaining inside an
-explicit definition, approved authority, deterministic constraints, durable
-record, fallback, and attribution boundary.
-
-## Contract
-
-| Concern | Tetris value |
+| Concern | Tetris contract |
 | --- | --- |
 | Runtime identity | Exact `{ definitionId, revision, contractDigest }` |
 | Runtime target | `session:game-456` |
 | Control target | `cohort:new_players` |
-| Live inputs | `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, `currentLevel` |
-| Output | `200..1500ms`, step `50ms`, default `800ms` |
-| Authority | Bundle-approved `numeric-rule` |
-| Constraints | Bounds, step, fixed-default `max-delta = 50`, required inputs |
-| Durable record | Decision record committed to Evidence Store before success |
-| Attribution | Exposure confirmation returns `exposureId` |
+| Request inputs | `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, `currentLevel` |
+| Result | Number `200..1500ms`, step `50ms`, default `800ms` |
+| Authority | Approved numeric rule; current local fixture is not a runtime authoring surface |
+| Constraints | Bounds, step, fixed-default `max-delta = 50`, required inputs and explicit runtime guards |
+| Recording | Durable decision record before success |
+| Attribution | Explicit confirmation supplies `exposureId` for outcomes |
 
-## End-to-end flow
+## Current flow
 
 ```text
-trusted deployment/control-plane client submits canonical manifest
-  -> Contract Service approval and readiness
-  -> State Store activation
+one authored JSON manifest
+  -> trusted Contract Service publication
+  -> authenticated exact-snapshot approval -> approved-definition receipt
+  -> trusted local bootstrap of receipt-bound State Store authority
+  -> generated catalog + receipt initialize the runtime client
 
-game Client SDK requests decision by key with live inputs
-  -> Decision Service loads contract and state
-  -> evaluates approved numeric rule
-  -> evaluates decision constraints
-  -> appends durable decision record
-  -> returns 750ms, 850ms, or governed 800ms fallback
+key + live inputs -> Decision Service
+  -> compatible contract/state + resolved inputs
+  -> approved numeric rule -> deterministic constraints
+  -> durable record -> 750ms / 850ms / governed 800ms fallback
 
-game applies value
-  -> confirms exposure
-  -> emits exposure-linked outcomes through its OTel pipeline
-  -> OTel Ingestion appends the observation
-  -> validates the declared binding and confirmed exposure
-  -> appends a distinct attributed Outcome to Evidence Store
+game applies result -> explicit confirmation
+  -> ordinary application OTel telemetry with confirmed attributes
 ```
+
+OTel Ingestion can validate declared outcome bindings against completed
+confirmation and materialize attributed evidence. The separate
+[Collector example](../../examples/otel-evidence/README.md) demonstrates that
+bound outcome path; the current Tetris harness emits and inspects correlated
+native logs without claiming a general Outcome store.
 
 ## Approved numeric rule
 
 ```text
 score = sum(normalizedInput * weight) / sum(weight)
-
 score >= 0.55 -> 850ms
 score <  0.55 -> 750ms
 ```
 
 | Input | Range | Weight |
 | --- | --- | --- |
-| `tetris.boardPressure` | `0..1` | `0.45` |
-| `tetris.recentPlacementTimeMs` | `0..2000` | `0.25` |
-| `tetris.recoveryFailures` | `0..5` | `0.20` |
-| `tetris.currentLevel` | `0..20` | `0.10` |
+| `boardPressure` | `0..1` | `0.45` |
+| `recentPlacementTimeMs` | `0..2000` | `0.25` |
+| `recoveryFailures` | `0..5` | `0.20` |
+| `currentLevel` | `0..20` | `0.10` |
 
-The executor consumes only the runtime projection, approved rule, and live
-inputs. It reports `confidence: null`.
+The executor takes only definition, approved rule and resolved primitives.
+These are live request operands, not telemetry handles, so Collector failure
+does not affect their resolution. Numeric confidence is null.
+
+```ts
+const decision = await flaggo.tune.number("tetris.dropInterval", {
+  context: { sessionId, userId, cohort, deviceType },
+  inputs: { boardPressure, recentPlacementTimeMs, recoveryFailures, currentLevel }
+});
+```
+
+The client has a generated catalog and approved receipt. Type/range/meaning,
+targeting and constraints are not repeated in application call sites.
 
 ## Required behavior
 
-| Situation | Expected outcome |
+| Situation | Outcome |
 | --- | --- |
-| Score at or above `0.55` | Exact approved `850ms` branch |
-| Score below `0.55` | Exact approved `750ms` branch |
-| No compatible authority or constraint-required fallback | Governed `800ms` with server provenance |
-| Recognized Decision Service outage with configured SDK fallback | Client `800ms`, no server decision or exposure identity |
-| Unknown, conflicting, retired, or non-ready identity | Typed fallback-ineligible error |
-| Invalid persisted authority | Readiness failure; never repaired |
+| Score at/above `0.55` | Exact approved `850ms` |
+| Score below `0.55` | Exact approved `750ms` |
+| No compatible authority or constraint-required fallback | Recorded server `800ms` |
+| Recognized outage with configured SDK fallback | Client `800ms`, no server record/exposure identity |
+| Invalid/unknown/conflicting/retired/non-ready identity | Explicit fallback-ineligible error |
+| Invalid persisted authority | Readiness failure, never repair |
 
-Both rule branches satisfy fixed-default delta:
+Both branches independently satisfy `abs(value - 800) <= 50`; a `750 -> 850`
+sequence is valid. The existing last-change cooldown fixture proves server
+fallback, not previous-result stabilization or hysteresis.
 
-```text
-abs(750 - 800) = 50
-abs(850 - 800) = 50
-```
+## Reconstructability and Phase 3 exit
 
-## Reconstructability and attribution
+Current records retain exact contract, targets, caller/resolved inputs,
+strategy, constraint/fallback facts, value and timestamp. Exposure exists only
+after application confirmation and cannot replace the input vector.
+Ordinary telemetry stays unlinked when it is not caused by confirmed use.
 
-Every successful server result is reconstructable from its definition, targets,
-inputs, state/activation lineage, selected branch, applied constraints,
-fallback provenance, result, and timestamp.
+The final #49/#40/#41 path additionally verifies activation-converged receipts,
+stable-head CAS/replay, complete state/activation lineage in Evidence Store,
+and server-side outcome recording under the canonical logical boundaries.
+It uses no standalone Policy, Audit, Reasoning or Operator Console service.
 
-Exposure exists only after application confirmation. Outcomes link to the
-confirmed `exposureId`; ordinary gameplay telemetry remains raw and unlinked.
-
-## Phase 3 exit evidence
-
-The final integration must prove:
-
-1. Contract Service registers, approves, activates, and returns readiness.
-2. State Store replay and stale-head protection remain exact.
-3. Decision Service returns exact approved branches under deterministic
-   constraints without a standalone Policy service.
-4. Decision and exposure records are durable and reconstructable without a
-   standalone Audit service.
-5. The application uses its own OTel pipeline and Flaggo OTel Ingestion.
-6. The integrated architecture uses the canonical service/store terminology.
+Future async proposals still require Contract Service approval and State Store
+activation. Learned strategies, experiments, rollouts and operator workflows
+need their own accepted contracts.
 
 ## Related documents
 
 - [Architecture overview](../architecture/OVERVIEW.md)
 - [Authority](../architecture/AUTHORITY.md)
 - [Runtime execution](../architecture/RUNTIME_EXECUTION.md)
-- [Tetris integration design](../design/tetris-integration/README.md)
+- [Tetris integration](../design/tetris-integration/README.md)

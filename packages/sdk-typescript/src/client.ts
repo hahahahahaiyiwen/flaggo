@@ -1,61 +1,39 @@
-import { randomUUID } from "node:crypto";
-
 import {
-  bundleDigest,
-  compareCanonicalStrings,
-  contractDigest,
-  normalizeBundle,
-} from "./canonical.js";
-import {
-  ContractConflictError,
+  FlaggoError,
   FlaggoHttpError,
+  InvalidDecisionInputError,
   InvalidServerResponseError,
   MissingAcceptedDefinitionError,
-  MissingStaticDefinitionError,
-  RequiresApprovalError,
 } from "./errors.js";
 import { SDK_VERSION } from "./package-version.js";
+import { assertCatalog, inputMatches, pointer, stepAligned } from "./static-schema.js";
+import {
+  authorization, headers, parseJson, problemOrThrow, record, hasOwn, isProblem,
+  isVerifiedNumberResult, isExposureConfirmationResult, verifyReceiptBindings,
+  type CredentialProvider,
+} from "./wire.js";
 import type {
   AcceptedDefinition,
+  CatalogDecision,
   ClientFallbackResult,
-  DecisionDefinitionBundle,
   DecisionReceipt,
   DecisionResult,
   ExposureConfirmationResult,
   FetchLike,
-  NumberDecisionDefinition,
   NumberTuneRequest,
-  ProblemDetails,
   RegistrationReceipt,
-  RequiresApprovalResult,
+  RuntimeCatalog,
   RuntimeContractIdentity,
-  ServerDecisionPayload,
 } from "./types.js";
 
-export type CredentialProvider =
-  | { mode: "local-development" }
-  | { mode: "bearer"; getToken(): Promise<string> };
+export type { CredentialProvider } from "./wire.js";
 
-export interface StartupRegistrationConfig {
-  mode: "startup-register";
-  url: string;
-  bundle: DecisionDefinitionBundle;
-  credential: CredentialProvider;
-}
-
-export interface PreRegisteredConfig {
-  mode: "pre-registered";
-  receipt: RegistrationReceipt;
-  bundle?: DecisionDefinitionBundle;
-}
-
-export interface FlaggoClientConfig {
+export interface FlaggoClientConfig<C extends RuntimeCatalog = RuntimeCatalog> {
   dataPlaneUrl: string;
-  appId: string;
-  environment: string;
+  catalog: C;
+  receipt: RegistrationReceipt;
   deploymentId?: string;
   dataPlaneCredential?: CredentialProvider;
-  controlPlane: StartupRegistrationConfig | PreRegisteredConfig;
   availabilityFallback?: {
     mode: "disabled" | "local-default";
     retries?: 0 | 1 | 2;
@@ -63,15 +41,41 @@ export interface FlaggoClientConfig {
   fetch?: FetchLike;
 }
 
-export interface FlaggoClient {
+type NumberKey<C extends RuntimeCatalog> = string extends keyof C["decisions"] ? string : {
+  [K in keyof C["decisions"]]: C["decisions"][K]["result"] extends { type: "number" } ? K : never;
+}[keyof C["decisions"]] & string;
+
+type Primitive<T> = T extends { type: "number" } ? number : T extends { type: "boolean" } ? boolean : string;
+type CallerKeys<D extends CatalogDecision> = {
+  [K in keyof D["inputs"]]: D["inputs"][K] extends { source: "request" } ? K : never;
+}[keyof D["inputs"]];
+type RequiredContextKeys<D extends CatalogDecision> = {
+  [K in keyof D["context"]]: D["context"][K] extends { required: true } ? K : never;
+}[keyof D["context"]];
+type EmptyOr<T> = keyof T extends never ? Record<string, never> : T;
+type Context<D extends CatalogDecision> = EmptyOr<
+  { [K in RequiredContextKeys<D>]: Primitive<D["context"][K]> }
+  & { [K in Exclude<keyof D["context"], RequiredContextKeys<D>>]?: Primitive<D["context"][K]> }
+>;
+type Inputs<D extends CatalogDecision> = EmptyOr<{ [K in CallerKeys<D>]: Primitive<D["inputs"][K]> }>;
+type Request<D extends CatalogDecision> = Omit<NumberTuneRequest, "context" | "inputs">
+  & (RequiredContextKeys<D> extends never ? { context?: Context<D> } : { context: Context<D> })
+  & (CallerKeys<D> extends never ? { inputs?: Inputs<D> } : { inputs: Inputs<D> });
+type CallArguments<C extends RuntimeCatalog, K extends keyof C["decisions"]> =
+  string extends keyof C["decisions"] ? [decisionKey: K, request?: NumberTuneRequest]
+    : K extends keyof C["decisions"]
+      ? RequiredContextKeys<C["decisions"][K]> | CallerKeys<C["decisions"][K]> extends never
+        ? [decisionKey: K, request?: Request<C["decisions"][K]>]
+        : [decisionKey: K, request: Request<C["decisions"][K]>]
+      : never;
+
+export interface FlaggoClient<C extends RuntimeCatalog = RuntimeCatalog> {
   readonly tune: {
-    number(
-      decisionKey: string,
-      request: NumberTuneRequest,
+    number<K extends NumberKey<C>>(
+      ...args: CallArguments<C, K>
     ): Promise<DecisionReceipt<number>>;
-    numberDetailed(
-      decisionKey: string,
-      request: NumberTuneRequest,
+    numberDetailed<K extends NumberKey<C>>(
+      ...args: CallArguments<C, K>
     ): Promise<DecisionResult<number>>;
   };
   readonly exposures: {
@@ -81,131 +85,6 @@ export interface FlaggoClient {
       options?: { appliedAt?: string; correlationId?: string },
     ): Promise<ExposureConfirmationResult>;
   };
-  readonly definitions: {
-    exportBundle(): DecisionDefinitionBundle;
-    getRegistrationReceipt(): RegistrationReceipt;
-  };
-}
-
-async function authorization(
-  credential: CredentialProvider | undefined,
-): Promise<string | undefined> {
-  if (credential === undefined) return undefined;
-  if (credential.mode === "local-development") return "Flaggo-Local-Development";
-  return `Bearer ${await credential.getToken()}`;
-}
-
-function headers(
-  authorizationValue: string | undefined,
-  correlationId?: string,
-): Headers {
-  const value = new Headers({ "Content-Type": "application/json" });
-  if (authorizationValue !== undefined) {
-    value.set("Authorization", authorizationValue);
-  }
-  if (correlationId !== undefined) {
-    value.set("X-Flaggo-Correlation-Id", correlationId);
-  }
-  return value;
-}
-
-async function parseJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch (error) {
-    throw new InvalidServerResponseError(
-      `Flaggo returned non-JSON HTTP ${response.status}.`,
-      { cause: error },
-    );
-  }
-}
-
-function problemOrThrow(body: unknown, status: number): ProblemDetails {
-  if (!isProblem(body) || body.status !== status) {
-    throw new InvalidServerResponseError(
-      `Flaggo returned malformed Problem Details for HTTP ${status}.`,
-    );
-  }
-  return body;
-}
-
-async function register(
-  config: StartupRegistrationConfig,
-  fetch: FetchLike,
-): Promise<RegistrationReceipt> {
-  const bundle = normalizeBundle(config.bundle);
-  const digest = bundleDigest(config.bundle);
-  const auth = await authorization(config.credential);
-  const response = await fetch(
-    `${config.url.replace(/\/$/, "")}/v1/definition-bundles:apply`,
-    {
-      method: "POST",
-      headers: {
-        ...Object.fromEntries(headers(auth)),
-        "Idempotency-Key": `flaggo:${bundle.application.id}:${bundle.application.environment}:${digest}`,
-      },
-      body: JSON.stringify(bundle),
-    },
-  );
-  const body = await parseJson(response);
-  if (response.status === 202) {
-    if (!isRequiresApprovalResult(body, bundle, digest)) {
-      throw new InvalidServerResponseError(
-        "Flaggo returned a malformed requires-approval result.",
-      );
-    }
-    throw new RequiresApprovalError(body);
-  }
-  if (!response.ok) {
-    throw new FlaggoHttpError(problemOrThrow(body, response.status));
-  }
-  if (!isRegistrationReceipt(body)) {
-    throw new InvalidServerResponseError(
-      "Flaggo returned a malformed registration receipt.",
-    );
-  }
-  const receipt = body;
-  validateReceiptAgainstBundle(
-    receipt,
-    bundle,
-    digest,
-    "Registration receipt does not match the submitted canonical bundle.",
-  );
-  return receipt;
-}
-
-function validateReceiptAgainstBundle(
-  receipt: RegistrationReceipt,
-  bundle: DecisionDefinitionBundle,
-  expectedBundleDigest: RegistrationReceipt["bundleDigest"],
-  identityMismatchMessage: string,
-): void {
-  if (
-    receipt.bundleDigest !== expectedBundleDigest
-    || receipt.application !== bundle.application.id
-    || receipt.environment !== bundle.application.environment
-  ) {
-    throw new InvalidServerResponseError(identityMismatchMessage);
-  }
-  const submittedDefinitions = new Map(
-    bundle.definitions.map((definition) => [
-      definition.key,
-      contractDigest(definition),
-    ]),
-  );
-  const acceptedKeys = Object.keys(receipt.acceptedDefinitions);
-  if (
-    acceptedKeys.length !== submittedDefinitions.size
-    || acceptedKeys.some((key) => {
-      const accepted = receipt.acceptedDefinitions[key];
-      return accepted === undefined
-        || accepted.contractDigest !== submittedDefinitions.get(key);
-    })
-  ) {
-    throw new InvalidServerResponseError(
-      "Registration receipt bindings do not match the submitted definitions.",
-    );
-  }
 }
 
 function expectedIdentity(
@@ -246,586 +125,59 @@ function projectReceipt(
   };
 }
 
-function isProblem(value: unknown): value is ProblemDetails {
-  const problem = record(value);
-  if (problem === undefined) return false;
-  const fallback = problem.clientFallback === undefined
-    ? undefined
-    : record(problem.clientFallback);
-  return (
-    isUriReference(problem.type)
-    && Number.isInteger(problem.status)
-    && Number(problem.status) >= 100
-    && Number(problem.status) <= 599
-    && typeof problem.code === "string"
-    && /^[a-z][a-z0-9-]*$/.test(problem.code)
-    && (problem.title === undefined || typeof problem.title === "string")
-    && (problem.detail === undefined || typeof problem.detail === "string")
-    && (problem.instance === undefined || isUriReference(problem.instance))
-    && (
-      problem.correlationId === undefined
-      || typeof problem.correlationId === "string"
-    )
-    && (
-      problem.retryAfterSeconds === undefined
-      || (
-        Number.isInteger(problem.retryAfterSeconds)
-        && Number(problem.retryAfterSeconds) >= 0
-      )
-    )
-    && (
-      problem.clientFallback === undefined
-      || (
-        fallback !== undefined
-        && Object.keys(fallback).every(
-          (key) => key === "eligible" || key === "reason",
-        )
-        && typeof fallback.eligible === "boolean"
-        && (fallback.reason === undefined || typeof fallback.reason === "string")
-      )
-    )
-    && (
-      problem.issues === undefined
-      || (
-        Array.isArray(problem.issues)
-        && problem.issues.every(isProblemIssue)
-      )
-    )
-  );
-}
-
-function isUriReference(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  if (!/^[\x21-\x7e]*$/.test(value) || /%(?![0-9a-f]{2})/i.test(value)) {
-    return false;
+function validateRequest(definition: CatalogDecision, request: NumberTuneRequest): void {
+  const value = record(request);
+  const allowed = new Set(["context", "inputs", "runtimeTarget", "idempotencyKey", "correlationId"]);
+  if (value === undefined || Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new InvalidDecisionInputError("/", "A request may contain only runtime data and request metadata.");
   }
-  return URL.canParse(value, "https://flaggo.invalid/");
-}
-
-function isProblemIssue(value: unknown): boolean {
-  const issue = record(value);
-  if (issue === undefined) return false;
-  const allowedKeys = new Set([
-    "code",
-    "severity",
-    "path",
-    "message",
-    "decisionKey",
-    "signalKey",
-  ]);
-  return Object.keys(issue).every((key) => allowedKeys.has(key))
-    && typeof issue.code === "string"
-    && /^[a-z][a-z0-9-]*$/.test(issue.code)
-    && (issue.severity === "error" || issue.severity === "warning")
-    && typeof issue.path === "string"
-    && typeof issue.message === "string"
-    && (issue.decisionKey === undefined || typeof issue.decisionKey === "string")
-    && (issue.signalKey === undefined || typeof issue.signalKey === "string");
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function hasOnlyKeys(
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-): boolean {
-  const allowedKeys = new Set(allowed);
-  return Object.keys(value).every((key) => allowedKeys.has(key));
-}
-
-function hasOwn(value: Record<string, unknown>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function stringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-function isDigest(value: unknown): value is `sha256:${string}` {
-  return typeof value === "string"
-    && value.length === 71
-    && /^sha256:[0-9a-f]{64}$/.test(value);
-}
-
-function isAcceptedDefinition(value: unknown): value is AcceptedDefinition {
-  const accepted = record(value);
-  return accepted !== undefined
-    && hasOnlyKeys(accepted, ["definitionId", "revision", "contractDigest"])
-    && nonEmptyString(accepted.definitionId)
-    && nonEmptyString(accepted.revision)
-    && isDigest(accepted.contractDigest);
-}
-
-function isProposedDefinition(value: unknown): boolean {
-  const proposed = record(value);
-  return proposed !== undefined
-    && hasOnlyKeys(proposed, ["definitionId", "contractDigest"])
-    && nonEmptyString(proposed.definitionId)
-    && isDigest(proposed.contractDigest);
-}
-
-function isCanonicalJsonValue(value: unknown): boolean {
-  if (
-    value === null
-    || typeof value === "boolean"
-    || typeof value === "string"
-  ) return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isCanonicalJsonValue);
-  const object = record(value);
-  return object !== undefined && Object.values(object).every(isCanonicalJsonValue);
-}
-
-function isSemanticDiffOperation(value: unknown): boolean {
-  const operation = record(value);
-  if (operation === undefined || typeof operation.path !== "string") return false;
-  if (operation.op === "add") {
-    return hasOnlyKeys(operation, ["op", "path", "after"])
-      && hasOwn(operation, "after")
-      && isCanonicalJsonValue(operation.after);
+  const context = record(request.context ?? {});
+  const inputs = record(request.inputs ?? {});
+  if (request.context === null || context === undefined) {
+    throw new InvalidDecisionInputError("/runtimeContext", "Context must be an object.", "invalid-runtime-context");
   }
-  if (operation.op === "remove") {
-    return hasOnlyKeys(operation, ["op", "path", "before"])
-      && hasOwn(operation, "before")
-      && isCanonicalJsonValue(operation.before);
+  if (request.inputs === null || inputs === undefined) {
+    throw new InvalidDecisionInputError("/inputs", "Inputs must be a plain object, not signal references.");
   }
-  return operation.op === "replace"
-    && hasOnlyKeys(operation, ["op", "path", "before", "after"])
-    && hasOwn(operation, "before")
-    && hasOwn(operation, "after")
-    && isCanonicalJsonValue(operation.before)
-    && isCanonicalJsonValue(operation.after);
-}
-
-function isContractChange(value: unknown): boolean {
-  const change = record(value);
-  if (change === undefined || !nonEmptyString(change.decisionKey)) return false;
-  if (
-    change.kind === "created"
-    || change.kind === "metadata-updated"
-    || change.kind === "deprecation-candidate"
-  ) {
-    return hasOnlyKeys(change, ["kind", "decisionKey"]);
+  for (const [key, field] of Object.entries(definition.context)) {
+    if (!Object.hasOwn(context, key)) {
+      if (field.required) throw new InvalidDecisionInputError(`/runtimeContext/${pointer(key)}`, "Required context is missing.", "invalid-runtime-context");
+    } else if (!inputMatches(context[key], field)
+      || (field.target !== undefined && (typeof context[key] !== "string" || context[key].trim().length === 0))) {
+      throw new InvalidDecisionInputError(`/runtimeContext/${pointer(key)}`, "Context does not satisfy its declared type or target.", "invalid-runtime-context");
+    }
   }
-  return change.kind === "semantic-change"
-    && hasOnlyKeys(
-      change,
-      ["kind", "decisionKey", "previous", "proposed", "semanticDiff"],
-    )
-    && isAcceptedDefinition(change.previous)
-    && isProposedDefinition(change.proposed)
-    && Array.isArray(change.semanticDiff)
-    && change.semanticDiff.length > 0
-    && change.semanticDiff.every(isSemanticDiffOperation);
-}
-
-function isContractIssue(value: unknown, warningOnly = false): boolean {
-  const issue = record(value);
-  if (issue === undefined) return false;
-  return hasOnlyKeys(
-    issue,
-    ["code", "severity", "path", "message", "decisionKey", "signalKey"],
-  )
-    && typeof issue.code === "string"
-    && /^[a-z][a-z0-9-]*$/.test(issue.code)
-    && (
-      issue.severity === "warning"
-      || (!warningOnly && issue.severity === "error")
-    )
-    && typeof issue.path === "string"
-    && typeof issue.message === "string"
-    && (issue.decisionKey === undefined || typeof issue.decisionKey === "string")
-    && (issue.signalKey === undefined || typeof issue.signalKey === "string");
-}
-
-function isRegistrationReceipt(value: unknown): value is RegistrationReceipt {
-  const receipt = record(value);
-  const accepted = record(receipt?.acceptedDefinitions);
-  return receipt !== undefined
-    && hasOnlyKeys(receipt, [
-      "application",
-      "environment",
-      "bundleDigest",
-      "buildId",
-      "artifactDigest",
-      "acceptedDefinitions",
-      "compatibility",
-      "status",
-      "changes",
-      "issues",
-    ])
-    && nonEmptyString(receipt.application)
-    && nonEmptyString(receipt.environment)
-    && isDigest(receipt.bundleDigest)
-    && (receipt.buildId === undefined || typeof receipt.buildId === "string")
-    && (
-      receipt.artifactDigest === undefined
-      || typeof receipt.artifactDigest === "string"
-    )
-    && accepted !== undefined
-    && Object.keys(accepted).length > 0
-    && Object.values(accepted).every(isAcceptedDefinition)
-    && ["identical", "metadata-only", "new-contract-required"].includes(
-      String(receipt.compatibility),
-    )
-    && receipt.status === "approved"
-    && (
-      receipt.changes === undefined
-      || (
-        Array.isArray(receipt.changes)
-        && receipt.changes.every(isContractChange)
-      )
-    )
-    && Array.isArray(receipt.issues)
-    && receipt.issues.every((issue) => isContractIssue(issue, true));
-}
-
-function isRequiresApprovalResult(
-  value: unknown,
-  bundle: DecisionDefinitionBundle,
-  digest: `sha256:${string}`,
-): value is RequiresApprovalResult {
-  const result = record(value);
-  return result !== undefined
-    && hasOnlyKeys(result, [
-      "status",
-      "approvalRequestId",
-      "application",
-      "environment",
-      "bundleDigest",
-      "compatibility",
-      "expiresAt",
-      "snapshotUrl",
-      "supersedesApprovalRequestId",
-      "changes",
-      "issues",
-    ])
-    && result.status === "requires-approval"
-    && nonEmptyString(result.approvalRequestId)
-    && result.application === bundle.application.id
-    && result.environment === bundle.application.environment
-    && result.bundleDigest === digest
-    && result.compatibility === "new-contract-required"
-    && isRfc3339Utc(result.expiresAt)
-    && typeof result.snapshotUrl === "string"
-    && (
-      result.supersedesApprovalRequestId === undefined
-      || typeof result.supersedesApprovalRequestId === "string"
-    )
-    && Array.isArray(result.changes)
-    && result.changes.length > 0
-    && result.changes.every(isContractChange)
-    && result.changes.some(
-      (change) => {
-        const kind = record(change)?.kind;
-        return kind === "semantic-change" || kind === "created";
-      },
-    )
-    && Array.isArray(result.issues)
-    && result.issues.every((issue) => isContractIssue(issue, true));
-}
-
-function isTarget(value: unknown): boolean {
-  const target = record(value);
-  return target !== undefined
-    && hasOnlyKeys(target, ["type", "id"])
-    && nonEmptyString(target.type)
-    && nonEmptyString(target.id);
-}
-
-function isTargetProvenance(value: unknown): boolean {
-  const provenance = record(value);
-  return provenance !== undefined
-    && hasOnlyKeys(
-      provenance,
-      ["targetType", "claimedId", "resolvedId", "source"],
-    )
-    && nonEmptyString(provenance.targetType)
-    && (
-      provenance.claimedId === undefined
-      || typeof provenance.claimedId === "string"
-    )
-    && nonEmptyString(provenance.resolvedId)
-    && [
-      "client-claimed",
-      "client-verified",
-      "server-derived",
-      "server-replaced",
-    ].includes(String(provenance.source));
-}
-
-function isExposure(value: unknown): boolean {
-  const exposure = record(value);
-  if (exposure === undefined) return false;
-  const keys = Object.keys(exposure);
-  if (exposure.confirmationRequired === false) {
-    return keys.length === 1 && keys[0] === "confirmationRequired";
+  for (const key of Object.keys(context)) {
+    if (!Object.hasOwn(definition.context, key)) {
+      throw new InvalidDecisionInputError(`/runtimeContext/${pointer(key)}`, "Unknown context field.", "invalid-runtime-context");
+    }
   }
-  return exposure.confirmationRequired === true
-    && keys.length === 2
-    && keys.includes("confirmationRequired")
-    && keys.includes("confirmToken")
-    && nonEmptyString(exposure.confirmToken);
-}
-
-function isConfidence(value: unknown): boolean {
-  if (value === null) return true;
-  const confidence = record(value);
-  const probability = (candidate: unknown): boolean =>
-    typeof candidate === "number"
-    && Number.isFinite(candidate)
-    && candidate >= 0
-    && candidate <= 1;
-  return confidence !== undefined
-    && hasOnlyKeys(
-      confidence,
-      ["evidenceQuality", "modelUncertainty", "expectedOutcome"],
-    )
-    && probability(confidence.evidenceQuality)
-    && (
-      confidence.modelUncertainty === undefined
-      || probability(confidence.modelUncertainty)
-    )
-    && (
-      confidence.expectedOutcome === undefined
-      || probability(confidence.expectedOutcome)
-    );
-}
-
-function isPolicyResult(value: unknown): boolean {
-  const policy = record(value);
-  if (policy === undefined) return false;
-  const clientFallback = policy.clientFallback === undefined
-    ? undefined
-    : record(policy.clientFallback);
-  return hasOnlyKeys(
-    policy,
-    ["result", "reasons", "appliedConstraints", "clientFallback"],
-  )
-    && ["approved", "blocked", "fallback"].includes(String(policy.result))
-    && stringArray(policy.reasons)
-    && stringArray(policy.appliedConstraints)
-    && (
-      policy.clientFallback === undefined
-      || (
-        clientFallback !== undefined
-        && hasOnlyKeys(clientFallback, ["requiredEvidenceUnavailable"])
-        && (
-          clientFallback.requiredEvidenceUnavailable === "allow"
-          || clientFallback.requiredEvidenceUnavailable === "forbid"
-        )
-      )
-    );
-}
-
-function isVerifiedNumberResult(
-  value: unknown,
-  decisionKey: string,
-  expected: RuntimeContractIdentity,
-  appId: string,
-  environment: string,
-): value is ServerDecisionPayload<number> {
-  if (value === null || typeof value !== "object") return false;
-  const result = value as Record<string, unknown>;
-  const definitionStatus = record(result.definitionStatus);
-  const definition = record(result.definition);
-  const fallback = record(result.fallback);
-  const policy = record(result.policy);
-  if (
-    definitionStatus === undefined
-    || definition === undefined
-    || fallback === undefined
-    || policy === undefined
-  ) return false;
-  if (!hasOnlyKeys(result, [
-    "decisionKey",
-    "definition",
-    "decisionId",
-    "value",
-    "valueType",
-    "decisionMode",
-    "strategyId",
-    "confidence",
-    "runtimeTarget",
-    "controlTarget",
-    "targetProvenance",
-    "resolutionChain",
-    "fallback",
-    "policy",
-    "definitionStatus",
-    "exposure",
-    "reason",
-    "auditId",
-  ])) return false;
-  const mode = result.decisionMode;
-  const modeValid = (
-    mode === "active-value"
-    && result.strategyId === undefined
-    && fallback.decisionFallbackUsed === false
-    && policy.result === "approved"
-  ) || (
-    (mode === "strategy" || mode === "experiment")
-    && nonEmptyString(result.strategyId)
-    && result.confidence !== null
-    && fallback.decisionFallbackUsed === false
-    && policy.result === "approved"
-  ) || (
-    mode === "fallback"
-    && result.strategyId === undefined
-    && result.confidence === null
-    && fallback.decisionFallbackUsed === true
-    && (policy.result === "blocked" || policy.result === "fallback")
-  );
-  return (
-    result.decisionKey === decisionKey
-    && hasOnlyKeys(
-      definition,
-      ["appId", "environment", "key", "definitionId", "revision"],
-    )
-    && definition.key === decisionKey
-    && definition.appId === appId
-    && definition.environment === environment
-    && definition.definitionId === expected.definitionId
-    && definition.revision === expected.revision
-    && nonEmptyString(result.decisionId)
-    && result.valueType === "number"
-    && typeof result.value === "number"
-    && modeValid
-    && isConfidence(result.confidence)
-    && (result.runtimeTarget === undefined || isTarget(result.runtimeTarget))
-    && (result.controlTarget === undefined || isTarget(result.controlTarget))
-    && Array.isArray(result.targetProvenance)
-    && result.targetProvenance.every(isTargetProvenance)
-    && Array.isArray(result.resolutionChain)
-    && stringArray(result.resolutionChain)
-    && hasOnlyKeys(
-      fallback,
-      [
-        "source",
-        "resolutionFallbackUsed",
-        "decisionFallbackUsed",
-        "reason",
-      ],
-    )
-    && fallback.source === "server"
-    && typeof fallback.resolutionFallbackUsed === "boolean"
-    && typeof fallback.decisionFallbackUsed === "boolean"
-    && (fallback.reason === null || typeof fallback.reason === "string")
-    && isPolicyResult(policy)
-    && hasOnlyKeys(definitionStatus, [
-      "definitionId",
-      "revision",
-      "contractDigest",
-      "bundleDigest",
-      "buildId",
-      "deploymentId",
-      "integrity",
-      "compatibility",
-    ])
-    && definitionStatus.definitionId === expected.definitionId
-    && definitionStatus.revision === expected.revision
-    && definitionStatus.contractDigest === expected.contractDigest
-    && definitionStatus.integrity === "verified"
-    && (
-      definitionStatus.bundleDigest === undefined
-      || isDigest(definitionStatus.bundleDigest)
-    )
-    && (
-      definitionStatus.buildId === undefined
-      || typeof definitionStatus.buildId === "string"
-    )
-    && (
-      definitionStatus.deploymentId === undefined
-      || typeof definitionStatus.deploymentId === "string"
-    )
-    && (
-      expected.bundleDigest === undefined
-      || definitionStatus.bundleDigest === expected.bundleDigest
-    )
-    && (
-      expected.buildId === undefined
-      || definitionStatus.buildId === expected.buildId
-    )
-    && (
-      expected.deploymentId === undefined
-      || definitionStatus.deploymentId === expected.deploymentId
-    )
-    && (
-      definitionStatus.compatibility === undefined
-      || [
-        "identical",
-        "metadata-only",
-        "new-contract-required",
-      ].includes(String(definitionStatus.compatibility))
-    )
-    && isExposure(result.exposure)
-    && typeof result.reason === "string"
-    && nonEmptyString(result.auditId)
-  );
-}
-
-function isExposureConfirmationResult(
-  value: unknown,
-  decisionId: string,
-): value is ExposureConfirmationResult {
-  const result = record(value);
-  return result !== undefined
-    && hasOnlyKeys(
-      result,
-      ["exposureId", "decisionId", "status", "confirmedAt"],
-    )
-    && nonEmptyString(result.exposureId)
-    && result.decisionId === decisionId
-    && result.status === "confirmed"
-    && isRfc3339Utc(result.confirmedAt);
-}
-
-function isRfc3339Utc(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/
-    .exec(value);
-  if (match === null || match[0].length !== value.length) return false;
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText] =
-    match;
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  const second = Number(secondText);
-  if (
-    year < 1
-    || month < 1
-    || month > 12
-    || day < 1
-    || hour > 23
-    || minute > 59
-    || second > 59
-  ) return false;
-  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const daysInMonth = [
-    31,
-    leapYear ? 29 : 28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ][month - 1]!;
-  return day <= daysInMonth;
+  for (const [key, schema] of Object.entries(definition.inputs)) {
+    const present = Object.hasOwn(inputs, key);
+    if (schema.source === "evidence") {
+      if (present) throw new InvalidDecisionInputError(`/inputs/${pointer(key)}`, "Evidence-owned inputs cannot be supplied by callers.", "input-source-conflict");
+    } else if (!present || !inputMatches(inputs[key], schema)) {
+      throw new InvalidDecisionInputError(`/inputs/${pointer(key)}`, "Required input is missing or violates its primitive type/bounds.");
+    }
+  }
+  for (const key of Object.keys(inputs)) {
+    if (!Object.hasOwn(definition.inputs, key)) {
+      throw new InvalidDecisionInputError(`/inputs/${pointer(key)}`, "Unknown input.");
+    }
+  }
+  if (request.runtimeTarget !== undefined) {
+    const target = record(request.runtimeTarget);
+    if (target === undefined || Object.keys(target).some((key) => key !== "type" && key !== "id")
+      || typeof target.type !== "string" || target.type.trim().length === 0
+      || typeof target.id !== "string" || target.id.trim().length === 0) {
+      throw new InvalidDecisionInputError("/runtimeTarget", "A target requires a nonempty type and ID.", "invalid-runtime-target");
+    }
+  }
+  for (const key of ["idempotencyKey", "correlationId"] as const) {
+    if (request[key] !== undefined && (typeof request[key] !== "string" || request[key].length === 0)) {
+      throw new InvalidDecisionInputError(`/${key}`, "Request metadata must be a nonempty string.");
+    }
+  }
 }
 
 const RETRYABLE_TRANSPORT_CODES = new Set([
@@ -927,77 +279,50 @@ async function waitBeforeRetry(response?: Response): Promise<void> {
   });
 }
 
-export async function createFlaggoClient(
-  config: FlaggoClientConfig,
-): Promise<FlaggoClient> {
+export function createFlaggoClient<const C extends RuntimeCatalog>(
+  configuration: FlaggoClientConfig<C>,
+): FlaggoClient<C> {
+  const allowed = new Set([
+    "dataPlaneUrl", "catalog", "receipt", "deploymentId", "dataPlaneCredential",
+    "availabilityFallback", "fetch",
+  ]);
+  if (Object.keys(configuration).some((key) => !allowed.has(key))) {
+    throw new FlaggoError("Unsupported runtime client configuration field.");
+  }
+  assertCatalog(configuration.catalog);
+  const catalog = structuredClone(configuration.catalog);
+  const receipt = structuredClone(configuration.receipt);
+  verifyReceiptBindings(receipt, catalog.application, catalog.bundleDigest, catalog.decisions);
+  const config = {
+    ...configuration,
+    catalog,
+    receipt,
+    ...(configuration.availabilityFallback === undefined ? {} : {
+      availabilityFallback: { ...configuration.availabilityFallback },
+    }),
+  };
+  if (config.availabilityFallback !== undefined
+    && (!["disabled", "local-default"].includes(config.availabilityFallback.mode)
+      || ![0, 1, 2].includes(config.availabilityFallback.retries ?? 1))) {
+    throw new FlaggoError("Invalid availability fallback configuration.");
+  }
   const fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
-  const receipt = config.controlPlane.mode === "startup-register"
-    ? await register(config.controlPlane, fetch)
-    : config.controlPlane.receipt;
-  if (
-    !isRegistrationReceipt(receipt)
-    || receipt.application !== config.appId
-    || receipt.environment !== config.environment
-  ) {
-    throw new InvalidServerResponseError(
-      "Registration receipt does not match the configured application identity.",
-    );
-  }
-  const configuredBundle = config.controlPlane.bundle;
-  const bundle = configuredBundle === undefined
-    ? undefined
-    : normalizeBundle(configuredBundle);
-  if (bundle !== undefined) {
-    validateReceiptAgainstBundle(
-      receipt,
-      bundle,
-      bundleDigest(bundle),
-      "Registration receipt does not match the configured static bundle.",
-    );
-  }
-  const definitions = new Map(
-    bundle?.definitions
-      .filter(
-        (definition): definition is NumberDecisionDefinition =>
-          definition.valueType === "number",
-      )
-      .map((definition) => [
-        definition.key,
-        {
-          definition,
-          contractDigest: contractDigest(definition),
-        },
-      ]),
-  );
+  const definitions = new Map(Object.entries(catalog.decisions));
 
   async function numberDetailed(
     decisionKey: string,
-    request: NumberTuneRequest,
+    request: NumberTuneRequest = {},
   ): Promise<DecisionResult<number>> {
-    const accepted = receipt.acceptedDefinitions[decisionKey];
-    if (accepted === undefined) {
+    request = structuredClone(request);
+    const definition = definitions.get(decisionKey);
+    if (definition === undefined) {
       throw new MissingAcceptedDefinitionError(decisionKey);
     }
-    const staticBinding = definitions.get(decisionKey);
-    let definition: NumberDecisionDefinition;
-    let actualDigest: ReturnType<typeof contractDigest>;
-    if (staticBinding === undefined) {
-      if (request.definition === undefined) {
-        throw new MissingStaticDefinitionError(decisionKey);
-      }
-      definition = request.definition;
-      actualDigest = contractDigest(definition);
-    } else {
-      definition = staticBinding.definition;
-      actualDigest = staticBinding.contractDigest;
+    if (definition.result.type !== "number") {
+      throw new FlaggoError(`Decision '${decisionKey}' does not return a number.`);
     }
-    if (actualDigest !== accepted.contractDigest) {
-      throw new ContractConflictError(
-        decisionKey,
-        accepted.contractDigest,
-        actualDigest,
-      );
-    }
+    validateRequest(definition, request);
+    const accepted = receipt.acceptedDefinitions[decisionKey]!;
     const expectedContract = expectedIdentity(
       receipt,
       decisionKey,
@@ -1011,7 +336,7 @@ export async function createFlaggoClient(
     const idempotencyKey = request.idempotencyKey
       ?? (
         fallbackEnabled && retries > 0
-          ? `flaggo-sdk:${randomUUID()}`
+          ? `flaggo-sdk:${globalThis.crypto.randomUUID()}`
           : undefined
       );
     const requestBody = JSON.stringify({
@@ -1019,17 +344,15 @@ export async function createFlaggoClient(
       ...(request.runtimeTarget === undefined
         ? {}
         : { runtimeTarget: request.runtimeTarget }),
-      runtimeContext: request.context,
+      runtimeContext: request.context ?? {},
       ...(request.inputs === undefined
         ? {}
         : {
-            inputs: [...request.inputs].sort((left, right) =>
-              compareCanonicalStrings(left.signal.key, right.signal.key)
-            ),
+            inputs: request.inputs,
           }),
       client: {
-        appId: config.appId,
-        environment: config.environment,
+        appId: catalog.application.id,
+        environment: catalog.application.environment,
         sdk: "typescript",
         sdkVersion: SDK_VERSION,
       },
@@ -1059,7 +382,7 @@ export async function createFlaggoClient(
         }
         return localFallback(
           decisionKey,
-          definition.actionSpace.default,
+          definition.result.default,
           expectedContract,
           "data-plane transport failure",
         );
@@ -1097,7 +420,7 @@ export async function createFlaggoClient(
           }
           return localFallback(
             decisionKey,
-            definition.actionSpace.default,
+            definition.result.default,
             expectedContract,
             `intermediary HTTP ${response.status}`,
           );
@@ -1132,7 +455,7 @@ export async function createFlaggoClient(
         }
         return localFallback(
           decisionKey,
-          definition.actionSpace.default,
+          definition.result.default,
           expectedContract,
           `intermediary HTTP ${response.status}`,
         );
@@ -1157,7 +480,7 @@ export async function createFlaggoClient(
           }
           return localFallback(
             decisionKey,
-            definition.actionSpace.default,
+            definition.result.default,
             expectedContract,
             "data-plane response transport failure",
           );
@@ -1185,7 +508,7 @@ export async function createFlaggoClient(
           if (fallbackEnabled) {
             return localFallback(
               decisionKey,
-              definition.actionSpace.default,
+              definition.result.default,
               expectedContract,
               problem.clientFallback.reason ?? problem.code,
             );
@@ -1198,9 +521,12 @@ export async function createFlaggoClient(
           body,
           decisionKey,
           expectedContract,
-          config.appId,
-          config.environment,
+          catalog.application.id,
+          catalog.application.environment,
         )
+        || body.value < definition.result.min || body.value > definition.result.max
+        || (definition.result.step !== undefined
+          && !stepAligned(body.value, definition.result.min, definition.result.step))
       ) {
         throw new InvalidServerResponseError(
           `Decision '${decisionKey}' returned an invalid or unverified result.`,
@@ -1213,7 +539,7 @@ export async function createFlaggoClient(
 
   return {
     tune: {
-      async number(decisionKey, request) {
+      async number(decisionKey: string, request?: NumberTuneRequest) {
         return projectReceipt(await numberDetailed(decisionKey, request));
       },
       numberDetailed,
@@ -1246,17 +572,6 @@ export async function createFlaggoClient(
         return body;
       },
     },
-    definitions: {
-      exportBundle() {
-        if (bundle === undefined) {
-          throw new Error("No code-first bundle was supplied to this client.");
-        }
-        return structuredClone(bundle);
-      },
-      getRegistrationReceipt() {
-        return structuredClone(receipt);
-      },
-    },
   };
 }
 
@@ -1282,4 +597,18 @@ function localFallback(
       reason,
     },
   };
+}
+
+export function confirmedExposureAttributes(
+  confirmation: ExposureConfirmationResult,
+): Readonly<{ "flaggo.exposure.id": string; "flaggo.decision.id": string }> {
+  const value = record(confirmation);
+  if (value === undefined || typeof value.decisionId !== "string" || value.decisionId.length === 0
+    || !isExposureConfirmationResult(value, value.decisionId)) {
+    throw new FlaggoError("A completed explicit exposure confirmation is required.");
+  }
+  return Object.freeze({
+    "flaggo.exposure.id": value.exposureId,
+    "flaggo.decision.id": value.decisionId,
+  });
 }

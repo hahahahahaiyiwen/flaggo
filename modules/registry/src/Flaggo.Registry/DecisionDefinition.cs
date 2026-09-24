@@ -4,11 +4,44 @@ using Flaggo.Shared.Contracts;
 
 namespace Flaggo.Registry;
 
-public sealed record RegisteredSignalInput(
+public sealed record RegisteredInput(
     string Key,
     string ValueType,
+    string Source,
+    string Meaning,
     double? Minimum = null,
-    double? Maximum = null);
+    double? Maximum = null,
+    string? Unit = null,
+    string? Binding = null);
+
+public sealed record TelemetryAttributeSelector(string From, string Key);
+
+public sealed record TelemetrySourceContract(
+    string Kind,
+    string ScopeName,
+    string? ScopeVersion,
+    string? Name,
+    string? EventName,
+    JsonElement? BodyEquals,
+    IReadOnlyDictionary<string, JsonElement> ResourceAttributes,
+    IReadOnlyDictionary<string, JsonElement> Attributes,
+    IReadOnlyDictionary<string, JsonElement> EventAttributes,
+    string ValueFrom,
+    string? ValueKey,
+    IReadOnlyList<string> BodyPath);
+
+public sealed record RegisteredEvidenceBinding(
+    string Key,
+    string Meaning,
+    string ValueType,
+    string? Unit,
+    double? Minimum,
+    double? Maximum,
+    TelemetrySourceContract Source,
+    string TargetType,
+    TelemetryAttributeSelector? TargetIdAttribute,
+    long MaxAgeSeconds,
+    TelemetryAttributeSelector? ExposureIdAttribute);
 
 public sealed record RegisteredRuntimeContextField(
     string Key,
@@ -42,9 +75,6 @@ public sealed record DecisionPolicyContract(
 
 public sealed record RuntimeDecisionDefinition
 {
-    private static readonly string[] LegacyTargetHierarchy =
-        ["session", "user", "cohort", "global"];
-
     [JsonConstructor]
     public RuntimeDecisionDefinition(
         string AppId,
@@ -54,14 +84,15 @@ public sealed record RuntimeDecisionDefinition
         string ValueType,
         JsonElement FallbackValue,
         string FallbackReason,
-        IReadOnlyList<RegisteredSignalInput> Inputs,
+        IReadOnlyList<RegisteredInput> Inputs,
         IReadOnlyList<RegisteredRuntimeContextField> RuntimeContext,
         string LifecycleStatus = "active",
         NumberActionSpaceContract? NumberActionSpace = null,
         DecisionPolicyContract? Policy = null,
         IReadOnlyList<string>? TargetHierarchy = null,
         string? InferenceTarget = null,
-        IReadOnlyList<string>? FallbackOrder = null)
+        IReadOnlyList<string>? FallbackOrder = null,
+        IReadOnlyList<RegisteredEvidenceBinding>? Evidence = null)
     {
         this.AppId = AppId;
         this.Environment = Environment;
@@ -76,20 +107,13 @@ public sealed record RuntimeDecisionDefinition
         this.NumberActionSpace = NumberActionSpace;
         this.Policy = Policy;
 
-        var explicitHierarchy = TargetHierarchy?
-            .Where(target => !string.IsNullOrWhiteSpace(target))
-            .ToArray();
-        var hierarchy = explicitHierarchy is { Length: > 0 }
-            ? explicitHierarchy
-            : BuildDerivedHierarchy(
-                InferenceTarget,
-                this.RuntimeContext,
-                FallbackOrder);
-        this.TargetHierarchy = hierarchy;
-        this.InferenceTarget = string.IsNullOrWhiteSpace(InferenceTarget)
-            ? hierarchy[0]
-            : InferenceTarget;
-        this.FallbackOrder = FallbackOrder?.ToArray() ?? [];
+        this.TargetHierarchy = TargetHierarchy?.ToArray()
+            ?? throw new ArgumentException("An explicit target hierarchy is required.", nameof(TargetHierarchy));
+        this.InferenceTarget = InferenceTarget
+            ?? throw new ArgumentException("An explicit primary target is required.", nameof(InferenceTarget));
+        this.FallbackOrder = FallbackOrder?.ToArray()
+            ?? throw new ArgumentException("Explicit fallback targets are required.", nameof(FallbackOrder));
+        this.Evidence = Evidence?.ToArray() ?? [];
     }
 
     public string AppId { get; init; }
@@ -106,7 +130,9 @@ public sealed record RuntimeDecisionDefinition
 
     public string FallbackReason { get; init; }
 
-    public IReadOnlyList<RegisteredSignalInput> Inputs { get; init; }
+    public IReadOnlyList<RegisteredInput> Inputs { get; init; }
+
+    public IReadOnlyList<RegisteredEvidenceBinding> Evidence { get; init; }
 
     public IReadOnlyList<RegisteredRuntimeContextField> RuntimeContext { get; init; }
 
@@ -125,68 +151,10 @@ public sealed record RuntimeDecisionDefinition
     public bool AllowsTargetKind(string targetType) =>
         TargetHierarchy.Contains(targetType, StringComparer.Ordinal);
 
-    private static IReadOnlyList<string> BuildDerivedHierarchy(
-        string? inferenceTarget,
-        IReadOnlyList<RegisteredRuntimeContextField> runtimeContext,
-        IReadOnlyList<string>? fallbackOrder)
-    {
-        if (string.IsNullOrWhiteSpace(inferenceTarget) &&
-            runtimeContext.All(field => string.IsNullOrWhiteSpace(field.TargetType)) &&
-            fallbackOrder is null)
-        {
-            return LegacyTargetHierarchy.ToArray();
-        }
-
-        var hierarchy = new List<string>();
-        AddTarget(hierarchy, inferenceTarget);
-        foreach (var target in runtimeContext
-                     .Select(field => field.TargetType)
-                     .Where(target => !string.IsNullOrWhiteSpace(target))
-                     .Distinct(StringComparer.Ordinal)
-                     .OrderBy(TargetPrecedence)
-                     .ThenBy(target => target, StringComparer.Ordinal))
-        {
-            AddTarget(hierarchy, target);
-        }
-
-        if (fallbackOrder is not null)
-        {
-            foreach (var target in fallbackOrder)
-            {
-                AddTarget(hierarchy, target);
-            }
-        }
-
-        if (hierarchy.Count == 0)
-        {
-            hierarchy.AddRange(LegacyTargetHierarchy);
-        }
-
-        return hierarchy;
-    }
-
-    private static int TargetPrecedence(string? target) =>
-        Array.FindIndex(
-            LegacyTargetHierarchy,
-            candidate => string.Equals(
-                candidate,
-                target,
-                StringComparison.Ordinal)) is var index && index >= 0
-            ? index
-            : LegacyTargetHierarchy.Length;
-
-    private static void AddTarget(ICollection<string> targets, string? target)
-    {
-        if (!string.IsNullOrWhiteSpace(target) &&
-            !targets.Contains(target, StringComparer.Ordinal))
-        {
-            targets.Add(target);
-        }
-    }
 }
 
 public sealed record DecisionObjective(
-    string SignalKey,
+    string EvidenceKey,
     string Direction,
     double? Target = null);
 
@@ -195,15 +163,6 @@ public sealed record DecisionObjectives(
     DecisionObjective? Primary = null,
     IReadOnlyList<DecisionObjective>? Secondary = null,
     string? Rationale = null);
-
-public sealed record RegisteredDecisionSignalRoles(
-    IReadOnlyList<string> Allowed,
-    IReadOnlyList<string> Evidence,
-    IReadOnlyList<string> Guardrails);
-
-public sealed record DecisionWorkflowPermissions(
-    string Mode,
-    IReadOnlyList<string> LiveInputs);
 
 public sealed record DecisionActionSpaceContract(
     string ValueType,
@@ -220,8 +179,7 @@ public sealed record IntelligenceLifecycleDefinitionSnapshot(
     RuntimeContractIdentity Identity,
     string LifecycleStatus,
     DecisionObjectives Objectives,
-    RegisteredDecisionSignalRoles SignalRoles,
-    DecisionWorkflowPermissions WorkflowPermissions,
+    IReadOnlyList<RegisteredEvidenceBinding> Evidence,
     DecisionActionSpaceContract ActionSpace,
     DecisionPolicyContract SafetyEnvelope);
 
@@ -260,13 +218,27 @@ public interface IRegistryHealth
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken);
 }
 
-internal sealed record RegisteredDefinitionProjections(
+public sealed record EvidenceBindingProjection(
+    ApplicationScope Scope,
+    string DecisionKey,
+    RuntimeContractIdentity Identity,
+    IReadOnlyList<RegisteredEvidenceBinding> Bindings);
+
+public interface IEvidenceBindingReader
+{
+    Task<IReadOnlyList<EvidenceBindingProjection>> ReadBindingsAsync(
+        ApplicationScope scope,
+        CancellationToken cancellationToken);
+}
+
+public sealed record RegisteredDefinitionProjections(
     RuntimeDecisionDefinition Runtime,
     IntelligenceLifecycleDefinitionSnapshot? Intelligence);
 
 public sealed partial class InMemoryDefinitionRegistry :
     IRuntimeDefinitionReader,
     IIntelligenceDefinitionReader,
+    IEvidenceBindingReader,
     IRegistryHealth
 {
     private readonly object _gate = new();
@@ -367,6 +339,25 @@ public sealed partial class InMemoryDefinitionRegistry :
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(_available);
+    }
+
+    public Task<IReadOnlyList<EvidenceBindingProjection>> ReadBindingsAsync(
+        ApplicationScope scope,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            IReadOnlyList<EvidenceBindingProjection> bindings = _definitions.Values
+                .Select(entry => entry.Runtime)
+                .Where(definition => definition.AppId == scope.AppId &&
+                    definition.Environment == scope.Environment &&
+                    definition.LifecycleStatus == "active" && definition.Evidence.Count > 0)
+                .Select(definition => new EvidenceBindingProjection(
+                    scope, definition.DecisionKey, definition.Identity, definition.Evidence))
+                .ToArray();
+            return Task.FromResult(bindings);
+        }
     }
 
     private static (

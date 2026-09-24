@@ -2,7 +2,7 @@
   "name": "validate-new-key-omitted-lineage",
   "scenario": 32,
   "invariant": "Omitting definitionId for a new decision key is required; validation computes the proposed contractDigest and apply later assigns the opaque lineage ID.",
-  "requestSchema": "decision-definition-bundle-v1.schema.json",
+  "requestSchema": "decision-definition-bundle-v2.schema.json",
   "responseSchema": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
   "request": {
     "method": "POST",
@@ -12,7 +12,6 @@
       "Content-Type": "application/json"
     },
     "body": {
-      "format": "flaggo.decision-definition-bundle/v1",
       "application": {
         "id": "tetris-demo",
         "environment": "dev"
@@ -27,101 +26,17 @@
         "path": "src/flaggo",
         "commit": "a1b2c3d4"
       },
-      "signals": [
-        {
-          "kind": "metric",
-          "key": "tetris.boardPressure",
-          "type": "number",
-          "source": "app-emitted",
-          "range": [
-            0,
-            1
-          ]
-        },
-        {
-          "kind": "metric",
-          "key": "tetris.recentPlacementTimeMs",
-          "type": "number",
-          "source": "app-emitted",
-          "unit": "ms"
-        },
-        {
-          "kind": "metric",
-          "key": "tetris.recoveryFailures",
-          "type": "number",
-          "source": "app-emitted"
-        },
-        {
-          "kind": "metric",
-          "key": "tetris.currentLevel",
-          "type": "number",
-          "source": "app-emitted"
-        },
-        {
-          "kind": "event",
-          "key": "tetris.piecePlaced",
-          "fields": {
-            "placementTimeMs": "number",
-            "hardDrop": "boolean"
-          },
-          "units": {
-            "placementTimeMs": "ms"
-          }
-        },
-        {
-          "kind": "event",
-          "key": "tetris.sessionEnded",
-          "fields": {
-            "endReason": "string",
-            "durationSeconds": "number"
-          },
-          "units": {
-            "durationSeconds": "s"
-          }
-        },
-        {
-          "kind": "metric",
-          "key": "tetris.earlyLossRate24h",
-          "type": "number",
-          "source": "derived",
-          "from": [
-            {
-              "key": "tetris.sessionEnded"
-            }
-          ],
-          "aggregation": "rate(endReason == 'early_loss')",
-          "window": "24h"
-        },
-        {
-          "kind": "metric",
-          "key": "tetris.hardDropRate24h",
-          "type": "number",
-          "source": "derived",
-          "from": [
-            {
-              "key": "tetris.piecePlaced"
-            }
-          ],
-          "aggregation": "rate(hardDrop == true)",
-          "window": "24h"
-        }
-      ],
-      "definitions": [
-        {
-          "key": "tetris.dropInterval",
-          "valueType": "number",
-          "actionSpace": {
+      "format": "flaggo.decision-definition-bundle/v2",
+      "decisions": {
+        "tetris.dropInterval": {
+          "result": {
             "type": "number",
             "min": 200,
             "max": 1500,
             "step": 50,
             "default": 800
           },
-          "fallback": {
-            "value": 800,
-            "reason": "safe_default_drop_interval"
-          },
-          "runtimeContextSchema": {
+          "context": {
             "userId": {
               "type": "string",
               "target": "user"
@@ -138,95 +53,60 @@
               "type": "string"
             }
           },
-          "targetHierarchy": [
-            "session",
-            "user",
-            "cohort",
-            "global"
-          ],
-          "signals": {
-            "allowed": [
-              {
-                "key": "tetris.boardPressure"
-              },
-              {
-                "key": "tetris.currentLevel"
-              },
-              {
-                "key": "tetris.earlyLossRate24h"
-              },
-              {
-                "key": "tetris.hardDropRate24h"
-              },
-              {
-                "key": "tetris.piecePlaced"
-              },
-              {
-                "key": "tetris.recentPlacementTimeMs"
-              },
-              {
-                "key": "tetris.recoveryFailures"
-              },
-              {
-                "key": "tetris.sessionEnded"
-              }
-            ]
-          },
-          "inference": {
-            "target": "session",
-            "inputs": [
-              {
-                "key": "tetris.boardPressure"
-              },
-              {
-                "key": "tetris.currentLevel"
-              },
-              {
-                "key": "tetris.recentPlacementTimeMs"
-              },
-              {
-                "key": "tetris.recoveryFailures"
-              }
+          "targeting": {
+            "hierarchy": [
+              "session",
+              "user",
+              "cohort",
+              "global"
             ],
+            "primary": "session",
             "fallbackOrder": [
               "cohort",
               "global"
             ]
           },
-          "intent": {
-            "type": "metric-objective",
-            "primary": {
-              "signal": {
-                "key": "tetris.earlyLossRate24h"
-              },
-              "direction": "minimize"
+          "inputs": {
+            "boardPressure": {
+              "source": "request",
+              "type": "number",
+              "meaning": "Current occupied-board fraction.",
+              "unit": "1",
+              "range": [
+                0,
+                1
+              ]
             },
-            "secondary": [
-              {
-                "signal": {
-                  "key": "tetris.hardDropRate24h"
-                },
-                "direction": "target",
-                "target": 0.45
-              },
-              {
-                "signal": {
-                  "key": "tetris.recentPlacementTimeMs"
-                },
-                "direction": "minimize"
-              }
-            ],
-            "rationale": "Keep gameplay challenging but playable while reducing early frustration."
+            "currentLevel": {
+              "source": "request",
+              "type": "number",
+              "meaning": "Current game level.",
+              "range": [
+                0,
+                20
+              ]
+            },
+            "recentPlacementTimeMs": {
+              "source": "request",
+              "type": "number",
+              "meaning": "Application's current placement-time estimate.",
+              "unit": "ms",
+              "range": [
+                0,
+                2000
+              ]
+            },
+            "recoveryFailures": {
+              "source": "request",
+              "type": "number",
+              "meaning": "Current recovery-failure count supplied by the game.",
+              "range": [
+                0,
+                5
+              ]
+            }
           },
-          "onlineStrategy": {
-            "mode": "approved-strategy",
-            "liveInputs": [
-              "currentLevel",
-              "boardPressure",
-              "recentPlacementTimeMs",
-              "recoveryFailures"
-            ]
-          },
+          "evidence": {},
           "policy": {
             "kind": "inline",
             "constraints": [
@@ -239,26 +119,18 @@
                 "value": 50
               },
               {
-                "kind": "max-model-uncertainty",
-                "value": 0.35
-              },
-              {
-                "kind": "min-evidence-quality",
-                "value": 0.7
-              },
-              {
-                "kind": "min-sample-size",
-                "value": 30
-              },
-              {
                 "kind": "number-bounds",
                 "min": 200,
                 "max": 1500
               }
             ]
+          },
+          "intent": {
+            "type": "natural-language",
+            "text": "Keep gameplay challenging but playable while reducing early frustration."
           }
         }
-      ]
+      }
     }
   },
   "expected": {
@@ -269,11 +141,11 @@
     },
     "body": {
       "status": "valid",
-      "bundleDigest": "sha256:39bdb0da9522075814510d523c366cd5500057da4cc78ba9b289db11cebfd968",
+      "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
       "compatibility": "new-contract-required",
       "validatedDefinitions": {
         "tetris.dropInterval": {
-          "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9"
+          "contractDigest": "sha256:ed9b49a622db7d8cec274c8a990c140edbeda55b00ea917c06df46d5e34da377"
         }
       },
       "issues": []

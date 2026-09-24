@@ -19,6 +19,12 @@ atomic authority persistence.
 
 ## Bundle-approved authority
 
+The following is the accepted Phase 3 extension owned by #40. The current
+manifest-first v2 contract publishes definitions but does not yet declare
+initial authority or claim ready-after-activation receipts. Local examples
+provision state through trusted fixtures. The activation core remains the
+boundary this extension will use after #49's server alignment; it does not
+invoke decision intelligence:
 ```text
 definition + initial authority candidate
   -> Contract Service validation

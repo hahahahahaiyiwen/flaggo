@@ -4,10 +4,15 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  FlaggoHttpError,
   createFlaggoClient,
-  createSignalHandle,
+  confirmedExposureAttributes,
 } from "../../packages/sdk-typescript/dist/index.js";
+import {
+  InMemoryLogRecordExporter,
+  LoggerProvider,
+  SimpleLogRecordProcessor,
+} from "@opentelemetry/sdk-logs";
+import { catalog } from "./dist/catalog.js";
 import {
   bootstrapTetris,
   loadCanonicalBundle,
@@ -87,7 +92,6 @@ async function runIntegration(lifecycle) {
       }, control, signal),
     bootstrap: (controlUrl, signal) => bootstrapTetris({
       controlPlaneUrl: controlUrl,
-      dataPlaneUrl: "http://127.0.0.1:0",
       publicationPath: paths.bootstrap,
       fetchImpl: fetchWithAbort,
       signal,
@@ -104,6 +108,7 @@ async function runIntegration(lifecycle) {
         Flaggo__Registry__LocalFilePath: paths.registry,
         Flaggo__Bootstrap__LocalGenerationPath: paths.bootstrap,
         Flaggo__Audit__LocalFilePath: paths.audit,
+        Flaggo__Telemetry__CommitDescriptorPath: resolve(runDirectory, "telemetry", "current.commit.json"),
       },
     ),
     waitForDataReady: (dataUrl, data, signal) =>
@@ -129,7 +134,6 @@ async function runIntegration(lifecycle) {
   });
   const {
     bootstrap,
-    controlUrl,
     dataUrl,
   } = runtime;
   assert.equal(
@@ -145,16 +149,11 @@ async function runIntegration(lifecycle) {
     }
     return fetchWithAbort(input, init);
   };
-  const client = await createFlaggoClient({
-    appId: "tetris-demo",
-    environment: "dev",
+  const client = createFlaggoClient({
+    catalog,
+    receipt: bootstrap.receipt,
     dataPlaneUrl: dataUrl,
     dataPlaneCredential: { mode: "local-development" },
-    controlPlane: {
-      mode: "pre-registered",
-      receipt: bootstrap.receipt,
-      bundle,
-    },
     availabilityFallback: { mode: "local-default", retries: 0 },
     fetch: forwardingFetch,
   });
@@ -164,18 +163,19 @@ async function runIntegration(lifecycle) {
     cohort: "new_players",
     deviceType: "desktop",
   };
-  const highInputs = [
-    input("tetris.boardPressure", 0.9),
-    input("tetris.recentPlacementTimeMs", 1600),
-    input("tetris.recoveryFailures", 3),
-    input("tetris.currentLevel", 8),
-  ];
+  const highInputs = {
+    boardPressure: 0.9,
+    recentPlacementTimeMs: 1600,
+    recoveryFailures: 3,
+    currentLevel: 8,
+  };
   const high = await client.tune.numberDetailed("tetris.dropInterval", {
     runtimeTarget: { type: "session", id: "game-phase3" },
     context,
     inputs: highInputs,
   });
   assert.equal(high.source, "server");
+  assert.equal(high.confidence, null);
   assert.equal(high.value, 850);
   assert.equal(high.decisionMode, "strategy");
   assert.equal(high.strategyId, "strategy-tetris-balanced-v1");
@@ -206,7 +206,7 @@ async function runIntegration(lifecycle) {
     );
     if (oppositeBoardOnly) {
       assert.notEqual(
-        values["tetris.boardPressure"] >= weightedRule.threshold,
+        values["boardPressure"] >= weightedRule.threshold,
         aggregateAtOrAbove,
         `${name} must oppose the board-pressure-only threshold result`,
       );
@@ -216,9 +216,7 @@ async function runIntegration(lifecycle) {
       {
         runtimeTarget: { type: "session", id: "game-phase3" },
         context,
-        inputs: Object.entries(values).map(([key, value]) =>
-          input(key, value)
-        ),
+        inputs: values,
       },
     );
     assert.equal(result.source, "server");
@@ -241,10 +239,10 @@ async function runIntegration(lifecycle) {
   await proveWeightedDecision({
     name: "board-high-aggregate-low",
     values: {
-      "tetris.boardPressure": 0.9,
-      "tetris.recentPlacementTimeMs": 0,
-      "tetris.recoveryFailures": 0,
-      "tetris.currentLevel": 0,
+      "boardPressure": 0.9,
+      "recentPlacementTimeMs": 0,
+      "recoveryFailures": 0,
+      "currentLevel": 0,
     },
     expectedScore: 0.405,
     expectedValue: 750,
@@ -253,10 +251,10 @@ async function runIntegration(lifecycle) {
   await proveWeightedDecision({
     name: "board-low-aggregate-high",
     values: {
-      "tetris.boardPressure": 0.4,
-      "tetris.recentPlacementTimeMs": 2000,
-      "tetris.recoveryFailures": 5,
-      "tetris.currentLevel": 20,
+      "boardPressure": 0.4,
+      "recentPlacementTimeMs": 2000,
+      "recoveryFailures": 5,
+      "currentLevel": 20,
     },
     expectedScore: 0.73,
     expectedValue: 850,
@@ -268,10 +266,10 @@ async function runIntegration(lifecycle) {
       {
         name: "placement-time-below",
         values: {
-          "tetris.boardPressure": 0.5,
-          "tetris.recentPlacementTimeMs": 1200,
-          "tetris.recoveryFailures": 3,
-          "tetris.currentLevel": 10,
+          "boardPressure": 0.5,
+          "recentPlacementTimeMs": 1200,
+          "recoveryFailures": 3,
+          "currentLevel": 10,
         },
         expectedScore: 0.545,
         expectedValue: 750,
@@ -279,10 +277,10 @@ async function runIntegration(lifecycle) {
       {
         name: "placement-time-above",
         values: {
-          "tetris.boardPressure": 0.5,
-          "tetris.recentPlacementTimeMs": 1240,
-          "tetris.recoveryFailures": 3,
-          "tetris.currentLevel": 10,
+          "boardPressure": 0.5,
+          "recentPlacementTimeMs": 1240,
+          "recoveryFailures": 3,
+          "currentLevel": 10,
         },
         expectedScore: 0.55,
         expectedValue: 850,
@@ -292,10 +290,10 @@ async function runIntegration(lifecycle) {
       {
         name: "recovery-failures-below",
         values: {
-          "tetris.boardPressure": 0.5,
-          "tetris.recentPlacementTimeMs": 1000,
-          "tetris.recoveryFailures": 3,
-          "tetris.currentLevel": 10,
+          "boardPressure": 0.5,
+          "recentPlacementTimeMs": 1000,
+          "recoveryFailures": 3,
+          "currentLevel": 10,
         },
         expectedScore: 0.52,
         expectedValue: 750,
@@ -303,10 +301,10 @@ async function runIntegration(lifecycle) {
       {
         name: "recovery-failures-above",
         values: {
-          "tetris.boardPressure": 0.5,
-          "tetris.recentPlacementTimeMs": 1000,
-          "tetris.recoveryFailures": 4,
-          "tetris.currentLevel": 10,
+          "boardPressure": 0.5,
+          "recentPlacementTimeMs": 1000,
+          "recoveryFailures": 4,
+          "currentLevel": 10,
         },
         expectedScore: 0.56,
         expectedValue: 850,
@@ -316,10 +314,10 @@ async function runIntegration(lifecycle) {
       {
         name: "current-level-below",
         values: {
-          "tetris.boardPressure": 0.5,
-          "tetris.recentPlacementTimeMs": 1200,
-          "tetris.recoveryFailures": 4,
-          "tetris.currentLevel": 2,
+          "boardPressure": 0.5,
+          "recentPlacementTimeMs": 1200,
+          "recoveryFailures": 4,
+          "currentLevel": 2,
         },
         expectedScore: 0.545,
         expectedValue: 750,
@@ -327,10 +325,10 @@ async function runIntegration(lifecycle) {
       {
         name: "current-level-above",
         values: {
-          "tetris.boardPressure": 0.5,
-          "tetris.recentPlacementTimeMs": 1200,
-          "tetris.recoveryFailures": 4,
-          "tetris.currentLevel": 3,
+          "boardPressure": 0.5,
+          "recentPlacementTimeMs": 1200,
+          "recoveryFailures": 4,
+          "currentLevel": 3,
         },
         expectedScore: 0.55,
         expectedValue: 850,
@@ -339,8 +337,8 @@ async function runIntegration(lifecycle) {
   ];
   for (const [below, above] of sensitivityPairs) {
     assert.equal(
-      below.values["tetris.boardPressure"],
-      above.values["tetris.boardPressure"],
+      below.values["boardPressure"],
+      above.values["boardPressure"],
     );
     await proveWeightedDecision(below);
     await proveWeightedDecision(above);
@@ -362,12 +360,7 @@ async function runIntegration(lifecycle) {
     },
     runtimeTarget: { type: "session", id: "game-phase3" },
     runtimeContext: context,
-    inputs: [...highInputs].sort((left, right) =>
-      left.signal.key.localeCompare(right.signal.key, "en", {
-        usage: "sort",
-        sensitivity: "variant",
-      })
-    ),
+    inputs: highInputs,
     client: {
       appId: "tetris-demo",
       environment: "dev",
@@ -396,38 +389,38 @@ async function runIntegration(lifecycle) {
     high.exposure.confirmToken,
     { appliedAt: new Date().toISOString() },
   );
-  const telemetryEvents = [];
-  const outcomeDeclaration = bundle.signals.find(
-    ({ key }) => key === "tetris.outcomeObserved",
-  );
-  const outcome = createSignalHandle(outcomeDeclaration, {
-    emit(event) {
-      telemetryEvents.push(event);
-    },
+  const exporter = new InMemoryLogRecordExporter();
+  const logs = new LoggerProvider({
+    processors: [new SimpleLogRecordProcessor({ exporter })],
   });
-  outcome.emit({
-    decisionId: high.decisionId,
-    exposureId: confirmation.exposureId,
-    outcome: "recovered",
-    dropIntervalMs: high.value,
-  });
-  await writeFile(
-    paths.telemetry,
-    telemetryEvents.map((event) => JSON.stringify(event)).join("\n") + "\n",
-    { encoding: "utf8", signal: lifecycle.signal },
-  );
+  try {
+    logs.getLogger("tetris", "1").emit({
+      eventName: "game.outcome",
+      body: { outcome: "recovered", dropIntervalMs: high.value },
+      attributes: { ...confirmedExposureAttributes(confirmation), "session.id": context.sessionId },
+    });
+    await logs.forceFlush();
+    await writeFile(
+      paths.telemetry,
+      exporter.getFinishedLogRecords().map(({ eventName, body, attributes }) =>
+        JSON.stringify({ eventName, body, attributes })).join("\n") + "\n",
+      { encoding: "utf8", signal: lifecycle.signal },
+    );
+  } finally {
+    await logs.shutdown();
+  }
 
   const recovery = await client.tune.numberDetailed(
     "tetris.dropInterval",
     {
       runtimeTarget: { type: "session", id: "game-phase3" },
       context,
-      inputs: [
-        input("tetris.boardPressure", 0.2),
-        input("tetris.recentPlacementTimeMs", 400),
-        input("tetris.recoveryFailures", 0),
-        input("tetris.currentLevel", 10),
-      ],
+      inputs: {
+        boardPressure: 0.2,
+        recentPlacementTimeMs: 400,
+        recoveryFailures: 0,
+        currentLevel: 10,
+      },
     },
   );
   assert.equal(recovery.source, "server");
@@ -446,48 +439,18 @@ async function runIntegration(lifecycle) {
     },
     lifecycle.signal,
   );
-  const evidenceRecoveryIdempotencyKey = "integration-evidence-recovery";
-  try {
-    await assert.rejects(
-      () => client.tune.numberDetailed(
-        "tetris.dropInterval",
-        {
-          runtimeTarget: { type: "session", id: "game-phase3" },
-          context,
-          inputs: highInputs,
-          idempotencyKey: evidenceRecoveryIdempotencyKey,
-        },
-      ),
-      (error) => {
-        assert.ok(error instanceof FlaggoHttpError);
-        assert.equal(error.problem.code, "required-evidence-unavailable");
-        assert.equal(error.problem.clientFallback?.eligible, false);
-        return true;
-      },
-    );
-  } finally {
-    await publishJsonGeneration(
-      bootstrap.publication.rootPath,
-      {
-        receipt: bootstrap.receipt,
-        state: bootstrap.state,
-        evidence: bootstrap.evidence,
-      },
-      lifecycle.signal,
-    );
-  }
-  const evidenceRecovered = await client.tune.numberDetailed(
+  const requestOnly = await client.tune.numberDetailed(
     "tetris.dropInterval",
     {
       runtimeTarget: { type: "session", id: "game-phase3" },
       context,
       inputs: highInputs,
-      idempotencyKey: evidenceRecoveryIdempotencyKey,
     },
   );
-  assert.equal(evidenceRecovered.source, "server");
-  assert.equal(evidenceRecovered.value, 850);
-  assert.equal(evidenceRecovered.policy.result, "approved");
+  assert.equal(requestOnly.source, "server");
+  assert.equal(requestOnly.value, 850);
+  assert.equal(requestOnly.confidence, null);
+  assert.equal(requestOnly.policy.result, "approved");
 
   const coolingState = structuredClone(bootstrap.state);
   coolingState.states[0].lastChangedAt = new Date().toISOString();
@@ -519,15 +482,10 @@ async function runIntegration(lifecycle) {
   const unavailableEndpoint = await lifecycle.startHostAsync(
     startUnavailableEndpoint,
   );
-  const unavailable = await createFlaggoClient({
-    appId: "tetris-demo",
-    environment: "dev",
+  const unavailable = createFlaggoClient({
+    catalog,
+    receipt: bootstrap.receipt,
     dataPlaneUrl: unavailableEndpoint.url,
-    controlPlane: {
-      mode: "pre-registered",
-      receipt: bootstrap.receipt,
-      bundle,
-    },
     availabilityFallback: { mode: "local-default", retries: 0 },
     fetch: fetchWithAbort,
   });
@@ -564,12 +522,12 @@ async function runIntegration(lifecycle) {
   assert.deepEqual(
     inspection.decisionInputs.find(
       ({ decisionId }) => decisionId === high.decisionId,
-    )?.signalKeys.sort(),
+    )?.inputKeys.sort(),
     [
-      "tetris.boardPressure",
-      "tetris.currentLevel",
-      "tetris.recentPlacementTimeMs",
-      "tetris.recoveryFailures",
+      "boardPressure",
+      "currentLevel",
+      "recentPlacementTimeMs",
+      "recoveryFailures",
     ],
   );
   const auditedCooldown = inspection.policyResults.find(
@@ -600,8 +558,8 @@ async function runIntegration(lifecycle) {
     serverFallbackSource: cooldown.fallback.source,
     clientFallbackMs: clientFallback.value,
     clientFallbackSource: clientFallback.fallback.source,
-    missingEvidenceFailClosed: true,
-    evidenceRecoveryMs: evidenceRecovered.value,
+    requestInputsIndependentOfEvidence: true,
+    requestOnlyMs: requestOnly.value,
     weightedProofs: weightedProofs.map(({ name, score, expectedValue }) => ({
       name,
       score,
@@ -630,10 +588,6 @@ async function runIntegration(lifecycle) {
   }
 }
 
-function input(key, value) {
-  return { signal: { key }, value };
-}
-
 function contractProjection(result) {
   return {
     value: result.value,
@@ -652,7 +606,7 @@ function contractProjection(result) {
 
 function weightedScore(rule, values) {
   return rule.weightedInputs.reduce((score, weightedInput) => {
-    const value = values[weightedInput.signalKey];
+    const value = values[weightedInput.inputKey];
     assert.equal(typeof value, "number");
     const normalized = Math.min(
       1,

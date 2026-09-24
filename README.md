@@ -11,22 +11,36 @@ durable decision and exposure records, and future asynchronous candidate path.
 
 ## Current product slice
 
+The current client uses a single manifest and explicit authenticated publication:
+
 ```text
-decision definition + initial authority candidate
-  -> Contract Service validation and approval
-  -> State Store activation
-  -> Decision Service execution
+JSON manifest
+  -> explicit publication + approval
+  -> generated typed catalog + approved receipt
+  -> key + live request inputs / materialized OTel inputs
+  -> existing governed state
+  -> deterministic runtime decision
   -> deterministic constraints + durable decision record
   -> confirmed exposure
   -> attributed outcome
 ```
 
 Current authority is either an approved fixed value or an approved numeric
-rule. Proposal generation, experiments, rollouts, and other proposal-managed
-workflows remain future work.
+rule. #49 aligns executable server boundaries and terminology; #40 extends
+the manifest with initial authority and activation-ready
+receipts; the current examples provision local state in trusted bootstrap.
+Proposal generation, learned evidence, experiments, rollouts, and other
+proposal-managed workflows remain future Phase 4 work.
 
 The first scenario governs `tetris.dropInterval`, returning an approved
 `750ms` or `850ms` value from live game inputs with an `800ms` fallback.
+
+Applications keep their existing OTel instrumentation and Collector pipelines.
+Flaggo binds selected observations to declared operands; its runtime SDK
+creates no telemetry provider or exporter. See the
+[SDK](packages/sdk-typescript/README.md),
+[Tetris integration](examples/tetris-integration/README.md), and
+[real Collector example](examples/otel-evidence/README.md).
 
 ## Start here
 

@@ -334,7 +334,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
             return null;
         }
 
-        if (string.IsNullOrWhiteSpace(rule.InputSignalKey) ||
+        if (string.IsNullOrWhiteSpace(rule.InputKey) ||
             !TryGetCanonicalDouble(rule.Threshold, out var threshold) ||
             !TryGetCanonicalDouble(rule.ValueAtOrAbove, out var valueAtOrAbove) ||
             !TryGetCanonicalDouble(rule.ValueBelow, out var valueBelow))
@@ -346,7 +346,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         if (rule.WeightedInputs is null)
         {
             return new NumericRuleStrategy(
-                rule.InputSignalKey,
+                rule.InputKey,
                 threshold,
                 valueAtOrAbove,
                 valueBelow,
@@ -367,8 +367,8 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         foreach (var input in weightedInputs)
         {
             if (input is null ||
-                string.IsNullOrWhiteSpace(input.SignalKey) ||
-                !keys.Add(input.SignalKey) ||
+                string.IsNullOrWhiteSpace(input.InputKey) ||
+                !keys.Add(input.InputKey) ||
                 !TryGetCanonicalDouble(input.Minimum, out var minimum) ||
                 !TryGetCanonicalDouble(input.Maximum, out var maximum) ||
                 maximum <= minimum ||
@@ -381,7 +381,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
 
             totalWeight += weight;
             mappedInputs.Add(
-                new NumericRuleInput(input.SignalKey, minimum, maximum, weight));
+                new NumericRuleInput(input.InputKey, minimum, maximum, weight));
         }
 
         if (!double.IsFinite(totalWeight) || totalWeight <= 0)
@@ -391,7 +391,7 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         }
 
         return new NumericRuleStrategy(
-            rule.InputSignalKey,
+            rule.InputKey,
             threshold,
             valueAtOrAbove,
             valueBelow,
@@ -574,14 +574,14 @@ public sealed partial class LocalFileStateStore : IStateStore, IStateHealth
         string? Id);
 
     private sealed record PersistedNumericRule(
-        string? InputSignalKey,
+        string? InputKey,
         JsonElement? Threshold,
         JsonElement? ValueAtOrAbove,
         JsonElement? ValueBelow,
         IReadOnlyList<PersistedNumericRuleInput?>? WeightedInputs);
 
     private sealed record PersistedNumericRuleInput(
-        string? SignalKey,
+        string? InputKey,
         JsonElement? Minimum,
         JsonElement? Maximum,
         JsonElement? Weight);

@@ -1,157 +1,74 @@
 {
-  "format": "flaggo.static-extraction/v1",
-  "bundle": {
-    "format": "flaggo.decision-definition-bundle/v1",
-    "application": {
-      "id": "adaptive-worker-demo",
-      "environment": "dev"
-    },
-    "source": {
-      "repository": "github.com/hahahahahaiyiwen/flaggo",
-      "path": "examples/adaptive-worker/src"
-    },
-    "signals": [
-      {
-        "kind": "event",
-        "key": "demo.itemCompleted",
-        "fields": {
-          "itemId": "string",
-          "succeeded": "boolean"
+  "format": "flaggo.decision-definition-bundle/v2",
+  "application": {
+    "id": "adaptive-worker-demo",
+    "environment": "dev"
+  },
+  "source": {
+    "repository": "github.com/hahahahahaiyiwen/flaggo",
+    "path": "examples/adaptive-worker/decision-manifest.json"
+  },
+  "decisions": {
+    "demo.workerBatchSize": {
+      "result": {
+        "type": "number",
+        "min": 1,
+        "max": 10,
+        "step": 1,
+        "default": 3
+      },
+      "context": {
+        "workerId": {
+          "type": "string",
+          "required": true
+        },
+        "cohort": {
+          "type": "string",
+          "target": "cohort",
+          "required": false
         }
       },
-      {
-        "kind": "event",
-        "key": "demo.itemEnqueued",
-        "fields": {
-          "itemId": "string",
-          "processingMs": "number",
-          "shouldFail": "boolean"
-        },
-        "units": {
-          "processingMs": "ms"
-        }
-      },
-      {
-        "kind": "metric",
-        "key": "demo.processingLatencyMs",
-        "type": "number",
-        "source": "app-emitted",
-        "unit": "ms",
-        "range": [
-          0,
-          10000
-        ]
-      },
-      {
-        "kind": "metric",
-        "key": "demo.queueDepth",
-        "type": "number",
-        "source": "app-emitted",
-        "range": [
-          0,
-          1000
-        ]
-      },
-      {
-        "kind": "metric",
-        "key": "demo.queuePressure",
-        "type": "number",
-        "source": "app-emitted",
-        "range": [
-          0,
-          1
-        ]
-      }
-    ],
-    "definitions": [
-      {
-        "key": "demo.workerBatchSize",
-        "valueType": "number",
-        "actionSpace": {
-          "type": "number",
-          "min": 1,
-          "max": 10,
-          "step": 1,
-          "default": 3
-        },
-        "fallback": {
-          "value": 3,
-          "reason": "safe_default_worker_batch_size"
-        },
-        "runtimeContextSchema": {
-          "workerId": {
-            "type": "string",
-            "required": true
-          },
-          "cohort": {
-            "type": "string",
-            "target": "cohort"
-          }
-        },
-        "targetHierarchy": [
+      "targeting": {
+        "hierarchy": [
           "cohort",
           "global"
         ],
-        "signals": {
-          "allowed": [
-            {
-              "key": "demo.queuePressure"
-            }
+        "primary": "cohort",
+        "fallbackOrder": [
+          "global"
+        ]
+      },
+      "inputs": {
+        "queuePressure": {
+          "source": "request",
+          "type": "number",
+          "meaning": "Current normalized queue pressure computed by the worker.",
+          "unit": "1",
+          "range": [
+            0,
+            1
           ]
-        },
-        "inference": {
-          "target": "cohort",
-          "inputs": [
-            {
-              "key": "demo.queuePressure"
-            }
-          ],
-          "fallbackOrder": [
-            "global"
-          ]
-        },
-        "onlineStrategy": {
-          "mode": "approved-strategy",
-          "liveInputs": [
-            "queuePressure"
-          ]
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": [
-            {
-              "kind": "cooldown",
-              "seconds": 1
-            },
-            {
-              "kind": "max-delta",
-              "value": 3
-            },
-            {
-              "kind": "min-evidence-quality",
-              "value": 0.8
-            },
-            {
-              "kind": "number-bounds",
-              "min": 1,
-              "max": 10
-            }
-          ],
-          "clientFallback": {
-            "requiredEvidenceUnavailable": "allow"
-          }
         }
-      }
-    ]
-  },
-  "bundleDigest": "sha256:9d63a48cc430c93abf5f07b058a4ed79493515b2736738b3a14fbf9f9575ce41",
-  "descriptors": [
-    {
-      "decisionKey": "demo.workerBatchSize",
-      "sourceFile": "src/adaptive-worker.ts",
-      "line": 123,
-      "column": 28,
-      "contractDigest": "sha256:56f293738d7ff41db572fb42baed0344ad5eea121bc91588c5a63b221bc5e14c"
+      },
+      "policy": {
+        "kind": "inline",
+        "constraints": [
+          {
+            "kind": "cooldown",
+            "seconds": 1
+          },
+          {
+            "kind": "max-delta",
+            "value": 3
+          },
+          {
+            "kind": "number-bounds",
+            "min": 1,
+            "max": 10
+          }
+        ]
+      },
+      "evidence": {}
     }
-  ]
+  }
 }

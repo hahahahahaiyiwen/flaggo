@@ -2,23 +2,20 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  RequiresApprovalError,
-  createFlaggoClient,
-} from "../../packages/sdk-typescript/dist/index.js";
+import { publishLocalManifest } from "../shared/publish-local-manifest.mjs";
 import { publishJsonGeneration } from "../tetris-integration/bootstrap.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
-export const extractionArtifactPath = resolve(
+export const manifestBundlePath = resolve(
   exampleDirectory,
   "generated/definitions.json",
 );
 export const decisionKey = "demo.workerBatchSize";
 export const strategyId = "strategy-adaptive-worker-pressure-v1";
 
-export async function loadExtractionArtifact(signal) {
+export async function loadManifestBundle(signal) {
   return JSON.parse(
-    await readFile(extractionArtifactPath, { encoding: "utf8", signal }),
+    await readFile(manifestBundlePath, { encoding: "utf8", signal }),
   );
 }
 
@@ -52,7 +49,7 @@ export function createAdaptiveWorkerState(
         mode: "strategy",
         strategyId,
         numericRule: {
-          inputSignalKey: "demo.queuePressure",
+          inputKey: "queuePressure",
           threshold: 0.7,
           valueAtOrAbove: 6,
           valueBelow: 3,
@@ -60,24 +57,6 @@ export function createAdaptiveWorkerState(
         lastChangedAt: lastChangedAt.toISOString(),
       },
     ],
-  };
-}
-
-export function createAdaptiveWorkerEvidence() {
-  return {
-    version: 1,
-    evidenceByStrategy: {
-      [strategyId]: {
-        evidenceQuality: 0.95,
-        modelUncertainty: 0.05,
-        expectedOutcome: 0.9,
-        sampleSize: 100,
-        details: {
-          source: "phase2.5-local-fixture",
-          workload: "deterministic-in-memory-queue",
-        },
-      },
-    },
   };
 }
 
@@ -90,69 +69,28 @@ export async function bootstrapAdaptiveWorker({
   publishGeneration = publishJsonGeneration,
 }) {
   signal?.throwIfAborted();
-  const artifact = await loadExtractionArtifact(signal);
+  const bundle = await loadManifestBundle(signal);
   const fetchWithAbort = (input, init = {}) =>
     fetchImpl(
       input,
       signal === undefined ? init : { ...init, signal },
     );
-  const config = {
-    appId: artifact.bundle.application.id,
-    environment: artifact.bundle.application.environment,
-    dataPlaneUrl: "http://127.0.0.1:0",
-    controlPlane: {
-      mode: "startup-register",
-      url: controlPlaneUrl,
-      bundle: artifact.bundle,
-      credential: { mode: "local-development" },
-    },
+  const publicationResult = await publishLocalManifest({
+    controlPlaneUrl,
+    bundle,
     fetch: fetchWithAbort,
-  };
-
-  let approvalRequired = false;
-  let approvalRequestId;
-  let client;
-  try {
-    client = await createFlaggoClient(config);
-  } catch (error) {
-    if (!(error instanceof RequiresApprovalError)) throw error;
-    approvalRequired = true;
-    approvalRequestId = error.approvalRequestId;
-    const response = await fetchWithAbort(
-      `${controlPlaneUrl.replace(/\/$/, "")}/v1/definition-bundle-approvals/${encodeURIComponent(error.approvalRequestId)}:approve`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Flaggo-Local-Development",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          expectedBundleDigest: error.bundleDigest,
-          comment: "Trusted Phase 2.5 adaptive-worker local bootstrap.",
-        }),
-      },
-    );
-    const approval = await response.json();
-    if (!response.ok || approval.status !== "approved") {
-      throw new Error(
-        `Adaptive-worker definition approval failed with HTTP ${response.status}: ${JSON.stringify(approval)}`,
-      );
-    }
-    client = await createFlaggoClient(config);
-  }
-
-  const receipt = client.definitions.getRegistrationReceipt();
+  });
+  const { receipt } = publicationResult;
   const state = createAdaptiveWorkerState(receipt, { now });
-  const evidence = createAdaptiveWorkerEvidence();
+  const evidence = { version: 1, evidenceByStrategy: {} };
   const publication = await publishGeneration(
     publicationPath,
     { evidence, receipt, state },
     signal,
   );
   return {
-    approvalRequired,
-    approvalRequestId,
-    artifact,
+    ...publicationResult,
+    bundle,
     receipt,
     state,
     evidence,

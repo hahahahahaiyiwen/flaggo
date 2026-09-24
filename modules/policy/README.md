@@ -23,5 +23,5 @@ seconds to persisted timestamps, so huge finite cooldowns cannot overflow. A
 future `LastChangedAt` fails closed as `cooldown_active`, including when the
 configured cooldown is zero.
 
-Issue #40 owns executable type/module renaming. Update this document when
+Issue #49 owns executable type/module renaming. Update this document when
 constraint composition or fallback authority changes.

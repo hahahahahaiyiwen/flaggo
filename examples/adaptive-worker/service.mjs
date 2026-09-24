@@ -12,7 +12,7 @@ import {
 } from "../tetris-integration/host-process.mjs";
 import {
   bootstrapAdaptiveWorker,
-  loadExtractionArtifact,
+  loadManifestBundle,
 } from "./scenario.mjs";
 import { waitForServiceShutdown } from "./service-health.mjs";
 
@@ -24,7 +24,6 @@ export async function startAdaptiveWorkerService({
   runDirectory,
   writeConnection = true,
 }) {
-  await rm(runDirectory, { recursive: true, force: true });
   await mkdir(runDirectory, { recursive: true });
   lifecycle.signal.throwIfAborted();
   const paths = {
@@ -36,7 +35,7 @@ export async function startAdaptiveWorkerService({
     controlLog: resolve(runDirectory, "control-plane.log"),
     dataLog: resolve(runDirectory, "data-plane.log"),
   };
-  const artifact = await loadExtractionArtifact(lifecycle.signal);
+  const bundle = await loadManifestBundle(lifecycle.signal);
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
@@ -44,9 +43,9 @@ export async function startAdaptiveWorkerService({
     });
   const commonConfiguration = {
     Flaggo__Authentication__LocalDevelopmentAppId:
-      artifact.bundle.application.id,
+      bundle.application.id,
     Flaggo__Authentication__LocalDevelopmentEnvironment:
-      artifact.bundle.application.environment,
+      bundle.application.environment,
     Flaggo__Registry__LocalFilePath: paths.registry,
   };
   const runtime = await startControlAndDataHosts({
@@ -71,7 +70,7 @@ export async function startAdaptiveWorkerService({
               Authorization: "Flaggo-Local-Development",
               "Content-Type": "application/json",
             },
-            body: JSON.stringify(artifact.bundle),
+            body: JSON.stringify(bundle),
             signal: probeSignal,
           },
         );
@@ -101,6 +100,8 @@ export async function startAdaptiveWorkerService({
         ...commonConfiguration,
         Flaggo__Bootstrap__LocalGenerationPath: paths.bootstrap,
         Flaggo__Audit__LocalFilePath: paths.audit,
+        Flaggo__Telemetry__CommitDescriptorPath:
+          resolve(runDirectory, "telemetry", "current.commit.json"),
         "Flaggo__Targeting__AuthoritativeCohorts__worker-canary":
           "adaptive-workers",
         "Flaggo__Targeting__AuthoritativeCohorts__adaptive-workers":
@@ -132,6 +133,7 @@ export async function startAdaptiveWorkerService({
     controlPlaneUrl: runtime.controlUrl,
     dataPlaneUrl: runtime.dataUrl,
     telemetryPath: paths.telemetry,
+    receipt: runtime.bootstrap.receipt,
   };
   if (writeConnection) {
     await writeFile(
@@ -142,7 +144,7 @@ export async function startAdaptiveWorkerService({
   }
   return {
     ...runtime,
-    artifact,
+    bundle,
     connection,
     paths,
   };
@@ -170,6 +172,8 @@ async function main() {
     ".flaggo",
     "adaptive-worker",
   );
+  await mkdir(dirname(runDirectory), { recursive: true });
+  await mkdir(runDirectory);
   const lifecycle = createHostLifecycle({
     removeRunDirectory: () =>
       rm(runDirectory, { recursive: true, force: true }),

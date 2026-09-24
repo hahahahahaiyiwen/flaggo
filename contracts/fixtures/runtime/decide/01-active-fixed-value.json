@@ -9,8 +9,8 @@
   "requestSchema": "runtime-models-v1.schema.json#/$defs/DecideRequest",
   "responseSchema": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
   "digest": {
-    "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
-    "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1"
+    "contractDigest": "sha256:ed9b49a622db7d8cec274c8a990c140edbeda55b00ea917c06df46d5e34da377",
+    "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c"
   },
   "request": {
     "method": "POST",
@@ -22,9 +22,9 @@
     "body": {
       "expectedContract": {
         "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-        "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
+        "contractDigest": "sha256:ed9b49a622db7d8cec274c8a990c140edbeda55b00ea917c06df46d5e34da377",
         "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-        "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+        "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
         "buildId": "tetris-web-2026-07-25.1",
         "deploymentId": "tetris-web-dev-a"
       },
@@ -38,14 +38,12 @@
         "cohort": "new_players",
         "deviceType": "mobile"
       },
-      "inputs": [
-        {
-          "signal": {
-            "key": "tetris.boardPressure"
-          },
-          "value": 0.82
-        }
-      ],
+      "inputs": {
+        "boardPressure": 0.82,
+        "currentLevel": 1,
+        "recentPlacementTimeMs": 1200,
+        "recoveryFailures": 0
+      },
       "client": {
         "appId": "tetris-demo",
         "environment": "dev",
@@ -112,8 +110,8 @@
       "definitionStatus": {
         "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
         "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-        "contractDigest": "sha256:6eadd7bd76b36ae06e89376d57107da83fdcabf07ff58c528ae97fddb7f08ee9",
-        "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+        "contractDigest": "sha256:ed9b49a622db7d8cec274c8a990c140edbeda55b00ea917c06df46d5e34da377",
+        "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
         "buildId": "tetris-web-2026-07-25.1",
         "deploymentId": "tetris-web-dev-a",
         "integrity": "verified",
@@ -123,7 +121,7 @@
         "confirmationRequired": true,
         "confirmToken": "confirm-abc"
       },
-      "reason": "Returned the approved active value within policy bounds.",
+      "reason": "Returned the active governed value.",
       "auditId": "audit-789"
     }
   }

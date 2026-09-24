@@ -65,7 +65,7 @@ public sealed class GovernedStateLifecycleTests
         Assert.StartsWith("strategy_", firstState.StrategyId);
         Assert.Equal(firstState.StrategyId, secondState.StrategyId);
         Assert.Equal(800, firstState.Value.GetInt32());
-        Assert.Equal("pressure", firstState.NumericRule!.InputSignalKey);
+        Assert.Equal("pressure", firstState.NumericRule!.InputKey);
     }
 
     [Fact]
@@ -487,7 +487,7 @@ public sealed class GovernedStateLifecycleTests
             CancellationToken.None);
         var storedInputs = baseline!.NumericRule!.WeightedInputs!;
 
-        Assert.Equal("pressure", Assert.Single(storedInputs).SignalKey);
+        Assert.Equal("pressure", Assert.Single(storedInputs).InputKey);
         var exposedList =
             Assert.IsAssignableFrom<IList<NumericRuleInput>>(storedInputs);
         Assert.Throws<NotSupportedException>(

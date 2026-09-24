@@ -10,7 +10,7 @@ failed. Records preserve the exact contract identity and relevant provenance.
 
 Explanation is a deterministic projection of these records. Update this
 document when retention, redaction, record shape, or durability requirements
-change. Issue #40 owns executable module and type migration.
+change. Issue #49 owns executable module and type migration.
 
 ## Current implementation
 
@@ -20,10 +20,16 @@ returning a server success; sink failures propagate and therefore cannot
 produce a falsely audited response. Records preserve runtime context and
 inputs, runtime/control targets, target provenance, resolution chain, policy
 result, accepted contract identity, returned value and type, and complete
-fallback attribution. Adaptive decisions additionally retain full evidence and
-compact confidence while the runtime response omits evidence detail.
-Application and environment ownership are immutable parts of every audit
-record.
+fallback attribution. `Inputs` is the resolved vector; `RequestInputs` retains
+the original caller values, and `InputProvenance` records each operand's source,
+binding, immutable generation, original nanosecond time, coverage and available
+record/trace/span/exposure references. Each evidence operand also retains its
+resolved target and resolution source/claim, even when that target is outside
+the state fallback chain; exposure snapshots carry the same provenance.
+Selected policy-quality evidence is separate from these input observations.
+Deterministic numeric rules report
+null learned confidence. Authenticated tenant, application, and environment
+ownership are immutable parts of every decision audit record.
 
 Phase 3 adds a local JSON Lines adapter implementing separate decision and
 confirmed-exposure audit ports. It stores bounded segments under
@@ -85,15 +91,17 @@ Contract identities require exact `sha256:` plus 64 lowercase hexadecimal
 digests (including an optional bundle digest). Digest and RFC 3339 timestamp
 validation is absolute: encoded leading or trailing spaces, tabs, line feeds,
 or carriage returns are rejected rather than trimmed or accepted as regex line
-boundaries. Runtime-context and signal
+boundaries. Runtime-context and input
 values are restricted to strings, booleans, or finite numbers that preserve
 their exact value through IEEE-754 canonicalization; null, object, array,
 nonfinite, and rounding-unsafe values fail readiness and append. Replay and new
-writes also enforce unique signal keys, frozen fallback/policy/provenance
+writes also enforce strict input maps, frozen fallback/policy/provenance
 enums, decision-mode discriminators, primitive decision values, and bounded
 confidence/evidence numbers. Successful `strategy` and `experiment` records
-require a strategy ID, full evidence, and compact confidence whose evidence
-quality, model uncertainty, and expected outcome exactly match that evidence.
+require a strategy ID. A deterministic rule may have no policy-quality
+evidence and has null confidence. When a confidence report is present, its
+quality, model uncertainty, and expected outcome must match the separately
+recorded evidence.
 `active-value` success carries no strategy ID, evidence, or confidence.
 Fallback carries no confidence; it may retain an attempted strategy ID and its
 available evidence for explanation, but evidence without a strategy ID is

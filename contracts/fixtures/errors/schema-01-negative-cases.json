@@ -80,7 +80,7 @@
           "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
           "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
           "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
-          "bundleDigest": "sha256:5dc39235981925be2bc052cca32a09b6b336bcd5eda2357e2911a00f393d41a1",
+          "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
           "buildId": "tetris-web-2026-07-25.1",
           "deploymentId": "tetris-web-dev-a",
           "integrity": "verified",
@@ -172,8 +172,8 @@
       }
     },
     {
-      "why": "signal schema digest requires project SHA-256 syntax",
-      "schemaRef": "decision-definition-bundle-v1.schema.json#/$defs/SignalDeclaration",
+      "why": "Legacy producer declarations are not evidence bindings.",
+      "schemaRef": "decision-definition-bundle-v2.schema.json#/$defs/EvidenceBinding",
       "body": {
         "kind": "metric",
         "key": "system.load",
@@ -194,20 +194,22 @@
     },
     {
       "why": "number definition cannot use string action space and boolean fallback",
-      "schemaRef": "decision-definition-bundle-v1.schema.json#/$defs/DecisionDefinitionBundleEntry",
+      "schemaRef": "decision-definition-bundle-v2.schema.json#/$defs/DecisionDefinition",
       "body": {
-        "key": "invalid.mixedValueContract",
-        "valueType": "number",
-        "actionSpace": {
-          "type": "string",
+        "result": {
+          "type": "number",
           "allowedValues": [
             "a",
             "b"
           ],
-          "default": "a"
+          "default": false
         },
-        "fallback": {
-          "value": false
+        "targeting": {
+          "hierarchy": [
+            "global"
+          ],
+          "primary": "global",
+          "fallbackOrder": []
         },
         "policy": {
           "kind": "inline",
@@ -217,19 +219,21 @@
     },
     {
       "why": "number action-space step must be positive",
-      "schemaRef": "decision-definition-bundle-v1.schema.json#/$defs/DecisionDefinitionBundleEntry",
+      "schemaRef": "decision-definition-bundle-v2.schema.json#/$defs/DecisionDefinition",
       "body": {
-        "key": "invalid.zeroStep",
-        "valueType": "number",
-        "actionSpace": {
+        "result": {
           "type": "number",
           "min": 0,
           "max": 10,
           "step": 0,
           "default": 5
         },
-        "fallback": {
-          "value": 5
+        "targeting": {
+          "hierarchy": [
+            "global"
+          ],
+          "primary": "global",
+          "fallbackOrder": []
         },
         "policy": {
           "kind": "inline",
@@ -285,10 +289,10 @@
   ],
   "rejectedFixtureMutations": [
     {
-      "why": "strategy result requires non-null confidence",
+      "why": "A non-null confidence report must have its required fields.",
       "fixture": "runtime/decide/02-active-numeric-strategy.json",
       "path": "/confidence",
-      "value": null,
+      "value": {},
       "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
     },
     {
@@ -360,6 +364,13 @@
         "modelUncertainty": 0.2,
         "expectedOutcome": 0.7
       },
+      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+    },
+    {
+      "why": "Deterministic numeric rules carry null learned confidence.",
+      "fixture": "runtime/decide/02-active-numeric-strategy.json",
+      "path": "/confidence",
+      "value": null,
       "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
     }
   ],

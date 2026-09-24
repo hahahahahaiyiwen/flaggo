@@ -402,7 +402,7 @@ public sealed class RuntimeStateTests
             new HashSet<string> { "dev" },
             CancellationToken.None);
 
-        var replay = await store.FindReplayAsync(
+        var replay = await store.FindReplayAsync("local-development",
             "decision-1",
             request,
             new HashSet<string> { "app" },
@@ -420,7 +420,7 @@ public sealed class RuntimeStateTests
         IReadOnlySet<string> environments,
         CancellationToken cancellationToken)
     {
-        var preparation = await store.PrepareConfirmationAsync(
+        var preparation = await store.PrepareConfirmationAsync("local-development",
             decisionId,
             request,
             appIds,
@@ -458,6 +458,7 @@ public sealed class RuntimeStateTests
         "audit");
 
     private static DecisionSnapshot CreateSnapshot() => new(
+        "local-development",
         "app",
         "dev",
         new RuntimeContractIdentity(
@@ -468,7 +469,7 @@ public sealed class RuntimeStateTests
         "number",
         new ServerFallbackInfo("server", false, false, null),
         new Dictionary<string, JsonElement>(),
-        [],
+        new Dictionary<string, JsonElement>(),
         null,
         new DecisionTargetRef("global", "global"),
         [],

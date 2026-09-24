@@ -16,17 +16,20 @@ public sealed record DecisionAuditRecord(
     string DecisionMode,
     ServerFallbackInfo Fallback,
     IReadOnlyDictionary<string, JsonElement> RuntimeContext,
-    IReadOnlyList<SignalInput> Inputs,
+    IReadOnlyDictionary<string, JsonElement> Inputs,
     DecisionTargetRef? RuntimeTarget,
     DecisionTargetRef? ControlTarget,
     IReadOnlyList<TargetResolutionProvenance> TargetProvenance,
     IReadOnlyList<string> ResolutionChain,
     PolicyEvaluationResult Policy,
     DateTimeOffset RecordedAt,
+    string TenantId,
     DecisionEvidenceSnapshot? Evidence = null,
     ConfidenceReport? Confidence = null,
     string? StrategyId = null,
-    string? Reason = null);
+    string? Reason = null,
+    IReadOnlyDictionary<string, JsonElement>? RequestInputs = null,
+    IReadOnlyDictionary<string, InputProvenance>? InputProvenance = null);
 
 public sealed record ExposureAuditRecord(
     string ExposureId,

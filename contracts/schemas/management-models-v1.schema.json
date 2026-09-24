@@ -28,7 +28,7 @@
         "path": { "type": "string" },
         "message": { "type": "string" },
         "decisionKey": { "type": "string" },
-        "signalKey": { "type": "string" }
+        "inputKey": { "type": "string" }
       }
     },
     "AcceptedDefinition": {
@@ -365,10 +365,10 @@
       "unevaluatedProperties": false
     },
     "ValidateBundleRequest": {
-      "$ref": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v1.schema.json"
+      "$ref": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v2.schema.json"
     },
     "ApplyBundleRequest": {
-      "$ref": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v1.schema.json"
+      "$ref": "https://flaggo.dev/contracts/schemas/decision-definition-bundle-v2.schema.json"
     },
     "ApproveRequest": {
       "type": "object",

@@ -58,8 +58,32 @@ port.
 ## Current implementation mapping
 
 `Flaggo.State` owns the current in-memory and local-file ports and adapters.
-Those libraries remain valid implementation details while #40 composes them
-under Contract Service and Decision Service ownership.
+Those libraries remain implementation details while #49 aligns service/store
+ownership and #40 connects manifest initial authority to activation/readiness.
+The current manifest does not grant the runtime caller an activation path.
+
+`IStateStore` receives exact ordered targets, not a hierarchy to interpret.
+Well-formed state for another semantic revision can be skipped; superseded,
+torn or incoherent state fails readiness instead of becoming `missing_state`.
+The authority union contains exactly one active value or numeric rule.
+
+`IGovernedStateLifecycleStore` owns expected-baseline activation. Contract
+Service captures/persists the baseline during approval, not afresh on each
+retry. Replacement changes one stable head across semantic revisions.
+Numeric activation derives strategy identity; fixed values have none.
+
+The local lifecycle-v2 document contains immutable state lineage and activation
+replay. Removed broad statuses/transitions/expiry/proposal-source fields are
+invalid, with no migration. The leased writer reloads the committed snapshot,
+applies CAS, flushes an immutable artifact and switches the pinned descriptor
+last. The current runtime-v1 snapshot is a separate read-only format, not
+accepted by lifecycle mutation.
+
+The library currently also implements `IConfirmedExposureReader`. That is an
+implementation mapping, not authority-state ownership of exposure in the
+target model; confirmed records belong logically to
+[Evidence Store](../evidence-store/README.md). It checks completed confirmation
+and scope, not merely an appended audit record.
 
 ## Related documents
 
