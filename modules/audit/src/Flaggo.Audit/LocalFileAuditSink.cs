@@ -1350,6 +1350,7 @@ public sealed class LocalFileAuditSink :
                 !ulong.TryParse(source.ObservedTimeUnixNano, NumberStyles.None, CultureInfo.InvariantCulture, out var timestamp) ||
                 timestamp == 0 || source.MaterializedAt is null || source.Coverage != "observed" ||
                 !Sha256DigestPattern.IsMatch(source.SourceFingerprint ?? "") ||
+                !IsValidTargetProvenance(source.TargetResolution) ||
                 source.ExposureId is not null && string.IsNullOrWhiteSpace(source.ExposureId))
             {
                 return false;

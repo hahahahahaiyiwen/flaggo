@@ -24,8 +24,10 @@ immutable generation through `IInputEvidenceSnapshotStore`.
 declared operand batch. It never queries raw telemetry on the decision path.
 
 Source nanoseconds, not export/arrival time, determine inclusive freshness.
-Retries and older data cannot refresh age. Conflicting latest values and
-multiple fresh Gauge streams are ambiguous; invalid newer observations
+Retries and older data cannot refresh age. Exact retries of retained validated
+frames preserve their attribution after restart; previously unseen references
+still require a live confirmation. Conflicting latest values and multiple fresh
+Gauge streams are ambiguous; invalid newer observations
 invalidate last-good values. Scope, exact definition, binding, target, and
 stream partition frames. Observed coverage never becomes learned confidence.
 The host supplies an opaque metric stream fingerprint that preserves native

@@ -328,6 +328,7 @@ public sealed class OtlpHostTests
         Assert.Empty(record.RequestInputs!);
         Assert.Equal(0.75, record.Inputs["pressure"].GetDouble());
         Assert.Equal("evidence", record.InputProvenance!["pressure"].Source);
+        Assert.Equal(new("global", "global", "server-derived"), record.InputProvenance["pressure"].TargetResolution);
         var exposures = factory.Services.GetRequiredService<InMemoryExposureStore>();
         Assert.Null(exposures.Find(record.DecisionId)!.Confirmation);
         Assert.Equal(record.InputProvenance, exposures.Find(record.DecisionId)!.Snapshot.InputProvenance);
@@ -349,6 +350,53 @@ public sealed class OtlpHostTests
         Assert.Equal(HttpStatusCode.OK, confirmation.StatusCode);
         Assert.Equal(await confirmation.Content.ReadAsStringAsync(), await confirmationReplay.Content.ReadAsStringAsync());
         Assert.Single(audit.ExposureRecords);
+    }
+
+    [Fact]
+    public async Task CohortEvidence_RetainsAuthoritativeTargetInDurableAuditAndExposureOutsideStateResolution()
+    {
+        using var directory = new TestRegistryFile();
+        var binding = Binding() with { TargetType = "cohort", TargetIdAttribute = new("attributes", "cohort.id") };
+        var definition = Definition(binding) with
+        {
+            RuntimeContext = [new("sessionId", "string", true, "session"), new("cohortId", "string", true, "cohort")],
+            TargetHierarchy = ["session", "cohort", "global"], InferenceTarget = "session", FallbackOrder = ["global"]
+        };
+        await using var factory = new OtlpFactory(directory.Path, binding, definition: definition,
+            targetResolver: new DefaultTargetResolver(new Dictionary<string, string> { ["client-claim"] = "actual-cohort" }));
+        using var client = factory.CreateClient();
+        var payload = MetricPayload();
+        payload.ResourceMetrics[0].ScopeMetrics[0].Metrics[0].Gauge.DataPoints.Add(new NumberDataPoint
+        {
+            TimeUnixNano = Timestamp, AsDouble = 0.75,
+            Attributes = { new KeyValue { Key = "cohort.id", Value = new() { StringValue = "actual-cohort" } } }
+        });
+        using var telemetry = await SendAsync(client, "metrics", payload.ToByteArray());
+        Assert.Equal(HttpStatusCode.OK, telemetry.StatusCode);
+        using var response = await DecideAsync(client, "cohort-input", runtimeContext: new { sessionId = "session-1", cohortId = "client-claim" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ServerDecisionResult>();
+        Assert.Equal(850, result!.Value.GetDouble());
+        Assert.DoesNotContain(result.TargetProvenance, target => target.TargetType == "cohort");
+        var record = Assert.Single(factory.Services.GetRequiredService<InMemoryAuditSink>().Records);
+        var expected = new TargetResolutionProvenance("cohort", "actual-cohort", "server-replaced", "client-claim");
+        Assert.Equal(expected, record.InputProvenance!["pressure"].TargetResolution);
+        var exposure = factory.Services.GetRequiredService<InMemoryExposureStore>().Find(record.DecisionId)!;
+        Assert.Equal(expected, exposure.Snapshot.InputProvenance!["pressure"].TargetResolution);
+        var auditPath = Path.Combine(Path.GetDirectoryName(directory.Path)!, "audit");
+        using (var sink = new LocalFileAuditSink(new(auditPath)))
+            await sink.RecordDecisionAsync(record, CancellationToken.None);
+        using (var reopened = new LocalFileAuditSink(new(auditPath)))
+            Assert.True(await reopened.IsAvailableAsync(CancellationToken.None));
+        var segment = Assert.Single(Directory.GetFiles(Path.Combine(auditPath + ".d", "segments")));
+        var persisted = (await File.ReadAllLinesAsync(segment))
+            .Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+            .Single(line => line.GetProperty("kind").GetString() == "decision");
+        var target = persisted.GetProperty("record").GetProperty("inputProvenance")
+            .GetProperty("pressure").GetProperty("targetResolution");
+        Assert.Equal("actual-cohort", target.GetProperty("resolvedId").GetString());
+        Assert.Equal("client-claim", target.GetProperty("claimedId").GetString());
+        Assert.Equal("server-replaced", target.GetProperty("source").GetString());
     }
 
     [Fact]
@@ -403,7 +451,8 @@ public sealed class OtlpHostTests
         Assert.Single(audit.ExposureRecords);
     }
 
-    private static Task<HttpResponseMessage> DecideAsync(HttpClient client, string key, object? inputs = null, string token = "decide")
+    private static Task<HttpResponseMessage> DecideAsync(HttpClient client, string key, object? inputs = null, string token = "decide",
+        object? runtimeContext = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/v1/decisions/worker.limit:decide");
         request.Headers.Authorization = new("Bearer", token);
@@ -411,7 +460,7 @@ public sealed class OtlpHostTests
         request.Content = JsonContent.Create(new
         {
             expectedContract = new { Identity.DefinitionId, Identity.ContractDigest, Identity.Revision },
-            runtimeContext = new { }, inputs = inputs ?? new { },
+            runtimeContext = runtimeContext ?? new { }, inputs = inputs ?? new { },
             client = new { appId = Scope.AppId, environment = Scope.Environment }
         });
         return SendAndDisposeAsync(client, request);
@@ -494,7 +543,8 @@ public sealed class OtlpHostTests
     }
 
     private sealed class OtlpFactory(string registryPath, RegisteredEvidenceBinding binding,
-        int maximumBytes = 4096, int maximumRecords = 100, IInputEvidenceSnapshotStore? store = null)
+        int maximumBytes = 4096, int maximumRecords = 100, IInputEvidenceSnapshotStore? store = null,
+        RuntimeDecisionDefinition? definition = null, ITargetResolver? targetResolver = null)
         : WebApplicationFactory<DataPlaneAssemblyMarker>
     {
         public EvidenceClock Clock { get; } = new();
@@ -509,7 +559,7 @@ public sealed class OtlpHostTests
             builder.UseSetting("Flaggo:Telemetry:MaximumRecords", maximumRecords.ToString());
             builder.ConfigureTestServices(services =>
             {
-                var registry = new InMemoryDefinitionRegistry([Definition(binding)]);
+                var registry = new InMemoryDefinitionRegistry([definition ?? Definition(binding)]);
                 services.RemoveAll<IRuntimeDefinitionReader>();
                 services.RemoveAll<IEvidenceBindingReader>();
                 services.RemoveAll<IRegistryHealth>();
@@ -518,6 +568,11 @@ public sealed class OtlpHostTests
                 services.AddSingleton<IRegistryHealth>(registry);
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(Clock);
+                if (targetResolver is not null)
+                {
+                    services.RemoveAll<ITargetResolver>();
+                    services.AddSingleton(targetResolver);
+                }
                 services.RemoveAll<IStateStore>();
                 services.AddSingleton<IStateStore>(new InMemoryStateStore([("worker.limit", new(
                     Identity.DefinitionId, Identity.Revision, Identity.ContractDigest, JsonSerializer.SerializeToElement(800),

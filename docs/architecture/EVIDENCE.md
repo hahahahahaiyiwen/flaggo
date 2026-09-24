@@ -121,7 +121,10 @@ proof of exposure. Gauge/exemplar attribution is rejected.
 The audit and exposure snapshot preserve caller inputs, resolved inputs, and
 per-input provenance: binding, generation, source time/fingerprint,
 materialization time, observed coverage, trace/span IDs and flags where
-available, and verified exposure ID. Confirmation cannot replace that vector.
+available, verified exposure ID, and the resolved evidence target with its
+resolution source and original claim. Evidence-target provenance is retained
+even when state resolution uses a different target or fallback chain.
+Confirmation cannot replace that vector.
 Retained decide retries return the original result even after telemetry changes.
 
 ## Integration

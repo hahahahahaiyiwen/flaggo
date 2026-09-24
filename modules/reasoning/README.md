@@ -47,7 +47,9 @@ it does not receive lifecycle state or an evidence snapshot.
 
 Runtime responses expose compact confidence and provenance. Audit and pending
 exposure snapshots retain original request inputs, resolved inputs, per-input
-provenance, and any participating policy-quality view. Cohort claims resolved by the
+provenance, and any participating policy-quality view. Each evidence input
+retains its resolved target and resolution provenance independently of the
+selected state target. Cohort claims resolved by the
 target adapter are marked `client-verified` when unchanged and
 `server-replaced` when an authoritative mapping changes them. Broader target
 selection records server-derived resolution fallback; global fallback retains

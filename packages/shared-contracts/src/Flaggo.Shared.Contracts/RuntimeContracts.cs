@@ -38,7 +38,8 @@ public sealed record InputProvenance(
     string? TraceId = null,
     string? SpanId = null,
     uint? SamplingFlags = null,
-    string? ExposureId = null);
+    string? ExposureId = null,
+    TargetResolutionProvenance? TargetResolution = null);
 
 public static class DecisionValues
 {

@@ -20,8 +20,11 @@ result, accepted contract identity, returned value and type, and complete
 fallback attribution. `Inputs` is the resolved vector; `RequestInputs` retains
 the original caller values, and `InputProvenance` records each operand's source,
 binding, immutable generation, original nanosecond time, coverage and available
-record/trace/span/exposure references. Selected policy-quality evidence is
-separate from these input observations. Deterministic numeric rules report
+record/trace/span/exposure references. Each evidence operand also retains its
+resolved target and resolution source/claim, even when that target is outside
+the state fallback chain; exposure snapshots carry the same provenance.
+Selected policy-quality evidence is separate from these input observations.
+Deterministic numeric rules report
 null learned confidence. Authenticated tenant, application, and environment
 ownership are immutable parts of every decision audit record.
 

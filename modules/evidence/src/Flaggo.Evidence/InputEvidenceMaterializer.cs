@@ -93,7 +93,7 @@ public sealed class InputEvidenceMaterializer : IInputTelemetrySink, IInputEvide
                         cancellationToken.ThrowIfCancellationRequested();
                         matchedRecord = true;
                         var projection = await TelemetryProjection.ProjectAsync(
-                            scope, definition, binding, observation, spanEvent, now, _exposures, cancellationToken);
+                            scope, definition, binding, observation, spanEvent, now, frames, _exposures, cancellationToken);
                         acceptedRecord |= projection.Error is null;
                         if (projection.Error is not null && diagnostics.Count < 16)
                             diagnostics.Add($"{binding.Key}: {projection.Error}");

@@ -62,18 +62,19 @@ type Request<D extends CatalogDecision> = Omit<NumberTuneRequest, "context" | "i
   & (RequiredContextKeys<D> extends never ? { context?: Context<D> } : { context: Context<D> })
   & (CallerKeys<D> extends never ? { inputs?: Inputs<D> } : { inputs: Inputs<D> });
 type CallArguments<C extends RuntimeCatalog, K extends keyof C["decisions"]> =
-  string extends keyof C["decisions"] ? [request?: NumberTuneRequest]
-    : RequiredContextKeys<C["decisions"][K]> | CallerKeys<C["decisions"][K]> extends never
-      ? [request?: Request<C["decisions"][K]>] : [request: Request<C["decisions"][K]>];
+  string extends keyof C["decisions"] ? [decisionKey: K, request?: NumberTuneRequest]
+    : K extends keyof C["decisions"]
+      ? RequiredContextKeys<C["decisions"][K]> | CallerKeys<C["decisions"][K]> extends never
+        ? [decisionKey: K, request?: Request<C["decisions"][K]>]
+        : [decisionKey: K, request: Request<C["decisions"][K]>]
+      : never;
 
 export interface FlaggoClient<C extends RuntimeCatalog = RuntimeCatalog> {
   readonly tune: {
     number<K extends NumberKey<C>>(
-      decisionKey: K,
       ...args: CallArguments<C, K>
     ): Promise<DecisionReceipt<number>>;
     numberDetailed<K extends NumberKey<C>>(
-      decisionKey: K,
       ...args: CallArguments<C, K>
     ): Promise<DecisionResult<number>>;
   };

@@ -18,7 +18,8 @@ public sealed record TargetResolutionPlan(
     IReadOnlyList<bool>? StateTargetFallbacks = null,
     IReadOnlySet<string>? AuthoritativelyResolvedTargetTypes = null,
     IReadOnlySet<int>? ServerDerivedTargetIndexes = null,
-    IReadOnlyList<DecisionTargetRef>? ResolvedTargets = null)
+    IReadOnlyList<DecisionTargetRef>? ResolvedTargets = null,
+    IReadOnlyList<TargetResolutionProvenance>? ResolvedTargetProvenance = null)
 {
     public TargetResolutionDescription Describe(
         DecisionTargetRef? controlTarget,
@@ -363,11 +364,13 @@ public sealed class DefaultTargetResolver(
         }
 
         var resolvedTargets = new List<DecisionTargetRef>();
+        var resolvedTargetProvenance = new List<TargetResolutionProvenance>();
         foreach (var type in definition.TargetHierarchy)
         {
             if (type == "global")
             {
                 resolvedTargets.Add(new DecisionTargetRef("global", "global"));
+                resolvedTargetProvenance.Add(new("global", "global", "server-derived"));
                 continue;
             }
             var claimedId = runtimeTarget?.Type == type ? runtimeTarget.Id :
@@ -376,11 +379,16 @@ public sealed class DefaultTargetResolver(
             if (type == "cohort")
             {
                 if (_authoritativeCohorts.TryGetValue(claimedId, out var authoritative))
+                {
                     resolvedTargets.Add(new DecisionTargetRef(type, authoritative));
+                    resolvedTargetProvenance.Add(new(type, authoritative,
+                        claimedId == authoritative ? "client-verified" : "server-replaced", claimedId));
+                }
             }
             else
             {
                 resolvedTargets.Add(new DecisionTargetRef(type, claimedId));
+                resolvedTargetProvenance.Add(new(type, claimedId, "client-claimed", claimedId));
             }
         }
 
@@ -394,7 +402,8 @@ public sealed class DefaultTargetResolver(
                 targetFallbacks,
                 authoritativelyResolvedTargetTypes,
                 serverDerivedTargetIndexes,
-                resolvedTargets));
+                resolvedTargets,
+                resolvedTargetProvenance));
     }
 
     private static void ValidateRuntimeTarget(

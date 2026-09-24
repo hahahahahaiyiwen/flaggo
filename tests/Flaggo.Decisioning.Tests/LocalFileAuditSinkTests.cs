@@ -73,6 +73,34 @@ public sealed class LocalFileAuditSinkTests
     }
 
     [Fact]
+    public async Task EvidenceInput_RequiresResolvedTargetProvenanceBeforeWriting()
+    {
+        using var file = new TestJsonFile("audit-input-target");
+        using var sink = new LocalFileAuditSink(new(file.Path));
+        var source = new InputProvenance("evidence", "pressure", "generation",
+            "1785974400000000000", DateTimeOffset.Parse("2026-08-06T00:00:00Z"), "observed",
+            $"sha256:{new string('a', 64)}");
+        var record = DecisionRecord() with
+        {
+            RequestInputs = new Dictionary<string, JsonElement>(),
+            InputProvenance = new Dictionary<string, InputProvenance> { ["boardPressure"] = source }
+        };
+        await Assert.ThrowsAsync<InvalidDataException>(() => sink.RecordDecisionAsync(record, CancellationToken.None));
+        record = record with
+        {
+            InputProvenance = new Dictionary<string, InputProvenance>
+            {
+                ["boardPressure"] = source with
+                {
+                    TargetResolution = new("cohort", "actual-cohort", "server-replaced", "client-claim")
+                }
+            }
+        };
+        await sink.RecordDecisionAsync(record, CancellationToken.None);
+        Assert.True(await sink.IsAvailableAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task LegacyEmptyFile_FailsClosedWithoutMigration()
     {
         using var file = new TestJsonFile("audit-empty");

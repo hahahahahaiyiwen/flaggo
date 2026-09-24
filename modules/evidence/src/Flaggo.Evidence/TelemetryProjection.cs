@@ -47,6 +47,7 @@ internal static class TelemetryProjection
         TelemetryObservation observation,
         TelemetryEvent? spanEvent,
         DateTimeOffset materializedAt,
+        IReadOnlyDictionary<(InputEvidenceKey Key, string Stream), InputEvidenceFrame> retainedFrames,
         IConfirmedExposureReader exposures,
         CancellationToken cancellationToken)
     {
@@ -56,6 +57,23 @@ internal static class TelemetryProjection
             StringAttribute(observation, spanEvent, binding.TargetIdAttribute!);
         if (string.IsNullOrWhiteSpace(targetId)) return new(null, "invalid-target");
         var target = new DecisionTargetRef(binding.TargetType, targetId);
+        var keyIdentity = new InputEvidenceKey(scope, definition.Identity.DefinitionId,
+            definition.Identity.Revision, definition.Identity.ContractDigest, binding.Key, target);
+        var stream = observation.Kind == "metric"
+            ? observation.MetricStreamFingerprint
+                ?? throw new InvalidDataException("The normalized metric has no stream identity.")
+            : "";
+        var fingerprint = spanEvent is null ? observation.Fingerprint :
+            Fingerprint(JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                observation.Fingerprint, spanEvent.Name, time = timestamp.ToString(CultureInfo.InvariantCulture),
+                attributes = AttributeIdentity(spanEvent.Attributes)
+            }));
+        // A committed exact replay retains its validated attribution even after transient confirmations are lost.
+        if (retainedFrames.TryGetValue((keyIdentity, stream), out var retained) &&
+            retained.Status == "available" && retained.Fingerprint == fingerprint &&
+            retained.TimeUnixNano == timestamp.ToString(CultureInfo.InvariantCulture))
+            return new(retained, null);
         var status = "available";
         JsonElement? value = null;
         switch (binding.Source.ValueFrom)
@@ -110,18 +128,6 @@ internal static class TelemetryProjection
                 exposureId = exposure.Confirmation.ExposureId;
             }
         }
-        var keyIdentity = new InputEvidenceKey(scope, definition.Identity.DefinitionId,
-            definition.Identity.Revision, definition.Identity.ContractDigest, binding.Key, target);
-        var stream = observation.Kind == "metric"
-            ? observation.MetricStreamFingerprint
-                ?? throw new InvalidDataException("The normalized metric has no stream identity.")
-            : "";
-        var fingerprint = spanEvent is null ? observation.Fingerprint :
-            Fingerprint(JsonSerializer.SerializeToUtf8Bytes(new
-            {
-                observation.Fingerprint, spanEvent.Name, time = timestamp.ToString(CultureInfo.InvariantCulture),
-                attributes = AttributeIdentity(spanEvent.Attributes)
-            }));
         return new(new InputEvidenceFrame(
             keyIdentity, stream, observation.Kind, status == "available" ? value : null, status,
             timestamp.ToString(CultureInfo.InvariantCulture), binding.MaxAgeSeconds, materializedAt,

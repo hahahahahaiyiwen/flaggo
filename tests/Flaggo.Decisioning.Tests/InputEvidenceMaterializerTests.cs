@@ -384,6 +384,60 @@ public sealed class InputEvidenceMaterializerTests
     }
 
     [Fact]
+    public async Task DurableAttribution_ExactReplayAfterRestartRetainsValidatedFrameButRejectsNewReferences()
+    {
+        using var directory = new TestRegistryFile();
+        var path = Path.Combine(Path.GetDirectoryName(directory.Path)!, "telemetry", "current.commit.json");
+        var binding = Binding() with
+        {
+            ExposureIdAttribute = new("attributes", "flaggo.exposure.id"),
+            Source = Binding().Source with { Kind = "span", ValueFrom = "attributes", ValueKey = "value" }
+        };
+        var exposures = new InMemoryExposureStore(new EvidenceClock(), () => "confirmed");
+        var snapshot = new DecisionSnapshot(Scope.TenantId, Scope.AppId, Scope.Environment, Identity,
+            JsonSerializer.SerializeToElement(0.25), "number", new("server", false, false, null),
+            Map(), Map(), Global, Global, [], ["global"], new("approved", [], []),
+            RequestInputs: Map(), InputProvenance: new Dictionary<string, InputProvenance>(), ResolvedTargets: [Global]);
+        await exposures.CreatePendingAsync("decision", "token", snapshot, CancellationToken.None);
+        await exposures.PrepareConfirmationAsync(Scope.TenantId, "decision", new("token"),
+            new HashSet<string> { Scope.AppId }, new HashSet<string> { Scope.Environment }, CancellationToken.None);
+        await exposures.CommitConfirmationAsync("decision", "confirmed", CancellationToken.None);
+        var observation = Observation() with
+        {
+            Kind = "span", Attributes = Map(("value", 0.25), ("flaggo.exposure.id", "confirmed"))
+        };
+        InputEvidenceValue before;
+        await using (var original = Materializer(binding, new LocalInputEvidenceStore(new(path)), exposures: exposures))
+        {
+            await original.InitializeAsync();
+            Assert.Equal(1, (await original.IngestAsync(Scope, [observation], CancellationToken.None)).AcceptedRecords);
+            before = await ReadAsync(original, binding);
+        }
+        var clock = new EvidenceClock { Now = ObservedAt.AddSeconds(10) };
+        await using var restarted = Materializer(binding, new LocalInputEvidenceStore(new(path)), clock);
+        await restarted.InitializeAsync();
+        var replay = await restarted.IngestAsync(Scope, [observation], CancellationToken.None);
+        Assert.Equal(1, replay.AcceptedRecords);
+        Assert.Equal(0, replay.RejectedRecords);
+        Assert.Empty(replay.Diagnostics);
+        var retained = await ReadAsync(restarted, binding, clock.Now);
+        Assert.Equal("available", retained.Status);
+        Assert.Equal(before.Provenance, retained.Provenance);
+        Assert.True(JsonElement.DeepEquals(before.Value!.Value, retained.Value!.Value));
+        Assert.Equal("stale", (await ReadAsync(restarted, binding, ObservedAt.AddSeconds(31))).Status);
+
+        var unseen = observation with
+        {
+            TimeUnixNano = Timestamp + 100,
+            Fingerprint = Observation(timestamp: Timestamp + 100).Fingerprint
+        };
+        Assert.Equal(1, (await restarted.IngestAsync(Scope, [unseen], CancellationToken.None)).RejectedRecords);
+        Assert.Equal("invalid-exposure", (await ReadAsync(restarted, binding, clock.Now)).Status);
+        Assert.Equal(1, (await restarted.IngestAsync(Scope with { TenantId = "tenant-b" },
+            [observation], CancellationToken.None)).RejectedRecords);
+    }
+
+    [Fact]
     public async Task RegistryCorruption_IsAvailabilityFailureRatherThanMalformedTelemetry()
     {
         await using var materializer = new InputEvidenceMaterializer(new BrokenBindings(),

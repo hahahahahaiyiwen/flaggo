@@ -39,6 +39,22 @@ it("derives keys, result kinds, context requiredness and caller-owned inputs fro
     client.tune.number("materialized", { inputs: { pressure: 0.5 } });
     // @ts-expect-error no invented inputs for key-only definitions
     client.tune.number("fixed", { inputs: { pressure: 0.5 } });
+    const key = Math.random() < 0.5 ? "fixed" : "live";
+    // @ts-expect-error a union key cannot erase required caller data
+    client.tune.number(key);
+    // @ts-expect-error detailed calls preserve the same key/request correlation
+    client.tune.numberDetailed(key);
+    // @ts-expect-error live data is invalid when the dynamic key selects fixed
+    client.tune.number(key, { context: { sessionId: "session-1" }, inputs: { pressure: 0.5 } });
+    if (key === "live") {
+      client.tune.number(key, { context: { sessionId: "session-1" }, inputs: { pressure: 0.5 } });
+      client.tune.numberDetailed(key, { context: { sessionId: "session-1" }, inputs: { pressure: 0.5 } });
+    }
+    const call = Math.random() < 0.5
+      ? ["fixed"] as const
+      : ["live", { context: { sessionId: "session-1" }, inputs: { pressure: 0.5 } }] as const;
+    client.tune.number(...call);
+    client.tune.numberDetailed(...call);
   };
   void inspect;
 });

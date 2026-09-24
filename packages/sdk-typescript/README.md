@@ -22,6 +22,9 @@ flaggo-manifest check .\decision-manifest.json `
 `check` fails for stale generated artifacts. Neither evaluates application
 source. Inputs are plain required values owned by `request` or `evidence`;
 evidence inputs inherit their binding schema and cannot be supplied by callers.
+Dynamic keys must remain correlated with their required context and inputs:
+narrow a union key before calling, or pass a discriminated key/request tuple.
+The same typing applies to `number` and `numberDetailed`.
 
 ## Publish separately
 

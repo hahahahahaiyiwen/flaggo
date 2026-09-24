@@ -75,7 +75,11 @@ public sealed class DecisionInputResolver(IInputEvidenceReader evidence)
                     !DecisionValues.Matches(value, read.Binding.ValueType, read.Binding.Minimum, read.Binding.Maximum))
                     throw Unavailable(read, "invalid-value", "The materialized value violates its binding.");
                 values.Add(read.InputKey, value.Clone());
-                provenance.Add(read.InputKey, observation.Provenance);
+                var targetResolution = targetPlan.ResolvedTargetProvenance?.SingleOrDefault(
+                    target => target.TargetType == read.Target.Type && target.ResolvedId == read.Target.Id)
+                    ?? throw new DecisionContractException(409, "contract-conflict",
+                        "The resolved evidence target has no resolution provenance.");
+                provenance.Add(read.InputKey, observation.Provenance with { TargetResolution = targetResolution });
             }
         }
         return new(values.ToFrozenDictionary(StringComparer.Ordinal), provenance.ToFrozenDictionary(StringComparer.Ordinal));
