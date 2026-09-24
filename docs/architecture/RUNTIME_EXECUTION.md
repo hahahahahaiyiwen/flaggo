@@ -1,241 +1,144 @@
 # Runtime decision execution
 
-## Purpose
+## Purpose and invariants
 
-Runtime decision execution is the data-plane capability that applies compatible
-approved state to one application request.
-
-It answers:
-
-> Given the exact decision definition, runtime target, live inputs, compatible
-> governed state, and runtime policy, what value should this request receive?
-
-Runtime does not generate proposals, approve candidates, or mutate durable
-authority.
-
-## Runtime invariants
-
-Runtime execution must be:
-
-- deterministic for the same exact identity, state, target, and inputs;
-- bounded by the definition, authority, and policy;
-- fast enough for the application request path;
-- consistent across service replicas;
-- explicit about fallback and failure provenance;
-- durably audited before a successful response;
-- unable to create authority.
-
-An unbounded request-time agent loop is prohibited. Any future request-time
-mechanism requires a separately approved bounded contract with enforceable
-latency and resource budgets.
+Decision Service applies compatible approved state to one application request.
+Execution is deterministic, bounded, constrained by the exact definition and
+authority, explicit about fallback, and durably recorded before server success.
+It cannot register definitions, generate proposals, approve candidates, repair
+authority or mutate the active head.
 
 ## Request flow
 
 ```text
-application request
-  -> validate { definitionId, revision, contractDigest }
-  -> validate registration and dependency readiness
-  -> resolve ordered exact targets
-  -> resolve required request/evidence inputs from one immutable generation
-  -> select the first compatible governed state
-  -> resolve active value, evaluate numeric rule, or select governed fallback
-  -> apply runtime policy
-  -> validate the exact output
-  -> durably persist audit
-  -> return RuntimeDecisionResult
+exact runtime identity + target/context + request inputs
+  -> accepted Contract Store projection
+  -> resolve ordered targets
+  -> resolve all required request/evidence operands from one pinned generation
+  -> read first compatible State Store authority
+  -> active value, numeric rule or governed fallback
+  -> deterministic decision constraints and exact output validation
+  -> durable Evidence Store decision record
+  -> runtime decision result
 ```
 
-Missing, unknown, conflicting, or retired identity is a contract error.
-Corrupt state, torn persistence, non-ready registration, and unavailable
-required durable audit are readiness or integrity errors. None silently becomes
-a decision value.
+Current approved-definition receipts are not activation-ready receipts.
+#40 adds that stronger registration guarantee after #49's server alignment.
 
-## Target and state resolution
+Unknown, conflicting or retired identities are contract errors. Corrupt state
+or unavailable required durable recording fails explicitly, never as a
+success-shaped value.
 
-The definition declares a primary inference target and explicit
-`fallbackOrder`:
+## Target, input and state resolution
+
+The definition permits target kinds and an explicit primary/fallback order.
+Only those state targets are probed. A valid head for a different revision is
+incompatible; malformed or incoherent state fails closed.
+
+Context supplies target identifiers only through declared mappings. Cohort
+claims require authoritative resolution. Evidence bindings may reference an
+authorized target outside the selected state chain; each input records its
+actual target, resolution source and original claim.
+
+Request operands are type/range checked. Callers cannot override evidence
+operands. Every evidence read pins authenticated tenant/app/environment, exact
+definition, generation and evaluation time. There is no hot-path aggregation
+or wait for telemetry export.
+
+## Active value and numeric rule
+
+An `active-value` returns its exact approved value after compatibility and
+constraint evaluation. It has no strategy identity.
+
+The numeric executor boundary is:
 
 ```text
-runtime target + verified context + fallbackOrder
-  -> ordered exact resolution targets
-  -> stable authority head for each target
-  -> first active state matching the complete runtime identity
+runtime definition projection + approved numeric rule + resolved primitive map
+  -> candidate or explicit execution error
 ```
 
-The target hierarchy authorizes target kinds but does not insert undeclared
-levels. A well-formed state for another revision is incompatible and resolution
-may continue. Corrupt or incoherent state fails explicitly.
-
-Audit distinguishes the runtime target receiving the result, the control target
-owning state, any evidence target used by policy, and the fallback target.
-
-## Current execution mechanisms
-
-### Active value
-
-`active-value` authority returns its approved value after compatibility and
-runtime-policy validation. It has no strategy identity.
-
-```text
-approved value
-  -> validate type, range, allowed values, step, and policy
-  -> return exact value or governed fallback
-```
-
-### Numeric rule
-
-`numeric-rule` authority evaluates declared resolved primitive inputs through the
-approved deterministic rule. The executor boundary is exactly:
-
-```text
-RuntimeDefinitionProjection
-  + NumericRuleStrategy
-  + input-name-to-primitive-value map
-  -> numeric candidate or execution error
-```
-
-No evidence snapshot crosses this executor boundary. A reasoning-owned resolver
-supplies request operands and evidence-owned values before execution. The
-executor does not query telemetry or receive lifecycle state.
-
-For each weighted input:
+It receives neither lifecycle state nor an `EvidenceSnapshot`, and never
+queries telemetry. Weighted inputs use:
 
 ```text
 normalized = clamp((value - minimum) / (maximum - minimum), 0, 1)
-```
-
-The score is the normalized weighted average:
-
-```text
 score = sum(normalized * weight) / sum(weight)
 ```
 
-Weights must be finite and non-negative, with a finite positive total; they do
-not need to sum to `1`. The threshold must be finite and within `[0, 1]`.
+Weights are finite and nonnegative with a positive total. The exact selected
+branch passes to constraint evaluation; runtime cannot clamp, step-align or
+repair it into a third value. Deterministic rules return `confidence: null`,
+not fabricated model uncertainty or evidence quality.
+
+## Decision constraints
+
+Constraints are definition data and Decision Service behavior, not a separate
+Policy service. Checks include output type/bounds/step, fixed-default
+max-delta, target/input eligibility, state compatibility and fallback. The
+current implementation also supports explicitly declared cooldown, pause and
+quality constraints through its existing internal evaluator.
+
+`max-delta` compares to manifest `result.default`. With default `800` and delta
+`50`, `750` and `850` are independently valid, including successive requests.
+The existing cooldown guard uses governed last-change time, not the previous
+returned value. The remaining Phase 3 constraint rebaseline is downstream.
+
+Constraint evaluation may approve the exact candidate, require governed
+fallback or reject execution. It cannot widen authority.
+
+## Durable decision and exposure records
+
+Before success, Decision Service persists authenticated scope, exact contract,
+original caller inputs, resolved values and per-input provenance, targets,
+selected strategy/mode, constraint results, fallback, returned value and time.
+Source/target provenance survives evidence updates and exact decide replay.
+
+The target architecture additionally carries complete state and activation
+lineage. Current runtime responses do not expose `stateId`; #49/#40/#41 own
+the executable record/authority alignment and final integrated verification.
+Do not infer complete future lineage from today's approved-definition receipt.
 
 ```text
-score >= threshold -> valueAtOrAbove
-score < threshold  -> valueBelow
+server decision -> application applies or renders value
+  -> confirm with decisionId + confirmation token
+  -> committed exposureId -> ordinary attributed outcome telemetry
 ```
 
-Both branches are validated against the registered result and active rule. Runtime
-passes the exact selected branch to policy. It never clamps, step-aligns, or
-repairs an invalid persisted branch into a third value.
+Confirmation cannot replace decision-time inputs. It prepares a stable
+identity, appends durable exposure evidence and commits confirmation, with
+replay/recovery preserving one exposure. The current lookup remains in-memory;
+an audit append alone is not completed confirmation.
 
-Deterministic rules report `confidence: null`; they do not fabricate model
-confidence or evidence quality.
+Console/in-memory recording is limited to tests or explicitly non-ready debug
+configurations. A ready append failure prevents server success. Explanation
+is derived from stored facts, not a standalone service.
 
-### Governed fallback
-
-A valid registered definition may return its audited server fallback when no
-permitted target has compatible active state or runtime policy prevents normal
-execution.
-
-Missing-state fallback has no selected control target, state lineage, strategy
-identity, or exposure confirmation. Fallback is a runtime outcome, not a
-persisted authority kind.
-
-## Runtime policy
-
-Runtime policy verifies that applying approved authority to this request remains
-safe. Current checks include:
-
-- exact definition and state compatibility;
-- target eligibility;
-- required live inputs;
-- output type, bounds, allowed values, and step;
-- fixed-baseline `max-delta`;
-- conditional evidence requirements when a policy explicitly requires them;
-- fallback requirements.
-
-For Phase 3, `max-delta` compares every candidate with the fixed
-manifest `result.default`. With default `800` and delta `50`, both `750` and
-`850` are valid independently, including a `750 -> 850` request sequence. The
-current separately declared cooldown guard uses governed last-change time;
-it is not previous-result stabilization. #41 re-baselines remaining runtime
-policy behavior.
-
-Policy may approve the exact candidate, return governed fallback, or reject it.
-Policy cannot widen authority or synthesize a repaired candidate.
-
-## Runtime result
-
-A successful `RuntimeDecisionResult` includes:
-
-- the returned primitive value;
-- decision mode;
-- fallback status and provenance;
-- complete definition identity;
-- runtime and selected control targets;
-- `strategyId` only for numeric-rule authority;
-- policy result;
-- confidence (`null` for bundle-authored Phase 3 authority);
-- decision and audit IDs;
-- explanation summary.
-
-The current runtime response does not expose `stateId`. Complete governed-state
-and activation lineage in the final audit state summary remains the #41
-re-baseline; current audit preserves exact contract and strategy/target identity.
-
-The result records what this request received. It is not future authority.
-
-## Durable audit and exposure
-
-A ready service must commit the decision audit to storage that survives process
-failure before returning success. Console and in-memory sinks are limited to
-tests or explicitly non-ready debugging.
-
-The audit captures authenticated tenant/application/environment, exact runtime
-identity, original caller inputs, resolved inputs and per-input provenance,
-targets, strategy/mode, policy outcome, fallback status, result, and timestamp.
-
-A returned result is not proof that the application used it:
-
-```text
-RuntimeDecisionResult
-  -> application applies or renders value
-  -> narrow to ServerDecisionReceipt
-  -> confirm exposure with decisionId + confirm token
-  -> exposureId
-  -> outcome telemetry linked to exposureId
-```
-
-Confirmation is idempotent and cannot replace decision-time inputs. Raw domain
-telemetry remains unlinked when it was not caused by an applied decision.
-
-## Fallback and failure provenance
+## Failure and fallback provenance
 
 | Outcome | Meaning |
 | --- | --- |
-| Governed server fallback | Valid registered request produced an audited safe value. |
-| SDK availability fallback | Explicitly configured response to a recognized data-plane outage; has no server decision, policy, audit, or exposure identity. |
-| Contract error | Missing, unknown, conflicting, or retired exact identity; never fallback-eligible. |
-| Readiness error | Required activation, state, audit, or persistence dependency is not ready; never a decision value. |
-| Invalid decision state | Persisted authority is corrupt or incompatible; never repaired or converted to fallback. |
-| Required input evidence unavailable | Missing, stale, future, ambiguous, invalid, or unavailable declared operands; 503 with SDK fallback forbidden. |
+| Governed fallback | Valid registered request returned a durably recorded safe value. |
+| SDK availability fallback | Explicit local response to an eligible outage, without server decision, constraint, record or exposure identity. |
+| Contract error | Missing, unknown, conflicting or retired exact identity; not fallback-eligible. |
+| Readiness error | Required contract, state or durable dependency is unavailable. |
+| Invalid state | Corrupt/incoherent authority is never repaired into a value. |
+| Required input evidence unavailable | Missing/stale/future/ambiguous/invalid operands produce 503 with SDK fallback forbidden. |
 
-The host passes a verified scope to input resolution. Each evidence read pins
-one generation and evaluation time. Successful retained idempotent replay keeps
-the original result/provenance rather than re-reading changed telemetry.
-Request-only decisions without evidence-dependent policy access neither
-evidence port. Trace sampling flags do not create learned confidence.
+Missing-state fallback has no selected state/strategy identity. Request-only
+decisions without evidence-dependent constraints access neither evidence
+port. Separate quality requirements follow their explicitly declared failure
+behavior; they do not manufacture input defaults.
 
-## Future extension boundary
+## Future boundary
 
-Experiment assignment, rollout routing, override, and new learned runtime
-strategies are not current mechanisms. The current deterministic rule may
-consume declared materialized observations without becoming a learned strategy.
-New mechanisms require explicit state, lifecycle,
-policy, result, audit, and bounded-executor contracts before it can enter the
-request path.
+Experiments, rollout routing, overrides and learned strategies need explicit
+state, lifecycle, constraint, record and bounded-execution contracts before
+entering this request path. Async Analysis Pipeline is not invoked online.
 
 ## Related documents
 
 - [Architecture overview](OVERVIEW.md)
-- [Authority](AUTHORITY.md)
-- [Decision definition](DECISION_DEFINITION.md)
-- [Evidence](EVIDENCE.md)
-- [Tetris scenario](../scenarios/TETRIS.md)
-- [Decision API component](../design/decision-api/README.md)
-- [Reasoning engine component](../design/reasoning-engine/README.md)
-- [Policy component](../design/policy/README.md)
+- [Decision authority](AUTHORITY.md)
+- [Decision Service](../design/decision-service/README.md)
+- [State Store](../design/state-store/README.md)
+- [Evidence Store](../design/evidence-store/README.md)

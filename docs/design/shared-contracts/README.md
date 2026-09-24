@@ -2,35 +2,34 @@
 
 ## Purpose and ownership
 
-`contracts/` owns language-neutral schemas, OpenAPI, fixtures, and semantic
+`contracts/` owns language-neutral schemas, OpenAPI, fixtures and semantic
 vectors. `packages/shared-contracts` contains shared data records and canonical
-utilities, not a global collection of service interfaces. Registry, evidence,
-state, policy, reasoning, and audit own their respective ports.
-
-Executable schemas are authoritative:
+utilities, not a global interface collection. Ports stay beside the owning
+Contract Service, Decision Service, ingestion, analysis or store capability.
+Current libraries implement these logical boundaries; they are not additional
+server components.
 
 - [Manifest v2](../../../contracts/schemas/decision-definition-bundle-v2.schema.json)
 - [Runtime models](../../../contracts/schemas/runtime-models-v1.schema.json)
 - [Management models](../../../contracts/schemas/management-models-v1.schema.json)
 - [Problem Details](../../../contracts/schemas/problem-details-v1.schema.json)
 
-The manifest-first replacement rejects the old bundle and input shapes. It
-does not add adapters or migrations. HTTP operation paths remain `/v1/...`;
-that path is not the manifest format number or a Phase 3 milestone.
+Executable shapes are authoritative. #49 migrates Policy/Audit-named fields
+and libraries to definition constraints and Evidence Store records, without
+compatibility aliases. #40 subsequently adds initial authority and
+activation-ready receipts. HTTP `/v1/` and manifest format version are
+independent.
 
-## Primitive types and action space
+## Values, targets and manifest
 
-Decision values are finite numbers, booleans, or strings, never null/objects.
-Numeric bounds are inclusive, step is positive and relative to `min`, and the
-default must be valid. String allowed-values sets are nonempty and unique and
-must contain the default. The authored `result` object is the sole result
-contract/default; runtime projections may use internal action-space types.
+Values are finite, lossless numbers, booleans or strings, never null/objects.
+Numeric bounds are inclusive; step is positive relative to `min`; the one
+`result.default` must be valid. String allowed-value sets are nonempty and
+unique and contain the default.
 
-Context contains declared primitive facts and explicit string target-ID
-bindings. A hierarchy permits target kinds; only the declared primary and
-ordered fallback targets determine resolution.
-
-## Decision contract
+Context declares primitive facts and explicit string target-ID bindings.
+Hierarchy permits target kinds, while primary and ordered fallback targets
+determine state resolution.
 
 ```ts
 type Manifest = {
@@ -43,29 +42,26 @@ type RequestInput = {
   source: "request";
   type: "number" | "boolean" | "string";
   meaning: string;
-  // Unit and range are valid only for numeric inputs.
   unit?: string;
   range?: [number, number];
 };
 type EvidenceInput = { source: "evidence"; binding: string };
 ```
 
-Each definition owns `result`, required `targeting` and `policy`, optional
-context/inputs/evidence maps, intent, and nonsemantic owner metadata.
-Every declared input is required. Evidence inputs inherit their binding's
-type, unit, range, and meaning; callers cannot override them.
+Unit/range apply only to numeric request operands. Every operand is required.
+Evidence operands inherit binding type/unit/range/meaning and cannot be
+supplied by callers. Runtime input bindings require attribution `none`;
+confirmed-exposure bindings remain valid for outcome/objective evidence.
 
-Bindings select supported native Gauge/span/span-event/log observations,
-explicit target and latest scalar projection, source-time freshness,
-observed-only coverage, and attribution. Numeric objectives reference numeric
-evidence bindings. Detailed source constraints belong to the executable schema
-and [Evidence](../../architecture/EVIDENCE.md).
+Definitions own result, targeting, current `policy` constraint data, optional
+context/input/evidence maps, intent and nonsemantic owner metadata. Native
+bindings select Gauge/span/span-event/log scalars, exact target, latest
+projection, source freshness and observed coverage.
+Numeric objectives reference numeric bindings. No global producer declaration,
+derived-rate language, redundant default or inline call-site contract exists.
+The current reference-policy shape is rejected, not silently resolved.
 
-No public producer declarations, duplicate default, inline per-call contract,
-implicit policy, or initial-authority mode is authored. Policy references are
-schema-defined but rejected until a governed resolver exists.
-
-## Runtime API contracts
+## Runtime contract and input ownership
 
 ```text
 POST /v1/decisions/{decisionKey}:decide
@@ -75,112 +71,101 @@ POST /v1/decisions/{decisionKey}:decide
   client: { appId, environment, ...SDK metadata }
 ```
 
-The route supplies the key. Required exact identity, strict JSON, unknown
-fields, duplicate properties, input source/type/range, and context/target
-coherence are validated. Duplicate properties and obsolete input arrays are
-not interpreted as an alternative wire format.
+Strict parsing rejects duplicate properties, unknown closed-schema fields,
+obsolete input arrays, invalid primitives and incoherent context/targets.
+Verified `ApplicationScope { appId, environment, tenantId }` comes from
+authentication, never caller JSON or resource attributes.
 
-The host supplies verified `ApplicationScope { appId, environment, tenantId }`
-from authenticated claims. Tenant identity never comes from body or OTel
-resource attributes. Input materialization and confirmation lookup partition
-by that authorized scope.
+Decision Service resolves a primitive map and per-input provenance from
+request values and one pinned evidence generation. Missing/stale/future/
+ambiguous/invalid/unavailable required inputs return 503
+`required-evidence-unavailable`, always SDK-fallback-ineligible. Request-only
+decisions without evidence-dependent constraints access neither evidence port.
 
-The resolver produces a complete scalar map and per-input provenance from
-request values and one pinned evidence generation. Required input evidence
-missing/stale/ambiguous/future/invalid/unavailable returns
-`503 required-evidence-unavailable`, always local-fallback-ineligible.
-Request-only decisions without evidence policy do not access evidence ports.
+Current server results contain exact verified identity, value, targets,
+`policy` evaluation, fallback, `auditId`/decision identity and exposure
+directive. These schema field names do not create standalone Policy/Audit
+components. Numeric rules have null learned confidence. SDK availability
+fallback has client-only provenance and no server identities.
 
-Server results carry exact definition integrity, result, targets, policy,
-fallback, audit/decision identity, and a confirmation directive when applicable.
-Deterministic rules report `confidence: null`. SDK availability fallback has
-client-only provenance and no server identities.
-
-Decide idempotency is tenant/application/environment scoped. The fingerprint
-covers caller content and exact identity, not mutable evidence generations or
-evaluation time. Retained successful replay returns the original result.
-Confirmation cannot replace decision-time inputs.
+Decide retry identity partitions authenticated tenant/app/environment and
+canonical caller content. It excludes mutable materialization generations and
+evaluation time. Retained success keeps the original resolved result;
+confirmation accepts no replacement input vector.
 
 ## Canonical definition normalization and digest
 
-All implementations normalize the same JSON manifest and use RFC 8785 JSON
-Canonicalization Scheme plus SHA-256:
+All implementations use RFC 8785 canonical JSON and SHA-256:
 
 ```text
 contractDigest = sha256(canonical({ key, contract: normalizedDefinition }))
 bundleDigest   = sha256(canonical(normalizedBundle))
 ```
 
-The key is semantic. Exclude definition owner metadata from `contractDigest`;
-retain owner/build/source metadata in the bundle identity. Opaque lineage and
-revision IDs are registry outputs, not authored definition fields.
+The key is semantic. Definition owner metadata is excluded from the contract
+digest but retained, with build/source metadata, in bundle identity. Opaque
+lineage and revision are server outputs, never author-supplied identity.
 
-Normalize omitted context/inputs/evidence to empty maps and omitted context
-requiredness to false. Apply the shared optional-policy normalization and sort
-set-like allowed values/constraints. Object order is immaterial; hierarchy,
-fallback order, numeric range endpoints, body paths, and prioritized objectives
-retain their meaning and ordering. Reject duplicates rather than choosing the
-first or last declaration. Do not synthesize numeric-bounds policy from the
-result bounds or infer target precedence.
+Omitted context/input/evidence maps normalize to empty maps; omitted context
+requiredness becomes false. Shared optional-policy normalization and
+set-like allowed-value/constraint sorting apply. Object order is immaterial;
+hierarchy, fallback order, ranges, body paths and prioritized objectives retain
+order/meaning. Duplicates are rejected, not selected first/last. No synthetic
+numeric-bound constraint or implicit target order is introduced.
 
-Input ownership, meaning, type/unit/range, binding source/selectors/projection,
-target, freshness, sampling/attribution, result, intent, and policy are semantic.
-No runtime value or materialized snapshot participates in a definition digest.
-The shared positive/negative
-[semantic vectors](../../../contracts/conformance/semantic-digest-vectors-v1.json)
-exercise .NET, TypeScript, and Python equivalence.
+Input ownership/type/unit/range/meaning, binding selectors/projection/target/
+freshness/sampling/attribution, result, intent and constraints are semantic.
+Runtime values and materialized snapshots never participate in definition
+identity. [Shared vectors](../../../contracts/conformance/semantic-digest-vectors-v1.json)
+exercise .NET, TypeScript and Python identity and semantic validation.
 
-## Contract identity and integrity
+## Identity, approval and receipt
 
-The complete runtime identity is `{ definitionId, revision, contractDigest }`.
-The registry preserves an opaque lineage across approved semantic revisions.
-Metadata-only changes retain the complete tuple. Clients cannot substitute a
-key, bundle digest, or newest revision.
+The complete runtime tuple is `{ definitionId, revision, contractDigest }`.
+Approved semantic changes retain lineage and create a new revision;
+metadata-only changes preserve the tuple. A key/bundle digest/newest revision
+cannot substitute for it. One revision cannot silently execute another
+revision's state or inherit its input frames.
 
-Every successful server result repeats the expected verified identity.
-Missing, unknown, conflicting, or retired identity is an explicit error.
-Multiple approved revisions can coexist; one revision cannot execute another
-revision's governed state or reuse its materialized input frames implicitly.
+Contract Service validates/classifies and atomically applies a manifest.
+New/changed semantics require authenticated exact-snapshot approval against a
+captured baseline. Exact apply replay returns the stored approved receipt.
 
-## Contract bundle and registration receipt
+The receipt binds every key to exact identity and bundle/build provenance.
+Runtime catalog scope, bundle digest, keys and contract digests must match.
+Neither runtime initialization nor the management helper approves itself.
+Current receipts are approved-definition bindings; #40's stronger
+activation-converged receipt is not fabricated by this schema.
 
-Management validates, classifies, and atomically applies normalized manifests.
-New/changed semantics require authenticated exact-snapshot approval with a
-captured baseline. Identical/metadata-only application preserves runtime
-identity; exact apply replay returns the stored receipt.
+## State, execution and constraints
 
-The approved receipt binds every manifest key to its exact identity and records
-the bundle/build provenance. A generated runtime catalog must match its scope,
-bundle digest, exact key set, and semantic digests. Neither the runtime client
-nor the separate management helper approves automatically.
+The numeric executor receives only definition, approved rule and resolved
+primitive inputs. Rule references are input names, not producer keys. It sees
+no lifecycle state/telemetry/quality snapshot and cannot select fallback,
+invent confidence or create authority.
 
-This receipt does not claim initial-authority activation. #40 owns that
-extension; no temporary authority mode or fabricated activation identity is
-present in this manifest.
+[State Store](../state-store/README.md) owns stable authority heads,
+immutable payloads, expected-baseline CAS, replay and lineage. Optional
+constraint-quality evidence is distinct from observed input coverage.
+Async candidates belong to [Async Analysis Pipeline](../async-analysis/README.md)
+and require Contract Service approval, never an online agent loop.
 
-## Decision strategy, state, and policy
+## Decision records and exposure
 
-The numeric executor receives only the typed runtime definition, approved
-numeric rule, and resolved primitive input map. Rules reference input names,
-not producer keys. They do not receive telemetry, lifecycle state, or quality
-snapshots and cannot create authority or learned confidence.
+Evidence Store owns reconstructable decision/exposure/outcome records.
+The current append adapter records scope, exact identity, caller/resolved
+inputs, target/strategy/constraint/fallback facts, reason and timestamp.
+Evidence input provenance retains binding, generation, source nanoseconds,
+materialization time, fingerprint, coverage, trace/span/flags, verified
+exposure and actual evidence-target resolution/source/claim.
 
-Governed state, expected-baseline activation, and stable heads are
-[state-owned](../state/README.md). Optional policy-quality evidence is a
-separate domain from observed input coverage. It is queried only when the
-effective policy requires it. Future proposal-managed authority remains a
-separate approved contract, not a request-time agent loop.
+Durable decision append precedes success. Confirmation capabilities never
+enter record output. Exposure preparation reserves identity, durable append
+precedes final commit, and retry preserves the same exposure under exact
+scope. A pending or audit-only preparation is not a completed confirmation.
+Current confirmation lookup is in-memory; new references to lost confirmations
+fail closed while retained validated frames preserve provenance.
 
-## Audit record and exposure
-
-Audit captures authenticated tenant/application/environment, exact identity,
-original request inputs, resolved inputs, target/state/policy/fallback details,
-reason, and timestamp. Input provenance distinguishes request ownership from
-evidence binding, generation, observed nanoseconds, materialization time,
-fingerprint, coverage, trace/span IDs/flags, and verified exposure reference.
-
-The decision audit commits before success. Confirmation capabilities never
-enter audit. Exposure confirmation prepares stable identity, commits its
-durable audit, then commits confirmation. Lookup and replay enforce tenant as
-well as application/environment. The snapshot preserves the original resolved
-vector/provenance; telemetry cannot rewrite it or stand in for confirmation.
+Complete authority-lineage record integration remains downstream. See
+[Evidence Store](../evidence-store/README.md) for current persistence details
+and the distinction from its target record model.

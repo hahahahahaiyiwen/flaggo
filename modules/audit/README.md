@@ -1,13 +1,16 @@
 # Audit Module
 
-Owns immutable decision, approval, policy, exposure, and explanation records.
+This current internal library provides Evidence Store append adapters for
+immutable decision and exposure records. Audit is the reconstructability
+invariant, not a first-class service.
 
-Audit writes are explicit async operations and failures are surfaced; callers
-must not report an audited success when durable recording is required but
+Record writes are explicit async operations and failures are surfaced;
+Decision Service must not report success when the required durable append
 failed. Records preserve the exact contract identity and relevant provenance.
 
-Update this document when retention, redaction, record shape, or durability
-requirements change.
+Explanation is a deterministic projection of these records. Update this
+document when retention, redaction, record shape, or durability requirements
+change. Issue #49 owns executable module and type migration.
 
 ## Current implementation
 

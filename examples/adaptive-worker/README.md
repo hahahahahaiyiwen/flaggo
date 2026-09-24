@@ -1,5 +1,11 @@
 # Adaptive Worker Example
 
+This example uses the manifest-first client and application-owned OTel.
+Trusted local bootstrap provisions existing approved state; #49 aligns
+executable server terminology and #40 adds manifest initial-authority
+publication. The current local state fixture is not an activation-ready
+registration receipt.
+
 This example owns the Phase 2.5 local SDK-to-service acceptance boundary. It
 is a TypeScript console application that processes real items from an
 in-memory queue while Flaggo decides `demo.workerBatchSize`.

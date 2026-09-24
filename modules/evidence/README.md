@@ -1,12 +1,16 @@
 # Evidence Module
 
-Owns native-observation projection, bounded materialized input snapshots,
+This internal library implements Evidence Store query/projection capabilities:
+native-observation projection, bounded materialized input snapshots,
 source-time freshness and provenance, and a separate policy-quality boundary.
 Application instrumentation and Collector configuration remain outside Flaggo.
+OTel Ingestion owns server intake; Decision Service appends
+decision/exposure records through current audit-named adapters.
 
 It returns domain evidence types through async ports and does not select
 actions. Missing evidence remains distinguishable from low-quality evidence,
-and detailed evidence stays in audit rather than compact runtime responses.
+and detailed evidence stays in Evidence Store rather than compact runtime
+responses.
 
 ## Current implementation
 
@@ -39,7 +43,8 @@ writer lease, frame/byte capacity, strict restart validation, and fail-closed
 recovery after uncertain writes. Required unusable inputs are errors, not
 implicit values or SDK fallback. Read-only lookup does not evict fresh frames.
 The host owns binary OTLP parsing/authentication and transport limits; see
-[the component contract](../../docs/design/telemetry-evidence/README.md).
+[OTel Ingestion](../../docs/design/otel-ingestion/README.md) and
+[Evidence Store](../../docs/design/evidence-store/README.md).
 
 The separate policy-quality path uses a strict JSON-file adapter selected by
 `Flaggo__Evidence__LocalFilePath`. The configured path is a commit descriptor,

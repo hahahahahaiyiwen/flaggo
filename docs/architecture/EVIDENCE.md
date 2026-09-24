@@ -2,140 +2,159 @@
 
 ## Boundary
 
-Applications own OpenTelemetry instrumentation, providers, exporters,
-Collectors, retention, and sampling. Flaggo binds selected existing telemetry
-to decision-local meaning. It is not a telemetry producer schema or warehouse.
-Evidence informs execution, policy, audit, and future proposals; it never
-creates authority.
+Evidence Store is the logical durable boundary for observations, materialized
+views, decision records, confirmed exposures and outcomes. Evidence informs
+Decision Service constraints and future Async Analysis Pipeline candidates;
+it never creates authority.
 
-| Data | Owner and role |
+Applications own OTel instrumentation, providers, exporters, Collectors,
+retention and sampling. OTel Ingestion interprets selected existing records
+through definition-local bindings. It does not introduce a parallel producer
+schema or a telemetry warehouse.
+
+| Kind | Meaning and current role |
 | --- | --- |
-| Context | Caller facts and identifiers, verified by runtime target resolution |
-| Request input | Current typed operand supplied directly; no instrument is required |
-| Input evidence | Declared scalar projected from received native OTel records |
-| Policy-quality evidence | Separate optional quality/model contract, queried only by an explicit policy |
-| Decision and exposure | Audit/state-owned operational records, not sampled telemetry |
+| Context | Caller facts and identifiers verified by target resolution |
+| Request input | Current primitive operand, with no instrument required |
+| Observation | Received native metric, span/span-event or structured log |
+| Input evidence view | Latest scalar projected for an exact binding/target |
+| Constraint-quality evidence | Separate optional quality/model contract |
+| Decision record | Reconstructable result persisted before server success |
+| Exposure record | Explicit confirmation of application use |
+| Outcome | Observation attributed to a completed confirmed exposure |
 
 ```text
-application OTel APIs/providers -> existing Collector pipelines
-  -> authenticated OTLP ingress -> registered binding projection
-  -> durable immutable input generation
-  -> one runtime input resolution -> numeric rule + policy -> audit
+application OTel pipeline -> authenticated OTel Ingestion
+  -> registered binding projection -> durable immutable input generation
+  -> Decision Service input resolution -> bounded rule + constraints
+  -> durable decision record
 ```
 
 ## Supported projections
 
-Every binding specifies exact scope name (optional version), resource and
-record selectors, type/meaning, target, `latest` projection,
-`freshness.maxAgeSeconds`, `sampling.accept: observed`, and attribution.
+Every binding declares exact instrumentation scope (optional version),
+resource/record selectors, type and meaning, target, `latest` projection,
+source-time freshness, `sampling.accept: observed` and attribution.
 
 | Native source | Supported value | Source time |
 | --- | --- | --- |
-| Metric Gauge | One scalar data point, exact unit | Point timestamp |
+| Metric Gauge | Scalar point with exact unit | Point timestamp |
 | Span | Duration in milliseconds or primitive attribute | Span end |
 | Named span event | Primitive event attribute | Event timestamp |
 | Log | Primitive attribute or scalar at a structured body path | Log timestamp |
 
-Logs match an event name or an exact scalar body. Body paths traverse native
-structured values; JSON-looking strings are not parsed. Attribute namespaces
-remain distinct. Missing fields, wrong types/units, no-recorded-value flags,
-and out-of-range observations are not zeroes.
+Logs select an event name or exact scalar body. Body paths traverse native
+structured values, never JSON-looking text. Attribute namespaces remain
+distinct. Missing fields, wrong types/units, no-recorded-value flags and
+out-of-range values are errors, not zeroes.
 
-Sums/counters, histograms, quantiles, rates, rolling windows, arbitrary
-queries, text extraction, and exemplar-based attribution are not supported.
-An OTel span event or named log record needs no Flaggo event declaration.
+Sums/counters, histograms, quantiles, rates, rolling windows, arbitrary queries,
+text extraction and exemplar-based attribution are unsupported. A span event
+or named log needs no Flaggo event declaration. Possible future evidence views
+do not advertise these operations as current capabilities.
 
 ## Freshness and ambiguity
 
-Timestamps retain their original unsigned nanoseconds as decimal strings.
-Freshness is inclusive: `0 <= evaluationTime - sourceTime <= maxAgeSeconds`.
-Missing/invalid source times are not replaced with ingestion time. Future
-observations and clock regression fail freshness. Duration must be a positive
-integer no larger than `922337203685` seconds.
+Source timestamps retain unsigned nanoseconds as decimal strings. Freshness
+is inclusive: `0 <= evaluationTime - sourceTime <= maxAgeSeconds`. Missing
+source time is not replaced by arrival time. Future observations and clock
+regression fail freshness. The declared maximum age is a positive integer no
+larger than `922337203685` seconds.
 
-Exact redelivery is idempotent; out-of-order data cannot overwrite a newer
-value or refresh its age. Conflicting values at the same latest timestamp
-are ambiguous. Multiple fresh Gauge streams for one binding target are also
-ambiguous: no averaging or last-writer-wins selection occurs. Narrow selectors
-or target dimensions to select a single series. A newer identifiable invalid
-observation invalidates the previous good value.
+Exact redelivery is idempotent and older data cannot replace newer values or
+refresh age. Conflicting latest values are ambiguous. Multiple fresh Gauge
+streams for one binding target are ambiguous, without averaging or
+last-writer-wins selection. Narrow selectors or target dimensions to one
+series. Identifiable invalid newer observations invalidate last-good values.
 
-Span/log latest means the latest matching **received** record, not necessarily
-the latest event that occurred in the application.
+Metric stream identity preserves native attribute types and disregards
+attribute-map order. Span/log latest means the latest matching received
+record, not necessarily the latest event that occurred.
 
-## Scope, materialization, and failure
+## Scope, persistence and failure
 
-Hosts derive tenant/application/environment from authenticated claims.
-Resource attributes and client JSON cannot supply tenant authority. Frames
-are partitioned by that scope, exact definition identity, binding, and target;
-new revisions do not inherit older frames implicitly.
+Authenticated claims supply tenant/application/environment. Resource
+attributes are metadata, not authorization. Current frames partition scope,
+exact definition identity, binding and target; new revisions do not inherit
+older frames implicitly.
 
-Ingestion pins approved, non-retired bindings. It validates and durably
-publishes a bounded immutable generation before acknowledging accepted data.
-Runtime reads pin one generation and one evaluation time; they do not scan
-raw records, aggregate, wait for exports, or independently refresh each input.
+Ingestion pins approved non-retired bindings and commits a bounded immutable
+generation before acknowledging acceptance. Runtime input resolution pins one
+generation and evaluation time for the full batch, with no raw scans, export
+waits or per-operand refresh.
 
-The local store holds one writer lease and uses verified committed-file
-snapshots. Restart verifies the committed generation. Corrupt or uncertain
-publication fails closed until a verified reload. Capacity failures do not
+The local input store holds one writer lease and uses verified committed-file
+publication. Restart validates the generation. Corruption or uncertain
+publication invalidates reads until verified reload. Capacity failure cannot
 evict fresh required inputs or acknowledge uncommitted work.
 
-Missing, stale, future, ambiguous, invalid, or unavailable required evidence
-returns `503 required-evidence-unavailable`, with a binding-specific reason
-and `clientFallback.eligible: false`. There is no inferred default. A
-request-only decision with no evidence-dependent policy reads neither evidence
-port. Numeric inference reports `confidence: null`.
+Required missing, stale, future, ambiguous, invalid or unavailable evidence
+returns `503 required-evidence-unavailable` with binding-specific diagnostics
+and `clientFallback.eligible: false`. Request-only decisions without
+evidence-dependent constraints read neither evidence port. Deterministic
+numeric execution returns `confidence: null`.
 
-## Sampling and collection
+## Collection and sampling
 
-Trace head sampling happens in the application SDK when a span starts;
-Collector tail sampling, when configured by the application, selects after
-receiving spans and may need trace affinity. Export batching, filtering,
-buffer limits, and lost delivery can further reduce observations.
+Trace head sampling happens in application SDKs at span creation. Collector
+tail sampling operates on received spans and may require trace affinity.
+Batching, filtering, buffer limits and delivery loss can reduce observations.
+Collector fan-out cannot recover records dropped upstream.
 
-Metrics normally aggregate measurements into exported points and are not
-controlled by trace sampling. Logs have their own filtering/delivery behavior;
-retaining a log or a sampled span does not certify population completeness.
-Collector pipeline placement determines whether Flaggo receives a filtered or
-less-filtered branch. Keep existing backends instead of replacing them.
+Metrics aggregate measurements into exported points independently of trace
+sampling. Logs have independent filtering/delivery behavior. Keeping a log or
+sampled span does not prove population completeness. Applications choose
+Collector routing and retain their existing backend exports.
 
-This slice accepts only observed coverage. Trace flags and available IDs are
-provenance, not evidence of unbiased sampling, complete counts, statistical
-confidence, or model quality.
+This slice accepts observed-only coverage. Flags and IDs are provenance, not
+proof of unbiased sampling, complete counts, statistical confidence or model
+quality.
 
-## Exposure and outcomes
+## Decision, exposure and outcome
 
 ```text
-apply returned value -> explicit confirmation -> committed exposure
+Decision Service returns a durably recorded value
+  -> application applies it -> explicit confirmation -> committed exposure
   -> attach confirmed attributes to an existing span/log
-  -> verified outcome binding
+  -> OTel Ingestion validates the outcome binding and confirmation
 ```
 
-Confirmation is an operational write, never a sampled event. A binding that
-requires confirmed attribution resolves `flaggo.exposure.id` through the
-state-owned confirmed-exposure reader and checks authenticated scope, exact
-definition identity, and the resolved target. Unused receipts, pending
-confirmations, foreign identities, and mere trace/baggage correlation are not
-proof of exposure. Gauge/exemplar attribution is rejected.
+Confirmation is operational and idempotent, never sampled telemetry.
+Attribution checks authenticated scope, completed confirmation, exact
+definition/revision/digest and target. A pending receipt, audit append alone,
+matching trace or client claim is insufficient. Gauge/exemplar attribution is
+rejected.
 
 Confirmed-exposure bindings are outcome/objective evidence, not required
-runtime input sources. Manifest validation rejects that circular dependency:
-the first decision cannot require its own already-confirmed exposure.
-Runtime evidence inputs require `attribution.kind: none`; no implicit initial
-value or weakened exposure identity is used to initialize them.
+runtime input sources. Validation rejects a circular first-decision
+prerequisite. Required input bindings use `attribution.kind: none`.
 
-The audit and exposure snapshot preserve caller inputs, resolved inputs, and
-per-input provenance: binding, generation, source time/fingerprint,
-materialization time, observed coverage, trace/span IDs and flags where
-available, verified exposure ID, and the resolved evidence target with its
-resolution source and original claim. Evidence-target provenance is retained
-even when state resolution uses a different target or fallback chain.
-Confirmation cannot replace that vector.
-Retained decide retries return the original result even after telemetry changes.
+Decision and exposure snapshots retain caller values, resolved values and
+per-input binding, generation, source timestamp/fingerprint, materialization
+time, coverage, available trace/span/flags/exposure references, and resolved
+evidence target with its resolution source/claim. The target remains recorded
+even outside the state fallback chain. Confirmation cannot replace this vector;
+retained decide retries do not re-read changed telemetry.
 
-## Integration
+The current confirmation lookup is in-memory. Previously validated durable
+frames, including their exact redelivery, retain provenance after restart;
+new references to lost confirmations fail closed. #49 owns consolidation of
+record/exposure ownership under Evidence Store. This slice does not claim a
+general persisted observation log, separate Outcome table, or query service.
 
-See [telemetry/evidence design](../design/telemetry-evidence/README.md) for
-transport limits, authorization, persistence, and recovery, and
-[the stock Collector example](../../examples/otel-evidence/README.md) for a
-complete cloud-free SDK-to-Collector-to-Flaggo flow.
+## Audit and explanation
+
+Audit is the invariant that lifecycle and runtime outcomes are reconstructable,
+not a standalone service. Explanation projects stored definition/target,
+inputs, selected authority, constraints, fallback, value and timestamp. It
+cannot invent missing provenance or reinterpret authority.
+
+## Related documents
+
+- [Architecture overview](OVERVIEW.md)
+- [Decision definition](DECISION_DEFINITION.md)
+- [Runtime execution](RUNTIME_EXECUTION.md)
+- [OTel Ingestion](../design/otel-ingestion/README.md)
+- [Evidence Store](../design/evidence-store/README.md)
+- [Async Analysis Pipeline](../design/async-analysis/README.md)
+- [Stock Collector integration](../../examples/otel-evidence/README.md)

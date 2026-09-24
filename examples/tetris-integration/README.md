@@ -1,5 +1,13 @@
 # Tetris Phase 3 Local Integration
 
+The manifest-first client and ordinary application OTel path are implemented.
+This harness explicitly publishes/approves definitions, then provisions
+receipt-bound local state. #49 aligns executable service/store terminology;
+#40 replaces that local authority bootstrap with manifest initial authority
+and activation-ready receipts; #41 verifies the final integrated path.
+The current fixture and Audit-named inspection are not parallel public
+contracts or compatibility paths.
+
 This example is the trusted, backend-only integration boundary for
 `tetris.dropInterval`. It does not contain frontend game behavior.
 

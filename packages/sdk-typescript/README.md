@@ -2,7 +2,13 @@
 
 `@flaggo/sdk` owns typed decision calls, exact catalog/receipt binding,
 availability fallback, and explicit exposure confirmation. It does not own
-telemetry instrumentation, collection, approval, strategy selection, or policy.
+telemetry instrumentation, collection, approval, strategy selection, or
+server-side constraint evaluation.
+
+The manifest-first client is implemented. #49 aligns executable server
+boundaries and current Policy/Audit-named fields; #40 adds initial-authority
+publication and activation-ready receipts. No obsolete producer or extraction
+API is retained for that future work.
 
 ## Author and compile
 

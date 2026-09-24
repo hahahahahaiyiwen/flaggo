@@ -1,7 +1,10 @@
 # Registry Module
 
-Owns manifest definitions, evidence bindings, semantic identity, compatibility,
-registration receipts, and approval snapshots.
+This current internal library implements Contract Service and Contract Store
+capabilities. It is not a separate first-class server component.
+
+It owns manifest definitions, evidence bindings, semantic identity, compatibility,
+registration receipts, and approval snapshots behind service-owned ports.
 
 The module exposes async ports for validation and immutable lookup. It must
 recompute canonical digests, reject invalid or conflicting semantic identity, and
@@ -55,9 +58,9 @@ the same key with a different bundle remains a conflict. Each approval captures
 its active-definition baseline;
 approval fails with a conflict if another approval changes that baseline first.
 Approval and rejection are replay-safe terminal transitions; expiry and
-opposite-terminal operations fail explicitly. Reference policies are rejected
-until a policy-resolution adapter is available rather than being activated
-without enforcement.
+opposite-terminal operations fail explicitly. The current schema's reference-policy
+shape is rejected rather than activated without enforcement; #49 owns its
+removal in favor of definition-owned constraints.
 Runtime lookup continues to require the complete application, environment,
 decision key, definition ID, and revision tuple.
 Inline cooldown constraints accept every finite nonnegative value preserved by

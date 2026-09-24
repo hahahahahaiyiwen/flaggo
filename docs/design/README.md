@@ -1,52 +1,55 @@
-# Flaggo component design index
+# Flaggo design index
 
-This folder contains focused designs for Flaggo system components and exact
-contract boundaries.
+Detailed designs follow the logical server boundaries defined by the
+[architecture overview](../architecture/OVERVIEW.md). A boundary is first-class
+only when it owns a domain or external-system contract.
 
-Canonical context:
+## External boundaries
 
-- [Documentation home](../README.md)
-- [Manifesto](../MANIFESTO.md)
-- [Architecture overview](../architecture/OVERVIEW.md)
-- [Decision definition](../architecture/DECISION_DEFINITION.md)
-- [Evidence](../architecture/EVIDENCE.md)
-- [Authority](../architecture/AUTHORITY.md)
-- [Runtime execution](../architecture/RUNTIME_EXECUTION.md)
-- [Tetris scenario](../scenarios/TETRIS.md)
-- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
-- [Phase 1 API contract proposal](API_CONTRACT_PROPOSAL.md)
-- [Phase 3 Tetris integration](tetris-integration/README.md)
-- [Shared contracts](shared-contracts/README.md)
+| Boundary | Design |
+| --- | --- |
+| Client SDK | [Client library](client-library/README.md) |
+| Application telemetry pipeline | Application-owned OpenTelemetry APIs, providers, exporters, and Collector configuration; see [OTel Ingestion](otel-ingestion/README.md) for the Flaggo ingress boundary. |
 
-## Component folders
+## Server services and workers
 
-Each component in the
-[architecture overview](../architecture/OVERVIEW.md#system-components) has
-exactly one folder:
+| Boundary | Responsibility | Design |
+| --- | --- | --- |
+| Contract Service | Definition lifecycle, approval, readiness, and authority activation orchestration. | [Contract Service](contract-service/README.md) |
+| Decision Service | Online decision and exposure APIs, deterministic execution, constraints, fallback, and durable record append. | [Decision Service](decision-service/README.md) |
+| OTel Ingestion | OTLP intake, binding validation, normalization, observation append, and confirmed-exposure outcome attribution. | [OTel Ingestion](otel-ingestion/README.md) |
+| Async Analysis Pipeline | Offline candidate production using contracts, evidence, and current state. | [Async Analysis Pipeline](async-analysis/README.md) |
 
-| # | High-level component | Design folder | Purpose |
-|---|---|---|---|
-| 1 | Client library | [client-library](client-library/README.md) | Manifest compilation, generated typing, separate publication, key-based decisions, and confirmation. |
-| 2 | Decision API service | [decision-api](decision-api/README.md) | Runtime service API that evaluates definitions, governed state, live inputs, policy, and optional evidence. |
-| 3 | Telemetry and evidence service | [telemetry-evidence](telemetry-evidence/README.md) | Native OTel ingestion, latest-value materialization, typed input snapshots, and provenance. |
-| 4 | Contract and registry service | [contract-registry](contract-registry/README.md) | Manifest validation, immutable definition identity, exact approval, and input/evidence projections. |
-| 5 | Policy service | [policy](policy/README.md) | Deterministic safety gate for action-space, runtime, authority, and conditional evidence constraints. |
-| 6 | State service | [state](state/README.md) | Active authority, state identity/generation, activation lineage, CAS, replay, and runtime projection. |
-| 7 | Decision reasoning engine | [reasoning-engine](reasoning-engine/README.md) | Bounded runtime strategy execution plus optional future proposal generation. |
-| 8 | Audit and explanation service | [audit-explanation](audit-explanation/README.md) | Decision audit records, evidence lineage, policy outcomes, and explanations. |
-| 9 | Operator console | [operator-console](operator-console/README.md) | Current audit/state visibility seam and future human governance surface; override, pause, and rollback require later contracts. |
+## Durable stores
+
+| Boundary | Responsibility | Design |
+| --- | --- | --- |
+| Contract Store | Definitions, revisions, approvals, and readiness metadata. | Owned by [Contract Service](contract-service/README.md#contract-store) |
+| State Store | Stable authority heads, immutable state, CAS, replay, and lineage. | [State Store](state-store/README.md) |
+| Evidence Store | Observations, derived evidence, decisions, exposures, and outcomes. | [Evidence Store](evidence-store/README.md) |
+
+## Embedded capabilities
+
+These are important behaviors, but not independent server components:
+
+- decision constraints are declared in definitions, validated by Contract
+  Service, and evaluated by Decision Service;
+- bounded numeric-rule execution runs inside Decision Service;
+- durable decision recording is part of Decision Service success;
+- explanation is a deterministic projection of stored decision facts; and
+- an operator console is a future client of service/query APIs.
 
 ## Cross-cutting contracts
 
-[shared-contracts](shared-contracts/README.md) contains provider-neutral
-cross-component domain, data, and wire-contract shapes. It does not own
-module service or infrastructure ports, which remain beside their consumers.
-It is a cross-cutting contract package, not an additional system component.
+[Shared contracts](shared-contracts/README.md) owns provider-neutral data and
+wire shapes. Module service and infrastructure ports stay beside their
+consumers.
 
-The [Phase 1 API Contract Proposal](API_CONTRACT_PROPOSAL.md) maps those domain contracts to the runtime, exposure, management, and health wire boundaries. Its accepted executable projection lives under [`contracts/`](../../contracts/README.md). Future wire changes follow the baseline's explicit compatibility and revision process.
+The [Phase 1 API contract proposal](API_CONTRACT_PROPOSAL.md) and executable
+[`contracts/`](../../contracts/README.md) describe current wire behavior.
 
-The [Phase 3 Tetris Integration](tetris-integration/README.md) composes these
-component boundaries into the cloud-free hero scenario using authenticated
+The [Tetris integration](tetris-integration/README.md) composes these
+service/store boundaries into the cloud-free hero scenario using authenticated
 manifest publication and trusted local governed state without moving
 management authority into the browser. Initial-authority/activation-ready
 publication remains the #40/#41 extension.

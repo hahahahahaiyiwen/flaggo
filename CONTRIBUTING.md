@@ -69,7 +69,7 @@ publishing temporary coordination packages.
 | `examples/` | Small integrations and links to external showcase applications |
 | `deploy/` | Container and local deployment assets |
 | `tools/` | Repository development and automation commands |
-| `docs/` | Product, architecture, scenario, and component design sources |
+| `docs/` | Product, architecture, scenario, and service/store design sources |
 
 ### Dependency rules
 
@@ -98,28 +98,32 @@ module-owned ports:
 
 These interfaces are owned beside the behavior that consumes them rather than
 collected in `packages/shared-contracts`, which remains a data-contract
-package. Domain capabilities keep their own ports, including registry
+package. Current domain libraries keep their own ports, including contract
 read/lifecycle ports, `IStateStore`, `IEvidenceProvider`, `IPolicyEvaluator`,
-and `IAuditSink`.
+and `IAuditSink`. Interface names describe the current executable code; logical
+ownership follows Contract Service, Decision Service, State Store, and Evidence
+Store.
 
 | Concern | Local implementation | Optional cloud adapter |
 | --- | --- | --- |
 | Configuration | Environment variables or explicit local files | Provider configuration service |
 | Secrets | Environment variables or local development secret store | Provider secret manager |
-| Registry and state | In-memory or SQLite-compatible store | Managed SQL, document, or cache service |
-| Evidence | In-process aggregation or local telemetry pipeline | OpenTelemetry-backed metrics or analytics store |
-| Audit | Durable file or SQLite-compatible store; memory/console only in tests or non-ready debugging | Object storage, event stream, or managed logging |
+| Contract and state stores | In-memory or local durable store | Managed SQL, document, or cache service |
+| Evidence Store | In-process aggregation or local telemetry pipeline | OpenTelemetry-backed metrics or analytics store |
+| Decision/exposure records | Durable local Evidence Store adapter; memory only in tests | Object storage, event stream, or managed analytics store |
 
-Public APIs, bundles, policies, strategies, and audit schemas must remain usable
-without a cloud account. New providers add adapters behind existing ports
+Public APIs, bundles, decision constraints, strategies, and durable record
+schemas must remain usable without a cloud account. New providers add adapters
+behind existing ports
 instead of changing core contracts.
 
 ### Initial implementation shape
 
-The first server implementation remains modular, with separate control-plane
-and data-plane hosts. Registry, policy, state, evidence, reasoning, and audit
-stay explicit modules behind owned ports. Local adapters may use simple
-persistence; separate services are justified only by operational requirements.
+The target server architecture has Contract Service, Decision Service, OTel
+Ingestion, Async Analysis Pipeline, Contract Store, State Store, and Evidence
+Store. Current registry, policy, state, evidence, decisioning/reasoning, and
+audit assemblies remain internal libraries mapped into those logical
+boundaries. Assembly count does not define product components or deployments.
 
 ### Parallel contract implementation
 
@@ -129,10 +133,11 @@ catalogs, canonical normalization/digesting, separate trusted publication,
 plain request serialization, runtime identity propagation, exposure
 confirmation, and configured availability fallback. Application OTel
 instrumentation and Collector pipelines remain application-owned.
-The service track owns runtime and management
-endpoints, contract-integrity verification, target and input resolution,
-governed state and strategy execution, policy, durable audit, exposure and
-attribution linkage, local adapters, and health.
+Trusted deployment tooling, not the runtime client, publishes manifests. The service
+track owns management/runtime endpoints, contract-integrity verification,
+target and input resolution, authority and strategy execution, decision
+constraints, durable decision records, exposure/outcome attribution, local
+adapters, and health.
 
 Both tracks test against the same OpenAPI documents, schemas, fixtures, and
 conformance suites. Each implementation branch records the contract revision
@@ -147,12 +152,15 @@ Extensions must use the owning seam instead of bypassing it:
 - add a result primitive only through an accepted shared and wire contract;
 - add strategy behavior through the strategy contract and executor;
 - add input projections through the evidence module's `IInputTelemetrySink`
-  and `IInputEvidenceReader`; keep policy quality behind `IEvidenceProvider`;
-- add storage through registry lifecycle/read ports or `IStateStore`;
-- add policy rules through `IPolicyEvaluator`;
+  and `IInputEvidenceReader`; keep constraint-quality evidence behind `IEvidenceProvider`;
+- add storage through Contract Store lifecycle/read ports, `IStateStore`, or
+  Evidence Store append/query ports;
+- add decision constraints through the current `IPolicyEvaluator` seam until
+  issue #49 completes executable server alignment;
 - add asynchronous reasoning as an authorized proposal producer feeding the
-  governed-state activation boundary;
-- add telemetry transports at the host adapter, not the runtime SDK; and
+  Contract Service activation boundary;
+- add telemetry transports through the application SDK/OTel pipeline and OTel
+  Ingestion host adapter, not the runtime decision client; and
 - add cloud providers through adapters behind existing ports.
 
 ### When to split a repository

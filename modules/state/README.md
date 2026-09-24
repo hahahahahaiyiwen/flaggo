@@ -1,7 +1,11 @@
 # State Module
 
-Owns governed decision state, decide idempotency, and exposure confirmation
-state.
+This current internal library implements the State Store boundary. It is not a
+separate server component.
+
+The current implementation owns governed decision state, decide idempotency
+and exposure confirmation state. In the logical architecture, confirmed
+exposure records belong to Evidence Store; #49 owns that executable alignment.
 
 Governed authority is ordered at the stable application, environment,
 decision-key, and control-target address. Each immutable state remains bound to
@@ -68,8 +72,8 @@ validated against the registry-owned runtime definition projection. State
 adapters must match only those exact targets and must never invent broader
 fallback or reinterpret target hierarchy semantics.
 
-The module also defines in-memory async ports for 24-hour decide idempotency
-and exposure confirmation. Concurrent requests with the same key and request
+The module also currently defines in-memory Decision Service ports for 24-hour
+decide idempotency and exposure confirmation. Concurrent requests with the same key and request
 fingerprint coalesce to one decision result; reusing a key for a different
 request conflicts. Exposure confirmation accepts the same observation
 repeatedly and conflicts if a later confirmation changes it. Confirmation is

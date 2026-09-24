@@ -3,26 +3,19 @@
 ## Purpose
 
 Decision authority is the control-plane boundary that turns a bounded candidate
-into durable behavior that runtime may consume.
+into immutable state that Decision Service may consume.
 
-It answers:
-
-> How does declared or proposed behavior become active, remain ordered under
-> concurrency, and become superseded?
-
-Authority does not select a value for an individual request. Runtime execution
-does not approve or mutate authority.
+Contract Service owns approval and activation orchestration. State Store owns
+atomic authority persistence.
 
 ## Boundary
 
-| Capability | Owns | Does not own |
+| Boundary | Owns | Cannot do |
 | --- | --- | --- |
-| Candidate or proposal producer | A bounded value or strategy plus rationale. | Approval or active state. |
-| Authority workflow | Authentication, exact-snapshot approval, activation, concurrency, replay, supersession, readiness, and lifecycle audit. | Per-request value selection. |
-| Runtime execution | Applying compatible approved state to one request. | Candidate generation, approval, or state mutation. |
-
-Authority always comes from authenticated governance and activation, never from
-the candidate source.
+| Candidate producer | Bounded value or rule plus rationale. | Approve or activate itself. |
+| Contract Service | Authentication, exact approval, constraint validation, baseline capture, activation orchestration, and readiness. | Select one request-time value. |
+| State Store | Stable heads, CAS, immutable state, replay, lineage, and atomic publication. | Approve candidates. |
+| Decision Service | Read compatible active state and execute it. | Mutate authority. |
 
 ## Bundle-approved authority
 
@@ -30,77 +23,39 @@ The following is the accepted Phase 3 extension owned by #40. The current
 manifest-first v2 contract publishes definitions but does not yet declare
 initial authority or claim ready-after-activation receipts. Local examples
 provision state through trusted fixtures. The activation core remains the
-boundary this extension will use; it does not invoke decision intelligence:
-
+boundary this extension will use after #49's server alignment; it does not
+invoke decision intelligence:
 ```text
-bundle apply
-  -> validate definition and initial authority candidate
-  -> create exact-snapshot approval request
-  -> authenticated approval
-  -> durably allocate server-derived identities
-  -> capture expected stable-head baseline
-  -> expected-baseline compare-and-swap
-  -> publish immutable GovernedDecisionState
-  -> return ready registration receipt
+definition + initial authority candidate
+  -> Contract Service validation
+  -> authenticated exact-snapshot approval
+  -> durable server-derived identities
+  -> captured stable-head baseline
+  -> State Store compare-and-swap
+  -> ready runtime binding
 ```
 
 The bundle cannot provide trusted approval, proposal, activation, state, or
-numeric-rule strategy identities. For each definition, the server derives
-proposal and activation identities from the application, environment, approval
-request, decision key, contract digest, and canonical candidate. Numeric-rule
-activation also derives its strategy identity; active-value activation has no
-strategy identity.
+numeric-rule strategy identities.
 
-The initial authority candidate participates in semantic identity. Changing its
-control target, kind, value or rule, or rationale requires a new definition
-revision and approval.
+Changing target, kind, value/rule, or rationale creates a semantic change that
+requires a new definition revision and approval.
 
-### Replay and interrupted activation
+## Proposal-managed authority
 
-Exact retry reuses the stored approval, identities, expected baseline, state
-ID, generation, and numeric-rule strategy ID. It never substitutes the
-authority head visible at retry time.
-
-An interrupted or outcome-unknown activation resumes with the same identities.
-A stale baseline, changed candidate, or permanent activation conflict remains
-non-ready and cannot overwrite newer authority. Reapplying unchanged accepted
-content may create one linked authority-reauthorization approval for only the
-failed authorities; concurrent exact reapplies must converge on that successor.
-
-### Registration readiness
-
-Approval and activation are separate events. A bundle-approved definition with
-required initial authority is not ready until activation succeeds. The ready
-receipt exposes the accepted runtime identity and the derived proposal,
-activation, state, generation, target, and authority-kind references.
-
-## Proposal-managed authority (Phase 4)
-
-Phase 4 may add independently produced candidates:
+Future Async Analysis Pipeline work may submit a bounded candidate:
 
 ```text
-definition + evidence + current state when present
-  -> authorized producer
-  -> bounded DecisionProposal
-  -> governance
-  -> initial or replacement activation
-  -> GovernedDecisionState
+contracts + evidence + current state
+  -> Async Analysis Pipeline candidate
+  -> Contract Service governance
+  -> State Store activation
 ```
 
-The producer may be decision intelligence, an operator, or other authorized
-automation. It cannot write runtime authority directly or supply trusted
-activation, state, approval, or strategy identities.
+The pipeline may be agentic or long-running. It never writes the active head
+directly. Issue #25 owns the first proposal-managed contract.
 
-The first proposal-managed activation uses the shared no-state baseline:
-generation `0`, no `stateId`, and no predecessor on the resulting state. Later
-activations compare against the captured current head and create replacement
-state.
-
-This section is an extension boundary, not a proposal DTO, analysis workflow,
-governance enum, experiment model, rollout model, or operator contract. GitHub
-issue #25 owns those details.
-
-## Shared activation model
+## Stable activation model
 
 The stable authority address is:
 
@@ -108,106 +63,70 @@ The stable authority address is:
 application + environment + decision key + control target
 ```
 
-It identifies one ordered authority head across semantic revisions.
-
-| Concept | Invariant |
+| Invariant | Requirement |
 | --- | --- |
-| Expected baseline | Approval preparation captures and stores the exact head that activation expects. |
-| Compare-and-swap | Activation succeeds only when the stable head still matches that captured baseline. |
-| Immutable state | Successful activation creates one exact-definition state record. |
-| Predecessor | Replacement state names the state it superseded; first authority has no predecessor. |
-| Generation | Successful publication advances the stable head monotonically. |
-| Replay | Exact retry returns the original publication rather than allocating another state. |
-| Atomic publication | Runtime never observes a partially published state/head pair. |
+| Expected baseline | Approval captures the exact head activation expects. |
+| Compare-and-swap | Activation succeeds only while that baseline still matches. |
+| Immutable state | Success creates one exact-definition state record. |
+| Predecessor | Replacement names the state it supersedes. |
+| Generation | Successful publication advances monotonically. |
+| Replay | Exact retry returns the original state and identities. |
+| Atomic publication | Runtime sees the complete previous or replacement state. |
 
-A well-formed stale activation conflicts. It does not create another revision
-namespace or bypass the stable head.
+Current state contains exactly one authority kind:
 
-## Current authority kinds
+- `active-value`: one approved contract-valid value, no strategy identity;
+- `numeric-rule`: one approved deterministic rule with a derived strategy
+  identity.
 
-Current governed state contains exactly one authority kind:
+Both kinds share validation, CAS, replay, lineage, and publication.
 
-| Kind | State payload | Ready receipt |
-| --- | --- | --- |
-| `active-value` | One approved contract-valid value. | Omits `strategyId`. |
-| `numeric-rule` | One approved deterministic weighted threshold rule. | Requires the derived `strategyId`. |
+## Decision constraints
 
-Both kinds share validation, captured-baseline activation, replay, stale-head
-conflict, predecessor lineage, and atomic publication.
+Contract Service validates candidates against the exact definition, target
+hierarchy, output contract, fallback, and declared decision constraints.
 
-Governed fallback is a runtime outcome, not a persisted authority kind.
-Experiment, rollout, fallback-only, and override authority remain future
-concepts.
+Constraints may narrow authority but never widen it. There is no separate
+Policy service or alternate approval path.
 
-## Current lifecycle
+## Lifecycle records
 
-```text
-bundle candidate:
-  declared -> approval-pending -> authorized -> activated
+Contract Store records the exact approved snapshot, actor, comment, expected
+baseline, and readiness result. State Store records proposal, activation,
+state, predecessor, generation, and strategy identities.
 
-GovernedDecisionState:
-  active -> superseded
-```
-
-Expiry, completion, rollback, pause, override, and broader public transition
-history require separately approved contracts. Rollback, when designed, should
-activate replacement or previous known-safe authority rather than become an
-implicit payload kind.
-
-## Authorization, policy, and audit
-
-Bundle approval authorizes the exact immutable snapshot. The approval actor and
-comment are persisted before state activation. The server validates the
-candidate against the exact definition, target hierarchy, output contract,
-fallback, and applicable policy.
-
-Effective policy is the intersection of definition constraints, environment
-policy, and any separately approved operator controls. A less-trusted layer may
-narrow behavior but cannot widen it.
-
-Lifecycle audit must reconstruct:
-
-- the exact definition identity and candidate;
-- authenticated approval and timestamp;
-- server-derived proposal, activation, state, and strategy identities;
-- expected baseline and stable authority address;
-- previous and replacement state IDs;
-- validation, policy, activation, retry, and conflict outcomes.
+Together these records reconstruct approval, activation, retry, conflict, and
+supersession without a separate Audit service.
 
 ## Runtime handoff
 
-Runtime consumes a read-only projection of compatible active state:
-
 ```text
-DecisionDefinition
+ready definition projection
   + runtime target and live inputs
-  + compatible GovernedDecisionState
-  + runtime policy
+  + compatible active state
+  + decision constraints
   -> RuntimeDecisionResult
 ```
 
-The authority source is intentionally irrelevant to runtime. Bundle-approved
-and future proposal-managed paths must produce the same current state shape or
-introduce a separately approved extension.
+The authority source is irrelevant to runtime. Bundle-approved and future
+proposal-managed candidates converge on the same state boundary.
 
 ## Design invariants
 
 1. Candidates never self-approve.
-2. The server derives trusted lifecycle and state identities.
-3. Approval and activation are distinct, durable events.
-4. One stable head orders authority across semantic revisions.
+2. Contract Service derives trusted lifecycle identities.
+3. Approval and activation are distinct durable events.
+4. One stable head orders authority across revisions.
 5. Activation uses the baseline captured during approval.
 6. Exact replay returns the original publication.
-7. Current state contains only `active-value` or `numeric-rule` authority.
-8. Runtime reads authority but cannot create it.
-9. Proposal-managed detail remains deferred to #25.
+7. Runtime reads authority but cannot create it.
+8. Async analysis submits candidates through Contract Service.
 
 ## Related documents
 
 - [Architecture overview](OVERVIEW.md)
 - [Decision definition](DECISION_DEFINITION.md)
-- [Evidence](EVIDENCE.md)
 - [Runtime execution](RUNTIME_EXECUTION.md)
-- [Tetris scenario](../scenarios/TETRIS.md)
-- [State component](../design/state/README.md)
-- [Contract and registry component](../design/contract-registry/README.md)
+- [Contract Service](../design/contract-service/README.md)
+- [State Store](../design/state-store/README.md)
+- [Async Analysis Pipeline](../design/async-analysis/README.md)

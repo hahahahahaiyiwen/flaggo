@@ -1,7 +1,10 @@
 # Reasoning Module
 
-Owns online decision orchestration over exact registered definitions,
-governed state, policy, evidence, strategy execution, and audit collaborators.
+This current internal library implements Decision Service orchestration:
+registered definitions, active state, decision constraints, bounded strategy
+execution, and durable Evidence Store collaborators. It is not a separate
+reasoning service.
+
 It depends only on constructor-injected module ports and returns shared domain
 contracts to the hosting application.
 
@@ -107,7 +110,13 @@ Confirmation, replay, and confirmed-attribution lookup enforce authenticated
 tenant as well as application/environment. Confirmations preserve the original
 resolved vector and cannot be replaced by sampled telemetry.
 
-Future proposal generation remains a separate approved boundary and cannot
-approve or activate state. Inputs and outputs use typed domain contracts.
+Future candidate selection and proposal generation across experiments,
+statistical methods, and approved AI-assisted strategies belongs to Async
+Analysis Pipeline, not this online service boundary.
+
+Async analysis produces candidates; it cannot approve or activate them.
+Candidates must pass through Contract Service. Inputs and outputs use typed
+domain contracts, and all evidence, state, and model collaborators are
+constructor-injected interfaces.
 
 Update this document when strategy execution or proposal semantics change.

@@ -1,12 +1,13 @@
 # Policy Module
 
-Owns effective-policy resolution and safety evaluation for proposed or runtime
-decisions.
+This current internal library implements decision-constraint evaluation for
+Contract Service and Decision Service. Policy is not a first-class product
+component or deployable service.
 
-Policy results are explicit domain types with stable reason codes. A blocked
-candidate cannot be returned as approved, and policy never performs rollout or
-storage operations directly. Collaborators are constructor-injected async
-ports.
+Constraint results use the current policy-named executable domain types with
+stable reason codes. A blocked candidate cannot be returned as approved, and
+constraint evaluation never performs activation or storage operations directly.
+Collaborators are constructor-injected async ports.
 
 ## Current implementation
 
@@ -22,5 +23,5 @@ seconds to persisted timestamps, so huge finite cooldowns cannot overflow. A
 future `LastChangedAt` fails closed as `cooldown_active`, including when the
 configured cooldown is zero.
 
-Update this document when policy composition, constraints, or fallback
-authority changes.
+Issue #49 owns executable type/module renaming. Update this document when
+constraint composition or fallback authority changes.
