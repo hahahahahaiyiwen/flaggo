@@ -7,6 +7,11 @@ baseline under [`contracts/`](../../contracts/README.md) encodes it and passes
 the conformance gate. Later behavior changes require an explicit contract
 revision with aligned schemas, OpenAPI, fixtures, and compatibility notes.
 
+This document retains current executable field examples where needed to
+describe the frozen Phase 1 API. The canonical target names are defined in the
+[Shared Contracts executable migration map](shared-contracts/README.md#executable-migration-map);
+issue #40 replaces those names atomically rather than supporting both.
+
 It does not introduce a second domain model. Canonical domain types remain owned by [Shared Contracts](shared-contracts/README.md); this document defines how those types cross HTTP and build/release boundaries.
 
 Roadmap note: the runtime decision and exposure endpoint shapes remain the
@@ -29,7 +34,7 @@ matching `Retry-After`/`retryAfterSeconds` metadata.
 
 ## Goals
 
-- Let TypeScript client and Decision API teams implement in parallel from one contract revision.
+- Let TypeScript client and Decision Service teams implement in parallel from one contract revision.
 - Keep the online decision call compact, deterministic, typed, and fail-closed.
 - Distinguish a governed server fallback from an SDK-local availability fallback.
 - Create exposure identity only after the application confirms that it applied a decision.
@@ -55,15 +60,20 @@ matching `Retry-After`/`retryAfterSeconds` metadata.
 
 ## Control plane, data plane, and application deployment
 
-Polari uses a cloud-service boundary:
+Flaggo uses a cloud-service boundary:
 
 | Boundary | Phase 1 behavior |
 | --- | --- |
-| Control plane | Definition-bundle validate/apply and immutable registry lifecycle. |
+| Contract Service | Definition-bundle validate/apply and immutable contract lifecycle. |
 | Data plane | Decide and exposure confirmation for exact registered identities. |
-| Application deployment | Developer-owned and independent from Polari. |
+| Application deployment | Developer-owned and independent from Flaggo. |
 
-For MVP, trusted application/bootstrap startup uses the control-plane API to atomically register the statically extracted bundle before enabling data-plane calls. Future clients may publish manually or integrate SDK/CLI tooling into CI/CD, GitOps, release pipelines, init/deployment hooks, verify-only startup, or registry-first workflows. Polari does not claim to block external code deployment.
+For MVP, trusted application/bootstrap startup uses Contract Service to
+atomically register the statically extracted bundle before enabling Decision
+Service calls. Future clients may publish manually or integrate SDK/CLI tooling
+into CI/CD, GitOps, release pipelines, init/deployment hooks, verify-only
+startup, or contract-first workflows. Flaggo does not claim to block external
+code deployment.
 
 Code deployed without a registered binding can still run. Startup registration may establish that binding; if it is skipped or fails, decision calls remain disabled. The data plane never registers from decide traffic, silently selects an older revision, or converts a contract/configuration error into local fallback.
 
@@ -74,9 +84,9 @@ Detailed developer UX: [Control Plane and Data Plane UX](client-library/CONTROL_
 | Concern | Authority |
 | --- | --- |
 | Domain types and invariants | [Shared Contracts](shared-contracts/README.md) |
-| HTTP behavior and orchestration | [Decision API](decision-api/README.md) |
+| Runtime HTTP behavior and orchestration | [Decision Service](decision-service/README.md) |
 | SDK authoring and result projection | [Client Library](client-library/README.md) |
-| Bundle lifecycle and compatibility | [Contract Registry](contract-registry/README.md) |
+| Bundle lifecycle and compatibility | [Contract Service](contract-service/README.md) |
 | Exposure and attribution semantics | [Evidence](../architecture/EVIDENCE.md) |
 | This phase's endpoint and artifact boundary | This proposal, until replaced by versioned OpenAPI/JSON Schema |
 
@@ -834,7 +844,10 @@ Readiness semantics:
 - Any required check that is not `up` produces `503` and `not-ready`.
 - Optional checks may be `degraded` or `down` while the endpoint returns `200 degraded`, but only when the runtime can still produce an audited governed fallback.
 - `200 ready` requires every check to be `up`.
-- The Phase 1 required checks are contract registry, decision state, policy evaluation, and durable audit. Evidence is globally optional: its loss always yields `200 degraded` readiness and never dynamically changes the check's `required` flag.
+- The Phase 1 required checks are Contract Store, State Store, decision
+  constraints, and durable Evidence Store record append. Evidence projections
+  are globally optional: their loss always yields `200 degraded` readiness and
+  never dynamically changes the check's `required` flag.
 - A ready data plane binds a durable audit sink. Successful audit completion means the record crossed that sink's durability boundary and survives process failure; console and in-memory sinks are limited to tests or explicitly non-ready debugging modes.
 - Evidence requirements are enforced per decide request. When an exact definition requires unavailable evidence, the server returns an audited governed fallback if its policy permits one; otherwise it returns `503 required-evidence-unavailable`. This request outcome does not change global readiness semantics.
 - Readiness performs no mutation and discloses only stable dependency names and coarse states. It never returns connection strings, exception text, hostnames, credentials, or detailed configuration.

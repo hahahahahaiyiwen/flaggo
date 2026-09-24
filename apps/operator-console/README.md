@@ -1,8 +1,10 @@
 # Operator Console
 
-The operator console is the human governance interface for inspection,
-approval, override, pause/resume, and rollback.
+The operator console is a future client application, not a first-class server
+component. It may provide human governance UX for inspection, approval,
+override, pause/resume, and rollback.
 
-It is a control-plane client and must not bypass management API authorization
-or mutate module storage directly. UI-specific models adapt from published
-contracts rather than becoming shared domain contracts.
+It calls Contract Service, Decision Service query surfaces, and store-backed
+read APIs. It must not bypass authorization or mutate storage directly.
+UI-specific models adapt from published contracts rather than becoming shared
+domain contracts.

@@ -3,16 +3,15 @@
 ## Purpose
 
 A decision definition is the versioned semantic contract for one Flaggo
-decision. It declares what may be decided, which target levels and signals
-matter, what "better" means, which safety and fallback rules constrain the
-system, and how authority may be supplied.
+decision. It declares targets, typed runtime inputs, output space, intent,
+deterministic constraints, fallback, and authority workflow.
 
-See the [architecture overview](OVERVIEW.md) for the system map. This document
-owns the detailed definition boundary.
+The canonical static source is a hand-authored manifest. A trusted
+deployment/control-plane client submits that manifest to Contract Service.
+Runtime application code references the registered decision by key and sends
+only live target, context, and input data.
 
-## Definition
-
-A decision definition belongs to a stable decision key.
+## Identity
 
 ```text
 decision key:
@@ -21,421 +20,287 @@ decision key:
 definition lineage:
   definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
 
-runtime revisions:
-  revision: rev_01JQ8Y8A1B2C3D4E5F6G7H8J9K
+runtime identity:
   revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
+  contractDigest: sha256:contract...
 ```
 
-The key identifies the developer-facing decision family. `definitionId` is an opaque registry lineage ID. Each approved semantic change creates an opaque runtime `revision` and canonical `contractDigest`; the full tuple is the immutable runtime identity.
+The decision key is the stable application-facing name. Contract Service
+assigns the opaque lineage ID and revision. The complete
+`{ definitionId, revision, contractDigest }` tuple is the immutable runtime
+identity.
 
-## What a decision definition owns
+## Definition-owned semantics
 
 | Part | Meaning | Tetris example |
 | --- | --- | --- |
-| Decision key | Stable application-facing decision family. | `tetris.dropInterval` |
-| Revision | Opaque registry-issued runtime revision; not semantic versioning or a metadata revision. | `rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3` |
-| Signal references | Role references to externally defined typed signal handles this decision may use for learning, validation, guardrails, objectives, and declared runtime inputs. | `boardPressureSignal`, `earlyLossRateSignal` |
-| Intent | Typed objective: natural-language product direction or metric-driven optimization over declared signals. | natural-language: challenging but playable; metric-objective: minimize early loss |
-| Inference | Runtime inference target, app-emitted metric inputs, and fallback order. | target `session`, inputs `boardPressure`, fallback `cohort -> global` |
-| Output contract | Result type, bounds, allowed values, step, default. | number, `200..1500`, step `50`, default `800` |
-| Safety/policy/guardrails | Hard constraints and operating limits. Evidence-backed constraints apply only when the active authority claims that evidence. | bounds, step, max delta |
-| Authority workflow | How approved state is initially supplied and which runtime mechanism it contains. | authenticated bundle approval of an `active-value` or `numeric-rule` candidate; Tetris uses `numeric-rule` |
-| Runtime context schema | Request-time facts the application must or may provide, including fields that identify target levels or metadata. | `sessionId`, `cohort`, `deviceType` |
+| Key | Stable decision family. | `tetris.dropInterval` |
+| Target hierarchy | Permitted resolution levels and order. | `session -> cohort -> global` |
+| Runtime inputs | Typed values resolved from declared request or authorized evidence sources. | board pressure, placement time, failures, level |
+| Signal references | Immutable observation/evidence identities. | early-loss rate, hard-drop rate |
+| Intent | Human or metric objective for async analysis. | reduce early loss while preserving challenge |
+| Action space | Output type, bounds, allowed values, step, and default. | number `200..1500`, step `50`, default `800` |
+| Constraints | Deterministic rules that may narrow but never widen authority. | fixed-default `max-delta = 50` |
+| Fallback | Governed value for an otherwise valid ready request. | `800ms` |
+| Lifecycle | Authority source and initial candidate where applicable. | bundle-approved numeric rule |
 
-## What it does not own
+The definition does not own telemetry history, evidence views, active state,
+decision records, exposures, outcomes, or app/build provenance.
 
-A decision definition does not own:
+## Canonical manifest
 
-- raw telemetry history,
-- signal schemas,
-- evidence snapshots,
-- app/build provenance,
-- approved active strategy or governed state,
-- active experiment variants or allocation,
-- rollout state,
-- concrete runtime decision results,
-- audit records.
+The manifest declares static semantics without runtime values:
 
-Those belong to [Evidence](EVIDENCE.md), [Authority](AUTHORITY.md),
-[Runtime execution](RUNTIME_EXECUTION.md), governed state, and the owning
-audit/explanation components.
-
-A bundle-approved definition may contain an initial authority candidate. That
-candidate participates in semantic identity, but it is not active authority
-until an authenticated control-plane approval and state activation succeed.
-
-## Signal ownership
-
-Signals are defined once near their producer. The signal key is the immutable semantic identity for schema, type, units, range, and meaning:
-
-```ts
-// gameplaySignalHandles.ts
-export const boardPressureSignal = flaggo.metric.number({
-  key: "tetris.boardPressure",
-  range: [0, 1]
-});
-
-export const recentPlacementTimeMsSignal = flaggo.metric.number({
-  key: "tetris.recentPlacementTimeMs",
-  unit: "ms"
-});
-
-export const recoveryFailuresSignal = flaggo.metric.number({
-  key: "tetris.recoveryFailures"
-});
-
-export const currentLevelSignal = flaggo.metric.number({
-  key: "tetris.currentLevel"
-});
-
-export const piecePlacedEvent = flaggo.event({
-  key: "tetris.piecePlaced",
-  fields: {
-    placementTimeMs: flaggo.number({ unit: "ms" }),
-    hardDrop: flaggo.boolean()
-  }
-});
-
-export const sessionEndedEvent = flaggo.event({
-  key: "tetris.sessionEnded",
-  fields: {
-    endReason: flaggo.string(),
-    durationSeconds: flaggo.number({ unit: "s" })
-  }
-});
-
-export const earlyLossRateSignal = flaggo.metric.derived({
-  key: "tetris.earlyLossRate24h",
-  type: "number",
-  from: sessionEndedEvent,
-  aggregation: "rate(endReason == 'early_loss')",
-  window: "24h"
-});
-
-export const hardDropRateSignal = flaggo.metric.derived({
-  key: "tetris.hardDropRate24h",
-  type: "number",
-  from: piecePlacedEvent,
-  aggregation: "rate(hardDrop == true)",
-  window: "24h"
-});
-```
-
-Emission imports and uses the typed handle. It should not redefine schemas inside every `emit(...)` call:
-
-```ts
-boardPressureSignal.emit(boardPressure);
-
-piecePlacedEvent.emit({
-  placementTimeMs,
-  hardDrop: placementMethod === "hard_drop"
-});
-```
-
-Any signal schema or semantic change requires a new key, such as `tetris.boardPressurePercent`. A signal key is immutable; schema digests can detect conflicting duplicate definitions under the same key, but a changed digest must not silently mutate that key's meaning. There is no separate public signal name or revision.
-
-A derived signal's aggregation and window are part of that immutable meaning. For example, `tetris.earlyLossRate24h` always means the declared 24-hour rate. Changing its aggregation or window requires a new key such as `tetris.earlyLossRate7d`; an evidence view must not override the fixed window of a derived signal. Raw events and app-emitted metrics may still be viewed over decision-specific windows.
-
-## SDK-facing shape
-
-The simple code-first UX should hide most contract machinery:
-
-```ts
-const dropIntervalDecision = await flaggo.tune.number("tetris.dropInterval", {
-  targetHierarchy: ["session", "user", "cohort", "global"],
-  signals: {
-    evidence: [
-      piecePlacedEvent,
-      sessionEndedEvent,
-      earlyLossRateSignal,
-      hardDropRateSignal
-    ]
-  },
-  intent: {
-    type: "metric-objective",
-    primary: { signal: earlyLossRateSignal, direction: "minimize" },
-    secondary: [
-      { signal: hardDropRateSignal, direction: "target", target: 0.45 },
-      { signal: recentPlacementTimeMsSignal, direction: "minimize" }
-    ],
-    rationale: "Keep gameplay challenging but playable while reducing early frustration."
-  },
-  inference: {
-    target: "session",
-    inputs: [
-      boardPressureSignal.input(boardPressure),
-      recentPlacementTimeMsSignal.input(recentPlacementTimeMs),
-      recoveryFailuresSignal.input(recoveryFailures),
-      currentLevelSignal.input(game.level)
-    ],
-    fallbackOrder: ["cohort", "global"]
-  },
-  output: {
-    default: 800,
-    range: [200, 1500],
-    step: 50
-  },
-  lifecycle: {
-    authorityMode: "bundle-approved",
-    initialAuthority: {
-      controlTarget: { type: "cohort", id: "new_players" },
-      kind: "numeric-rule",
-      rule: {
-        threshold: 0.55,
-        valueAtOrAbove: 850,
-        valueBelow: 750,
-        weightedInputs: [
-          {
-            signal: boardPressureSignal,
-            minimum: 0,
-            maximum: 1,
-            weight: 0.45
-          },
-          {
-            signal: recentPlacementTimeMsSignal,
-            minimum: 0,
-            maximum: 2000,
-            weight: 0.25
-          },
-          {
-            signal: recoveryFailuresSignal,
-            minimum: 0,
-            maximum: 5,
-            weight: 0.20
-          },
-          {
-            signal: currentLevelSignal,
-            minimum: 0,
-            maximum: 20,
-            weight: 0.10
-          }
-        ]
-      },
-      rationale: "Initial deterministic Tetris behavior."
-    }
-  },
-  policy: {
-    maxDelta: 50
-  },
-  context: {
-    sessionId: flaggo.target.session(sessionId),
-    userId: flaggo.target.user(userId),
-    cohort: flaggo.target.cohort(playerCohort)
-  }
-});
-
-gameEngine.updateConfig({ dropInterval: dropIntervalDecision.value });
-let confirmedExposureId: string | undefined;
-if (
-  dropIntervalDecision.source === "server" &&
-  dropIntervalDecision.exposure.confirmationRequired
-) {
-  const confirmedExposure = await flaggo.exposures.confirm(
-    dropIntervalDecision.decisionId,
-    dropIntervalDecision.exposure.confirmToken
-  );
-  confirmedExposureId = confirmedExposure.exposureId;
-}
-```
-
-The code-first object is partitioned by tooling into a versioned decision definition and a runtime request. Emission is global to the application, but association is decision-specific: `signals.evidence`, `intent`, bound `inference.inputs`, and guardrail references declare which signal handles this decision may use. `boardPressureSignal.input(boardPressure)` contributes the signal identity to the extracted definition and the current value to the runtime request. Typed context wrappers such as `flaggo.target.session(sessionId)` similarly contribute target schema plus the current target ID. Runtime values are excluded from definition digests and revisions. The `flaggo.tune.number(...)` surface returns a number decision receipt: application code applies `.value`, while its server exposure directive authorizes confirmation. Ordinary signal emission remains raw and unlinked. Only after confirmation returns `confirmedExposureId` may the application emit attributed outcome telemetry through an explicit exposure-scoped operation or payload containing that ID.
-
-The code-first `policy` shorthand is normalized to canonical `InlinePolicy`
-constraints before hashing. For example, `maxDelta: 50` becomes
-`{ kind: "max-delta", value: 50 }`. The explicit form may provide
-`PolicyReference | InlinePolicy` directly; equivalent shorthand and canonical
-policies produce the same definition digest. Cooldown authoring remains
-deferred to #33.
-
-Only app-emitted primitive metric handles may appear in `inference.inputs`. Events and service-derived metrics may contribute to evidence; numeric derived metrics may also serve as objectives, but neither events nor derived metrics can be supplied as online request values. SDK typing enforces this for code-first authoring, while extraction, registry validation, and the Decision API enforce it at trust boundaries.
-
-Metric objectives are narrower than general signal roles: objective signals must be numeric metrics. They may be app-emitted or derived, but events and boolean/string metrics are invalid because `minimize`, `maximize`, and numeric `target` require a numeric domain. SDKs expose a branded numeric metric identity; the registry and Decision API resolve the key and validate its registered declaration.
-
-Objective direction is a discriminated contract. `direction: "target"` requires a finite numeric `target`; `minimize` and `maximize` forbid `target`. SDK typing catches this during authoring, and canonical, registry, and Decision API validation enforce it for language-neutral clients.
-
-Policy is required in both combined and explicit definitions. Code-first `PolicyAuthoring` normalizes to `InlinePolicy`; the explicit form must supply `PolicyReference | InlinePolicy`. No implicit environment/default policy is inserted when policy is omitted.
-
-Code-first extraction is fail-closed. Static semantics must use the SDK's extractable literal subset; spreads, conditional definition fields, computed keys, dynamic signal arrays, helper-returned fragments, and post-construction mutation are invalid for MVP extraction. Runtime expressions are permitted only where the extractor can separate them from static semantics, such as signal/target bindings or statically typed context values. Unsupported syntax fails build/CI instead of producing a runtime-dependent definition.
-
-Tooling extracts and hashes each call site's static descriptor once. Repeated runtime calls rebuild only bound values and attach the cached identity. Identical canonical definitions for the same decision key within one build are deduplicated; different canonical digests for the same key are a `contract-conflict` build error. Combined and explicit authoring forms use the same [canonical normalization and digest rules](../design/shared-contracts/README.md#canonical-definition-normalization-and-digest).
-
-The bundle cannot request trusted authority for itself. A control-plane actor
-approves the exact semantic snapshot. Proposal-managed governance remains
-deferred to GitHub issue #25 and cannot bypass executable objectives, typed
-policy constraints, or environment authority.
-
-Signal handles are the single declaration surface for facts Flaggo may understand:
-
-| Concept | Source | Used by | Example |
-| --- | --- | --- | --- |
-| Declared event | Domain event emitted through a typed signal handle. | Async learning, evidence views, validation, audit. | `piecePlacedEvent` |
-| App-emitted metric | Application-computed metric with stable semantics. | Async learning and, if selected, runtime strategy evaluation. | `boardPressureSignal` |
-| Derived signal | Metric declared from other signal handles and an aggregation expression. | Async learning, evidence views, validation, policy. | `earlyLossRateSignal` |
-| Inference input | App-emitted metric bound to its current value inside the inference declaration. | Runtime strategy evaluation. | `boardPressureSignal.input(boardPressure)` |
-| Decision-record input | Inference input value captured when a value is returned. | Auditing what Flaggo decided for the request. | `decision.boardPressure` when `850ms` was returned |
-| Exposure-captured input | Inference input value copied to an exposure only after the client narrows to a server receipt, verifies `exposure.confirmationRequired`, and confirms the value was applied or rendered. | Later learning and outcome correlation. | `exposure.boardPressure` after `confirmExposure(decisionId, exposure.confirmToken)` |
-
-If runtime strategy evaluation should branch on a value, it must be declared once as an app-emitted metric handle and selected as `inference.inputs`. The application should provide the pre-aggregated value with the request through that handle; the runtime service should not aggregate it on the hot path. Aggregated metrics must be declared as derived signal handles with their source signals and aggregation expression. Evidence views can be derived internally from the definition revision, referenced signal definitions, target hierarchy, and requested windows. Decision records capture returned values; exposure capture is still useful because it records the exact input values present when the application actually applied or rendered a decision.
-
-Intent is typed so Flaggo can distinguish product guidance from measurable objectives:
-
-```ts
-intent: {
-  type: "natural-language",
-  text: "challenging-but-playable"
-}
-```
-
-```ts
-intent: {
-  type: "metric-objective",
-  primary: { signal: earlyLossRateSignal, direction: "minimize" },
-  secondary: [
-    { signal: hardDropRateSignal, direction: "target", target: 0.45 },
-    { signal: recentPlacementTimeMsSignal, direction: "minimize" }
-  ],
-  rationale: "Keep the game challenging while reducing early frustration."
-}
-```
-
-Natural-language intent is useful for early product design and human review. Metric-objective intent is useful when the team wants async intelligence to optimize against declared signals with explicit directions and targets.
-
-## Target hierarchy
-
-The target hierarchy is the abstraction that prevents separate hard-coded models for async learning, governed state, runtime execution, evidence, policy, and fallback.
-
-```text
-session -> user -> cohort -> global
-```
-
-Each path resolves a target role from the same hierarchy:
-
-| Target role | Chosen by | Meaning |
-| --- | --- | --- |
-| Runtime target | Runtime decision execution | Concrete entity receiving the decision now. |
-| Learning target | Async intelligence | Population or slice with enough evidence for analysis. |
-| Control target | Governance | Boundary where approved state is stored. |
-| Evidence target | Evidence layer | Aggregation boundary for an evidence view. |
-| Fallback target | Runtime/governance | Broader safe level used when specific resolution fails. |
-
-Example:
-
-```text
-runtime target:
-  session:game-456
-
-learning target:
-  cohort:new_players
-
-control target:
-  cohort:new_players
-
-fallback target:
-  global
-```
-
-## Versioning rule
-
-Semantic changes create a new definition revision. Examples:
-
-- output type or bounds change,
-- `targetHierarchy` changes,
-- `inference.target` changes,
-- `inference.fallbackOrder` changes,
-- allowed signal roles change,
-- optimization intent changes,
-- safety/policy envelope changes,
-- authority mode, initial authority target, kind-specific value or rule, or
-  rationale changes.
-
-Metadata-only changes may keep the same semantic revision if the registry can prove runtime behavior is unchanged.
-
-Definition publication is a control-plane operation independent from application deployment. For MVP, static code-first extraction supplies a canonical bundle to trusted application/bootstrap startup, which validates/applies it, obtains authenticated approval, activates required initial authority, and only then initializes the data-plane binding. Future control-plane clients may publish manually or through CLI, CI/CD, GitOps, deployment hooks, verify-only startup, or registry-first tooling. Decide never registers a definition. If startup publication or required activation fails, Flaggo initialization remains non-ready.
-
-## Tetris example
-
-```text
-DecisionDefinition
-  key: tetris.dropInterval
-  definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
-  revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
-  contractDigest: sha256:contract...
-  targetHierarchy: session -> user -> cohort -> global
-  signals:
-    allow:
-      - tetris.piecePlaced
-      - tetris.sessionEnded
-      - tetris.boardPressure
-      - tetris.recentPlacementTimeMs
-      - tetris.recoveryFailures
-      - tetris.currentLevel
-      - tetris.earlyLossRate24h
-      - tetris.hardDropRate24h
-  intent:
-    type: metric-objective
-    primary:
-      signal: tetris.earlyLossRate24h
-      direction: minimize
-  inference:
-    target: session
-    inputs:
-      - tetris.boardPressure
-      - tetris.recentPlacementTimeMs
-      - tetris.recoveryFailures
-      - tetris.currentLevel
-    fallbackOrder: cohort -> global
-  output:
-    type: number
-    range: 200..1500
-    step: 50
-    default: 800
-  lifecycle:
-    authorityMode: bundle-approved
-    initialAuthority:
-      controlTarget: cohort:new_players
-      kind: numeric-rule
-      rule:
-        threshold: 0.55
-        valueAtOrAbove: 850
-        valueBelow: 750
-        weightedInputs:
-          - signal: tetris.boardPressure
-            minimum: 0
-            maximum: 1
-            weight: 0.45
-          - signal: tetris.recentPlacementTimeMs
-            minimum: 0
-            maximum: 2000
-            weight: 0.25
-          - signal: tetris.recoveryFailures
-            minimum: 0
-            maximum: 5
-            weight: 0.20
-          - signal: tetris.currentLevel
-            minimum: 0
-            maximum: 20
-            weight: 0.10
-      rationale: Initial deterministic Tetris behavior.
-  policy:
-    kind: inline
+```yaml
+format: flaggo.decision-definition-bundle/v2
+application:
+  id: tetris-demo
+  environment: dev
+source:
+  repository: hahahahahaiyiwen/flaggo
+  path: examples/tetris-integration/tetris-manifest.yaml
+definitions:
+  - key: tetris.dropInterval
+    valueType: number
+    targetHierarchy: [session, cohort, global]
+    runtimeContextSchema:
+      sessionId:
+        type: string
+        required: true
+        target: session
+      cohort:
+        type: string
+        required: true
+        target: cohort
+    inference:
+      target: session
+      fallbackOrder: [cohort, global]
+      inputs:
+        - key: tetris.boardPressure
+          valueType: number
+          source: { kind: request, field: boardPressure }
+        - key: tetris.recentPlacementTimeMs
+          valueType: number
+          source: { kind: request, field: recentPlacementTimeMs }
+        - key: tetris.recoveryFailures
+          valueType: number
+          source: { kind: request, field: recoveryFailures }
+        - key: tetris.currentLevel
+          valueType: number
+          source: { kind: request, field: currentLevel }
+    actionSpace:
+      type: number
+      min: 200
+      max: 1500
+      step: 50
+      default: 800
+    fallback:
+      value: 800
     constraints:
-      - kind: max-delta
-        value: 50
+      rules:
+        - kind: max-delta
+          value: 50
+    lifecycle:
+      authorityMode: bundle-approved
+      initialAuthority:
+        kind: numeric-rule
+        controlTarget:
+          type: cohort
+          id: new_players
+        rule:
+          threshold: 0.55
+          valueAtOrAbove: 850
+          valueBelow: 750
+          weightedInputs:
+            - input: { key: tetris.boardPressure }
+              minimum: 0
+              maximum: 1
+              weight: 0.45
+            - input: { key: tetris.recentPlacementTimeMs }
+              minimum: 0
+              maximum: 2000
+              weight: 0.25
+            - input: { key: tetris.recoveryFailures }
+              minimum: 0
+              maximum: 5
+              weight: 0.20
+            - input: { key: tetris.currentLevel }
+              minimum: 0
+              maximum: 20
+              weight: 0.10
+        rationale: Initial deterministic Tetris behavior.
 ```
 
-`initialAuthority` is part of semantic identity but is only a candidate.
-Authenticated bundle approval authorizes the exact candidate, and registration
-is not ready until the derived state is active. The candidate is a
-discriminated `active-value` or `numeric-rule` union. Active-value authority
-carries a contract-valid value directly and has no strategy identity;
-numeric-rule authority carries the deterministic rule shown above.
+Issue #44 owns the final manifest syntax, typed input resolution, and OTel
+binding shape. Issue #40 adds the bundle-approved lifecycle and target
+constraint names without reintroducing inline application definitions.
 
-For revised Phase 3, `max-delta` compares the rule output with the fixed
-contract baseline `actionSpace.default = 800`; it does not imply
-previous-result or request-time stabilization semantics.
+## Signal and input ownership
 
-## Design rule
+Signal declarations are immutable manifest data with stable keys, types, units,
+ranges, sources, and derived semantics.
 
-> A decision definition declares the semantic contract and may declare an
-> initial authority candidate. It never contains self-approved active state,
-> learned replacement authority, or runtime results.
+```yaml
+signals:
+  - key: tetris.boardPressure
+    kind: metric
+    type: number
+    source: app-emitted
+    range: [0, 1]
+  - key: tetris.earlyLossRate24h
+    kind: metric
+    type: number
+    source: derived
+    from: [tetris.sessionEnded]
+    aggregation: rate(endReason == 'early_loss')
+    window: 24h
+```
+
+A semantic schema change requires a new key. A derived metric's aggregation and
+window are part of that immutable meaning.
+
+Runtime inputs are a narrower role. Every input has an explicit source owned by
+#44's manifest/input contract:
+
+- request-sourced values arrive with the decision request;
+- evidence-sourced values are resolved from an authorized, materialized,
+  target-specific Evidence Store view;
+- Decision Service receives the same typed resolved-input collection regardless
+  of source; and
+- Decision Service records values plus source provenance used for a successful
+  server result.
+
+The bounded numeric-rule executor never queries raw telemetry, waits for OTel
+export, or consumes an `EvidenceSnapshot`. The Tetris Phase 3 rule uses only
+request-sourced inputs. Exact input-source syntax and supported evidence
+projections remain owned by #44.
+
+## Intent
+
+Intent guides future Async Analysis Pipeline work. It is not executable online
+authority.
+
+```yaml
+intent:
+  type: metric-objective
+  primary:
+    signal: tetris.earlyLossRate24h
+    direction: minimize
+  secondary:
+    - signal: tetris.hardDropRate24h
+      direction: target
+      target: 0.45
+```
+
+Objective signals must be numeric. `target` requires a finite numeric target;
+`minimize` and `maximize` forbid one.
+
+## Decision constraints
+
+Every definition carries complete `DecisionConstraints` data. Phase 3 does not
+support a separately resolved constraint reference or environment policy.
+
+Contract Service validates:
+
+- action-space and fallback coherence;
+- constraint shape and duplicate kinds;
+- candidate target and output compatibility;
+- required input declarations; and
+- initial authority compatibility.
+
+Decision Service evaluates the same accepted constraint projection against the
+exact runtime candidate. Constraints can approve, block, or require governed
+fallback. They cannot clamp, repair, or widen approved authority.
+
+Issue #40 replaces the executable `policy`, `InlinePolicy`,
+`PolicyConstraint`, and `PolicyEvaluationResult` names with `constraints`,
+`DecisionConstraints`, `DecisionConstraint`, and
+`ConstraintEvaluationResult`.
+
+## Authority workflow
+
+```text
+canonical manifest + initial authority candidate
+  -> Contract Service canonical validation
+  -> authenticated exact-snapshot approval
+  -> expected stable-head baseline
+  -> State Store compare-and-swap activation
+  -> ready runtime binding
+```
+
+The manifest may describe a bounded candidate. It cannot supply trusted
+approval, proposal, activation, state, strategy, or decision-record identities.
+
+Async Analysis Pipeline may later submit candidates through the same Contract
+Service boundary. It cannot approve or activate them directly.
+
+## Runtime projection and request
+
+Decision Service receives an immutable projection containing only behavior
+needed online:
+
+- exact runtime identity;
+- target hierarchy and fallback order;
+- typed runtime input declarations;
+- action space and fallback;
+- decision constraints; and
+- authority compatibility requirements.
+
+Application code is key-based:
+
+```ts
+const result = await flaggo.decide.number("tetris.dropInterval", {
+  target: { type: "session", id: sessionId },
+  context: {
+    sessionId,
+    cohort: playerCohort
+  },
+  inputs: {
+    "tetris.boardPressure": boardPressure,
+    "tetris.recentPlacementTimeMs": recentPlacementTimeMs,
+    "tetris.recoveryFailures": recoveryFailures,
+    "tetris.currentLevel": game.level
+  }
+});
+
+gameEngine.updateConfig({ dropInterval: result.value });
+```
+
+No inline definition, policy, signal handle, AST extraction, or management
+credential belongs in the runtime call site.
+
+## Versioning
+
+Semantic changes create a new digest/revision, including changes to:
+
+- action space or fallback;
+- targets, context bindings, or fallback order;
+- input/signal roles;
+- intent or objectives;
+- decision constraints; or
+- authority mode, target, kind-specific candidate, rule, or rationale.
+
+Metadata-only edits may retain semantic identity only when Contract Service can
+prove runtime behavior is unchanged.
+
+Publication is independent from application deployment. A trusted deployment,
+CLI, CI/CD, GitOps, or operator client submits the manifest. Decision Service
+never registers definitions from runtime traffic.
+
+## Durable records
+
+Contract Store retains definitions, revisions, approvals, baselines, and
+readiness metadata. State Store retains activation and immutable authority.
+Evidence Store retains decision, exposure, and outcome records.
+
+These records make lifecycle and runtime behavior reconstructable without an
+Audit component. Explanation is derived from the stored facts.
+
+## Related documents
+
+- [Architecture overview](OVERVIEW.md)
+- [Evidence](EVIDENCE.md)
+- [Authority](AUTHORITY.md)
+- [Runtime execution](RUNTIME_EXECUTION.md)
+- [Shared contracts](../design/shared-contracts/README.md)
+- [Contract Service](../design/contract-service/README.md)

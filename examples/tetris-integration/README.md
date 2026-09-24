@@ -1,5 +1,13 @@
 # Tetris Phase 3 Local Integration
 
+> **Temporary executable baseline:** These files exercise the pre-#44/#40
+> runtime and are replaced by #41. The target uses a hand-authored manifest,
+> trusted Contract Service publication, key-plus-live-data SDK calls,
+> definition-owned decision constraints, State Store activation, and Evidence
+> Store decision/exposure/outcome records. `strategy-activation.json`,
+> `evidence.json`, SDK bundle application, and Audit-named inspection are not
+> target architecture and receive no compatibility path.
+
 This example is the trusted, backend-only integration boundary for
 `tetris.dropInterval`. It does not contain frontend game behavior.
 

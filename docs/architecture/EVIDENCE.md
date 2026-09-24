@@ -2,245 +2,130 @@
 
 ## Purpose
 
-Decision evidence is what Flaggo knows from runtime facts, observations,
-telemetry, evidence views, quality signals, and provenance.
+Evidence Store is the durable boundary for facts Flaggo observes or derives:
+telemetry observations, evidence views, decision records, confirmed exposures,
+and outcomes.
 
-See the [architecture overview](OVERVIEW.md) for the system map. Evidence may
-inform policy, audit, and future proposal producers, but it does not create
-authority by itself. Authority comes from governance and governed state.
+Evidence can inform Decision Service constraints and future Async Analysis
+Pipeline candidates. It never creates or activates authority.
 
-## Core idea
+## Record kinds
 
-Decision evidence has two broad forms:
-
-| Evidence form | Meaning | Example |
-| --- | --- | --- |
-| Runtime context | Target identifiers and non-signal request metadata. | `sessionId`, `deviceType` |
-| Runtime signal inputs | Typed signal values supplied with a decision request. | `tetris.boardPressure = 0.82` |
-| Durable observations | Facts observed over time. | `piece_placed`, `session_ended`, emitted metrics |
-
-Flaggo projects these facts into evidence views.
-
-```text
-signal: tetris.recentPlacementTimeMs
-  target: cohort:new_players
-  window: 24h
-  filters: {}
-  quality: sufficient
-```
-
-## What decision evidence owns
-
-| Part | Meaning |
+| Kind | Meaning |
 | --- | --- |
-| Runtime context | Current request facts and identifiers. |
-| Raw observations | Events, metrics, traces, logs, spans, or domain records. |
-| Signal definitions | Immutable keyed schemas for observed measures. |
-| Evidence views | Signal key + target + window + filters + freshness/quality. |
-| Inference inputs | Typed signal values used for runtime strategy evaluation. Code-first SDKs may bind them inside `inference.inputs`; the wire request carries them separately from runtime context. |
-| Decision records | Returned value plus inference input values, target, complete runtime identity, and audit/correlation ID. |
-| Exposure records | Client-confirmed application/rendering of a returned value, linked to a decision record. |
-| Evidence quality | Freshness, sample size, confidence, missingness, conflict, drift. |
-| Target identifiers | Runtime facts used to resolve target hierarchy levels. |
-| Application/build provenance | Caller metadata used for audit, migration, drift detection, and operations. |
+| Runtime inputs | Typed values resolved for one execution from request or authorized evidence sources. |
+| Observation | Event, metric, trace, log, span, or domain fact received through OTel Ingestion or another explicit adapter. |
+| Evidence view | Target/window/filter projection over observations with freshness and quality. |
+| Decision record | Reconstructable result appended by Decision Service before success. |
+| Exposure record | Confirmation that the application applied or rendered a returned result. |
+| Outcome | Observation attributed to a confirmed exposure. |
 
-Application/build provenance should not affect personalization or target selection by default. It can become a governed evidence dimension only when explicitly declared by a decision definition.
+RequestDecisionInput values travel with a request. Evidence-sourced values are
+resolved from authorized materialized views. Decision Service combines both
+into `ResolvedDecisionInput` values and copies their source provenance into the
+decision record. Resolution never performs hot-path raw telemetry aggregation.
 
-## Signals and derived evidence views
+## Signal model
 
-Decision definitions reference signal handles by role. Tooling can derive an explicit allowed-signal set from objective, inference, evidence, and guardrail references:
+Decision definitions declare immutable keyed signals:
 
-```text
-derived allowed signals:
-  - tetris.piecePlaced
-  - tetris.sessionEnded
-  - tetris.boardPressure
-  - tetris.recentPlacementTimeMs
-  - tetris.recoveryFailures
-  - tetris.currentLevel
-  - tetris.earlyLossRate24h
-  - tetris.hardDropRate24h
-```
+- manifest input declarations may select request or evidence sources through
+  #44's typed resolution contract;
+- events and derived metrics may inform evidence and objectives;
+- objective signals must be numeric; and
+- derived signal semantics include their aggregation expression and fixed
+  window where applicable.
 
-Evidence views are derived from immutable signal keys, target hierarchy, and time/window/filter needs:
-
-```text
-definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
-revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
-  signal: tetris.earlyLossRate24h
-  target: cohort:new_players
-  filters: {}
-```
-
-For a fixed-window derived signal such as `tetris.earlyLossRate24h`, the window is already part of the immutable signal semantics and the evidence view omits `window`. For a raw event or app-emitted metric, the evidence-role/view may select a window. A view must never override a derived signal's declared aggregation window.
-
-This lets multiple decision definitions reuse compatible observed signals without sharing governed state or requiring separate evidence binding declarations.
-
-## Declared metrics and inference inputs
-
-Some values are useful both as durable evidence and as inference inputs:
-
-```text
-boardPressure
-recentPlacementTimeMs
-recoveryFailures
-currentLevel
-```
-
-They should be declared as immutable keyed metrics first, then optionally selected as inference inputs:
-
-| Concept | Meaning | Best for |
-| --- | --- | --- |
-| Declared metric | App-computed or pre-materialized signal with stable semantics. | Async learning, validation, evidence views. |
-| Inference input | Declared metric supplied with the decision request. | Fast runtime strategy evaluation without service-side hot-path aggregation. |
-| Decision-record input | Inference input value captured when Flaggo returns a decision. | Auditing what Flaggo recommended under the exact request context. |
-| Exposure-captured input | Inference input value copied when the client confirms the value was applied or rendered. | Learning what happened under the exact context of a rendered decision. |
-
-For example:
-
-```text
-metric: tetris.boardPressure
-  type: number
-  source: app-emitted
-
-inferenceInputs:
-  - tetris.boardPressure
-```
-
-The emitted metric is normal telemetry:
-
-```text
-metric boardPressure = 0.82
-```
-
-The request-time inference input is captured in a decision record when Flaggo returns a value:
-
-```text
-decisionId: decision-123
-definitionId: def_01JQ8Y7M6X3K9P2W4R5T6V7N8A
-revision: rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3
-contractDigest: sha256:contract...
-runtime target: session:game-456
-returned value: 850
-inference inputs:
-  tetris.boardPressure = 0.82
-  tetris.recentPlacementTimeMs = 1420
-  tetris.recoveryFailures = 2
-  tetris.currentLevel = 3
-auditId: audit-789
-```
-
-The client confirms an exposure only when it actually applies or renders the returned value. Under the Phase 1 API proposal, it sends the server-issued confirm token to `POST /v1/exposures/{decisionId}:confirm`; an idempotent retry returns the same exposure:
-
-```text
-exposureId: exposure-456
-decisionId: decision-123
-applied value: 850
-appliedAt: 2026-07-28T15:58:00Z
-```
-
-Later outcome events should correlate with exposures, not merely returned decisions. The metric, decision, and exposure records answer different learning questions:
-
-The service copies decision-time inference inputs into the exposure record. Confirmation does not accept replacement input values from the client.
-
-| Question | Better source |
-| --- | --- |
-| How often do new players reach high board pressure, regardless of Flaggo decisions? | Emitted metric |
-| What value did Flaggo recommend for this request? | Decision record |
-| When the app actually applied `850ms` under high board pressure, did players recover? | Exposure-captured inference input |
-
-Design rule:
-
-> If runtime strategy evaluation needs a value, it must be a declared metric selected as an inference input. A code-first SDK may bind the current pre-aggregated value directly inside `inference.inputs`; it must still serialize that value into the wire request's separate `inputs` array. The service should not aggregate it on the hot path.
+Every online input declares a request or evidence source through #44's
+manifest contract. Request-sourced primitive values arrive with the call.
+Evidence-sourced values are resolved from authorized materialized views before
+bounded execution. Contract Service validates the declaration; Decision
+Service consumes and records typed resolved values plus provenance.
 
 ## Evidence views
 
-An evidence view is a target-specific and time-specific projection of evidence.
+An evidence view identifies:
 
 ```text
-EvidenceView
-  signal: tetris.recentPlacementTimeMs
-  target: session:game-456
-  window: 2m
-  filters: {}
+signal + target + window + filters + freshness/quality
 ```
+
+Views are reusable when those immutable semantics match. Raw observations and
+signal definitions may also be reused across definition revisions. Decision
+state is never reused implicitly because authority belongs to State Store and
+an exact runtime identity.
+
+## Decision, exposure, and outcome
 
 ```text
-EvidenceView
-  signal: tetris.recentPlacementTimeMs
-  target: cohort:new_players
-  window: 24h
-  filters: {}
+Decision Service returns value
+  -> decision record already durable
+  -> application applies or renders value
+  -> explicit exposure confirmation
+  -> exposure record
+  -> later outcome references exposureId
 ```
 
-The same immutable signal key can support evidence workflows and live runtime
-inputs, but those values cross different ports:
+A decision record answers what Flaggo returned. An exposure record answers
+whether the application used it. An outcome answers what happened after that
+confirmed use.
 
-| Path | Contract |
-| --- | --- |
-| Async learning and future proposal generation | Cohort/global evidence views over hours, days, or weeks. |
-| Phase 3 numeric-rule evaluation | Current app-emitted value serialized as a live `SignalInput`; no `EvidenceSnapshot` crosses the strategy executor port. |
-| Runtime policy and audit/explanation | Immutable evidence snapshot references used by the policy evaluation or decision record. |
+Confirmation cannot replace decision-time inputs. The server copies the
+immutable attribution snapshot into the exposure record and returns the same
+exposure identity on an exact retry.
 
-An evidence-backed runtime strategy would require a separately approved
-bounded strategy kind and executor contract. It is not an optional extension
-to the Phase 3 numeric-rule executor.
-
-## Runtime context
-
-Runtime context is evidence for the current request. It can contain:
-
-```text
-sessionId = game-456
-userId = user-123
-cohort = new_players
-```
-
-Runtime signal inputs are separate from ordinary context:
-
-```text
-tetris.boardPressure = 0.82
-tetris.recentPlacementTimeMs = 1420
-tetris.recoveryFailures = 2
-tetris.currentLevel = 3
-```
-
-The target resolver uses these facts with the definition's primary inference
-target and explicit `fallbackOrder`:
-
-```text
-session:game-456 -> cohort:new_players -> global
-```
-
-## Reuse across definition revisions
-
-Evidence can be reused across decision definition revisions when semantics match.
-
-| Layer | Default reuse behavior |
-| --- | --- |
-| Raw observations | Reusable when immutable signal keys match. |
-| Signal definitions | Reusable by immutable signal key. |
-| Evidence views | Reusable when signal key, target, window, and filters match. |
-| Governed state | Not reused automatically; it belongs to the authority workflow. |
-
-Example: a newly approved opaque revision of `tetris.dropInterval` may add `tetris.recoveryFailures`. It can reuse historical `tetris.recentPlacementTimeMs` and `tetris.earlyLossRate24h` views while the new signal warms up.
+Ordinary telemetry remains raw and unlinked. Attribution occurs only through
+an explicit confirmed `exposureId`.
 
 ## OpenTelemetry relationship
 
-OpenTelemetry should be a preferred transport and correlation model, not the only evidence shape.
+The application owns its OpenTelemetry APIs, providers, exporter, and optional
+Collector configuration. Flaggo owns OTel Ingestion and normalization into
+Evidence Store.
 
 | OTel signal | Evidence contribution |
 | --- | --- |
-| Metrics | Rates, averages, percentiles, counts, guardrails. |
+| Metrics | Rates, averages, percentiles, counts, constraints, and objectives. |
 | Traces | Request/workflow path and latency attribution. |
-| Span events | Domain events attached to operations. |
-| Logs | Structured domain records and debugging signals. |
-| Baggage/context | Propagated target or correlation metadata. |
+| Span events | Domain facts attached to operations. |
+| Logs | Structured domain records and diagnostics. |
+| Context | Target or correlation metadata. |
 
-Flaggo can expose domain-friendly evidence concepts while remaining compatible with OpenTelemetry pipelines.
+OpenTelemetry is a preferred transport and correlation model, not the only
+internal evidence shape.
 
-## Design rule
+## Audit and explanation
 
-> Evidence is reusable knowledge. It may inform future proposals, runtime
-> policy, and audit, but it does not become runtime authority until governance
-> produces governed state.
+Audit is the invariant that lifecycle and runtime outcomes are durable and
+reconstructable. It is not a standalone service.
+
+Explanation is a deterministic projection of stored facts such as:
+
+- definition identity and targets;
+- live inputs;
+- state, activation, and approval lineage;
+- selected candidate and applied constraints;
+- fallback provenance;
+- returned value and timestamp.
+
+Explanation cannot invent missing provenance or reinterpret authority.
+
+## Reuse and isolation
+
+| Layer | Default behavior |
+| --- | --- |
+| Observations | Reusable when immutable signal semantics match. |
+| Evidence views | Reusable when signal, target, window, and filters match. |
+| Decision records | Bound to the exact identity and request. |
+| Exposure records | Bound to one decision result and application use. |
+| Outcomes | Bound to a confirmed exposure when attributed. |
+| Decision state | Owned separately by State Store; never inferred from evidence. |
+
+## Related documents
+
+- [Architecture overview](OVERVIEW.md)
+- [Decision definition](DECISION_DEFINITION.md)
+- [Runtime execution](RUNTIME_EXECUTION.md)
+- [OTel Ingestion](../design/otel-ingestion/README.md)
+- [Evidence Store](../design/evidence-store/README.md)
+- [Async Analysis Pipeline](../design/async-analysis/README.md)

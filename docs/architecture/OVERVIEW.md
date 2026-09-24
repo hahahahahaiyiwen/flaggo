@@ -2,259 +2,209 @@
 
 ## Purpose
 
-Flaggo is a policy-first decisioning control plane with a runtime decision
-provider. This document defines the shared vocabulary, layers, component map,
-and control/data-plane boundaries. Detailed contracts live in the linked
-architecture, component, and executable contract documents.
+Flaggo is a closed-loop decisioning system with two online services, one
+telemetry ingress, an optional async worker family, and three durable stores.
+This document defines the shared vocabulary and ownership model.
 
 ## System at a glance
 
-The application delegates a bounded runtime variable. Flaggo makes the
-authority for that variable explicit, applies it deterministically, records the
-result durably, and attributes outcomes only after the application confirms it
-used the result.
-
 ```text
-control plane
-  definition bundle
-    -> validation
-    -> authenticated approval
-    -> governed-state activation
-
-data plane
-  exact definition identity + runtime target + live inputs
-    -> compatible governed state
-    -> active-value resolution or numeric-rule evaluation
-    -> runtime policy
-    -> durable audit
-    -> RuntimeDecisionResult
-
 application
-  applies result
-    -> confirms exposure
-    -> receives exposureId
-    -> emits exposure-linked outcomes
+  Client SDK --------------------------> Decision Service
+  application OTel pipeline ----------> OTel Ingestion
+
+trusted deployment/control-plane client
+  canonical manifest -----------------> Contract Service
+
+Contract Service
+  -> Contract Store
+  -> approved activation -> State Store
+
+Decision Service
+  <- Contract Store
+  <- State Store
+  -> Evidence Store (decision and exposure records)
+
+OTel Ingestion
+  -> Evidence Store (observations and validated attributed outcomes)
+
+Async Analysis Pipeline
+  <- Contract Store
+  <- Evidence Store
+  <- State Store
+  -> candidate -> Contract Service approval
 ```
 
-The current Phase 3 path starts from a bundle-authored authority candidate.
-Future Phase 4 work may produce a bounded proposal from evidence or another
-authorized source, but governance must still activate state before runtime can
-consume it.
+Arrows show allowed ownership paths, not direct database access requirements.
+Adapters may expose ports or service APIs while preserving the same boundary.
 
 ## Core vocabulary
 
-| Concept | Primary question | Ownership |
+| Concept | Meaning | Owner |
 | --- | --- | --- |
-| Decision key | Which runtime decision family did application code delegate? | Stable developer-facing name such as `tetris.dropInterval`. |
-| Decision definition | What may be decided for this semantic revision? | Versioned targets, signals, intent, inference inputs, output contract, policy, fallback, and authority workflow. |
-| Runtime identity | Which exact registered contract does this request expect? | `{ definitionId, revision, contractDigest }`. |
-| Decision evidence | What is known now or historically? | Context, live signal inputs, observations, evidence views, quality, provenance, decision records, exposures, and outcomes. |
-| Authority candidate | What bounded behavior is requesting approval? | Bundle-declared initial authority now; a future `DecisionProposal` later. |
-| Governed decision state | Which behavior is authorized for runtime use? | Immutable `active-value` or `numeric-rule` authority plus activation lineage. |
-| Runtime decision execution | How is approved behavior applied to this request? | Deterministic active-value resolution, numeric-rule evaluation, policy, fallback, and audit. |
-| Runtime decision result | What did this request receive? | Value, mode, fallback, targets, policy, confidence, decision ID, and audit ID. |
-| Exposure | Did the application actually apply or render the result? | Server record created only after confirmation; identified by `exposureId`. |
+| Decision key | Stable developer-facing name for one decision family. | Decision definition |
+| Decision definition | Versioned semantic contract: targets, inputs, output, constraints, fallback, and authority workflow. | Contract Service / Contract Store |
+| Runtime identity | Exact `{ definitionId, revision, contractDigest }` expected by a request. | Contract Service |
+| Decision constraints | Deterministic limits that validate candidates or runtime results. | Declared in definitions; evaluated by owning service |
+| Authority candidate | Bounded behavior awaiting authenticated approval. | Bundle or Async Analysis Pipeline |
+| Decision state | Immutable activated `active-value` or `numeric-rule` authority. | State Store |
+| Runtime inputs | Typed values resolved for one execution from request or authorized evidence sources. | Decision Service input resolution from application request / Evidence Store |
+| Evidence | Durable observed or derived knowledge. | Evidence Store |
+| Decision record | Reconstructable record of one server result. | Decision Service -> Evidence Store |
+| Exposure | Confirmation that the application applied or rendered a result. | Decision Service -> Evidence Store |
+| Outcome | Observation validated and attributed to a confirmed exposure, then durably stored. | OTel Ingestion -> Evidence Store |
 
-`GovernedDecisionState` is not part of the decision definition. It is produced
-by an approved control-plane workflow. `RuntimeDecisionResult` is not authority;
-it is one audited data-plane outcome.
+`RuntimeDecisionResult` records what one request received. It is not authority.
 
-## Layers and boundaries
+## First-class boundaries
 
-| Layer | Owns | Does not own |
-| --- | --- | --- |
-| Definition | Semantic contract, target hierarchy, signal roles, action space, policy, fallback, and authority workflow. | Telemetry history, approved state, or runtime results. |
-| Evidence | Runtime facts, signals, observations, evidence views, quality, provenance, decisions, exposures, and outcomes. | Approval or active authority. |
-| Authority | Authenticated approval, activation, stable-head concurrency, replay, supersession, and readiness. | Per-request value selection. |
-| Runtime | Applying compatible authority to one request, runtime policy, fallback, audit, and result construction. | Proposal generation or state mutation. |
-| Application | Supplying context and inputs, applying the result, confirming exposure, and emitting outcomes. | Granting itself authority. |
+### Contract Service
 
-The separation keeps online execution bounded and keeps asynchronous reasoning
-out of the request path.
+The control-plane service validates and stores definitions, records exact
+approvals, orchestrates authority activation, and returns ready bindings. It
+owns Contract Store and is the only service allowed to activate state.
 
-## Authority and runtime flows
+### Decision Service
 
-### Bundle-approved authority
+The online data-plane service resolves ready contracts and active state,
+executes bounded authority, evaluates decision constraints, selects governed
+fallback, appends durable decision records, and confirms exposure.
+
+### OTel Ingestion
+
+The server ingress accepts supported OTLP data from the application's existing
+telemetry pipeline and appends normalized observations to Evidence Store.
+
+### Async Analysis Pipeline
+
+Offline workers may read contracts, evidence, and current state to produce
+bounded candidates. They cannot approve candidates or write active state.
+
+### Durable stores
+
+- Contract Store: definitions, revisions, approvals, and readiness.
+- State Store: stable authority heads, immutable states, CAS, replay, lineage.
+- Evidence Store: observations, views, decisions, exposures, and outcomes.
+
+## Embedded capabilities
+
+Policy is not a component. Decision constraints are contract data and service
+behavior.
+
+Audit is not a component. Durable, reconstructable records are required outputs
+of Contract Service lifecycle changes and Decision Service results.
+
+Explanation is not a component. It is a deterministic projection of stored
+facts.
+
+The operator console is not a server component. It is a future client of
+management, query, state, and evidence APIs.
+
+The former reasoning boundary is split: bounded online execution is inside
+Decision Service; async candidate production belongs to Async Analysis
+Pipeline.
+
+## Control-plane flow
 
 ```text
-definition + initial authority candidate
-  -> bundle validation
+decision definition + initial authority candidate
+  -> Contract Service canonical validation
   -> authenticated exact-snapshot approval
-  -> captured expected authority baseline
-  -> stable-head compare-and-swap
-  -> immutable GovernedDecisionState
-  -> ready registration receipt
+  -> captured stable-head baseline
+  -> State Store compare-and-swap
+  -> ready registration binding
 ```
 
-The bundle declares a candidate; it cannot declare trusted approval, proposal,
-activation, strategy, or state identities. The server derives those identities
-and reuses them on exact replay.
+The client cannot supply trusted approval, activation, state, or strategy
+identities.
 
-### Proposal-managed authority
-
-```text
-future authorized producer
-  -> bounded DecisionProposal
-  -> governance
-  -> initial or replacement activation
-  -> GovernedDecisionState
-```
-
-This is a Phase 4 extension point, not a current proposal or governance DTO.
-Issue #25 owns its detailed design. Both authority sources must converge on the
-same governed-state boundary unless a later contract explicitly extends it.
-
-### Runtime execution
+## Data-plane flow
 
 ```text
-exact registered identity
-  + runtime target and context
-  + live declared inputs
-  + compatible governed state
-  + runtime policy
-  -> active value, numeric rule, or governed fallback
-  -> durable audit
+exact runtime identity + target + live inputs
+  -> ready Contract Store projection
+  -> compatible State Store authority
+  -> active value or numeric-rule execution
+  -> decision-constraint evaluation
+  -> governed result or fallback
+  -> durable Evidence Store decision record
   -> RuntimeDecisionResult
 ```
 
-Runtime cannot create durable authority. Any future request-time mechanism must
-have a separately approved bounded contract with enforceable latency and
-resource budgets; an unbounded agent loop never belongs in the request path.
+Runtime cannot create authority.
 
-## System components
-
-Flaggo uses nine logical components. Repository modules and deployment units
-may differ, but each responsibility has one owning boundary.
-
-| # | Component | Responsibility | Detailed design |
-| --- | --- | --- | --- |
-| 1 | Client library | Code-first definitions, extraction, control-plane registration, typed runtime calls, exposure confirmation, and optional availability fallback. | [Client library](../design/client-library/README.md) |
-| 2 | Decision API | Validate exact runtime requests, resolve dependencies, execute authority, apply policy, persist audit, and return results. | [Decision API](../design/decision-api/README.md) |
-| 3 | Telemetry and evidence | Ingest observations and expose evidence/provenance boundaries. | [Telemetry and evidence](../design/telemetry-evidence/README.md) |
-| 4 | Contract and registry | Validate and store canonical definitions, revisions, policies, and runtime projections. | [Contract and registry](../design/contract-registry/README.md) |
-| 5 | Policy | Deterministically narrow candidates using definition and environment constraints. | [Policy](../design/policy/README.md) |
-| 6 | State | Own stable authority heads, immutable states, activation lineage, replay, and runtime projections. | [State](../design/state/README.md) |
-| 7 | Reasoning engine | Execute current numeric rules and preserve a separate future proposal-production seam. | [Reasoning engine](../design/reasoning-engine/README.md) |
-| 8 | Audit and explanation | Durably record decisions, inputs, targets, state/policy lineage, fallback, and explanations. | [Audit and explanation](../design/audit-explanation/README.md) |
-| 9 | Operator console | Inspect current definitions, state, and audit; future governed operator actions require explicit contracts. | [Operator console](../design/operator-console/README.md) |
-
-Cross-cutting language-neutral contracts are owned by
-[shared contracts](../design/shared-contracts/README.md), not by a tenth
-component.
-
-## Target vocabulary
-
-A decision definition declares a hierarchy of target kinds. Each path resolves
-a specific target role instead of overloading one generic "scope".
-
-| Target role | Meaning | Tetris example |
-| --- | --- | --- |
-| Runtime target | Concrete entity receiving this decision now. | `session:game-456` |
-| Learning target | Population selected for future analysis. | `cohort:new_players` |
-| Control target | Boundary where authority is approved and stored. | `cohort:new_players` |
-| Evidence target | Boundary used by an evidence view. | `cohort:new_players` over 24 hours |
-| Fallback target | Broader permitted level used by resolution. | `global` |
-| Policy scope | Boundary where a policy applies. | environment or decision target |
-
-The target hierarchy authorizes kinds. Runtime resolution follows the exact
-primary inference target and explicit `fallbackOrder`; it does not insert
-undeclared levels or arbitrate overlapping selectors.
-
-## Control plane, data plane, and deployment
-
-| Boundary | Owns |
-| --- | --- |
-| Control plane | Bundle validation/apply, immutable definition publication, authenticated approval, activation, supersession, state, and registration readiness. |
-| Data plane | Exact-identity decide, active-value resolution, numeric-rule evaluation, governed fallback, durable decision audit, and exposure confirmation. |
-| Application deployment | Building and deploying application code; remains outside Flaggo ownership. |
-
-For the MVP, trusted application/bootstrap startup acts as a control-plane
-client. Browser code must not contain management credentials. Runtime decide
-never registers or changes a definition.
+## Telemetry and closed-loop flow
 
 ```text
-code-first declaration
-  -> static extraction
-  -> independent application deployment
-  -> trusted control-plane registration and approval
-  -> ready runtime binding
-  -> data-plane decision calls
-```
+application-owned OTel export
+  -> OTel Ingestion
+  -> Evidence Store observations
 
-## Identity, state, and reuse
-
-The runtime identity is always the complete tuple:
-
-```text
-{ definitionId, revision, contractDigest }
-```
-
-The stable authority address is:
-
-```text
-application + environment + decision key + control target
-```
-
-One stable head orders replacement across semantic revisions. Every governed
-state is immutable and bound to the exact runtime identity that was approved.
-Activation compares the stable head with the baseline captured during approval;
-a changed head is a stale conflict, not an alternate mutation path.
-
-| Layer | Reuse rule |
-| --- | --- |
-| Raw observations | Reusable when immutable signal semantics match. |
-| Evidence views | Reusable when signal, target, window, and filters match. |
-| Stable authority head | Shared across semantic revisions at one authority address. |
-| Governed state | Never silently reused across exact runtime identities. |
-| Decision, audit, exposure, and outcome records | Bound to the exact identity used by the request. |
-
-## Failure, fallback, audit, and attribution
-
-Missing, unknown, conflicting, retired, or non-ready definition identity is an
-explicit contract or readiness error. It cannot become local fallback.
-
-A valid registered decision may return governed server fallback when no
-compatible authority exists or runtime policy prevents normal execution. An
-optional SDK fallback is limited to recognized data-plane availability
-failures and cannot claim a server decision, policy, audit, or exposure
-identity.
-
-A ready service must commit decision audit to storage that survives process
-failure before returning a successful result. Console and in-memory sinks are
-test or explicitly non-ready debug options only.
-
-A returned decision is not proof of application:
-
-```text
-RuntimeDecisionResult
+decision result
   -> application applies value
-  -> confirm exposure
-  -> exposureId
-  -> exposure-linked outcome telemetry
+  -> explicit exposure confirmation
+  -> Evidence Store exposure
+
+application emits exposure-linked outcome through its OTel pipeline
+  -> OTel Ingestion validates binding and confirmed exposure
+  -> Evidence Store observation + attributed Outcome
+
+contracts + evidence + current state
+  -> Async Analysis Pipeline candidate
+  -> Contract Service governance
 ```
 
-Raw domain telemetry remains independent when it was not caused by an applied
-decision.
+## Identity and reuse
 
-## Current and future boundaries
+The runtime identity is the complete definition tuple. The stable authority
+address is application + environment + decision key + control target.
 
-Current authority kinds are exactly `active-value` and `numeric-rule`. Governed
-fallback is a runtime outcome, not a persisted authority kind.
+Observations and evidence views may be reused when their immutable semantics
+match. Decision state is never silently reused across exact runtime identities.
+Decision, exposure, and outcome records remain bound to the identity used.
 
-Experiment assignment, rollout routing, override, pause, rollback, expiry,
-completion, cooldown, hysteresis, previous-result stabilization, and detailed
-proposal-managed governance remain deferred until their contracts are
-separately approved.
+## Failure and fallback
+
+Missing, conflicting, retired, or non-ready identities are explicit contract or
+readiness errors. Corrupt stores fail closed.
+
+A valid registered request may return governed server fallback. An SDK
+availability fallback is application-local and has no server decision,
+constraint, durable-record, or exposure identity.
+
+## Current implementation mapping
+
+Current assemblies remain modular implementation libraries. Logical ownership
+does not require one assembly per boundary:
+
+| Current implementation | Target ownership |
+| --- | --- |
+| Control-plane host and Registry module | Contract Service / Contract Store |
+| Data-plane host and Decisioning module | Decision Service |
+| Policy module | Internal constraint evaluation in Contract and Decision Services |
+| Audit module | Evidence Store append adapter used by Decision Service |
+| State module | State Store |
+| Evidence module | Evidence Store and projection ports |
+| Reasoning module | Decision Service executor plus future Async Analysis ports |
+
+Issue #40 owns executable migration. Issue #41 verifies the integrated Phase 3
+path.
+
+## Delivery impact map
+
+| Follow-up | Required outcome |
+| --- | --- |
+| #40 | Compose Contract Service and Decision Service against the three stores; migrate `policy`/`InlinePolicy`/`PolicyEvaluationResult` to definition-owned `constraints`/`DecisionConstraints`/`ConstraintEvaluationResult`; remove `PolicyReference`; migrate `auditId`/`AuditRecord`/`IAuditSink` to `decisionRecordId`/`DecisionRecord`/Evidence Store append; preserve approval, CAS, replay, readiness, fallback, and exposure behavior. |
+| #41 | Run the real Tetris path using a trusted manifest publisher plus key-based runtime SDK; verify the seven logical boundaries, deterministic constraints without standalone Policy, durable records without standalone Audit, application-owned OTel export, and preserved authority/fallback/exposure invariants. |
+
+The operative issue contracts for #40 and #41 use these target names. They do
+not preserve compatibility aliases for the executable migration.
 
 ## Related documents
 
-- [Documentation home](../README.md)
-- [Manifesto](../MANIFESTO.md)
 - [Decision definition](DECISION_DEFINITION.md)
 - [Evidence](EVIDENCE.md)
 - [Authority](AUTHORITY.md)
 - [Runtime execution](RUNTIME_EXECUTION.md)
+- [Design index](../design/README.md)
 - [Tetris scenario](../scenarios/TETRIS.md)
-- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
-- [Component design index](../design/README.md)
-- [Executable contracts](../../contracts/README.md)

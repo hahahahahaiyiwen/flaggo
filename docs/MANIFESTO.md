@@ -2,66 +2,62 @@
 
 ## Why Flaggo exists
 
-Software increasingly uses AI to write, review, test, and ship code, yet most
-runtime behavior is still governed by static branches, fixed thresholds,
-configuration values, and manually operated control loops.
+Software increasingly uses AI to write, review, test, and ship code, yet many
+runtime choices remain scattered across branches, fixed thresholds, remote
+configuration, and manually operated control loops.
 
 Flaggo explores a better primitive for selected runtime decisions:
 
-> Given an explicit decision contract, current context, approved authority,
-> and policy, what safe value should the application receive now?
+> Given an explicit decision definition, current context, approved authority,
+> and deterministic constraints, what safe value should the application receive
+> now?
 
-The goal is not to replace code or let an unbounded model control production.
-The application owns execution. Product and platform teams define intent,
-boundaries, and accountability. Flaggo makes the delegated decision explicit,
-governed, deterministic online, auditable, and capable of gaining a closed
-loop when separately approved asynchronous intelligence is useful.
+The application still owns execution. Product and platform teams define intent,
+constraints, and accountability. Flaggo makes the delegated decision explicit,
+approved, deterministic online, reconstructable, and capable of gaining a
+closed loop when separately approved asynchronous analysis is useful.
 
 ## Implementation principles
 
 1. **Build the smallest complete end-to-end slice.** Prove one useful decision
-   from declaration through approval, runtime use, audit, exposure, and outcome
-   before expanding the platform.
-2. **Use cohesive modules with explicit boundaries.** Separate definition,
-   evidence, authority, runtime, policy, state, and audit responsibilities.
-   Depend on small domain contracts rather than infrastructure details.
-3. **Add contracts where real boundaries require them.** Public APIs,
-   cross-process behavior, module ports, persisted state, and lifecycle
-   concurrency need explicit contracts. Avoid abstractions, configuration, and
-   indirection without a current consumer.
-4. **Make security and policy proportional and explicit.** Model the risks and
-   requirements the product actually has. Authenticated approval, credential
-   separation, fail-closed identity validation, durable audit, and mandatory
-   policy remain non-negotiable where the contract requires them; generalized
-   workflow machinery does not.
-5. **Define failure, fallback, audit, and authorization behavior.** Do not use
-   broad catches, silent defaults, success-shaped errors, or ambiguous
-   authority. A returned decision must be reconstructable.
-6. **Remove obsolete paths.** When the accepted design changes, update callers
-   and delete superseded contracts and documentation instead of adding
-   compatibility layers or parallel sources of truth.
-7. **Test behavior at meaningful boundaries.** Cover expected outcomes, edge
-   cases, failures, concurrency, replay, persistence, and real integration
-   seams. Prefer simple test doubles and integration tests where contracts meet
-   actual systems.
+   from definition through approval, runtime use, durable record, exposure, and
+   outcome before expanding the platform.
+2. **Use cohesive boundaries.** Contract Service, Decision Service, OTel
+   Ingestion, Async Analysis Pipeline, and the Contract, State, and Evidence
+   Stores each own one meaningful domain or external-system boundary.
+3. **Treat constraints as contract data and boundary behavior.** Definitions
+   declare deterministic constraints; Contract Service validates them and
+   Decision Service evaluates them. A separate Policy service is not required.
+4. **Add contracts only where boundaries require them.** Public APIs,
+   cross-process behavior, persisted stores, and lifecycle concurrency need
+   explicit contracts. Internal helpers do not become components by default.
+5. **Preserve authority and accountability.** Authenticated approval,
+   credential separation, fail-closed identity validation, stable-head
+   compare-and-swap, immutable state, and durable records are non-negotiable.
+6. **Define failure and fallback explicitly.** Do not use broad catches, silent
+   defaults, success-shaped errors, or ambiguous authority. Every server
+   decision must be reconstructable.
+7. **Remove obsolete paths.** Update callers and delete superseded contracts
+   and documentation instead of adding compatibility layers or parallel names.
+8. **Test meaningful boundaries.** Cover expected outcomes, failures,
+   concurrency, replay, persistence, and real service/store seams.
 
 ## Product boundary
 
-Online execution must remain deterministic, bounded, policy-gated, and
-compatible with approved `GovernedDecisionState`. It must never invoke an
-unbounded request-time agent loop.
+Online execution remains deterministic, bounded, constraint-checked, and
+compatible with approved decision state. It never invokes an unbounded
+request-time agent loop.
 
-AI or other analysis belongs primarily in an asynchronous proposal path:
+Longer-running analysis belongs in an asynchronous pipeline:
 
 ```text
-evidence + outcomes + objectives
-  -> bounded proposal
-  -> governance
-  -> governed state
-  -> deterministic runtime execution
+contracts + evidence + outcomes + current state
+  -> bounded candidate
+  -> Contract Service approval
+  -> State Store activation
+  -> deterministic Decision Service execution
 ```
 
 Not every branch should become a decision call, and not every decision needs
-AI. Flaggo is for contextual, high-change, policy-constrained decisions where
-an explicit governed interface is better than hard-coded logic plus manual
-operations.
+AI. Flaggo is for contextual, high-change decisions where an explicit approved
+interface is better than hard-coded logic plus manual operations.

@@ -1,5 +1,11 @@
 # Client Library Design
 
+> **Ownership note:** Issue #44 owns the manifest-first client redesign. The
+> current code-first and Policy-named examples below describe the executable
+> baseline being replaced; they do not override #44's hand-authored manifest,
+> key-plus-runtime-data SDK boundary, or the
+> [shared-contract migration map](../shared-contracts/README.md#executable-migration-map).
+
 ## Purpose
 
 The client library is the developer-facing integration point for flaggo. It lets application code declare decision keys and definitions, emit decision evidence, pass runtime context, request `RuntimeDecisionResult` values, and safely apply returned values or fallbacks.
@@ -81,7 +87,7 @@ The client library should support:
 3. **Scoped decision request**
    - Pass runtime context.
    - Pass concrete target identifiers for the configured `inference.target` and signal target hierarchy.
-   - Call the versioned runtime Decision API.
+   - Call the versioned Decision Service runtime API.
    - Optionally attach an idempotency key for safe decide retries.
    - Treat cohort/segment identifiers as claims that the server may verify or replace.
    - Receive the runtime decision value directly in the basic path.
@@ -164,7 +170,7 @@ The client library interacts with three categories of endpoints. Runtime decide 
 
 | Area | Client behavior |
 |---|---|
-| **Runtime Decision API** | Calls `/v1/decisions/{decisionKey}:decide`, applies the returned value, and calls `/v1/exposures/{decisionId}:confirm` only when that value was applied or rendered. |
+| **Decision Service client** | Calls `/v1/decisions/{decisionKey}:decide`, applies the returned value, and calls `/v1/exposures/{decisionId}:confirm` only when that value was applied or rendered. |
 | **Telemetry ingestion** | Emits telemetry through OpenTelemetry-compatible export when configured. The SDK should not invent a custom telemetry transport unless needed for direct/demo mode. |
 | **Definition tooling / Management APIs** | Generates, validates, or applies canonical definition bundles. MVP uses explicit startup registration; future clients may use CLI, CI/CD, GitOps, deployment hooks, or registry-first workflows. |
 
@@ -172,7 +178,10 @@ Design rule:
 
 > Runtime decision calls are data-plane operations. Definition registration is a separate control-plane operation even when the MVP SDK coordinates it during application/bootstrap startup.
 
-Application deployment itself remains developer-owned and can proceed without Polari tooling. In that case, data-plane calls fail until the exact expected definition is registered. See [Control Plane and Data Plane UX](CONTROL_DATA_PLANE_UX.md).
+Application deployment itself remains developer-owned and can proceed without
+Flaggo tooling. In that case, Decision Service calls fail until the exact
+expected definition is registered. See
+[Control Plane and Data Plane UX](CONTROL_DATA_PLANE_UX.md).
 
 ## Software lifecycle roles
 
@@ -182,12 +191,15 @@ The SDK has different responsibilities at different stages. It should not be req
 | --- | --- | --- | --- |
 | Development | Developer declares decision keys, events, metrics, and fallback. | Provide ergonomic TypeScript declarations, availability-fallback typing, and typed decision calls. | Author `flaggo.decision-definition-bundle.json` or configure decision key in registry. |
 | Build | Definition artifact is produced or selected for that build. | Optional extractor emits the canonical `DecisionDefinitionBundle`, per-definition `contractDigest` values, and build metadata. | Bundle is maintained as JSON/YAML or exported from registry/platform tooling. |
-| Application deployment | Code is deployed independently. | No Polari management action is implied by deployment itself. | Existing deployment mechanism remains unchanged. |
+| Application deployment | Code is deployed independently. | No Flaggo management action is implied by deployment itself. | Existing deployment mechanism remains unchanged. |
 | Application/bootstrap startup | MVP atomically validates/applies the extracted bundle and receives the runtime binding. | Trusted SDK bootstrap acts as a control-plane client, then initializes the data-plane client. | Future alternatives include CLI, CI/CD, GitOps, init/deployment hooks, or registry-first tooling. |
 | Runtime | Application asks for decisions and emits telemetry. | Send exact expected definition identity; surface contract errors; optionally apply local fallback only for configured availability failures. | Direct REST client sends the same compact identity and handles Problem Details. |
 | Observe/operate | Teams inspect contract drift, fallback, and strategy outcomes. | Expose response fields and emit diagnostics. | Operator console, audit API, logs, metrics, deployment checks. |
 
-This separation lets TypeScript be the first ergonomic SDK while preserving polyglot and open-source-native portability. Polari tooling can optimize control-plane publication without claiming ownership of application deployment.
+This separation lets TypeScript be the first ergonomic SDK while preserving
+polyglot and open-source-native portability. Flaggo tooling can optimize
+Contract Service publication without claiming ownership of application
+deployment.
 
 ### Basic decision and runtime value
 
@@ -872,7 +884,7 @@ Supported authoring modes:
 
 The first slice should support TypeScript `code-first` generation plus startup registration for the local Tetris demo and direct `bundle-first` REST compatibility at the management API layer.
 
-Resource lifecycle is owned by the Contract Registry. Client tooling should create or validate resources through bundle sync, but should not hard-delete missing resources. Missing declarations should become deprecation candidates, not deletes.
+Resource lifecycle is owned by Contract Service and Contract Store. Client tooling should create or validate resources through bundle sync, but should not hard-delete missing resources. Missing declarations should become deprecation candidates, not deletes.
 
 ### Versioning UX
 
@@ -1006,7 +1018,7 @@ For the Tetris hero scenario, the first client library design should support:
 - Local data-plane initialization remains disabled when apply fails or remains
   pending because no accepted binding exists. A direct request that bypasses
   this precondition may receive `409 contract-not-registered`.
-- Decision API call with a typed response.
+- Decision Service call with a typed response.
 - Runtime API path versioning through `/v1`.
 - OpenTelemetry telemetry mode.
 - No registration side effects in decide or exposure calls.

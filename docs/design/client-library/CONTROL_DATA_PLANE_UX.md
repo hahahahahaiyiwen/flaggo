@@ -1,10 +1,15 @@
 # Control Plane and Data Plane UX
 
+> **Ownership note:** Issue #44 owns the manifest-first client and trusted
+> deployment-tooling split. Any extraction/startup-registration examples below
+> describe the current executable baseline, not the target runtime Client SDK
+> boundary in the [architecture overview](../../architecture/OVERVIEW.md).
+
 ## Purpose
 
-Polari follows a cloud-service control-plane/data-plane model while preserving code-first authoring.
+Flaggo follows a cloud-service control-plane/data-plane model while preserving code-first authoring.
 
-Code-first means application code can be the source of decision definitions. Control-plane and data-plane APIs remain separate even when one SDK coordinates both during application bootstrap. Polari does not become responsible for deploying application code.
+Code-first means application code can be the source of decision definitions. Control-plane and data-plane APIs remain separate even when one SDK coordinates both during application bootstrap. Flaggo does not become responsible for deploying application code.
 
 ## Responsibility boundary
 
@@ -14,9 +19,13 @@ Code-first means application code can be the source of decision definitions. Con
 | Data plane | Evaluate a pre-registered expected definition and confirm exposure. | Running application or direct REST client |
 | Application deployment | Build and deploy application code. | Developer-owned deployment system |
 
-Application deployment and definition registration are independent operations. For the MVP, the default code-first experience registers during trusted application/bootstrap startup after deployment and before data-plane use. If startup registration is skipped or fails, the application can still run, but Polari decision calls cannot.
+Application deployment and definition registration are independent operations.
+For the MVP, the default code-first experience registers during trusted
+application/bootstrap startup after deployment and before data-plane use. If
+startup registration is skipped or fails, the application can still run, but
+Flaggo decision calls cannot.
 
-Polari can later provide manual, CI/CD, GitOps, init-container, sidecar, and registry-first control-plane clients without changing the service boundary.
+Flaggo can later provide manual, CI/CD, GitOps, init-container, sidecar, and contract-first control-plane clients without changing the service boundary.
 
 ## Code-first lifecycle
 
@@ -40,7 +49,7 @@ application/bootstrap startup (MVP)
 
 data plane
   application calls decide with the exact expected contract identity
-  Decision API evaluates only registered definitions
+  Decision Service evaluates only registered definitions
 ```
 
 ## Control-plane client experiences
@@ -55,7 +64,7 @@ The architecture supports several experiences:
 | CI/CD or release integration | Pipeline publishes definitions independently from runtime startup. | Future integration |
 | Init container, sidecar, or deployment hook | Platform bootstrap owns management credentials and publishes before the app becomes ready. | Future integration |
 | Pull reconciler or GitOps | Controller observes desired bundles and reconciles registry state. | Future integration |
-| Registry-first | Operator tooling owns definitions; application references an existing binding. | Supported architecture |
+| Contract-first | Operator tooling owns definitions; application references an existing binding. | Supported architecture |
 
 These are control-plane clients, not alternate service architectures. None may register through the data-plane decide endpoint.
 
@@ -99,7 +108,10 @@ Startup registration does not bypass lifecycle or approval:
 - concurrent identical startup: idempotent replay returns the same receipt,
 - conflicting bundle: startup registration fails; no previous revision is selected.
 
-The Flaggo client initialization rejects on validation failure, apply failure, conflict, or `requires-approval`. The host application decides whether to stop startup or continue without Polari, but it cannot turn that failure into a local decision fallback.
+The Flaggo client initialization rejects on validation failure, apply failure,
+conflict, or `requires-approval`. The host application decides whether to stop
+startup or continue without Flaggo, but it cannot turn that failure into a
+local decision fallback.
 
 The typed approval error includes the stable `approvalRequestId`. Approval
 authorizes the exact pending canonical bundle snapshot. For a proposal-managed
@@ -180,9 +192,9 @@ never consumes the newer strategy.
 | Definition is retired | `409 retired-definition` | Forbidden |
 | Required activation is pending or failed | `409 definition-not-ready` | Forbidden |
 | Invalid context or inference input | `400` or `422` Problem Details | Forbidden |
-| A required state, policy, or audit readiness check failed | `503 decision-service-not-ready` with `clientFallback.eligible: false` | Forbidden |
+| A required State Store, constraint evaluator, or Evidence Store append readiness check failed | `503 decision-service-not-ready` with `clientFallback.eligible: false` | Forbidden |
 | Persisted state violates canonical invariants | `500 invalid-decision-state` with `clientFallback.eligible: false` | Forbidden |
-| Registered definition evaluates but applicable state, policy, or evidence blocks adaptation | `200` audited server fallback | Not applicable |
+| Registered definition evaluates but applicable state, constraints, or evidence blocks adaptation | `200` durably recorded server fallback | Not applicable |
 | Required evidence is unavailable and governed fallback is forbidden | `503 required-evidence-unavailable` with `clientFallback.eligible: false` | Forbidden |
 | Data plane is genuinely unavailable, unreachable, or times out after readiness passed | Transport failure or `503 service-unavailable` with `clientFallback.eligible: true` | Explicitly configurable |
 
@@ -194,24 +206,31 @@ corruption and make an unhealthy deployment appear healthy.
 
 ### Approved server decision
 
-The registered definition is evaluated and produces an approved value or strategy result. The response contains server decision, policy, definition, audit, and exposure-confirmation identity.
+The registered definition is evaluated and produces an approved value or
+strategy result. The response contains decision, constraint result, definition,
+decision-record, and exposure-confirmation identity.
 
 ### Governed server fallback
 
-The registered definition is valid, but governed state, policy, safety, or
+The registered definition is valid, but governed state, constraints, or
 explicitly required evidence prevents adaptation. The server returns the
-definition's registered fallback as an audited `200` decision result.
+definition's registered fallback as a durably recorded `200` decision result.
 
 ### SDK availability fallback
 
-The data plane cannot be reached or cannot complete a request because of an explicitly recognized availability failure. If application configuration enables it, the SDK may return the code-declared local default with `source: "client-fallback"`.
+Decision Service cannot be reached or cannot complete a request because of an
+explicitly recognized availability failure. If application configuration
+enables it, the SDK may return its configured local default with
+`source: "client-fallback"`.
 
-An availability fallback has no server `decisionId`, `auditId`, policy result, definition status, or exposure token. It carries only the accepted expected contract tuple as client provenance.
+An availability fallback has no server `decisionId`, `decisionRecordId`,
+constraint result, definition status, or exposure token. It carries only the
+accepted expected contract tuple as client provenance.
 
 Availability fallback is disabled by default. It is eligible only after configured retries for DNS/connection failure, connection/read timeout before a complete response, intermediary `502`/`504`, or a valid Flaggo `5xx` Problem Details response with `clientFallback.eligible: true`. It is forbidden for TLS, certificate, proxy/authentication configuration, caller cancellation, malformed responses, every `503` without explicit eligibility, every `4xx`, `500`/`501`/`505`, and Flaggo problems where eligibility is false or absent.
 
 `required-evidence-unavailable` is always ineligible for SDK-local fallback.
-When governed fallback is permitted, the server returns an audited fallback
+When governed fallback is permitted, the server returns a durably recorded fallback
 decision. Otherwise the SDK surfaces fallback-ineligible Problem Details.
 
 The default is one retry after the initial attempt with the same decide
