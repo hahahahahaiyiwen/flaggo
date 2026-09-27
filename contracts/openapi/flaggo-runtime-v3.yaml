@@ -1,0 +1,285 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flaggo Runtime API",
+    "version": "3.0.0",
+    "description": "Stateless runtime decisions for exact immutable DecisionContract versions. The route identifies the named contract and contract digest; the body contains only the complete SDK-constructed RuntimeInput.",
+    "license": {
+      "name": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://decision.flaggo.dev",
+      "description": "Decision Service"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    }
+  ],
+  "security": [
+    {
+      "oauth2": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "runtime-decisions",
+      "description": "Runtime decisions produced from exact DecisionContract versions"
+    },
+    {
+      "name": "health",
+      "description": "Liveness and readiness"
+    }
+  ],
+  "paths": {
+    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions": {
+      "post": {
+        "tags": [
+          "runtime-decisions"
+        ],
+        "operationId": "createRuntimeDecision",
+        "summary": "Create a runtime decision from an exact DecisionContract version.",
+        "description": "The route addresses one immutable contract version: contractDigest must belong to contractName, and runtime never resolves the named resource's current version. The server validates the complete SDK-constructed RuntimeInput, resolves the executable active for the exact digest in the authenticated application and environment scope, evaluates it, validates the result, and returns without persisting a decision resource or request state. Each retry independently resolves the executable active at that request.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.decisions:decide"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/RuntimeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision produced by the executable active for the exact contract digest.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/RuntimeDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/ProblemWithRetryAfter"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProblemWithRetryAfter"
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthLive",
+        "summary": "Liveness probe. No external dependency checks.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process can serve the handler.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/LivenessResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthReady",
+        "summary": "Readiness probe over required and optional dependencies.",
+        "description": "200 ready requires every check up. 200 degraded is allowed when only optional checks are impaired. Any required check that is not up returns 503 not-ready.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ready or degraded readiness.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not-ready: a required dependency is not up.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "description": "OAuth 2.0/OIDC bearer access tokens. Tokens carry non-empty flaggo_application and flaggo_environment claims; authorization scopes are read from scope and scp. Local development may explicitly enable an insecure bypass, disabled by default.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
+            "scopes": {
+              "flaggo.decisions:decide": "Create runtime decisions from exact DecisionContract versions"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "ContractNamePath": {
+        "name": "contractName",
+        "in": "path",
+        "required": true,
+        "description": "Stable user-owned identity of the named DecisionContract resource.",
+        "schema": {
+          "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/DecisionName"
+        }
+      },
+      "ContractDigestPath": {
+        "name": "contractDigest",
+        "in": "path",
+        "required": true,
+        "description": "Exact immutable DecisionContract version used for runtime authority. It must belong to contractName; runtime never substitutes the current version.",
+        "schema": {
+          "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "CorrelationIdHeader": {
+        "name": "X-Flaggo-Correlation-Id",
+        "in": "header",
+        "required": false,
+        "description": "Optional client-supplied tracing correlation id.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "headers": {
+      "CorrelationId": {
+        "description": "Server request-correlation identifier returned on every response.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RetryAfter": {
+        "description": "RFC 9110 Retry-After delay in seconds.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "RFC 9457 Problem Details error. Programs branch on the problem type URI and HTTP status, never on title or detail.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../schemas/problem-details-v3.schema.json"
+            }
+          }
+        }
+      },
+      "ProblemWithRetryAfter": {
+        "description": "RFC 9457 Problem Details error with an advisory Retry-After header.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../schemas/problem-details-v3.schema.json"
+            }
+          }
+        }
+      }
+    }
+  }
+}

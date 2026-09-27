@@ -8,7 +8,7 @@ import {
   installSignalHandlers,
   parseListeningUrl,
   runWithCleanup,
-  startControlAndDataHosts,
+  startContractAndDecisionHosts,
   startHungEndpoint,
   startUnavailableEndpoint,
   waitForReady,
@@ -63,8 +63,8 @@ describe("Tetris integration host discovery", () => {
       const response = await fetch(endpoint.url);
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toMatchObject({
-        code: "service-unavailable",
-        clientFallback: { eligible: true },
+        type: "https://flaggo.dev/problems/dependency-unavailable",
+        status: 503,
       });
       expect(endpoint.exited).toBe(false);
     } finally {
@@ -91,7 +91,7 @@ describe("Tetris integration host discovery", () => {
 });
 
 describe("Tetris integration host lifecycle", () => {
-  it("aborts during bootstrap before creating a data-plane host", async () => {
+  it("aborts during publication before creating a Decision Service host", async () => {
     const lifecycle = createHostLifecycle({
       removeRunDirectory: async () => {},
     });
@@ -101,20 +101,20 @@ describe("Tetris integration host lifecycle", () => {
     let dataHostCreated = false;
 
     try {
-      const workflow = startControlAndDataHosts({
+      const workflow = startContractAndDecisionHosts({
         lifecycle,
-        createControlHost: () => host("control-plane"),
-        waitForControlReady: async () => {},
-        bootstrap: async () => {
+        createContractHost: () => host("contract-service"),
+        waitForContractReady: async () => {},
+        publishContract: async () => {
           processTarget.emit("SIGINT");
           processTarget.emit("SIGTERM");
           return {};
         },
-        createDataHost: () => {
+        createDecisionHost: () => {
           dataHostCreated = true;
-          return host("data-plane");
+          return host("decision-service");
         },
-        waitForDataReady: async () => {},
+        waitForDecisionReady: async () => {},
       });
 
       await expect(workflow).rejects.toMatchObject({
@@ -325,17 +325,17 @@ describe("Tetris integration host lifecycle", () => {
           error.code = "EBUSY";
           throw error;
         }
-        expect(stopped).toEqual(["data-plane"]);
+        expect(stopped).toEqual(["decision-service"]);
       },
     });
-    lifecycle.trackHost(host("data-plane", async () => {
-      stopped.push("data-plane");
+    lifecycle.trackHost(host("decision-service", async () => {
+      stopped.push("decision-service");
     }));
 
     await lifecycle.cleanup();
 
     expect(removalAttempts).toBe(2);
-    expect(stopped).toEqual(["data-plane"]);
+    expect(stopped).toEqual(["decision-service"]);
   });
 
   it("reports aggregate cleanup failure without replacing workflow failure", async () => {
@@ -405,26 +405,26 @@ describe("Tetris integration host lifecycle", () => {
     expect(managed.stopCount).toBe(1);
   });
 
-  it("detects a control-plane crash immediately after bootstrap", async () => {
+  it("detects a Contract Service crash immediately after publication", async () => {
     const lifecycle = createHostLifecycle({
       removeRunDirectory: async () => {},
     });
-    const control = crashableHost("control-plane");
+    const control = crashableHost("contract-service");
     let dataHostCreated = false;
 
-    await expect(startControlAndDataHosts({
+    await expect(startContractAndDecisionHosts({
       lifecycle,
-      createControlHost: () => control,
-      waitForControlReady: async () => {},
-      bootstrap: async () => {
+      createContractHost: () => control,
+      waitForContractReady: async () => {},
+      publishContract: async () => {
         control.crash(0);
         return {};
       },
-      createDataHost: () => {
+      createDecisionHost: () => {
         dataHostCreated = true;
-        return host("data-plane");
+        return host("decision-service");
       },
-      waitForDataReady: async () => {},
+      waitForDecisionReady: async () => {},
     })).rejects.toThrow("exited unexpectedly");
     expect(dataHostCreated).toBe(false);
     await expect(lifecycle.cleanup()).rejects.toMatchObject({
@@ -488,7 +488,7 @@ describe("Tetris integration readiness deadlines", () => {
             );
           });
         },
-        host("data-plane"),
+        host("decision-service"),
         lifecycle.signal,
         {
           timeoutMilliseconds: 80,

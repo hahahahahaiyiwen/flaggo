@@ -1,30 +1,25 @@
 # Applications
 
-`apps` contains independently runnable Flaggo hosts. Applications compose
-module-owned interfaces with infrastructure adapters; domain modules never
-depend on application projects.
+`apps` contains independently runnable composition roots. Phase 3 has:
 
-Initial hosts are the control plane, data plane, and operator console. A future
-worker may be added when asynchronous intelligence requires an independent
-process.
+```text
+apps/contract-service
+apps/decision-service
+```
 
-`apps/shared/src/Flaggo.Hosting` contains strict HTTP contract mechanics shared
-by executable hosts without owning routes or business behavior. Management
-routes exist only in `Flaggo.ControlPlane`; decide, exposure, and health routes
-exist only in `Flaggo.DataPlane`.
+Contract Service owns management routes. Decision Service owns decide and
+health routes. Reusable strict HTTP mechanics live under `modules/hosting`;
+apps do not reference another app project.
 
-For local development, both hosts compose the registry-owned
-`LocalFileDefinitionRegistry` through the shared hosting configuration. With no
-override they resolve the same repository-local
-`.flaggo/definition-registry-v1.json`. Set the absolute
-`Flaggo__Registry__LocalFilePath` environment variable when hosts use different
-working directories or when tests/deployments require isolated state. The
-directory is created on first access; invalid or inaccessible state is an
-explicit startup/runtime failure, never a silent in-memory fallback.
+The legacy `data-plane`, `control-plane`, and shared host layer were removed
+after the v3 consumer cutover. Neither service exposes forwarding projects,
+compatibility routes, or alternate v1 APIs.
 
-Data-plane direct state/evidence overrides use
-`Flaggo__State__LocalFilePath` and `Flaggo__Evidence__LocalFilePath` as commit
-descriptor paths. They never consume mutable raw JSON. Deployments that switch
-receipt, state, and evidence together should configure
-`Flaggo__Bootstrap__LocalGenerationPath` and publish the single digest-pinned
-generation manifest last.
+Decision Service readiness requires exact Contract Store reads, Executable
+Store active lookup, and the bounded evaluator. It does not require an
+Evidence module, OTLP routes, a Collector, async analysis, or durable decision
+append.
+
+Both hosts configure the same local SQLite database path/connection string.
+Each store module owns its tables and exact schema version; hosts do not issue
+SQL directly.

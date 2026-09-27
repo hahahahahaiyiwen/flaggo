@@ -1,0 +1,41 @@
+{
+  "name": "runtime-current-exposure",
+  "scenario": 4,
+  "invariant": "The SDK may include the exposure identity for the previous decision actually applied as part of the complete RuntimeInput.",
+  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+  "request": {
+    "method": "POST",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "attributes": {
+        "_random": 0.42,
+        "user_id": "user-123",
+        "recovery_failures": 1
+      },
+      "currentExposure": {
+        "exposureId": "exposure-previous-001"
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-current-exposure"
+    },
+    "body": {
+      "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "executableDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "result": 700,
+      "evaluation": {
+        "source": "rule",
+        "rule": "slow-after-recovery-failure"
+      }
+    }
+  }
+}

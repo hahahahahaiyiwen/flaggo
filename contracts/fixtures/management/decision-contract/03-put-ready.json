@@ -1,0 +1,56 @@
+{
+  "name": "put-decision-contract-ready",
+  "scenario": 46,
+  "invariant": "PUT creates an immutable version and returns it only after the contract is durable and its default executable is active.",
+  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
+  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersion",
+  "request": {
+    "method": "PUT",
+    "path": "/v3/decision-contracts/tetris.dropInterval",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "name": "tetris.dropInterval",
+      "expression_syntax": "flaggo.cel/v1",
+      "attributes": [],
+      "result": {
+        "schema": {
+          "type": "number",
+          "minimum": 100,
+          "maximum": 1000
+        },
+        "default": 500
+      }
+    }
+  },
+  "expected": {
+    "status": 201,
+    "headers": {
+      "Content-Type": "application/json",
+      "Location": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:5ac7477d55d7dfb1b4993e87118182b55a848fdc36fa5617196f27f1400e2ab1",
+      "X-Flaggo-Correlation-Id": "srv-contract-put-ready"
+    },
+    "body": {
+      "name": "tetris.dropInterval",
+      "contractDigest": "sha256:5ac7477d55d7dfb1b4993e87118182b55a848fdc36fa5617196f27f1400e2ab1",
+      "status": "ready",
+      "acceptedAt": "2026-08-01T12:00:00Z",
+      "activeExecutableDigest": "sha256:bf693713abb032d7257141839c38f8b3943d463d464f1b4dc2dba356e3902398",
+      "contract": {
+        "name": "tetris.dropInterval",
+        "expression_syntax": "flaggo.cel/v1",
+        "attributes": [],
+        "result": {
+          "schema": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 1000
+          },
+          "default": 500
+        }
+      }
+    }
+  }
+}

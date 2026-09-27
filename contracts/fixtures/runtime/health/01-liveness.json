@@ -2,7 +2,7 @@
   "name": "health-liveness",
   "scenario": 38,
   "invariant": "Liveness returns 200 when the process can serve the handler and performs no external dependency checks.",
-  "responseSchema": "runtime-models-v1.schema.json#/$defs/LivenessResult",
+  "responseSchema": "runtime-models-v3.schema.json#/$defs/LivenessResult",
   "request": {
     "method": "GET",
     "path": "/health/live",

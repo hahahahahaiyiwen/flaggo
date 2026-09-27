@@ -1,14 +1,11 @@
 import {
-  confirmedExposureAttributes,
-  type DecisionResult,
-  type ExposureConfirmationResult,
   type FlaggoClient,
+  type RuntimeContractBindings,
+  type RuntimeDecision,
 } from "@flaggo/sdk";
 import type {
   ApplicationLogger,
 } from "./telemetry.js";
-import type { catalog } from "./generated/catalog.js";
-
 export interface WorkItem {
   id: string;
   processingMs: number;
@@ -18,12 +15,6 @@ export interface WorkItem {
 interface QueuedWorkItem {
   item: WorkItem;
   enqueuedAtMs: number;
-}
-
-interface PendingConfirmation {
-  decisionId: string;
-  confirmToken: string;
-  appliedAt: string;
 }
 
 export type WorkloadProfile =
@@ -56,10 +47,9 @@ export interface WorkerTickResult {
   queueDepthAfter: number;
   appliedBatchSize: number;
   processedItemIds: string[];
-  decision: DecisionResult<number>;
+  decision: RuntimeDecision<number>;
   operations: string[];
   appliedAt?: string;
-  confirmation?: ExposureConfirmationResult;
 }
 
 interface ProfileDefinition {
@@ -76,11 +66,10 @@ const profileDefinitions: Record<WorkloadProfile, ProfileDefinition> = {
 
 export class AdaptiveWorker {
   private readonly queue: QueuedWorkItem[] = [];
-  private pendingConfirmation: PendingConfirmation | undefined;
   private tickNumber = 0;
 
   constructor(
-    private readonly flaggo: FlaggoClient<typeof catalog>,
+    private readonly flaggo: FlaggoClient<RuntimeContractBindings>,
     private readonly telemetry: ApplicationLogger,
     private readonly clock: WorkerClock = new DeterministicWorkerClock(),
     private readonly queueCapacity = 8,
@@ -93,25 +82,7 @@ export class AdaptiveWorker {
     return this.queue.length;
   }
 
-  get hasPendingConfirmation(): boolean {
-    return this.pendingConfirmation !== undefined;
-  }
-
-  async retryPendingConfirmation():
-    Promise<ExposureConfirmationResult | undefined> {
-    const pending = this.pendingConfirmation;
-    if (pending === undefined) return undefined;
-    const confirmation = await this.flaggo.exposures.confirm(
-      pending.decisionId,
-      pending.confirmToken,
-      { appliedAt: pending.appliedAt },
-    );
-    this.pendingConfirmation = undefined;
-    return confirmation;
-  }
-
   async runTick(profile: WorkloadProfile): Promise<WorkerTickResult> {
-    await this.retryPendingConfirmation();
     this.enqueue(profile);
     const queueDepthBefore = this.queue.length;
     this.telemetry.emit({ eventName: "worker.queue.depth", body: queueDepthBefore });
@@ -119,48 +90,25 @@ export class AdaptiveWorker {
     this.telemetry.emit({ eventName: "worker.queue.pressure", body: queuePressure });
     const flaggo = this.flaggo;
 
-    const decision = await flaggo.tune.numberDetailed(
+    const decision = await flaggo.decide<number>(
       "demo.workerBatchSize",
       {
-        runtimeTarget: {
-          type: "cohort",
-          id: this.claimedCohort,
-        },
-        context: {
+        attributes: {
           workerId: this.workerId,
           cohort: this.claimedCohort,
+          queuePressure,
         },
-        inputs: { queuePressure },
-        idempotencyKey:
-          `adaptive-worker:${this.workerId}:${this.tickNumber}`,
       },
     );
 
-    const operations = [`decision-received:${decision.value}`];
-    const processedItemIds = this.applyBatch(decision.value);
-    operations.push(`batch-applied:${decision.value}`);
+    const operations = [`decision-received:${decision.result}`];
+    const processedItemIds = this.applyBatch(decision.result);
+    operations.push(`batch-applied:${decision.result}`);
     const appliedAt = new Date().toISOString();
-    let confirmation: ExposureConfirmationResult | undefined;
-    if (
-      decision.source === "server" &&
-      decision.exposure.confirmationRequired
-    ) {
-      this.pendingConfirmation = {
-        decisionId: decision.decisionId,
-        confirmToken: decision.exposure.confirmToken,
-        appliedAt,
-      };
-      confirmation = await this.retryPendingConfirmation();
-      if (confirmation === undefined) {
-        throw new Error("The pending exposure confirmation was not retained.");
-      }
-      operations.push(`exposure-confirmed:${confirmation.exposureId}`);
-      this.telemetry.emit({
-        eventName: "worker.batch.applied",
-        body: { batchSize: decision.value, processedCount: processedItemIds.length },
-        attributes: confirmedExposureAttributes(confirmation),
-      });
-    }
+    this.telemetry.emit({
+      eventName: "worker.batch.applied",
+      body: { batchSize: decision.result, processedCount: processedItemIds.length },
+    });
 
     this.telemetry.emit({ eventName: "worker.queue.depth", body: this.queue.length });
     return {
@@ -168,12 +116,11 @@ export class AdaptiveWorker {
       queuePressure,
       queueDepthBefore,
       queueDepthAfter: this.queue.length,
-      appliedBatchSize: decision.value,
+      appliedBatchSize: decision.result,
       processedItemIds,
       decision,
       operations,
       appliedAt,
-      ...(confirmation === undefined ? {} : { confirmation }),
     };
   }
 

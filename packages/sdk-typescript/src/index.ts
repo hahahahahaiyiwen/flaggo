@@ -1,17 +1,21 @@
 export {
   createFlaggoClient,
-  confirmedExposureAttributes,
   type CredentialProvider,
   type FlaggoClient,
   type FlaggoClientConfig,
 } from "./client.js";
 export {
-  ContractConflictError,
   FlaggoError,
   FlaggoHttpError,
   InvalidServerResponseError,
-  MissingAcceptedDefinitionError,
+  MissingContractBindingError,
   InvalidDecisionInputError,
-  RequiresApprovalError,
 } from "./errors.js";
+export {
+  createContractServiceClient,
+  type ContractServiceClient,
+  type ContractServiceClientConfig,
+  type ListContractVersionsOptions,
+  type ManagementRequestOptions,
+} from "./management.js";
 export type * from "./types.js";

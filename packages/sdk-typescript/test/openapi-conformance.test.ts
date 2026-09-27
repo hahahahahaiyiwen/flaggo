@@ -65,7 +65,7 @@ function jsonSchema(file: string): JsonSchema {
 function operation(
   document: OpenApiDocument,
   path: string,
-  method: "get" | "post",
+  method: "get" | "post" | "put",
 ): Operation {
   const value = document.paths[path]?.[method];
   expect(value, `${method.toUpperCase()} ${path} must exist`).toBeDefined();
@@ -101,137 +101,187 @@ function expectRequired(schema: JsonSchema, required: string[]): void {
 }
 
 describe("OpenAPI shared-contract alignment", () => {
-  const runtime = yamlDocument("flaggo-runtime-v1.yaml");
-  const management = yamlDocument("flaggo-management-v1.yaml");
-  const runtimeModels = jsonSchema("runtime-models-v1.schema.json");
-  const managementModels = jsonSchema("management-models-v1.schema.json");
-  const definitionBundle = jsonSchema(
-    "decision-definition-bundle-v2.schema.json",
-  );
-  const problemDetails = jsonSchema("problem-details-v1.schema.json");
+  const runtime = yamlDocument("flaggo-runtime-v3.yaml");
+  const management = yamlDocument("flaggo-management-v3.yaml");
+  const runtimeModels = jsonSchema("runtime-models-v3.schema.json");
+  const managementModels = jsonSchema("management-models-v3.schema.json");
+  const problemDetails = jsonSchema("problem-details-v3.schema.json");
 
-  it.each(["metrics", "traces", "logs"])("documents native binary %s ingress separately from decide", (signal) => {
-    const ingest = operation(runtime, `/otlp/{appId}/{environment}/v1/${signal}`, "post");
-    expectSecurity(ingest, "polari.telemetry:ingest");
-    expectParameters(ingest, [
-      "#/components/parameters/OtlpApplicationPath",
-      "#/components/parameters/OtlpEnvironmentPath",
-      "#/components/parameters/OtlpEncodingHeader",
+  it("exposes only runtime decisions and health from the runtime API", () => {
+    expect(Object.keys(runtime.paths)).toEqual([
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions",
+      "/health/live",
+      "/health/ready",
     ]);
-    expect(ingest.requestBody?.$ref).toBe("#/components/requestBodies/OtlpExport");
-    expect(runtime.components.requestBodies.OtlpExport?.content?.["application/x-protobuf"]?.schema.$ref)
-      .toBe("#/components/schemas/OtlpBinary");
-    expect(ingest.responses["200"]?.$ref).toBe("#/components/responses/OtlpAcknowledgement");
-    for (const status of ["400", "401", "403", "413", "415"]) {
-      expect(ingest.responses[status]?.$ref).toBe("#/components/responses/OtlpError");
-    }
-    for (const status of ["429", "503"]) {
-      expect(ingest.responses[status]?.$ref).toBe("#/components/responses/OtlpRetry");
-    }
   });
 
-  it("keeps explicit manifest publication and typed approval responses", () => {
+  it("exposes named DecisionContracts with immutable digest versions", () => {
     expect(management.openapi).toBe("3.1.0");
-    const apply = operation(
+    expect(Object.keys(management.paths)).toEqual([
+      "/v3/decision-contracts/{contractName}",
+      "/v3/decision-contracts/{contractName}/validate",
+      "/v3/decision-contracts/{contractName}/versions",
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
+    ]);
+
+    const validate = operation(
       management,
-      "/v1/definition-bundles:apply",
+      "/v3/decision-contracts/{contractName}/validate",
       "post",
     );
-
-    expect(apply.operationId).toBe("applyDefinitionBundle");
-    expectSecurity(apply, "polari.definitions:apply");
-    expectParameters(apply, [
-      "#/components/parameters/ApplyIdempotencyKeyHeader",
+    expect(validate.operationId).toBe("validateDecisionContract");
+    expectSecurity(validate, "flaggo.contracts:validate");
+    expectParameters(validate, [
+      "#/components/parameters/ContractNamePath",
       "#/components/parameters/CorrelationIdHeader",
     ]);
-    expect(apply.requestBody?.$ref).toBe("#/components/requestBodies/Bundle");
-    expect(
-      management.components.requestBodies.Bundle!.content?.["application/json"]
-        ?.schema?.$ref,
-    ).toBe("../schemas/decision-definition-bundle-v2.schema.json");
+    expect(validate.requestBody?.$ref).toBe(
+      "#/components/requestBodies/DecisionContract",
+    );
     expectResponseSchema(
-      apply,
+      validate,
       "200",
-      "../schemas/management-models-v1.schema.json#/$defs/RegistrationReceipt",
+      "../schemas/management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
     );
-    expectResponseSchema(
-      apply,
-      "202",
-      "../schemas/management-models-v1.schema.json#/$defs/RequiresApprovalResult",
+
+    const putContract = operation(
+      management,
+      "/v3/decision-contracts/{contractName}",
+      "put",
     );
-    for (const status of ["401", "403", "409", "415", "422"]) {
-      expect(apply.responses[status]?.$ref).toBe(
+    expect(putContract.operationId).toBe("putDecisionContract");
+    expectSecurity(putContract, "flaggo.contracts:accept");
+    expectParameters(putContract, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(putContract.requestBody?.$ref).toBe(
+      "#/components/requestBodies/DecisionContract",
+    );
+    expect(putContract.responses["200"]?.$ref).toBe(
+      "#/components/responses/DecisionContractVersion",
+    );
+    expect(putContract.responses["201"]?.$ref).toBe(
+      "#/components/responses/CreatedDecisionContractVersion",
+    );
+
+    const getCurrent = operation(
+      management,
+      "/v3/decision-contracts/{contractName}",
+      "get",
+    );
+    expect(getCurrent.operationId).toBe("getCurrentDecisionContract");
+    expectSecurity(getCurrent, "flaggo.contracts:read");
+    expectParameters(getCurrent, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(getCurrent.responses["200"]?.$ref).toBe(
+      "#/components/responses/DecisionContractVersion",
+    );
+
+    const listVersions = operation(
+      management,
+      "/v3/decision-contracts/{contractName}/versions",
+      "get",
+    );
+    expect(listVersions.operationId).toBe("listDecisionContractVersions");
+    expectSecurity(listVersions, "flaggo.contracts:read");
+    expectParameters(listVersions, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/PageLimitQuery",
+      "#/components/parameters/PageCursorQuery",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(listVersions.responses["200"]?.$ref).toBe(
+      "#/components/responses/DecisionContractVersionList",
+    );
+
+    const getVersion = operation(
+      management,
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
+      "get",
+    );
+    expect(getVersion.operationId).toBe("getDecisionContractVersion");
+    expectSecurity(getVersion, "flaggo.contracts:read");
+    expectParameters(getVersion, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/ContractDigestPath",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(getVersion.responses["200"]?.$ref).toBe(
+      "#/components/responses/DecisionContractVersion",
+    );
+
+    expect(
+      management.components.requestBodies.DecisionContract!.content?.[
+        "application/json"
+      ]?.schema?.$ref,
+    ).toBe(
+      "../schemas/management-models-v3.schema.json#/$defs/DecisionContract",
+    );
+    for (const status of ["401", "403", "409", "415", "422", "503"]) {
+      expect(putContract.responses[status]?.$ref).toBe(
         "#/components/responses/Problem",
       );
     }
 
-    expect(
-      management.components.parameters.ApplyIdempotencyKeyHeader!.name,
-    ).toBe("Idempotency-Key");
-    expect(
-      management.components.parameters.ApplyIdempotencyKeyHeader!.required,
-    ).toBe(true);
-    expectRequired(definitionBundle, [
-      "format",
-      "application",
-      "decisions",
+    expectRequired(managementModels.$defs!.DecisionContract!, [
+      "name",
+      "expression_syntax",
+      "attributes",
+      "result",
     ]);
-    expectRequired(managementModels.$defs!.RegistrationReceipt!, [
-      "application",
-      "environment",
-      "bundleDigest",
-      "acceptedDefinitions",
-      "compatibility",
+    expectRequired(managementModels.$defs!.DecisionContractVersion!, [
+      "name",
+      "contractDigest",
       "status",
-      "issues",
+      "acceptedAt",
+      "activeExecutableDigest",
+      "contract",
     ]);
-    expectRequired(managementModels.$defs!.RequiresApprovalResult!, [
-      "status",
-      "approvalRequestId",
-      "application",
-      "environment",
-      "bundleDigest",
-      "expiresAt",
-      "snapshotUrl",
-      "changes",
-      "issues",
+    expectRequired(managementModels.$defs!.DecisionContractVersionList!, [
+      "name",
+      "currentContractDigest",
+      "versions",
+      "nextCursor",
     ]);
   });
 
-  it("keeps decide identity, idempotency, retry, and response contracts", () => {
+  it("keeps stateless runtime evaluation and retry contracts", () => {
     expect(runtime.openapi).toBe("3.1.0");
-    const decide = operation(
+    const createDecision = operation(
       runtime,
-      "/v1/decisions/{decisionKey}:decide",
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions",
       "post",
     );
 
-    expect(decide.operationId).toBe("decide");
-    expectSecurity(decide, "polari.decisions:decide");
-    expectParameters(decide, [
-      "#/components/parameters/DecisionKeyPath",
-      "#/components/parameters/IdempotencyKeyHeader",
+    expect(createDecision.operationId).toBe("createRuntimeDecision");
+    expectSecurity(createDecision, "flaggo.decisions:decide");
+    expectParameters(createDecision, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/ContractDigestPath",
       "#/components/parameters/CorrelationIdHeader",
     ]);
-    expect(decide.requestBody?.required).toBe(true);
+    expect(createDecision.requestBody?.required).toBe(true);
     expect(
-      decide.requestBody?.content?.["application/json"]?.schema?.$ref,
-    ).toBe("../schemas/runtime-models-v1.schema.json#/$defs/DecideRequest");
-    expectResponseSchema(
-      decide,
-      "200",
-      "../schemas/runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      createDecision.requestBody?.content?.["application/json"]?.schema?.$ref,
+    ).toBe(
+      "../schemas/runtime-models-v3.schema.json#/$defs/RuntimeInput",
     );
-    expect(decide.responses["200"]?.headers).toMatchObject({
+    expectResponseSchema(
+      createDecision,
+      "200",
+      "../schemas/runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+    );
+    expect(createDecision.responses["200"]?.headers).toMatchObject({
       "X-Flaggo-Correlation-Id": {
         $ref: "#/components/headers/CorrelationId",
       },
-      "Idempotency-Key-Expires-At": {
-        $ref: "#/components/headers/IdempotencyKeyExpiresAt",
-      },
     });
-    for (const status of ["409", "429", "503"]) {
-      expect(decide.responses[status]?.$ref).toBe(
+    expect(createDecision.responses["409"]).toBeUndefined();
+    for (const status of ["429", "503"]) {
+      expect(createDecision.responses[status]?.$ref).toBe(
         "#/components/responses/ProblemWithRetryAfter",
       );
     }
@@ -241,61 +291,25 @@ describe("OpenAPI shared-contract alignment", () => {
       "Retry-After": { $ref: "#/components/headers/RetryAfter" },
     });
 
-    expect(runtime.components.parameters.IdempotencyKeyHeader!.name).toBe(
-      "Idempotency-Key",
-    );
-    expect(runtime.components.parameters.IdempotencyKeyHeader!.required).toBe(
-      false,
-    );
-    expectRequired(runtimeModels.$defs!.DecideRequest!, [
-      "expectedContract",
-      "runtimeContext",
-      "client",
+    expect(
+      runtime.components.parameters.IdempotencyKeyHeader,
+    ).toBeUndefined();
+    expect(runtimeModels.$defs!.RuntimeEvaluationRequest).toBeUndefined();
+    expectRequired(runtimeModels.$defs!.RuntimeInput!, [
+      "attributes",
     ]);
-    expectRequired(runtimeModels.$defs!.ServerDecisionResult!.allOf![0]!, [
-      "decisionKey",
-      "definition",
-      "decisionId",
-      "decisionMode",
-      "confidence",
-      "fallback",
-      "policy",
-      "definitionStatus",
-      "exposure",
-      "reason",
-      "auditId",
+    expectRequired(runtimeModels.$defs!.RuntimeAttributes!, [
+      "_random",
+    ]);
+    expectRequired(runtimeModels.$defs!.RuntimeDecision!, [
+      "contractDigest",
+      "executableDigest",
+      "result",
+      "evaluation",
     ]);
   });
 
-  it("keeps exposure confirmation and SDK error classification contracts", () => {
-    const confirm = operation(
-      runtime,
-      "/v1/exposures/{decisionId}:confirm",
-      "post",
-    );
-
-    expect(confirm.operationId).toBe("confirmExposure");
-    expectSecurity(confirm, "polari.exposures:confirm");
-    expectParameters(confirm, [
-      "#/components/parameters/DecisionIdPath",
-      "#/components/parameters/CorrelationIdHeader",
-    ]);
-    expect(
-      confirm.requestBody?.content?.["application/json"]?.schema?.$ref,
-    ).toBe(
-      "../schemas/runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
-    );
-    expectResponseSchema(
-      confirm,
-      "200",
-      "../schemas/runtime-models-v1.schema.json#/$defs/ExposureConfirmationResult",
-    );
-    expect(confirm.responses["500"]?.$ref).toBe(
-      "#/components/responses/Problem",
-    );
-    expect(confirm.responses["503"]?.$ref).toBe(
-      "#/components/responses/ProblemWithRetryAfter",
-    );
+  it("keeps SDK error classification contracts", () => {
     expect(
       runtime.components.responses.ProblemWithRetryAfter!.headers,
     ).toMatchObject({
@@ -304,36 +318,22 @@ describe("OpenAPI shared-contract alignment", () => {
       },
       "Retry-After": { $ref: "#/components/headers/RetryAfter" },
     });
-    expectRequired(runtimeModels.$defs!.ExposureConfirmationRequest!, [
-      "confirmToken",
-    ]);
-    expectRequired(runtimeModels.$defs!.ExposureConfirmationResult!, [
-      "exposureId",
-      "decisionId",
-      "status",
-      "confirmedAt",
-    ]);
-    expectRequired(problemDetails, ["type", "status", "code"]);
-    expect(Object.keys(problemDetails.properties!)).toEqual(
-      expect.arrayContaining([
-        "type",
-        "status",
-        "code",
+    expect(problemDetails.required).toBeUndefined();
+    expect(Object.keys(problemDetails.properties!)).toEqual([
+      "type",
       "title",
+      "status",
       "detail",
       "instance",
-      "correlationId",
-        "retryAfterSeconds",
-        "clientFallback",
-      ]),
-    );
+    ]);
 
     const securityText = JSON.stringify({
       runtime: runtime.components.securitySchemes.oauth2,
       management: management.components.securitySchemes.oauth2,
     });
-    expect(securityText).toContain("polari.decisions:decide");
-    expect(securityText).toContain("polari.exposures:confirm");
-    expect(securityText).toContain("polari.definitions:apply");
+    expect(securityText).toContain("flaggo.decisions:decide");
+    expect(securityText).not.toContain("polari.exposures:confirm");
+    expect(securityText).toContain("flaggo.contracts:accept");
+    expect(securityText).not.toContain("polari.definitions:apply");
   });
 });

@@ -1,9 +1,11 @@
 # Executable Contracts
 
-This directory is the executable projection of the accepted API design in
-[`docs/design/API_CONTRACT_PROPOSAL.md`](../docs/design/API_CONTRACT_PROPOSAL.md).
-The OpenAPI documents and JSON Schemas are the authority for
-wire behavior. Their conformance gate must remain green for every change.
+This directory is the executable projection of the service-owned API designs:
+[Contract Service](../docs/design/architecture/CONTRACT_SERVICE.md),
+[Decision Service](../docs/design/architecture/RUNTIME.md), and
+[Evidence](../docs/design/architecture/EVIDENCE.md). The OpenAPI documents and
+JSON Schemas are the authority for current wire behavior. Their conformance
+gate must remain green for every change.
 
 ## Layout
 
@@ -16,26 +18,46 @@ contracts/
   mock/          Fixture-backed development server
 ```
 
-The fixture manifest indexes 75 cases covering all 43 required scenarios from
-the proposal. SDK and service implementations must use the same artifacts
-rather than maintain independent wire DTOs.
+The fixture manifest indexes the current conformance scenarios. SDK and service
+implementations use these artifacts as the shared wire authority.
 
-The current breaking replacement is manifest
-`flaggo.decision-definition-bundle/v2`: one result/default, typed request or
-evidence inputs, and decision-local native OTel bindings. Producer schemas,
-inline declarations/extraction, old input arrays, and v1 manifests are removed.
-Deterministic rules permit null confidence. Current publication returns an
-approved-definition receipt; initial-authority activation/readiness is #40.
+The current management contract is
+[`flaggo-management-v3.yaml`](openapi/flaggo-management-v3.yaml). A decision
+name identifies a versioned `DecisionContract` resource, while
+`contractDigest` identifies one immutable accepted version. The API exposes
+dry-run validation, idempotent create-or-update by name, current-version lookup,
+and cursor-paginated historical-version lookup. A newly created version is
+returned only after its generated default executable is active. The API has no
+bundle, numeric server revision, compatibility classification, or manual
+bundle-approval resource.
 
-Three native scope-denial fixtures use `protocol: "otlp-protobuf"` and
-`protobuf` message projections rather than JSON wire bodies. The exhaustive
-.NET fixture runner encodes generated OTLP requests and compares binary
-`google.rpc.Status` responses. Python verifies route/media/status/scope
-coverage; the JSON mock does not advertise these native fixtures.
+[`management-models-v3.schema.json`](schemas/management-models-v3.schema.json)
+contains the strict `DecisionContract`, `DecisionExecutable`, validation-result,
+immutable-version, and version-list shapes. Description-only changes remain
+non-semantic and resolve to the existing digest instead of creating a new
+version. Its JSON Schema and CEL value profiles remain intentionally bounded by
+the deferred design work recorded in
+[`CONTRACTS.md`](../docs/design/contracts/CONTRACTS.md).
 
-Approval-required change sets contain at least one newly `created` definition
-or `semantic-change`; metadata-only changes remain immediately applicable and
-cannot masquerade as an approval request.
+Errors use the RFC 9457 members from
+[`problem-details-v3.schema.json`](schemas/problem-details-v3.schema.json)
+without Flaggo-specific body fields. Problem identity is the `type` URI;
+request correlation and retry timing remain HTTP headers.
+
+The runtime contract is
+[`flaggo-runtime-v3.yaml`](openapi/flaggo-runtime-v3.yaml). Its main operation
+posts a complete `RuntimeInput` to the exact immutable contract-version
+resource:
+
+```http
+POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+```
+
+The route never resolves the named resource's current version. Every successful
+response identifies the exact contract and executable digests. The obsolete v2 definition-bundle contract and its consumers have been removed.
+
+The Phase 3 runtime fixture surface is JSON-only. It covers runtime decisions
+and health; there are no executable Evidence or OTLP routes.
 
 ## Validate
 
@@ -44,16 +66,12 @@ python -m pip install -r contracts\conformance\requirements.txt
 python contracts\conformance\validate.py
 ```
 
-Validation checks all schemas, OpenAPI structure and local references, fixture
-manifest coverage, positive request/response bodies, negative schema cases,
-semantic value contracts, and normalized per-definition and bundle digests.
-It also validates the canonical Tetris definition artifact directly against
-the frozen Draft 2020-12 bundle schema and proves additional and unevaluated
-properties are rejected.
-The SDK artifact test pins both the full canonical bundle digest and the
-per-definition semantic digest. Intentional artifact edits must pass this
-frozen-schema gate first, then update both SDK-computed pins in the same
-reviewed change.
+Validation checks registered schemas, OpenAPI structure and local references,
+fixture-manifest coverage, positive request/response bodies, negative schema
+cases, semantic value contracts, the v3 DecisionContract management surface,
+and the v3 runtime evaluation surface. Legacy Tetris bundle checks remain
+blocked until their consumer migration removes references to the deleted v2
+bundle schema.
 It does not start network services or access remote schema registries.
 
 The `Contracts` GitHub Actions workflow runs the local Tetris host harness in a

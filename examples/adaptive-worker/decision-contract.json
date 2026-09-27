@@ -1,0 +1,51 @@
+{
+  "name": "demo.workerBatchSize",
+  "expression_syntax": "flaggo.cel/v1",
+  "attributes": [
+    {
+      "name": "workerId",
+      "schema": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    {
+      "name": "cohort",
+      "schema": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    {
+      "name": "queuePressure",
+      "schema": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  ],
+  "result": {
+    "schema": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "default": 3
+  },
+  "authoredExecutable": {
+    "rules": [
+      {
+        "name": "high-pressure",
+        "when": {
+          "expression": "attributes.queuePressure >= 0.7"
+        },
+        "return": {
+          "value": 6
+        }
+      }
+    ]
+  }
+}

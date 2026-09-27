@@ -10,17 +10,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./manifest": {
-      "types": "./dist/manifest.d.ts",
-      "import": "./dist/manifest.js"
-    },
     "./management": {
       "types": "./dist/management.d.ts",
       "import": "./dist/management.js"
     }
-  },
-  "bin": {
-    "flaggo-manifest": "./dist/manifest-cli.js"
   },
   "files": [
     "dist",
@@ -32,10 +25,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "json-canonicalize": "2.0.0",
-    "typescript": "5.8.3"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "24.1.0",
     "vitest": "3.2.4",

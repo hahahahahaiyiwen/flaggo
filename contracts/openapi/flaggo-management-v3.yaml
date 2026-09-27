@@ -1,0 +1,439 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flaggo Management API",
+    "version": "3.0.0",
+    "description": "Management API for named, versioned DecisionContract resources. A contract name identifies the logical resource and contractDigest identifies one immutable accepted version. Strict wire models live in ../schemas/management-models-v3.schema.json and ../schemas/problem-details-v3.schema.json.",
+    "license": {
+      "name": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://control.flaggo.dev",
+      "description": "Control plane"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    }
+  ],
+  "security": [
+    {
+      "oauth2": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "decision-contracts",
+      "description": "Named DecisionContract resources and their immutable digest versions"
+    }
+  ],
+  "paths": {
+    "/v3/decision-contracts/{contractName}": {
+      "put": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "putDecisionContract",
+        "summary": "Create or update a named DecisionContract.",
+        "description": "Validates the payload, requires its name to equal contractName, computes its semantic contractDigest, durably creates the immutable version when new, generates and activates its default executable, and then moves the named resource's current-version and learning-head pointers. Older digest activations remain available. Repeating the same semantic payload is idempotent and returns the existing version; non-semantic-only changes do not create a version.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.contracts:accept"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/DecisionContract"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersion"
+          },
+          "201": {
+            "$ref": "#/components/responses/CreatedDecisionContractVersion"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "getCurrentDecisionContract",
+        "summary": "Get the current accepted version of a named DecisionContract.",
+        "description": "Returns the version selected by the named management resource's currentContractDigest pointer. This convenience lookup is for management only; runtime requests must carry an exact contractDigest and never resolve current implicitly.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.contracts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersion"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/v3/decision-contracts/{contractName}/validate": {
+      "post": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "validateDecisionContract",
+        "summary": "Dry-run validation for one named DecisionContract.",
+        "description": "Requires the payload name to equal contractName, then parses and type-checks the contract, validates supported JSON Schema and CEL profiles, verifies cross-references and defaults, canonicalizes semantic content, and computes the proposed contractDigest without mutation. Well-formed but semantically invalid content returns 200 with status invalid.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.contracts:validate"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/DecisionContract"
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result with status valid or invalid.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionContractValidationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/v3/decision-contracts/{contractName}/versions": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "listDecisionContractVersions",
+        "summary": "List immutable versions of a named DecisionContract.",
+        "description": "Returns accepted versions ordered by acceptedAt descending and then contractDigest descending. Pagination uses an opaque stable cursor. Ordering is management history and never authorizes runtime to select an implicit latest digest.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.contracts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersionList"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/v3/decision-contracts/{contractName}/versions/{contractDigest}": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "getDecisionContractVersion",
+        "summary": "Get one immutable DecisionContract version.",
+        "description": "Returns the exact digest version only when it belongs to the named DecisionContract within the authenticated application and environment scope.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.contracts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersion"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "description": "OAuth 2.0/OIDC bearer access tokens. Tokens carry non-empty flaggo_application and flaggo_environment claims; authorization scopes are read from scope and scp. DecisionContract attributes never establish authority scope. Local development may explicitly enable an insecure bypass, disabled by default.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
+            "scopes": {
+              "flaggo.contracts:validate": "Dry-run validation for named DecisionContracts",
+              "flaggo.contracts:accept": "Create immutable DecisionContract versions and move the named current pointer",
+              "flaggo.contracts:read": "Read current and historical DecisionContract versions"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "ContractNamePath": {
+        "name": "contractName",
+        "in": "path",
+        "required": true,
+        "description": "Stable user-owned identity of the named DecisionContract resource. A request payload name must match this value.",
+        "schema": {
+          "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionName"
+        }
+      },
+      "ContractDigestPath": {
+        "name": "contractDigest",
+        "in": "path",
+        "required": true,
+        "description": "Exact immutable version digest within the named DecisionContract resource.",
+        "schema": {
+          "$ref": "../schemas/management-models-v3.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "PageLimitQuery": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum number of versions to return.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      },
+      "PageCursorQuery": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque cursor returned by the previous page.",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "CorrelationIdHeader": {
+        "name": "X-Flaggo-Correlation-Id",
+        "in": "header",
+        "required": false,
+        "description": "Optional client-supplied tracing correlation ID.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "headers": {
+      "CorrelationId": {
+        "description": "Server request-correlation identifier returned on every response.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Location": {
+        "description": "URI of the exact immutable DecisionContract version.",
+        "schema": {
+          "type": "string",
+          "format": "uri-reference"
+        }
+      }
+    },
+    "requestBodies": {
+      "DecisionContract": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionContract"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "DecisionContractVersion": {
+        "description": "One immutable accepted DecisionContract version that is runtime-ready.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionContractVersion"
+            }
+          }
+        }
+      },
+      "CreatedDecisionContractVersion": {
+        "description": "A newly created immutable DecisionContract version that is runtime-ready.",
+        "headers": {
+          "Location": {
+            "$ref": "#/components/headers/Location"
+          },
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionContractVersion"
+            }
+          }
+        }
+      },
+      "DecisionContractVersionList": {
+        "description": "A cursor-paginated page of immutable DecisionContract version summaries.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionContractVersionList"
+            }
+          }
+        }
+      },
+      "Problem": {
+        "description": "RFC 9457 Problem Details error. Programs branch on the problem type URI and HTTP status, never on title or detail.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../schemas/problem-details-v3.schema.json"
+            }
+          }
+        }
+      }
+    }
+  }
+}

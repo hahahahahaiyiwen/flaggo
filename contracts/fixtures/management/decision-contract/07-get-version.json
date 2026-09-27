@@ -1,0 +1,40 @@
+{
+  "name": "get-decision-contract-version",
+  "scenario": 51,
+  "invariant": "An immutable historical version is addressable by its digest within the named contract resource.",
+  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersion",
+  "request": {
+    "method": "GET",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f",
+    "headers": {
+      "Authorization": "******"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-contract-get-version"
+    },
+    "body": {
+      "name": "tetris.dropInterval",
+      "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f",
+      "status": "ready",
+      "acceptedAt": "2026-07-15T10:00:00Z",
+      "activeExecutableDigest": "sha256:1cbf2d048b3d8c2f0339623466ef521e411bb531247d337230d05256536b4db3",
+      "contract": {
+        "name": "tetris.dropInterval",
+        "expression_syntax": "flaggo.cel/v1",
+        "attributes": [],
+        "result": {
+          "schema": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 1000
+          },
+          "default": 600
+        }
+      }
+    }
+  }
+}

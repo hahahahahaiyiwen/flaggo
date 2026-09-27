@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <ProjectReference Include="..\..\..\contract\src\Flaggo.Contract\Flaggo.Contract.csproj" />
+    <ProjectReference Include="..\..\..\expression\src\Flaggo.Expressions\Flaggo.Expressions.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -4,22 +4,15 @@ import { pathToFileURL } from "node:url";
 
 import {
   createFlaggoClient,
-  type RegistrationReceipt,
+  type RuntimeContractBindings,
 } from "@flaggo/sdk";
 
 import { AdaptiveWorker } from "./adaptive-worker.js";
 import { LocalOtelLogs } from "./telemetry.js";
-import { catalog } from "./generated/catalog.js";
-
 interface ServiceConnection {
-  controlPlaneUrl: string;
-  dataPlaneUrl: string;
+  decisionServiceUrl: string;
   telemetryPath: string;
-  receipt: RegistrationReceipt;
-}
-
-function hasArgument(name: string): boolean {
-  return process.argv.slice(2).includes(name);
+  contracts: RuntimeContractBindings;
 }
 
 function argumentValue(name: string): string | undefined {
@@ -35,15 +28,10 @@ export async function runMain(): Promise<void> {
   const service = JSON.parse(
     await readFile(serviceFile, "utf8"),
   ) as ServiceConnection;
-  const allowLocalFallback = hasArgument("--allow-local-fallback");
   const client = createFlaggoClient({
-    catalog,
-    receipt: service.receipt,
-    dataPlaneUrl: service.dataPlaneUrl,
-    dataPlaneCredential: { mode: "local-development" },
-    availabilityFallback: allowLocalFallback
-      ? { mode: "local-default", retries: 0 }
-      : { mode: "disabled", retries: 0 },
+    contracts: service.contracts,
+    decisionServiceUrl: service.decisionServiceUrl,
+    credential: { mode: "local-development" },
   });
   const telemetry = new LocalOtelLogs(service.telemetryPath);
   try {
@@ -58,16 +46,14 @@ export async function runMain(): Promise<void> {
     await telemetry.flush();
     process.stdout.write(`${JSON.stringify({
       status: "completed",
-      receipt: service.receipt,
       profiles: results.map((result) => ({
         profile: result.profile,
         queuePressure: result.queuePressure,
         appliedBatchSize: result.appliedBatchSize,
         processedCount: result.processedItemIds.length,
         queueDepthAfter: result.queueDepthAfter,
-        source: result.decision.source,
-        decisionMode: result.decision.decisionMode,
-        exposureId: result.confirmation?.exposureId,
+        evaluation: result.decision.evaluation,
+        executableDigest: result.decision.executableDigest,
       })),
       telemetryEvents: telemetry.events.length,
       telemetryPath: service.telemetryPath,

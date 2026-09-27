@@ -1,7 +1,7 @@
 # Operator Console
 
 The operator console is a future client application, not a first-class server
-component. It may provide human governance UX for inspection, approval,
+component. It may provide human governance UX for inspection, activation,
 override, pause/resume, and rollback.
 
 It calls Contract Service, Decision Service query surfaces, and store-backed

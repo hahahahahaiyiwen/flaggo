@@ -1,0 +1,37 @@
+{
+  "name": "runtime-default-result",
+  "scenario": 2,
+  "invariant": "When no eligible rule matches, runtime returns the DecisionContract default as a successful default evaluation.",
+  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+  "request": {
+    "method": "POST",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "attributes": {
+        "_random": 0.73,
+        "user_id": "user-456",
+        "recovery_failures": 0
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-default-result"
+    },
+    "body": {
+      "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "executableDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "result": 800,
+      "evaluation": {
+        "source": "default"
+      }
+    }
+  }
+}
