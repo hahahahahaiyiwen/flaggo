@@ -3,7 +3,15 @@
   "expression_syntax": "flaggo.cel/v1",
   "attributes": [
     {
-      "name": "board_pressure",
+      "name": "board_pressure_mean_5s",
+      "schema": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    {
+      "name": "board_pressure_max_5s",
       "schema": {
         "type": "number",
         "minimum": 0,
@@ -19,19 +27,27 @@
       }
     },
     {
-      "name": "recent_placement_time_ms",
+      "name": "placement_time_mean_ms_5s",
       "schema": {
         "type": "number",
         "minimum": 0,
-        "maximum": 2000
+        "maximum": 60000
       }
     },
     {
-      "name": "recovery_failures",
+      "name": "recovery_failures_5s",
       "schema": {
         "type": "integer",
         "minimum": 0,
-        "maximum": 5
+        "maximum": 100
+      }
+    },
+    {
+      "name": "pieces_locked_5s",
+      "schema": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
       }
     },
     {
@@ -56,7 +72,7 @@
       {
         "name": "high-pressure",
         "when": {
-          "expression": "attributes.board_pressure >= 0.8 || attributes.recovery_failures >= 3"
+          "expression": "attributes.board_pressure_mean_5s >= 0.75 || attributes.board_pressure_max_5s >= 0.9 || attributes.recovery_failures_5s >= 3"
         },
         "return": {
           "value": 850
@@ -65,7 +81,7 @@
       {
         "name": "low-pressure",
         "when": {
-          "expression": "attributes.board_pressure < 0.8 && attributes.recovery_failures < 3"
+          "expression": "attributes.board_pressure_mean_5s < 0.75 && attributes.board_pressure_max_5s < 0.9 && attributes.recovery_failures_5s < 3"
         },
         "return": {
           "value": 750
@@ -83,7 +99,7 @@
     "evidence": [
       {
         "name": "placement_time",
-        "attribute": "recent_placement_time_ms",
+        "attribute": "placement_time_mean_ms_5s",
         "binding": "tetris.placement_time",
         "correlateBy": [
           "session_id"
@@ -91,7 +107,7 @@
       },
       {
         "name": "recovery_failure",
-        "attribute": "recovery_failures",
+        "attribute": "recovery_failures_5s",
         "binding": "tetris.recovery_failure",
         "correlateBy": [
           "session_id"

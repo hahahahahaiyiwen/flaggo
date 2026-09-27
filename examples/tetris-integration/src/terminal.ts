@@ -1,8 +1,11 @@
 import { emitKeypressEvents, type Key } from "node:readline";
 
 import {
+  dropIntervalObservationWindowMs,
+  dropIntervalRefreshIntervalMs,
   LocalDropIntervalProvider,
   localDropInterval,
+  RollingDropIntervalContext,
   type DropIntervalProvider,
   type DropIntervalSelection,
 } from "./drop-interval.js";
@@ -19,18 +22,50 @@ export interface TerminalTetrisOptions {
   readonly input?: NodeJS.ReadStream;
   readonly output?: NodeJS.WriteStream;
   readonly game?: TetrisGameOptions;
+  readonly now?: () => number;
+  readonly policyRefreshIntervalMs?: number;
 }
 
 const clearScreen = "\u001b[2J\u001b[H";
 const hideCursor = "\u001b[?25l";
 const showCursor = "\u001b[?25h";
 
+function localSelection(currentLevel: number): DropIntervalSelection {
+  return {
+    intervalMs: localDropInterval(currentLevel),
+    source: "local",
+    status: "local gravity policy",
+  };
+}
+
+function updatedSelection(
+  current: DropIntervalSelection,
+  refreshed: DropIntervalSelection,
+): DropIntervalSelection {
+  if (
+    refreshed.source !== "local-fallback"
+    || (
+      current.source !== "flaggo"
+      && current.source !== "flaggo-cached"
+    )
+  ) {
+    return refreshed;
+  }
+  return {
+    intervalMs: current.intervalMs,
+    source: "flaggo-cached",
+    status: `retained after refresh failure: ${refreshed.status}`,
+  };
+}
+
 function statusLine(selection: DropIntervalSelection): string {
   const source = selection.source === "flaggo"
     ? "Flaggo"
-    : selection.source === "local-fallback"
-      ? "Local fallback"
-      : "Local";
+    : selection.source === "flaggo-cached"
+      ? "Flaggo cached"
+      : selection.source === "local-fallback"
+        ? "Local fallback"
+        : "Local";
   return `${source}: ${selection.intervalMs}ms (${selection.status})`;
 }
 
@@ -61,7 +96,9 @@ export function renderTerminal(
     "",
     `Score: ${snapshot.score}  Lines: ${snapshot.lines}  Level: ${snapshot.level}`,
     `Gravity: ${statusLine(selection)}`,
-    `Board pressure: ${snapshot.dropContext.boardPressure.toFixed(2)}`,
+    `Current board pressure: ${
+      snapshot.dropObservation.boardPressure.toFixed(2)
+    }`,
     `State: ${state}`,
     "",
     "Controls: arrows/A,D move | up/W rotate | down/S soft drop",
@@ -77,29 +114,48 @@ export async function runTerminalTetris(
   if (input.isTTY !== true || output.isTTY !== true || input.setRawMode === undefined) {
     throw new Error("Interactive Tetris requires a TTY terminal.");
   }
+  options.signal?.throwIfAborted();
 
   const provider = options.provider ?? new LocalDropIntervalProvider();
-  let game = new TetrisGame(options.game);
-  let selection = await provider.select(
-    game.snapshot().dropContext,
-    options.signal,
+  const now = options.now ?? Date.now;
+  const policyRefreshIntervalMs = positiveDuration(
+    options.policyRefreshIntervalMs,
+    dropIntervalRefreshIntervalMs,
+    "policy refresh interval",
   );
-  options.signal?.throwIfAborted();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let game = new TetrisGame(options.game);
+  let observationWindow = new RollingDropIntervalContext(
+    game.snapshot().dropObservation,
+    now(),
+    dropIntervalObservationWindowMs,
+  );
+  let selection = localSelection(game.level);
+  let gravityTimer: ReturnType<typeof setTimeout> | undefined;
+  let policyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let resolveStopped: (() => void) | undefined;
-  let refreshGeneration = 0;
+  let policyGeneration = 0;
+  let policyRequestInFlight = false;
   let refreshController: AbortController | undefined;
 
   const render = (): void => {
     output.write(renderTerminal(game.snapshot(), selection));
   };
 
+  const stopPolicyRefresh = (): void => {
+    policyGeneration += 1;
+    if (policyTimer !== undefined) clearTimeout(policyTimer);
+    policyTimer = undefined;
+    refreshController?.abort();
+    refreshController = undefined;
+    policyRequestInFlight = false;
+  };
+
   const stop = (): void => {
     if (stopped) return;
     stopped = true;
-    if (timer !== undefined) clearTimeout(timer);
-    refreshController?.abort();
+    if (gravityTimer !== undefined) clearTimeout(gravityTimer);
+    stopPolicyRefresh();
     input.removeListener("keypress", onKeypress);
     options.signal?.removeEventListener("abort", stop);
     input.setRawMode?.(false);
@@ -108,56 +164,132 @@ export async function runTerminalTetris(
     resolveStopped?.();
   };
 
-  const schedule = (): void => {
-    if (timer !== undefined) clearTimeout(timer);
+  const scheduleGravity = (): void => {
+    if (gravityTimer !== undefined) clearTimeout(gravityTimer);
     if (stopped || game.paused || game.gameOver) return;
-    timer = setTimeout(() => {
-      timer = undefined;
+    gravityTimer = setTimeout(() => {
+      gravityTimer = undefined;
       const update = game.tick();
       afterUpdate(update);
-      schedule();
+      scheduleGravity();
     }, selection.intervalMs);
   };
 
-  const refreshInterval = (): void => {
-    refreshGeneration += 1;
-    const generation = refreshGeneration;
-    refreshController?.abort();
-    refreshController = new AbortController();
+  const applyRefreshedSelection = (
+    refreshed: DropIntervalSelection,
+  ): void => {
+    selection = updatedSelection(selection, refreshed);
+    render();
+  };
+
+  const refreshPolicy = (): void => {
+    if (
+      stopped
+      || game.paused
+      || game.gameOver
+      || policyRequestInFlight
+    ) {
+      return;
+    }
+    policyRequestInFlight = true;
+    const generation = policyGeneration;
+    const controller = new AbortController();
+    refreshController = controller;
     const signal = options.signal === undefined
-      ? refreshController.signal
-      : AbortSignal.any([options.signal, refreshController.signal]);
-    void provider.select(game.snapshot().dropContext, signal).then(
-      (next) => {
-        if (stopped || generation !== refreshGeneration) return;
-        selection = next;
-        render();
-        schedule();
+      ? controller.signal
+      : AbortSignal.any([options.signal, controller.signal]);
+    const context = observationWindow.snapshot(
+      game.snapshot().dropObservation,
+      now(),
+    );
+    void provider.select(context, signal).then(
+      (refreshed) => {
+        if (
+          stopped
+          || signal.aborted
+          || generation !== policyGeneration
+        ) {
+          return;
+        }
+        applyRefreshedSelection(refreshed);
       },
       (error: unknown) => {
-        if (stopped || generation !== refreshGeneration || signal.aborted) return;
+        if (
+          stopped
+          || signal.aborted
+          || generation !== policyGeneration
+        ) {
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
-        selection = {
+        applyRefreshedSelection({
           intervalMs: localDropInterval(game.level),
           source: "local-fallback",
           status: `provider error: ${message}`,
-        };
-        render();
-        schedule();
+        });
       },
+    ).finally(() => {
+      if (generation !== policyGeneration) return;
+      policyRequestInFlight = false;
+      refreshController = undefined;
+    });
+  };
+
+  const schedulePolicyRefresh = (): void => {
+    if (stopped || game.paused || game.gameOver) return;
+    policyTimer = setTimeout(() => {
+      policyTimer = undefined;
+      refreshPolicy();
+      schedulePolicyRefresh();
+    }, policyRefreshIntervalMs);
+  };
+
+  const startPolicyRefresh = (): void => {
+    stopPolicyRefresh();
+    if (stopped || game.paused || game.gameOver) return;
+    refreshPolicy();
+    schedulePolicyRefresh();
+  };
+
+  const resetObservationWindow = (): void => {
+    observationWindow = new RollingDropIntervalContext(
+      game.snapshot().dropObservation,
+      now(),
+      dropIntervalObservationWindowMs,
     );
   };
 
   const afterUpdate = (update: GameUpdate): void => {
+    const snapshot = game.snapshot();
+    observationWindow.record(
+      snapshot.dropObservation,
+      now(),
+      update.locked,
+    );
+    if (
+      update.locked
+      && (
+        selection.source === "local"
+        || selection.source === "local-fallback"
+      )
+    ) {
+      selection = {
+        ...selection,
+        intervalMs: localDropInterval(snapshot.level),
+      };
+    }
+    if (update.gameOver) stopPolicyRefresh();
     if (update.changed) render();
-    if (update.locked && !update.gameOver) refreshInterval();
   };
 
   const restart = (): void => {
+    stopPolicyRefresh();
     game = new TetrisGame(options.game);
-    refreshInterval();
+    selection = localSelection(game.level);
+    resetObservationWindow();
     render();
-    schedule();
+    scheduleGravity();
+    startPolicyRefresh();
   };
 
   const onKeypress = (_text: string, key: Key): void => {
@@ -175,8 +307,14 @@ export async function runTerminalTetris(
     }
     if (key.name === "p") {
       game.setPaused(!game.paused);
+      if (game.paused) {
+        stopPolicyRefresh();
+      } else {
+        resetObservationWindow();
+        startPolicyRefresh();
+      }
       render();
-      schedule();
+      scheduleGravity();
       return;
     }
     if (game.paused || game.gameOver) return;
@@ -205,7 +343,7 @@ export async function runTerminalTetris(
     }
     if (update !== undefined) {
       afterUpdate(update);
-      schedule();
+      scheduleGravity();
     }
   };
 
@@ -216,10 +354,23 @@ export async function runTerminalTetris(
   options.signal?.addEventListener("abort", stop, { once: true });
   output.write(hideCursor);
   render();
-  schedule();
+  scheduleGravity();
+  startPolicyRefresh();
 
   await new Promise<void>((resolve) => {
     resolveStopped = resolve;
     if (stopped) resolve();
   });
+}
+
+function positiveDuration(
+  value: number | undefined,
+  defaultValue: number,
+  description: string,
+): number {
+  const duration = value ?? defaultValue;
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new RangeError(`The ${description} must be positive.`);
+  }
+  return duration;
 }

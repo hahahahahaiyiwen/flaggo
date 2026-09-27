@@ -69,12 +69,19 @@ attributes:
       type: string
       description: Current game session.
 
-  - name: board_pressure
+  - name: board_pressure_mean_5s
     schema:
       type: number
       minimum: 0
       maximum: 1
-      description: Fraction of the board currently occupied.
+      description: Time-weighted mean board pressure over the trailing five seconds.
+
+  - name: board_pressure_max_5s
+    schema:
+      type: number
+      minimum: 0
+      maximum: 1
+      description: Maximum board pressure over the trailing five seconds.
 
   - name: current_level
     schema:
@@ -82,17 +89,23 @@ attributes:
       minimum: 0
       description: Current game level.
 
-  - name: recent_placement_time_ms
+  - name: placement_time_mean_ms_5s
     schema:
       type: number
       minimum: 0
-      description: Time used for a recent placement in milliseconds.
+      description: Mean placement time for pieces locked in the trailing five seconds.
 
-  - name: recovery_failures
+  - name: recovery_failures_5s
     schema:
       type: integer
       minimum: 0
-      description: Number of failed recovery attempts.
+      description: Failed recovery attempts for pieces locked in the trailing five seconds.
+
+  - name: pieces_locked_5s
+    schema:
+      type: integer
+      minimum: 0
+      description: Pieces locked in the trailing five seconds.
 
 result:
   schema:
@@ -106,7 +119,7 @@ authoredExecutable:
     - name: high-pressure
       description: Slow placement when the occupied board creates high risk.
       when:
-        expression: attributes.board_pressure >= 0.8
+        expression: attributes.board_pressure_mean_5s >= 0.75
       return:
         value: 250
 
@@ -133,14 +146,14 @@ learning:
   evidence:
     - name: placement_time
       description: Placement latency observed after a runtime decision.
-      attribute: recent_placement_time_ms
+      attribute: placement_time_mean_ms_5s
       binding: tetris.placement_time
       correlateBy:
         - session_id
 
     - name: recovery_failure
       description: Recovery failures observed after a runtime decision.
-      attribute: recovery_failures
+      attribute: recovery_failures_5s
       binding: tetris.recovery_failure
       correlateBy:
         - session_id
@@ -170,12 +183,12 @@ contains an explicitly labeled JSON Schema:
 
 ```yaml
 attributes:
-  - name: board_pressure
+  - name: board_pressure_mean_5s
     schema:
       type: number
       minimum: 0
       maximum: 1
-      description: Fraction of the board currently occupied.
+      description: Time-weighted mean board pressure over the trailing five seconds.
 ```
 
 Attribute names are unique. List order is not semantic; canonicalization orders
@@ -541,7 +554,7 @@ kind: rules
 rules:
   - name: high-pressure
     when:
-      expression: attributes.board_pressure >= 0.8
+      expression: attributes.board_pressure_mean_5s >= 0.75
     return:
       value: 250
 

@@ -1,4 +1,4 @@
-import type { DropIntervalContext } from "./drop-interval.js";
+import type { DropIntervalObservation } from "./drop-interval.js";
 
 export const boardWidth = 10;
 export const boardHeight = 20;
@@ -44,7 +44,7 @@ export interface GameSnapshot {
   readonly level: number;
   readonly paused: boolean;
   readonly gameOver: boolean;
-  readonly dropContext: DropIntervalContext;
+  readonly dropObservation: DropIntervalObservation;
 }
 
 const kinds: readonly TetrominoKind[] = [
@@ -298,10 +298,10 @@ export class TetrisGame {
       level: this.level,
       paused: this.pausedValue,
       gameOver: this.gameOverValue,
-      dropContext: {
+      dropObservation: {
         boardPressure: this.boardPressure(),
         currentLevel: this.level,
-        recentPlacementTimeMs: this.recentPlacementTimeMs,
+        placementTimeMs: this.recentPlacementTimeMs,
         recoveryFailures: this.recentRecoveryFailures,
         sessionId: this.sessionId,
       },

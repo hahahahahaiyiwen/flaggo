@@ -31,14 +31,18 @@ isolated SQLite database, then deploys the contracts listed in
 starts the game. Both services and the temporary database are stopped and
 removed when the game exits.
 
-The game requests a new interval at startup and after each piece locks, not on
-every gravity tick. Its status line shows whether the current interval came
-from Flaggo, the standalone policy, or the standalone policy after a Flaggo
-failure.
+The game starts immediately with local gravity while requesting its first
+Flaggo interval in the background. It summarizes a trailing five-second
+observation window and refreshes the decision every five seconds, with at most
+one request in flight. Piece locks update that window but do not trigger
+requests. Responses update the value used by future gravity ticks without
+resetting an already scheduled tick.
 
-If Flaggo becomes unavailable, the app keeps running with local level-based
-gravity and displays `Local fallback`. This is application behavior implemented
-by the optional provider; the SDK does not synthesize fallback decisions.
+If Flaggo is unavailable before the first successful response, the app keeps
+running with local level-based gravity and displays `Local fallback`. After a
+successful response, a failed refresh retains the last Flaggo interval and
+displays `Flaggo cached`. This is application behavior implemented by the
+terminal and optional provider; the SDK does not synthesize fallback decisions.
 
 ## Controls
 
@@ -64,9 +68,14 @@ end in `.decision-contract.json`; `flaggo.deploy.json` references the file.
 
 | Condition | Interval |
 | --- | --- |
-| Board pressure is at least `0.8`, or recovery failures are at least `3` | `850ms` |
-| Lower pressure and fewer than `3` recovery failures | `750ms` |
+| Five-second mean pressure is at least `0.75`, maximum pressure is at least `0.9`, or recovery failures are at least `3` | `850ms` |
+| Lower mean and maximum pressure with fewer than `3` recovery failures | `750ms` |
 | No authored rule is eligible | Contract default `800ms` |
+
+Runtime attributes state their temporal meaning explicitly:
+`board_pressure_mean_5s`, `board_pressure_max_5s`,
+`placement_time_mean_ms_5s`, `recovery_failures_5s`,
+`pieces_locked_5s`, `current_level`, and `session_id`.
 
 The optional adapter uses `createDecisionClient` from `@flaggo/sdk/runtime`.
 The deployment helper uses `createContractClient` from

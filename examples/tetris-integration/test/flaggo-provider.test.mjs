@@ -11,10 +11,12 @@ const executableDigest =
   "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 
 const context = {
-  boardPressure: 0.9,
+  boardPressureMean5s: 0.8,
+  boardPressureMax5s: 0.9,
   currentLevel: 8,
-  recentPlacementTimeMs: 1_600,
-  recoveryFailures: 3,
+  placementTimeMeanMs5s: 1_600,
+  recoveryFailures5s: 3,
+  piecesLocked5s: 2,
   sessionId: "provider-test",
 };
 
@@ -58,10 +60,12 @@ test("Flaggo provider maps game context and returns decision provenance", async 
       _random: undefined,
     },
     {
-      board_pressure: 0.9,
+      board_pressure_mean_5s: 0.8,
+      board_pressure_max_5s: 0.9,
       current_level: 8,
-      recent_placement_time_ms: 1_600,
-      recovery_failures: 3,
+      placement_time_mean_ms_5s: 1_600,
+      recovery_failures_5s: 3,
+      pieces_locked_5s: 2,
       session_id: "provider-test",
       _random: undefined,
     },

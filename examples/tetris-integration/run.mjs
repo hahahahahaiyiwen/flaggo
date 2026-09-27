@@ -59,21 +59,24 @@ async function runIntegration(lifecycle) {
   });
   const common = {
     current_level: 8,
-    recent_placement_time_ms: 1600,
+    placement_time_mean_ms_5s: 1600,
+    pieces_locked_5s: 2,
     session_id: "game-v3",
   };
   const { value: high } = await client.decide(contract.name, {
     attributes: {
       ...common,
-      board_pressure: 0.9,
-      recovery_failures: 3,
+      board_pressure_mean_5s: 0.8,
+      board_pressure_max_5s: 0.9,
+      recovery_failures_5s: 3,
     },
   });
   const { value: low } = await client.decide(contract.name, {
     attributes: {
       ...common,
-      board_pressure: 0.4,
-      recovery_failures: 0,
+      board_pressure_mean_5s: 0.4,
+      board_pressure_max_5s: 0.5,
+      recovery_failures_5s: 0,
     },
   });
   const { value: missing } = await client.decide(contract.name, {

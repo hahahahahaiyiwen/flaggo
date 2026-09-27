@@ -17,10 +17,12 @@ import {
 
 type TetrisDecisions = {
   readonly "tetris.dropInterval": DecisionSpec<{
-    readonly board_pressure: number;
+    readonly board_pressure_mean_5s: number;
+    readonly board_pressure_max_5s: number;
     readonly current_level: number;
-    readonly recent_placement_time_ms: number;
-    readonly recovery_failures: number;
+    readonly placement_time_mean_ms_5s: number;
+    readonly recovery_failures_5s: number;
+    readonly pieces_locked_5s: number;
     readonly session_id: string;
   }, number>;
 };
@@ -73,15 +75,26 @@ export function createFlaggoDropIntervalProvider(
       try {
         const response = await client.decide("tetris.dropInterval", {
           attributes: {
-            board_pressure: Math.max(0, Math.min(1, context.boardPressure)),
-            current_level: Math.max(0, Math.min(20, context.currentLevel)),
-            recent_placement_time_ms: Math.max(
+            board_pressure_mean_5s: Math.max(
               0,
-              Math.min(2_000, context.recentPlacementTimeMs),
+              Math.min(1, context.boardPressureMean5s),
             ),
-            recovery_failures: Math.max(
+            board_pressure_max_5s: Math.max(
               0,
-              Math.min(5, context.recoveryFailures),
+              Math.min(1, context.boardPressureMax5s),
+            ),
+            current_level: Math.max(0, Math.min(20, context.currentLevel)),
+            placement_time_mean_ms_5s: Math.max(
+              0,
+              Math.min(60_000, context.placementTimeMeanMs5s),
+            ),
+            recovery_failures_5s: Math.max(
+              0,
+              Math.min(100, Math.trunc(context.recoveryFailures5s)),
+            ),
+            pieces_locked_5s: Math.max(
+              0,
+              Math.min(100, Math.trunc(context.piecesLocked5s)),
             ),
             session_id: context.sessionId,
           },

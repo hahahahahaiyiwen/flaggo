@@ -81,7 +81,8 @@ Content-Type: application/json
 ```yaml
 attributes:
   session_id: game-456
-  board_pressure: 0.82
+  board_pressure_mean_5s: 0.82
+  board_pressure_max_5s: 0.91
   current_level: 10
   _random: 0.137...
 

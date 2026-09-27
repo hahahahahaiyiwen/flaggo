@@ -60,10 +60,10 @@ test("movement respects board boundaries and records recovery context", () => {
 
   const snapshot = game.snapshot();
   assert.equal(snapshot.score, 36);
-  assert.equal(snapshot.dropContext.boardPressure, 0.1);
-  assert.equal(snapshot.dropContext.recentPlacementTimeMs, 550);
-  assert.equal(snapshot.dropContext.recoveryFailures, 1);
-  assert.equal(snapshot.dropContext.sessionId, "movement-test");
+  assert.equal(snapshot.dropObservation.boardPressure, 0.1);
+  assert.equal(snapshot.dropObservation.placementTimeMs, 550);
+  assert.equal(snapshot.dropObservation.recoveryFailures, 1);
+  assert.equal(snapshot.dropObservation.sessionId, "movement-test");
 });
 
 test("rotation changes the active shape and pause blocks actions", () => {
@@ -137,10 +137,12 @@ test("local interval policy and contract bounds are deterministic", async () => 
   await assert.doesNotReject(async () => {
     assert.deepEqual(
       await provider.select({
-        boardPressure: 0,
+        boardPressureMean5s: 0,
+        boardPressureMax5s: 0,
         currentLevel: 3,
-        recentPlacementTimeMs: 0,
-        recoveryFailures: 0,
+        placementTimeMeanMs5s: 0,
+        recoveryFailures5s: 0,
+        piecesLocked5s: 0,
         sessionId: "local",
       }),
       {

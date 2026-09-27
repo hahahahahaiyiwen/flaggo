@@ -80,7 +80,7 @@ observed value:
 evidence:
   - name: recovery_failure
     description: Recovery failures observed after a runtime decision.
-    attribute: recovery_failures
+    attribute: recovery_failures_5s
     binding: tetris.recovery_failure
     correlateBy:
       - session_id
