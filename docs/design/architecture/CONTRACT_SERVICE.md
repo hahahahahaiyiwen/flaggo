@@ -29,10 +29,41 @@ contract author
 ```
 
 The management client supplies desired contract content. The Contract Service
-establishes accepted identity and runtime readiness. During publication, a
+establishes accepted identity and runtime readiness. During deployment, a
 client does not assert a `contractDigest`, `executableDigest`, or activation
 record as trusted authority; it may use server-returned digests for later exact
 reads and application configuration.
+
+## Contract source and deployment files
+
+A `DecisionContract` is contract-as-code rather than environment
+configuration. Keep one independently versioned contract per file using:
+
+```text
+flaggo/contracts/<decision-name>.decision-contract.json
+```
+
+The file name must preserve the exact embedded `DecisionContract.name`.
+Service URLs, credentials, application identity, and environment identity do
+not belong in the contract file.
+
+When a project deploys multiple contracts, it may use `flaggo.deploy.json` as
+a deployment inventory:
+
+```json
+{
+  "format": "flaggo.deploy/v1",
+  "contracts": [
+    "flaggo/contracts/checkout.shippingMethod.decision-contract.json",
+    "flaggo/contracts/search.pageSize.decision-contract.json"
+  ]
+}
+```
+
+Paths are portable forward-slash relative paths contained within the
+manifest's directory. The manifest does not embed contracts and is not an
+atomic multi-contract API payload. Deployment tooling processes each referenced
+contract independently through the name-keyed `PUT`.
 
 ## Client responsibilities
 
@@ -40,9 +71,9 @@ A contract author or CI client:
 
 - maintains the complete `DecisionContract` as source-controlled input;
 - addresses the logical management resource by `contractName`;
-- uses dry-run validation before publication when early feedback is useful;
+- may use dry-run validation independently when early feedback is useful;
 - submits the complete desired contract rather than an incremental mutation;
-- records the returned `contractDigest` for application build or deployment;
+- records the returned `contractDigest` for exact runtime configuration;
 - uses exact-version reads for audit or reconstruction; and
 - treats the name-level current version as management discovery, never as a
   runtime selection mechanism.
@@ -52,8 +83,29 @@ application artifact or deployment is outside the initial Management API.
 Whatever mechanism is used must preserve the exact digest rather than defer
 version selection to runtime.
 
+Build and deployment are separate:
+
+```text
+Build
+  -> generate or validate local artifacts
+  -> compile application code
+  -> perform no service mutation
+
+Deploy
+  -> load one DecisionContract artifact
+  -> validate its wire shape locally
+  -> PUT it to Contract Service
+  -> receive contractDigest and activeExecutableDigest
+  -> distribute the exact runtime binding
+```
+
+The SDK validates the wire shape before sending `PUT`. Contract Service then
+performs authoritative semantic validation as part of deployment. Calling the
+remote dry-run validation endpoint first is optional and is not part of the
+normal deployment flow.
+
 Clients may retry a `PUT` with identical semantic content. They must not infer
-that a transport timeout means publication failed; the follow-up response or
+that a transport timeout means deployment failed; the follow-up response or
 exact-version read establishes the durable outcome.
 
 ## Management API boundary
@@ -72,7 +124,7 @@ GET  /v3/decision-contracts/{contractName}/versions/{contractDigest}
 ### Dry-run validation
 
 `POST .../validate` applies the same contract validation and canonical digest
-calculation used by publication but performs no durable mutation:
+calculation used by deployment but performs no durable mutation:
 
 ```text
 DecisionContract
@@ -92,7 +144,7 @@ Details instead.
 Validation does not reserve a digest, create a version, generate an
 executable, change a current pointer, or activate runtime authority.
 
-### Publication
+### Deployment
 
 `PUT .../{contractName}` accepts one complete immutable version and makes it
 runtime-ready:
@@ -171,9 +223,9 @@ different semantic roles even when stored transactionally in one database.
 
 ### Default executable
 
-Every accepted contract has a required literal default. Publication generates
+Every accepted contract has a required literal default. Deployment generates
 and activates its default executable before returning a ready version. Failure
-to persist or activate the default prevents successful publication.
+to persist or activate the default prevents successful deployment.
 
 ### Authored executable
 
@@ -213,7 +265,7 @@ executable.
 The Contract Service must preserve these ordering guarantees:
 
 - accepted contract and executable content are immutable by digest;
-- publication of identical semantic content converges on one version;
+- deployment of identical semantic content converges on one version;
 - a ready response is impossible before default activation succeeds;
 - current-version and learning-head movement occurs only after the new digest
   is ready;
@@ -246,12 +298,12 @@ executable from another contract digest.
 2. The server computes semantic digests; clients do not assert trusted
    identities.
 3. Validation is side-effect free.
-4. Publication is idempotent by canonical semantic content.
-5. A published `ready` version has a durable active default executable.
+4. Deployment is idempotent by canonical semantic content.
+5. A deployed `ready` version has a durable active default executable.
 6. Generation creates immutable candidates; only activation grants runtime
    authority.
 7. `auto-activation` performs a checked atomic activation rather than
-   publishing by generation recency.
+   deploying by generation recency.
 8. Management current-version and learning-head pointers never select a
    runtime contract version.
 9. Older digest activations survive acceptance of a newer version.

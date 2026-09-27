@@ -6,5 +6,5 @@ override, pause/resume, and rollback.
 
 It calls Contract Service, Decision Service query surfaces, and store-backed
 read APIs. It must not bypass authorization or mutate storage directly.
-UI-specific models adapt from published contracts rather than becoming shared
+UI-specific models adapt from deployed contracts rather than becoming shared
 domain contracts.

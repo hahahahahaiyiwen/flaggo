@@ -144,24 +144,24 @@ describe("OpenAPI shared-contract alignment", () => {
       "../schemas/management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
     );
 
-    const putContract = operation(
+    const deployContract = operation(
       management,
       "/v3/decision-contracts/{contractName}",
       "put",
     );
-    expect(putContract.operationId).toBe("putDecisionContract");
-    expectSecurity(putContract, "flaggo.contracts:accept");
-    expectParameters(putContract, [
+    expect(deployContract.operationId).toBe("deployDecisionContract");
+    expectSecurity(deployContract, "flaggo.contracts:accept");
+    expectParameters(deployContract, [
       "#/components/parameters/ContractNamePath",
       "#/components/parameters/CorrelationIdHeader",
     ]);
-    expect(putContract.requestBody?.$ref).toBe(
+    expect(deployContract.requestBody?.$ref).toBe(
       "#/components/requestBodies/DecisionContract",
     );
-    expect(putContract.responses["200"]?.$ref).toBe(
+    expect(deployContract.responses["200"]?.$ref).toBe(
       "#/components/responses/DecisionContractVersion",
     );
-    expect(putContract.responses["201"]?.$ref).toBe(
+    expect(deployContract.responses["201"]?.$ref).toBe(
       "#/components/responses/CreatedDecisionContractVersion",
     );
 
@@ -221,7 +221,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "../schemas/management-models-v3.schema.json#/$defs/DecisionContract",
     );
     for (const status of ["401", "403", "409", "415", "422", "503"]) {
-      expect(putContract.responses[status]?.$ref).toBe(
+      expect(deployContract.responses[status]?.$ref).toBe(
         "#/components/responses/Problem",
       );
     }

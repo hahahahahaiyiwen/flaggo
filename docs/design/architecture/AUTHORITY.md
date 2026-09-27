@@ -73,7 +73,7 @@ Acceptance does not activate authored behavior. The contract may contain an
 `authoredExecutable`, but that field is source material for generation rather
 than active behavior.
 
-Successful publication reports an accepted-ready version only after the
+Successful deployment reports an accepted-ready version only after the
 Contract Service has generated and activated its default executable. An
 internal staging record that has not completed that transition is not exposed
 as accepted-ready runtime authority.

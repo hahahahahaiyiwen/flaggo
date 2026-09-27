@@ -3,16 +3,16 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  createFlaggoClient,
-  type RuntimeContractBindings,
-} from "@flaggo/sdk";
+  createDecisionClient,
+  type DecisionBindings,
+} from "@flaggo/sdk/runtime";
 
-import { AdaptiveWorker } from "./adaptive-worker.js";
+import { AdaptiveWorker, type WorkerDecisions } from "./adaptive-worker.js";
 import { LocalOtelLogs } from "./telemetry.js";
 interface ServiceConnection {
   decisionServiceUrl: string;
   telemetryPath: string;
-  contracts: RuntimeContractBindings;
+  bindings: DecisionBindings<WorkerDecisions>;
 }
 
 function argumentValue(name: string): string | undefined {
@@ -28,9 +28,9 @@ export async function runMain(): Promise<void> {
   const service = JSON.parse(
     await readFile(serviceFile, "utf8"),
   ) as ServiceConnection;
-  const client = createFlaggoClient({
-    contracts: service.contracts,
-    decisionServiceUrl: service.decisionServiceUrl,
+  const client = createDecisionClient<WorkerDecisions>({
+    bindings: service.bindings,
+    baseUrl: service.decisionServiceUrl,
     credential: { mode: "local-development" },
   });
   const telemetry = new LocalOtelLogs(service.telemetryPath);

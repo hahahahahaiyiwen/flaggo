@@ -1,0 +1,5 @@
+{
+  "name": "@flaggo/example-tetris",
+  "private": true,
+  "type": "module"
+}

@@ -3,12 +3,13 @@
 This TypeScript console application processes an in-memory queue while Flaggo
 chooses `demo.workerBatchSize`.
 
-`decision-contract.json` is the complete v3 `DecisionContract`. The local
-service launcher:
+`flaggo/contracts/demo.workerBatchSize.decision-contract.json` is the complete
+v3 `DecisionContract`, and `flaggo.deploy.json` lists it for deployment. The
+local environment:
 
 1. starts Contract Service and Decision Service against one isolated SQLite
    database;
-2. publishes the contract through
+2. deploys the contract through
    `PUT /v3/decision-contracts/demo.workerBatchSize`;
 3. records the returned exact `contractDigest`; and
 4. configures the worker to call the exact-version Runtime API.
@@ -33,7 +34,7 @@ From the repository root:
 npm run test:adaptive-worker
 ```
 
-The smoke test builds the SDK, application, and .NET hosts; publishes the
+The smoke test builds the SDK, application, and .NET hosts; deploys the
 contract; exercises default and authored-rule decisions through the real
 Decision Service; verifies application telemetry; checks that an unavailable
 service is surfaced as a failure; and removes its isolated state.

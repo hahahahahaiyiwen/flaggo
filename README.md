@@ -1,7 +1,7 @@
 # Flaggo
 
 Flaggo is a closed-loop decisioning system for bounded runtime variables. It
-gives application code an explicit way to publish a versioned
+gives application code an explicit way to deploy a versioned
 `DecisionContract`, activate one immutable `DecisionExecutable`, request a
 deterministic result, and correlate outcomes after the application reports
 exposure.

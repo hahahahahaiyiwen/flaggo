@@ -1,10 +1,8 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  createContractServiceClient,
-} from "../../packages/sdk-typescript/dist/index.js";
+import { deployContracts } from "../contract-deployment.mjs";
 import {
   createHostLifecycle,
   installSignalHandlers,
@@ -17,7 +15,7 @@ import { waitForServiceShutdown } from "./service-health.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleDirectory, "../..");
-const contractPath = resolve(exampleDirectory, "decision-contract.json");
+const deploymentManifestPath = resolve(exampleDirectory, "flaggo.deploy.json");
 
 export async function startAdaptiveWorkerService({
   lifecycle,
@@ -33,20 +31,19 @@ export async function startAdaptiveWorkerService({
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
   };
-  const contract = JSON.parse(
-    await readFile(contractPath, { encoding: "utf8", signal: lifecycle.signal }),
-  );
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
-      signal: init.signal ?? lifecycle.signal,
+      signal: init.signal === undefined
+        ? lifecycle.signal
+        : AbortSignal.any([init.signal, lifecycle.signal]),
     });
   const commonConfiguration = {
     ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
     Flaggo__Authentication__Application: "adaptive-worker",
     Flaggo__Authentication__Environment: "development",
   };
-  const runtime = await startContractAndDecisionHosts({
+  const hosts = await startContractAndDecisionHosts({
     lifecycle,
     createContractHost: () => startHost(
       "adaptive-worker-contract-service",
@@ -64,14 +61,6 @@ export async function startAdaptiveWorkerService({
         host,
         signal,
       ),
-    publishContract: async (url) => {
-      const client = createContractServiceClient({
-        contractServiceUrl: url,
-        credential: { mode: "local-development" },
-        fetch: fetchWithAbort,
-      });
-      return client.put(contract.name, contract);
-    },
     createDecisionHost: () => startHost(
       "adaptive-worker-decision-service",
       resolve(
@@ -89,12 +78,26 @@ export async function startAdaptiveWorkerService({
         signal,
       ),
   });
+  const deployedContracts = await deployContracts({
+    manifestPath: deploymentManifestPath,
+    baseUrl: hosts.contractUrl,
+    credential: { mode: "local-development" },
+    fetch: fetchWithAbort,
+    signal: lifecycle.signal,
+  });
+  const deployed = deployedContracts.contracts[0];
+  if (deployed === undefined || deployedContracts.contracts.length !== 1) {
+    throw new Error(
+      "The Adaptive Worker deployment manifest must contain exactly one DecisionContract.",
+    );
+  }
+  const deployment = deployed.deployment;
   const connection = {
-    contractServiceUrl: runtime.contractUrl,
-    decisionServiceUrl: runtime.decisionUrl,
-    contracts: {
-      [runtime.publication.name]: {
-        contractDigest: runtime.publication.contractDigest,
+    contractServiceUrl: hosts.contractUrl,
+    decisionServiceUrl: hosts.decisionUrl,
+    bindings: {
+      [deployment.name]: {
+        contractDigest: deployment.contractDigest,
       },
     },
     telemetryPath: paths.telemetry,
@@ -107,9 +110,10 @@ export async function startAdaptiveWorkerService({
     );
   }
   return {
-    ...runtime,
+    ...hosts,
     connection,
-    contract,
+    contract: deployed.contract,
+    deployment,
     paths,
   };
 }
@@ -136,7 +140,7 @@ async function runService(lifecycle, runDirectory) {
     status: "ready",
     contractServiceUrl: service.contractUrl,
     decisionServiceUrl: service.decisionUrl,
-    contractDigest: service.publication.contractDigest,
+    contractDigest: service.deployment.contractDigest,
     connectionPath: service.paths.connection,
     telemetryPath: service.paths.telemetry,
   }, null, 2)}\n`);

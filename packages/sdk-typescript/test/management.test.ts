@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  createContractServiceClient,
+  createContractClient,
   FlaggoHttpError,
-  InvalidDecisionInputError,
+  InvalidFlaggoInputError,
   InvalidServerResponseError,
   type DecisionContract,
   type FetchLike,
-} from "../src/index.js";
+} from "../src/management/index.js";
 
 const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -40,39 +40,41 @@ const version = {
 function response(
   status: number,
   body: unknown,
-  contentType = status >= 400
-    ? "application/problem+json"
-    : "application/json",
   extraHeaders?: HeadersInit,
 ): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      "Content-Type": contentType,
+      "Content-Type": status >= 400
+        ? "application/problem+json"
+        : "application/json",
       ...Object.fromEntries(new Headers(extraHeaders)),
     },
   });
 }
 
 describe("v3 Contract Service client", () => {
-  it("validates a complete contract without publishing it", async () => {
+  it("validates a complete contract without deploying it", async () => {
     const fetch = vi.fn<FetchLike>(async () => response(200, {
       status: "valid",
       contractDigest,
       issues: [],
     }));
-    const client = createContractServiceClient({
-      contractServiceUrl: "https://contracts.test/",
+    const client = createContractClient({
+      baseUrl: "https://contracts.test/",
       credential: { mode: "local-development" },
       fetch,
     });
 
-    await expect(client.validate(contract.name, contract, {
+    await expect(client.validate(contract, {
       correlationId: "validation-1",
     })).resolves.toEqual({
-      status: "valid",
-      contractDigest,
-      issues: [],
+      value: {
+        status: "valid",
+        contractDigest,
+        issues: [],
+      },
+      metadata: { status: 200 },
     });
 
     const [url, init] = fetch.mock.calls[0]!;
@@ -83,19 +85,30 @@ describe("v3 Contract Service client", () => {
     expect(JSON.parse(String(init?.body))).toEqual(contract);
     expect(new Headers(init?.headers).get("X-Flaggo-Correlation-Id"))
       .toBe("validation-1");
+    expect(new Headers(init?.headers).get("Authorization"))
+      .toBe("Flaggo-Local-Development");
   });
 
-  it("publishes and validates the ready version envelope", async () => {
-    const fetch = vi.fn<FetchLike>(async () => response(201, version, undefined, {
-      Location: `/v3/decision-contracts/${contract.name}/versions/${contractDigest}`,
+  it("deploys a ready version and exposes response metadata", async () => {
+    const location =
+      `/v3/decision-contracts/${contract.name}/versions/${contractDigest}`;
+    const fetch = vi.fn<FetchLike>(async () => response(201, version, {
+      Location: location,
+      "X-Flaggo-Correlation-Id": "deployment-1",
     }));
-    const client = createContractServiceClient({
-      contractServiceUrl: "https://contracts.test",
+    const client = createContractClient({
+      baseUrl: "https://contracts.test",
       fetch,
     });
 
-    await expect(client.put<number>(contract.name, contract)).resolves.toEqual(version);
-    expect(fetch.mock.calls[0]![1]?.method).toBe("PUT");
+    await expect(client.deploy(contract)).resolves.toEqual({
+      value: version,
+      metadata: {
+        status: 201,
+        location,
+        correlationId: "deployment-1",
+      },
+    });
   });
 
   it("reads current, exact, and paginated versions", async () => {
@@ -113,18 +126,21 @@ describe("v3 Contract Service client", () => {
         }],
         nextCursor: null,
       }));
-    const client = createContractServiceClient({
-      contractServiceUrl: "https://contracts.test",
+    const client = createContractClient({
+      baseUrl: "https://contracts.test",
       fetch,
     });
 
-    await expect(client.getCurrent<number>(contract.name)).resolves.toEqual(version);
+    await expect(client.getCurrent<number>(contract.name))
+      .resolves.toMatchObject({ value: version });
     await expect(client.getVersion<number>(contract.name, contractDigest))
-      .resolves.toEqual(version);
-    await expect(client.listVersions(contract.name, {
-      limit: 10,
-      cursor: "next/page",
-    })).resolves.toMatchObject({ currentContractDigest: contractDigest });
+      .resolves.toMatchObject({ value: version });
+    await expect(client.listVersions(
+      contract.name,
+      { limit: 10, cursor: "next/page" },
+    )).resolves.toMatchObject({
+      value: { currentContractDigest: contractDigest },
+    });
 
     expect(String(fetch.mock.calls[1]![0])).toContain(
       `/versions/${encodeURIComponent(contractDigest)}`,
@@ -144,40 +160,55 @@ describe("v3 Contract Service client", () => {
     const fetch = vi.fn<FetchLike>(async () => response(
       422,
       problem,
-      undefined,
       {
         "X-Flaggo-Correlation-Id": "server-correlation",
         "Retry-After": "1",
       },
     ));
-    const client = createContractServiceClient({
-      contractServiceUrl: "https://contracts.test",
+    const client = createContractClient({
+      baseUrl: "https://contracts.test",
       fetch,
     });
 
-    await expect(client.put(contract.name, contract)).rejects.toMatchObject({
+    await expect(client.deploy(contract)).rejects.toMatchObject({
       problem,
       response: {
+        status: 422,
         correlationId: "server-correlation",
         retryAfterSeconds: 1,
       },
     });
+    await expect(client.deploy(contract)).rejects.toBeInstanceOf(FlaggoHttpError);
   });
 
-  it("rejects invalid identities and malformed service responses", async () => {
+  it("rejects malformed local contracts before transport", async () => {
+    const fetch = vi.fn<FetchLike>();
+    const client = createContractClient({
+      baseUrl: "https://contracts.test",
+      fetch,
+    });
+
+    await expect(client.deploy({
+      ...contract,
+      attributes: [{ name: "_reserved", schema: { type: "number" } }],
+    } as never)).rejects.toBeInstanceOf(InvalidFlaggoInputError);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid route identities and malformed responses", async () => {
     const fetch = vi.fn<FetchLike>(async () => response(200, {
       ...version,
       contractDigest: executableDigest,
     }));
-    const client = createContractServiceClient({
-      contractServiceUrl: "https://contracts.test",
+    const client = createContractClient({
+      baseUrl: "https://contracts.test",
       fetch,
     });
 
-    await expect(client.validate("other.name", contract))
-      .rejects.toBeInstanceOf(InvalidDecisionInputError);
+    await expect(client.getCurrent("invalid/name"))
+      .rejects.toBeInstanceOf(InvalidFlaggoInputError);
     await expect(client.getVersion(contract.name, "sha256:bad"))
-      .rejects.toBeInstanceOf(InvalidDecisionInputError);
+      .rejects.toBeInstanceOf(InvalidFlaggoInputError);
     await expect(client.getVersion(contract.name, contractDigest))
       .rejects.toBeInstanceOf(InvalidServerResponseError);
   });
@@ -188,8 +219,8 @@ describe("v3 Contract Service client", () => {
       status: 404,
       code: "not-found",
     }));
-    const client = createContractServiceClient({
-      contractServiceUrl: "https://contracts.test",
+    const client = createContractClient({
+      baseUrl: "https://contracts.test",
       fetch,
     });
 

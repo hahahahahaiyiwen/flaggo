@@ -160,7 +160,7 @@ This is a conceptual shape, not the final wire schema. Both
 
 The contract does not contain an active executable, runtime attribute values,
 collected evidence, activation state, or lifecycle history.
-Publication metadata such as repository, commit, build, owner, and timestamps
+Deployment metadata such as repository, commit, build, owner, and timestamps
 also remains outside its semantic content.
 
 ### Attributes
@@ -294,7 +294,7 @@ DecisionContract.result.default
 ```
 
 Default executable generation and activation are automatic. Contract
-publication reports runtime readiness only after this activation succeeds.
+deployment reports runtime readiness only after this activation succeeds.
 Authored or evidence-based candidates may later replace it, but their absence,
 validation failure, or failed activation never makes the contract unable to
 return a runtime decision.
@@ -501,7 +501,7 @@ objective, guardrail, or learning policy produces a new digest.
 
 Descriptions are non-semantic and do not affect the digest, including
 `description` annotations nested inside JSON Schemas. Formatting, comments,
-attribute/evidence list order, and publication metadata also do not change the
+attribute/evidence list order, and deployment metadata also do not change the
 digest. Attribute and evidence declarations canonicalize by name; authored
 rule order remains semantic because the first matching rule wins.
 
@@ -649,7 +649,7 @@ byte-for-byte identical.
 `executableDigest`. Activation changes the executable's lifecycle role, not
 its identity or content.
 
-Server-generated record IDs may identify publication, generation, or
+Server-generated record IDs may identify deployment, generation, or
 activation events, but they do not replace these semantic identities.
 
 ## Primitive invariants

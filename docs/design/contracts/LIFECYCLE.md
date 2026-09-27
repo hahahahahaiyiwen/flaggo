@@ -39,8 +39,8 @@ merely because it was produced or validated. Flaggo generates and activates
 the default executable automatically from the accepted contract's required
 `result.default`.
 
-An implementation may compose several transitions into one publication API,
-but it must preserve their distinct outcomes. Public contract publication
+An implementation may compose several transitions into one deployment API,
+but it must preserve their distinct outcomes. Public contract deployment
 reports accepted and ready only after default generation and activation
 succeed. Generation of a later candidate does not make that candidate active.
 
@@ -67,7 +67,7 @@ contractDigest = digest(canonical(DecisionContract))
 
 Acceptance does not determine whether another contract digest is compatible.
 It validates the required default but does not produce runtime authority by
-itself. The publication workflow immediately continues through default
+itself. The deployment workflow immediately continues through default
 generation and activation before returning accepted readiness.
 
 ### Acceptance outcomes
@@ -119,7 +119,7 @@ DecisionContract (accepted).result.default
 
 Every accepted contract follows this path. It requires no separate executable
 authorization because its exact value was accepted as part of the contract.
-The publication workflow does not report ready until default activation
+The deployment workflow does not report ready until default activation
 succeeds.
 
 ### Authored path
@@ -314,8 +314,8 @@ using its existing active executable.
 
 | State | Entered by | Permitted next transitions |
 | --- | --- | --- |
-| Submitted contract | User publication | Reject or accept contract |
-| Accepted contract | Successful publication, including default activation | Evaluate with the default or produce replacement candidates |
+| Submitted contract | User deployment | Reject or accept contract |
+| Accepted contract | Successful deployment, including default activation | Evaluate with the default or produce replacement candidates |
 | Waiting for learning interval | Accepted contract with learning enabled or completed analysis attempt | Start one analysis run when the interval elapses |
 | Analyzing evidence | Eligible interval with no other run active | Produce no candidate, fail, or produce one candidate |
 | Candidate executable | Successful Executable Generation | Fail validation, become superseded, fail activation, or activate when eligible |

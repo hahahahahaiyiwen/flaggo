@@ -12,7 +12,7 @@ public interface IContractLifecycle
         string contractName,
         DecisionContract contract);
 
-    Task<ContractPublicationResult> PublishAsync(
+    Task<ContractDeploymentResult> DeployAsync(
         DecisionScope scope,
         string contractName,
         DecisionContract contract,
@@ -57,7 +57,7 @@ public sealed class ContractLifecycle(
         return ContractValidator.Validate(contract, expressionCompiler);
     }
 
-    public async Task<ContractPublicationResult> PublishAsync(
+    public async Task<ContractDeploymentResult> DeployAsync(
         DecisionScope scope,
         string contractName,
         DecisionContract contract,
@@ -101,7 +101,7 @@ public sealed class ContractLifecycle(
             contractDigest,
             cancellationToken);
 
-        return new ContractPublicationResult(
+        return new ContractDeploymentResult(
             Project(accepted, active.ExecutableDigest),
             writeResult == ContractStoreWriteResult.Created);
     }
@@ -179,7 +179,7 @@ public sealed class ContractLifecycle(
             if (active is null)
             {
                 throw new InvalidDataException(
-                    $"Published contract '{accepted.ContractDigest}' has no active executable.");
+                    $"Deployed contract '{accepted.ContractDigest}' has no active executable.");
             }
 
             versions.Add(new DecisionContractVersionSummary
@@ -227,7 +227,7 @@ public sealed class ContractLifecycle(
             }
             catch (ActivationConflictException)
             {
-                // Another publisher or generator established runtime authority.
+                // Another deployer or generator established runtime authority.
             }
 
             active = await executableStore.GetActiveAsync(
@@ -374,7 +374,7 @@ public sealed class ContractLifecycle(
     }
 }
 
-public sealed record ContractPublicationResult(
+public sealed record ContractDeploymentResult(
     DecisionContractVersion Version,
     bool Created);
 

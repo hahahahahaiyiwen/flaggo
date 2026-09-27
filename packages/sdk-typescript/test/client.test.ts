@@ -1,20 +1,37 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  createFlaggoClient,
-  InvalidDecisionInputError,
+  createDecisionClient,
+  FlaggoAbortError,
+  FlaggoHttpError,
+  FlaggoTimeoutError,
+  FlaggoTransportError,
+  InvalidFlaggoInputError,
   InvalidServerResponseError,
-  MissingContractBindingError,
+  MissingDecisionBindingError,
+  type DecisionBindings,
+  type DecisionSpec,
   type FetchLike,
-} from "../src/index.js";
+} from "../src/runtime/index.js";
 
 const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 const executableDigest =
   "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-const contracts = {
+
+type Decisions = {
+  readonly parallelism: DecisionSpec<{
+    readonly queuePressure: number;
+    readonly worker: {
+      readonly id: string;
+      readonly zones: readonly string[];
+    };
+  }, number>;
+};
+
+const bindings: DecisionBindings<Decisions> = {
   parallelism: { contractDigest },
-} as const;
+};
 
 function decision(
   result: unknown = 4,
@@ -36,7 +53,9 @@ function jsonResponse(
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": status >= 400
+        ? "application/problem+json"
+        : "application/json",
       ...Object.fromEntries(new Headers(responseHeaders)),
     },
   });
@@ -44,25 +63,35 @@ function jsonResponse(
 
 describe("v3 runtime client", () => {
   it("posts one complete RuntimeInput to the exact contract version", async () => {
-    const fetch = vi.fn<FetchLike>(async () => jsonResponse(decision()));
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test/",
-      contracts,
+    const fetch = vi.fn<FetchLike>(async () => jsonResponse(
+      decision(),
+      200,
+      { "X-Flaggo-Correlation-Id": "server-correlation" },
+    ));
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test/",
+      bindings,
       fetch,
       random: () => 0.25,
     });
 
-    const result = await client.decide<number>("parallelism", {
+    const response = await client.decide("parallelism", {
       attributes: {
         queuePressure: 0.75,
         worker: { id: "worker-1", zones: ["west", "east"] },
       },
       currentExposure: { exposureId: "exposure-previous" },
+    }, {
       correlationId: "correlation-1",
     });
 
-    expect(result).toEqual(decision());
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(response).toEqual({
+      value: decision(),
+      metadata: {
+        status: 200,
+        correlationId: "server-correlation",
+      },
+    });
     const [url, init] = fetch.mock.calls[0]!;
     expect(String(url)).toBe(
       `https://decisions.test/v3/decision-contracts/parallelism/versions/`
@@ -81,8 +110,11 @@ describe("v3 runtime client", () => {
     });
   });
 
-  it("reuses the complete input, including _random, for retries", async () => {
+  it("reuses exact request bytes and refreshes credentials for retries", async () => {
     const random = vi.fn(() => 0.375);
+    const getToken = vi.fn()
+      .mockResolvedValueOnce("token-1")
+      .mockResolvedValueOnce("token-2");
     const fetch = vi.fn<FetchLike>()
       .mockResolvedValueOnce(jsonResponse({
         type: "https://flaggo.dev/problems/dependency-unavailable",
@@ -90,42 +122,49 @@ describe("v3 runtime client", () => {
         status: 503,
       }, 503, { "Retry-After": "0" }))
       .mockResolvedValueOnce(jsonResponse(decision(6, { source: "default" })));
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test",
-      contracts,
-      retries: 1,
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
+      credential: { mode: "bearer", getToken },
+      retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
       fetch,
       random,
     });
 
-    await expect(client.decide<number>("parallelism", {
+    await expect(client.decide("parallelism", {
       attributes: { queuePressure: 0.5 },
-    })).resolves.toMatchObject({ result: 6 });
+    })).resolves.toMatchObject({ value: { result: 6 } });
 
     expect(random).toHaveBeenCalledTimes(1);
+    expect(getToken).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0]![1]?.body).toBe(fetch.mock.calls[1]![1]?.body);
-    expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body)))
-      .toMatchObject({ attributes: { _random: 0.375 } });
+    expect(new Headers(fetch.mock.calls[0]![1]?.headers).get("Authorization"))
+      .toBe("Bearer token-1");
+    expect(new Headers(fetch.mock.calls[1]![1]?.headers).get("Authorization"))
+      .toBe("Bearer token-2");
   });
 
-  it("retries transport failures but does not synthesize a fallback", async () => {
+  it("normalizes exhausted transport failures without synthesizing fallback", async () => {
     const unavailable = new TypeError("connection refused");
     const fetch = vi.fn<FetchLike>()
       .mockRejectedValueOnce(unavailable)
       .mockRejectedValueOnce(unavailable);
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test",
-      contracts,
-      retries: 1,
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
+      retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
       fetch,
     });
 
-    await expect(client.decide("parallelism")).rejects.toBe(unavailable);
+    await expect(client.decide("parallelism")).rejects.toMatchObject({
+      name: "FlaggoTransportError",
+      cause: unavailable,
+    });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("surfaces standard Problem Details and does not retry client errors", async () => {
+  it("surfaces standard Problem Details without retrying client errors", async () => {
     const problem = {
       type: "https://flaggo.dev/problems/invalid-runtime-input",
       title: "Invalid runtime input",
@@ -137,19 +176,24 @@ describe("v3 runtime client", () => {
       400,
       { "X-Flaggo-Correlation-Id": "correlation-server" },
     ));
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test",
-      contracts,
-      retries: 2,
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
+      retry: { maxAttempts: 3 },
       fetch,
     });
 
-    await expect(client.decide("parallelism"))
-      .rejects.toMatchObject({
-        problem,
-        response: { correlationId: "correlation-server" },
-      });
-    expect(fetch).toHaveBeenCalledTimes(1);
+    await expect(client.decide("parallelism")).rejects.toMatchObject({
+      problem,
+      response: {
+        status: 400,
+        correlationId: "correlation-server",
+      },
+    });
+    await expect(client.decide("parallelism")).rejects.toBeInstanceOf(
+      FlaggoHttpError,
+    );
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("rejects nonstandard Problem Details extensions", async () => {
@@ -157,11 +201,10 @@ describe("v3 runtime client", () => {
       type: "https://flaggo.dev/problems/no-active-executable",
       status: 503,
       code: "no-active-executable",
-      clientFallback: { eligible: true },
     }, 503));
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test",
-      contracts,
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
       fetch,
     });
 
@@ -171,34 +214,80 @@ describe("v3 runtime client", () => {
 
   it.each([
     [{ attributes: { _random: 0.1 } }, "/attributes/_random"],
-    [{ attributes: { pressure: Number.NaN } }, "/attributes/pressure"],
+    [{ attributes: { queuePressure: Number.NaN } }, "/attributes/queuePressure"],
+    [{ attributes: { worker: new Date() } }, "/attributes/worker"],
     [{ currentExposure: { exposureId: "" } }, "/currentExposure/exposureId"],
-    [{ correlationId: "invalid\r\nheader" }, "/correlationId"],
-  ])("rejects invalid SDK input %#", async (request, path) => {
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test",
-      contracts,
+  ])("rejects values that do not serialize as valid RuntimeInput %#", async (
+    request,
+    path,
+  ) => {
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
       fetch: vi.fn(),
     });
 
-    await expect(client.decide("parallelism", request))
-      .rejects.toMatchObject({
-        message: expect.stringContaining(path),
-      });
+    await expect(client.decide(
+      "parallelism",
+      request as never,
+    )).rejects.toMatchObject({
+      name: "InvalidFlaggoInputError",
+      message: expect.stringContaining(path),
+    });
   });
 
-  it("rejects invalid random sources before sending a request", async () => {
+  it("rejects sparse arrays and invalid random sources before transport", async () => {
     const fetch = vi.fn<FetchLike>();
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test",
-      contracts,
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
       fetch,
       random: () => 1,
     });
+    await expect(client.decide("parallelism"))
+      .rejects.toBeInstanceOf(InvalidFlaggoInputError);
+
+    const sparse: string[] = [];
+    sparse.length = 1;
+    const validRandomClient = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
+      fetch,
+      random: () => 0.5,
+    });
+    await expect(validRandomClient.decide("parallelism", {
+      attributes: {
+        worker: { id: "worker", zones: sparse },
+      },
+    })).rejects.toBeInstanceOf(InvalidFlaggoInputError);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("enforces request and response document limits", async () => {
+    const fetch = vi.fn<FetchLike>(async () => jsonResponse(
+      decision(),
+      200,
+      { "Content-Length": "262145" },
+    ));
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
+      fetch,
+    });
+
+    const oversizedAttributes = Object.fromEntries(
+      Array.from(
+        { length: 17 },
+        (_, index) => [`value${index}`, "x".repeat(16_384)],
+      ),
+    );
+    await expect(client.decide("parallelism", {
+      attributes: oversizedAttributes,
+    } as never)).rejects.toBeInstanceOf(InvalidFlaggoInputError);
+    expect(fetch).not.toHaveBeenCalled();
 
     await expect(client.decide("parallelism"))
-      .rejects.toBeInstanceOf(InvalidDecisionInputError);
-    expect(fetch).not.toHaveBeenCalled();
+      .rejects.toBeInstanceOf(InvalidServerResponseError);
   });
 
   it("rejects unknown bindings and malformed successful responses", async () => {
@@ -206,15 +295,38 @@ describe("v3 runtime client", () => {
       ...decision(),
       contractDigest: executableDigest,
     }));
-    const client = createFlaggoClient({
-      decisionServiceUrl: "https://decisions.test",
-      contracts,
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
       fetch,
     });
 
     await expect(client.decide("missing" as "parallelism"))
-      .rejects.toBeInstanceOf(MissingContractBindingError);
+      .rejects.toBeInstanceOf(MissingDecisionBindingError);
     await expect(client.decide("parallelism"))
       .rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("supports caller cancellation and operation timeouts", async () => {
+    const fetch = vi.fn<FetchLike>(() => new Promise(() => {}));
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
+      fetch,
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(client.decide("parallelism", {}, {
+      signal: controller.signal,
+    })).rejects.toBeInstanceOf(FlaggoAbortError);
+
+    await expect(client.decide("parallelism", {}, {
+      timeoutMs: 10,
+    })).rejects.toBeInstanceOf(FlaggoTimeoutError);
+  });
+
+  it("exports transport errors through the runtime entry point", () => {
+    expect(FlaggoTransportError).toBeDefined();
   });
 });

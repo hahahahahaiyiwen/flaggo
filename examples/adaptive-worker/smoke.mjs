@@ -4,8 +4,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  createFlaggoClient,
-} from "../../packages/sdk-typescript/dist/index.js";
+  createDecisionClient,
+} from "../../packages/sdk-typescript/dist/runtime/index.js";
 import {
   createHostLifecycle,
   installSignalHandlers,
@@ -35,11 +35,13 @@ async function runSmoke(lifecycle) {
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
-      signal: init.signal ?? lifecycle.signal,
+      signal: init.signal === undefined
+        ? lifecycle.signal
+        : AbortSignal.any([init.signal, lifecycle.signal]),
     });
-  const client = createFlaggoClient({
-    contracts: service.connection.contracts,
-    decisionServiceUrl: service.decisionUrl,
+  const client = createDecisionClient({
+    bindings: service.connection.bindings,
+    baseUrl: service.decisionUrl,
     credential: { mode: "local-development" },
     fetch: fetchWithAbort,
     random: () => 0.25,
@@ -73,11 +75,11 @@ async function runSmoke(lifecycle) {
     for (const result of [steady, burst, slowDownstream, recovery]) {
       assert.equal(
         result.decision.contractDigest,
-        service.publication.contractDigest,
+        service.deployment.contractDigest,
       );
       assert.equal(
         result.decision.executableDigest,
-        service.publication.activeExecutableDigest,
+        service.deployment.activeExecutableDigest,
       );
       assert.ok(result.operations.some((operation) =>
         operation.startsWith("batch-applied:")
@@ -113,8 +115,8 @@ async function runSmoke(lifecycle) {
 
     process.stdout.write(`${JSON.stringify({
       status: "passed",
-      contractDigest: service.publication.contractDigest,
-      executableDigest: service.publication.activeExecutableDigest,
+      contractDigest: service.deployment.contractDigest,
+      executableDigest: service.deployment.activeExecutableDigest,
       steadyBatchSize: steady.appliedBatchSize,
       burstBatchSize: burst.appliedBatchSize,
       recoveryBatchSize: recovery.appliedBatchSize,

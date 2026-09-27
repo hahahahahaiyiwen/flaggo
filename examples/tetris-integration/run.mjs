@@ -1,20 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  createContractServiceClient,
-  createFlaggoClient,
-} from "../../packages/sdk-typescript/dist/index.js";
+  createDecisionClient,
+} from "@flaggo/sdk/runtime";
 import {
   createHostLifecycle,
   installSignalHandlers,
   runWithCleanup,
-  startContractAndDecisionHosts,
-  startHost,
-  waitForReady,
 } from "./host-process.mjs";
+import { deployTetrisContract } from "./deploy-contract.mjs";
+import { startLocalFlaggoHosts } from "./local-flaggo.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleDirectory, "../..");
@@ -25,73 +23,21 @@ const runDirectory = resolve(
 );
 
 async function runIntegration(lifecycle) {
-  await mkdir(runDirectory, { recursive: true });
-  const contract = JSON.parse(
-    await readFile(resolve(exampleDirectory, "decision-contract.json"), {
-      encoding: "utf8",
-      signal: lifecycle.signal,
-    }),
-  );
-  const paths = {
-    database: resolve(runDirectory, "flaggo.db"),
-    contractLog: resolve(runDirectory, "contract-service.log"),
-    decisionLog: resolve(runDirectory, "decision-service.log"),
-  };
-  const commonConfiguration = {
-    ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
-    Flaggo__Authentication__Application: "tetris",
-    Flaggo__Authentication__Environment: "integration",
-  };
-  const fetchWithAbort = (input, init = {}) =>
-    fetch(input, {
-      ...init,
-      signal: init.signal ?? lifecycle.signal,
-    });
-  const runtime = await startContractAndDecisionHosts({
+  const hosts = await startLocalFlaggoHosts({
     lifecycle,
-    createContractHost: () => startHost(
-      "tetris-contract-service",
-      resolve(
-        repositoryRoot,
-        "apps/contract-service/src/Flaggo.ContractService/bin/Debug/net10.0/Flaggo.ContractService.dll",
-      ),
-      paths.contractLog,
-      repositoryRoot,
-      commonConfiguration,
-    ),
-    waitForContractReady: (url, host, signal) =>
-      waitForReady(
-        (probeSignal) => ready(url, fetchWithAbort, probeSignal),
-        host,
-        signal,
-      ),
-    publishContract: async (url) => {
-      const management = createContractServiceClient({
-        contractServiceUrl: url,
-        credential: { mode: "local-development" },
-        fetch: fetchWithAbort,
-      });
-      const validation = await management.validate(contract.name, contract);
-      assert.equal(validation.status, "valid");
-      return management.put(contract.name, contract);
-    },
-    createDecisionHost: () => startHost(
-      "tetris-decision-service",
-      resolve(
-        repositoryRoot,
-        "apps/decision-service/src/Flaggo.DecisionService/bin/Debug/net10.0/Flaggo.DecisionService.dll",
-      ),
-      paths.decisionLog,
-      repositoryRoot,
-      commonConfiguration,
-    ),
-    waitForDecisionReady: (url, host, signal) =>
-      waitForReady(
-        (probeSignal) => ready(url, fetchWithAbort, probeSignal),
-        host,
-        signal,
-      ),
+    repositoryRoot,
+    exampleDirectory,
+    runDirectory,
   });
+  const deployed = await deployTetrisContract({
+    exampleDirectory,
+    contractUrl: hosts.contractUrl,
+    fetch: hosts.fetch,
+    signal: lifecycle.signal,
+  });
+  const contract = deployed.contract;
+  const deployment = deployed.deployment;
+  const fetchWithAbort = hosts.fetch;
 
   const capturedBodies = [];
   const forwardingFetch = async (input, init) => {
@@ -100,11 +46,11 @@ async function runIntegration(lifecycle) {
     }
     return fetchWithAbort(input, init);
   };
-  const client = createFlaggoClient({
-    decisionServiceUrl: runtime.decisionUrl,
-    contracts: {
+  const client = createDecisionClient({
+    baseUrl: hosts.decisionUrl,
+    bindings: {
       [contract.name]: {
-        contractDigest: runtime.publication.contractDigest,
+        contractDigest: deployment.contractDigest,
       },
     },
     credential: { mode: "local-development" },
@@ -116,21 +62,21 @@ async function runIntegration(lifecycle) {
     recent_placement_time_ms: 1600,
     session_id: "game-v3",
   };
-  const high = await client.decide(contract.name, {
+  const { value: high } = await client.decide(contract.name, {
     attributes: {
       ...common,
       board_pressure: 0.9,
       recovery_failures: 3,
     },
   });
-  const low = await client.decide(contract.name, {
+  const { value: low } = await client.decide(contract.name, {
     attributes: {
       ...common,
       board_pressure: 0.4,
       recovery_failures: 0,
     },
   });
-  const missing = await client.decide(contract.name, {
+  const { value: missing } = await client.decide(contract.name, {
     attributes: {
       session_id: "game-v3",
     },
@@ -143,10 +89,10 @@ async function runIntegration(lifecycle) {
   assert.equal(missing.result, 800);
   assert.deepEqual(missing.evaluation, { source: "default" });
   for (const decision of [high, low, missing]) {
-    assert.equal(decision.contractDigest, runtime.publication.contractDigest);
+    assert.equal(decision.contractDigest, deployment.contractDigest);
     assert.equal(
       decision.executableDigest,
-      runtime.publication.activeExecutableDigest,
+      deployment.activeExecutableDigest,
     );
   }
   assert.equal(capturedBodies.length, 3);
@@ -157,30 +103,17 @@ async function runIntegration(lifecycle) {
     assert.equal("fallback" in body, false);
   }
 
-  await runtime.decision.stop();
+  await hosts.decision.stop();
   await assert.rejects(() => client.decide(contract.name));
 
   process.stdout.write(`${JSON.stringify({
     status: "passed",
-    contractDigest: runtime.publication.contractDigest,
-    executableDigest: runtime.publication.activeExecutableDigest,
+    contractDigest: deployment.contractDigest,
+    executableDigest: deployment.activeExecutableDigest,
     high: high.result,
     low: low.result,
     missing: missing.result,
   }, null, 2)}\n`);
-}
-
-async function ready(url, fetchImpl, signal) {
-  const response = await fetchImpl(`${url}/health/ready`, { signal });
-  const body = await response.text();
-  if (!response.ok) {
-    throw new Error(`service readiness returned HTTP ${response.status}: ${body}`);
-  }
-  const readiness = JSON.parse(body);
-  if (readiness.status !== "ready") {
-    throw new Error(`service readiness reported '${readiness.status}': ${body}`);
-  }
-  return true;
 }
 
 async function main() {

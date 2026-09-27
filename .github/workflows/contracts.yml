@@ -31,10 +31,11 @@ jobs:
           node-version: "20"
           cache: npm
       - run: npm ci
+      - run: npm run check:generated
       - run: npm run check:openapi
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
+      - run: npm run check:package
 
   dotnet-services:
     runs-on: ubuntu-latest
@@ -85,6 +86,7 @@ jobs:
           dotnet-version: "10.0.x"
       - run: npm ci
       - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
+      - run: npm run test:tetris-app
       - run: npm run test:tetris-integration
 
   adaptive-worker-integration:

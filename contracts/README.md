@@ -69,9 +69,9 @@ python contracts\conformance\validate.py
 Validation checks registered schemas, OpenAPI structure and local references,
 fixture-manifest coverage, positive request/response bodies, negative schema
 cases, semantic value contracts, the v3 DecisionContract management surface,
-and the v3 runtime evaluation surface. Legacy Tetris bundle checks remain
-blocked until their consumer migration removes references to the deleted v2
-bundle schema.
+and the v3 runtime evaluation surface. The Tetris consumer and host harness use
+the v3 management and runtime APIs; the deleted v2 bundle schema is no longer
+part of their validation path.
 It does not start network services or access remote schema registries.
 
 The `Contracts` GitHub Actions workflow runs the local Tetris host harness in a

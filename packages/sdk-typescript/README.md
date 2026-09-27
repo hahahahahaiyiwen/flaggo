@@ -1,102 +1,157 @@
 # `@flaggo/sdk`
 
-The TypeScript SDK calls the stateless Decision Service v3 endpoint:
+The TypeScript SDK provides separate clients for runtime decisions and contract
+management:
+
+```ts
+import { createDecisionClient } from "@flaggo/sdk/runtime";
+import { createContractClient } from "@flaggo/sdk/management";
+```
+
+The package is ESM-only and targets Node.js 20+, modern browsers, and edge
+runtimes with the standard Fetch API. It has no runtime dependencies.
+
+## Runtime decisions
+
+Application configuration binds every decision name to one immutable accepted
+contract digest. A TypeScript decision catalog binds that identity to its
+attribute and result types once, rather than selecting a result type at each
+call.
+
+```ts
+import {
+  createDecisionClient,
+  defineDecisionBindings,
+  type DecisionSpec,
+} from "@flaggo/sdk/runtime";
+
+type Decisions = {
+  readonly "worker.batch-size": DecisionSpec<{
+    readonly queuePressure: number;
+    readonly workerId: string;
+  }, number>;
+};
+
+const bindings = defineDecisionBindings<Decisions>({
+  "worker.batch-size": {
+    contractDigest:
+      "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  },
+});
+
+const flaggo = createDecisionClient<Decisions>({
+  baseUrl: "https://decisions.example.com",
+  bindings,
+  credential: {
+    mode: "bearer",
+    getToken: async () => obtainAccessToken(),
+  },
+  retry: {
+    maxAttempts: 2,
+  },
+});
+
+const { value: decision, metadata } = await flaggo.decide(
+  "worker.batch-size",
+  {
+    attributes: {
+      queuePressure: 0.82,
+      workerId: "worker-17",
+    },
+    currentExposure: {
+      exposureId: "previous-exposure-id",
+    },
+  },
+  {
+    correlationId: "request-correlation-id",
+    timeoutMs: 1_000,
+    signal: abortController.signal,
+  },
+);
+
+applyBatchSize(decision.result);
+console.log(metadata.correlationId);
+```
+
+The SDK constructs the complete `RuntimeInput`, adds `_random`, validates the
+serialized JSON, and sends:
 
 ```http
 POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
-Bind each decision name to one immutable contract version when creating the
-client:
+All attributes are optional at evaluation time. Rules depending on missing
+attributes do not match, allowing the Decision Service to return the contract
+default. Transport retries reuse the exact serialized input while resolving
+the executable active for each later attempt.
 
-```ts
-import {
-  createFlaggoClient,
-  type RuntimeContractBindings,
-} from "@flaggo/sdk";
-
-const contracts = {
-  "worker.batch-size": {
-    contractDigest:
-      "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  },
-} as const satisfies RuntimeContractBindings;
-
-const flaggo = createFlaggoClient({
-  decisionServiceUrl: "https://decisions.example.com",
-  contracts,
-  credential: {
-    mode: "bearer",
-    getToken: async () => obtainAccessToken(),
-  },
-  retries: 1,
-});
-
-const decision = await flaggo.decide<number>("worker.batch-size", {
-  attributes: {
-    queuePressure: 0.82,
-    workerId: "worker-17",
-  },
-  currentExposure: {
-    exposureId: "previous-exposure-id",
-  },
-});
-
-applyBatchSize(decision.result);
-```
-
-The SDK builds the complete `RuntimeInput`, adds the reserved `_random`
-attribute, and serializes it once. A retry reuses those exact bytes, while the
-Decision Service intentionally resolves whichever executable is active for
-that later attempt. Application attributes beginning with `_` are rejected.
-
-Successful responses are strict `RuntimeDecision` values containing
-`contractDigest`, `executableDigest`, `result`, and rule/default evaluation
-provenance. Failures use standard RFC 9457 Problem Details; correlation and
-retry metadata are read from HTTP headers. The v3 client does not implement
-local fallback because fallback behavior remains a separate design decision.
+SDK fallback and exposure telemetry are not part of this release. Service
+failures remain explicit, and exposure emission will be added through the
+future OpenTelemetry ingestion path.
 
 ## Contract management
 
-`createContractServiceClient` exposes the five Management API v3 operations:
-dry-run validation, idempotent publication by contract name, current-version
-lookup, paginated version history, and exact-version lookup.
+The management client exposes dry-run validation, idempotent deployment,
+current-version lookup, paginated history, and exact-version lookup.
 
 ```ts
 import {
-  createContractServiceClient,
+  createContractClient,
   type DecisionContract,
-} from "@flaggo/sdk";
+} from "@flaggo/sdk/management";
 
-const contracts = createContractServiceClient({
-  contractServiceUrl: "https://contracts.example.com",
+const contracts = createContractClient({
+  baseUrl: "https://contracts.example.com",
   credential: {
     mode: "bearer",
     getToken: async () => obtainAccessToken(),
   },
 });
 
-const contract: DecisionContract = {
-  // Complete DecisionContract payload.
-};
+const contract = {
+  name: "worker.batch-size",
+  expression_syntax: "flaggo.cel/v1",
+  attributes: [],
+  result: {
+    schema: { type: "integer", minimum: 1 },
+    default: 3,
+  },
+} as const satisfies DecisionContract<number>;
 
-const validation = await contracts.validate("worker.batch-size", contract);
-if (validation.status === "valid") {
-  const accepted = await contracts.put("worker.batch-size", contract);
-  const exact = await contracts.getVersion(
-    accepted.name,
-    accepted.contractDigest,
-  );
-}
+const deployed = await contracts.deploy(contract);
+const exact = await contracts.getVersion(
+  deployed.value.name,
+  deployed.value.contractDigest,
+);
+console.log(exact.value.contract);
 ```
 
-The name identifies the logical contract resource and `contractDigest`
-identifies one immutable version. `getCurrent` is a management projection only;
-runtime clients must use the exact digest returned by publication or lookup.
+`deploy` performs local wire-shape validation before sending the authoritative
+`PUT`. Use `validate` separately when an authoring or CI workflow needs
+server-side semantic diagnostics without mutation; it is not a prerequisite
+for deployment.
 
-## Validation
+The server computes contract and executable digests. `getCurrent` is a
+management projection only; runtime clients always use an exact digest.
+
+## Errors and response metadata
+
+Successful operations return `{ value, metadata }`. Metadata contains the HTTP
+status and any correlation, retry, or location headers supplied by the service.
+
+All SDK failures derive from `FlaggoError`. Public categories distinguish
+invalid input, missing bindings, transport failure, timeout, cancellation,
+HTTP Problem Details, and malformed server responses.
+
+## Contract authority
+
+Wire models and standalone validators are generated from the v3 JSON Schemas.
+Client orchestration, retries, exact-version binding, and semantic identity
+checks remain hand-written.
 
 ```powershell
+npm run check:generated --workspace @flaggo/sdk
+npm run typecheck --workspace @flaggo/sdk
 npm test --workspace @flaggo/sdk
 npm run build --workspace @flaggo/sdk
 ```

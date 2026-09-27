@@ -56,7 +56,7 @@ roadmap and status source. This page is orientation, not a second roadmap.
 | --- | --- |
 | Why does Flaggo exist? | [Manifesto](MANIFESTO.md) |
 | How do clients, services, workers, and stores fit together? | [Architecture overview](design/architecture/OVERVIEW.md) |
-| How do authoring clients publish and inspect contracts? | [Contract clients and Contract Service](design/architecture/CONTRACT_SERVICE.md) |
+| How do authoring clients deploy and inspect contracts? | [Contract clients and Contract Service](design/architecture/CONTRACT_SERVICE.md) |
 | How do applications and the SDK call runtime? | [Runtime client and Decision Service](design/architecture/RUNTIME.md) |
 | What are the contract and executable primitives? | [Decision contracts and executables](design/contracts/CONTRACTS.md) |
 | How does the lifecycle progress? | [Decision contract lifecycle](design/contracts/LIFECYCLE.md) |

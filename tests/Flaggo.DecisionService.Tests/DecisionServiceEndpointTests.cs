@@ -26,10 +26,10 @@ public sealed class DecisionServiceEndpointTests
     {
         using var factory = new DecisionServiceFactory();
         using var client = factory.CreateClient();
-        var published = await PublishAsync(factory, activate: true);
+        var deployed = await DeployAsync(factory, activate: true);
         using var request = DecisionRequest(
-            published.Contract.Name,
-            published.ContractDigest,
+            deployed.Contract.Name,
+            deployed.ContractDigest,
             """{"attributes":{"_random":0.25,"pressure":0.9}}""");
         request.Headers.Add(CorrelationIds.HeaderName, "client-correlation");
 
@@ -40,8 +40,8 @@ public sealed class DecisionServiceEndpointTests
         Assert.Equal(
             "client-correlation",
             Assert.Single(response.Headers.GetValues(CorrelationIds.HeaderName)));
-        Assert.Equal(published.ContractDigest, body.GetProperty("contractDigest").GetString());
-        Assert.Equal(published.ExecutableDigest, body.GetProperty("executableDigest").GetString());
+        Assert.Equal(deployed.ContractDigest, body.GetProperty("contractDigest").GetString());
+        Assert.Equal(deployed.ExecutableDigest, body.GetProperty("executableDigest").GetString());
         Assert.Equal(250, body.GetProperty("result").GetInt32());
         Assert.Equal("rule", body.GetProperty("evaluation").GetProperty("source").GetString());
         Assert.Equal(
@@ -54,11 +54,11 @@ public sealed class DecisionServiceEndpointTests
     {
         using var factory = new DecisionServiceFactory();
         using var client = factory.CreateClient();
-        var published = await PublishAsync(factory, activate: true);
+        var deployed = await DeployAsync(factory, activate: true);
 
         using var unsupported = DecisionRequest(
-            published.Contract.Name,
-            published.ContractDigest,
+            deployed.Contract.Name,
+            deployed.ContractDigest,
             "{}",
             "text/plain");
         using var unsupportedResponse = await client.SendAsync(unsupported);
@@ -68,8 +68,8 @@ public sealed class DecisionServiceEndpointTests
             ProblemTypes.UnsupportedMediaType);
 
         using var invalid = DecisionRequest(
-            published.Contract.Name,
-            published.ContractDigest,
+            deployed.Contract.Name,
+            deployed.ContractDigest,
             """{"attributes":{"pressure":0.9}}""");
         using var invalidResponse = await client.SendAsync(invalid);
         await AssertProblemAsync(
@@ -78,8 +78,8 @@ public sealed class DecisionServiceEndpointTests
             ProblemTypes.InvalidRuntimeInput);
 
         using var unknownMember = DecisionRequest(
-            published.Contract.Name,
-            published.ContractDigest,
+            deployed.Contract.Name,
+            deployed.ContractDigest,
             """{"attributes":{"_random":0.25},"unknown":true}""");
         using var unknownMemberResponse = await client.SendAsync(unknownMember);
         await AssertProblemAsync(
@@ -93,11 +93,11 @@ public sealed class DecisionServiceEndpointTests
     {
         using var factory = new DecisionServiceFactory();
         using var client = factory.CreateClient();
-        var published = await PublishAsync(factory, activate: true);
+        var deployed = await DeployAsync(factory, activate: true);
 
         using var invalidName = DecisionRequest(
             "invalid$name",
-            published.ContractDigest,
+            deployed.ContractDigest,
             """{"attributes":{"_random":0.25}}""");
         using var invalidNameResponse = await client.SendAsync(invalidName);
         await AssertProblemAsync(
@@ -107,7 +107,7 @@ public sealed class DecisionServiceEndpointTests
 
         using var wrongName = DecisionRequest(
             "checkout.other",
-            published.ContractDigest,
+            deployed.ContractDigest,
             """{"attributes":{"_random":0.25}}""");
         using var wrongNameResponse = await client.SendAsync(wrongName);
         await AssertProblemAsync(
@@ -121,10 +121,10 @@ public sealed class DecisionServiceEndpointTests
     {
         using var factory = new DecisionServiceFactory();
         using var client = factory.CreateClient();
-        var published = await PublishAsync(factory, activate: false);
+        var deployed = await DeployAsync(factory, activate: false);
         using var request = DecisionRequest(
-            published.Contract.Name,
-            published.ContractDigest,
+            deployed.Contract.Name,
+            deployed.ContractDigest,
             """{"attributes":{"_random":0.25}}""");
 
         using var response = await client.SendAsync(request);
@@ -187,10 +187,10 @@ public sealed class DecisionServiceEndpointTests
         };
         var compilation = new FlaggoExecutableCompiler(expressionCompiler)
             .Compile(contract, executable);
-        var published = await PersistAsync(factory, contract, compilation, activate: true);
+        var deployed = await PersistAsync(factory, contract, compilation, activate: true);
         using var request = DecisionRequest(
             contract.Name,
-            published.ContractDigest,
+            deployed.ContractDigest,
             """{"attributes":{"_random":0.25,"value":0}}""");
         if (failure == "result")
         {
@@ -262,10 +262,10 @@ public sealed class DecisionServiceEndpointTests
                 ]
             }
         };
-        var published = await PersistAsync(factory, contract, compilation, activate: true);
+        var deployed = await PersistAsync(factory, contract, compilation, activate: true);
         using var request = DecisionRequest(
             contract.Name,
-            published.ContractDigest,
+            deployed.ContractDigest,
             """{"attributes":{"_random":0.25}}""");
 
         using var response = await client.SendAsync(request);
@@ -408,10 +408,10 @@ public sealed class DecisionServiceEndpointTests
         };
         var compilation = new FlaggoExecutableCompiler(expressionCompiler)
             .Compile(contract, executable);
-        var published = await PersistAsync(factory, contract, compilation, activate: true);
+        var deployed = await PersistAsync(factory, contract, compilation, activate: true);
         using var request = DecisionRequest(
             contract.Name,
-            published.ContractDigest,
+            deployed.ContractDigest,
             fixture.RootElement.GetProperty("request").GetProperty("body").GetRawText());
 
         using var response = await client.SendAsync(request);
@@ -446,7 +446,7 @@ public sealed class DecisionServiceEndpointTests
         return request;
     }
 
-    private static async Task<PublishedFixture> PublishAsync(
+    private static async Task<DeployedFixture> DeployAsync(
         DecisionServiceFactory factory,
         bool activate)
     {
@@ -490,7 +490,7 @@ public sealed class DecisionServiceEndpointTests
         return await PersistAsync(factory, contract, compilation, activate);
     }
 
-    private static async Task<PublishedFixture> PersistAsync(
+    private static async Task<DeployedFixture> PersistAsync(
         DecisionServiceFactory factory,
         DecisionContract contract,
         ExecutableCompilation compilation,
@@ -522,7 +522,7 @@ public sealed class DecisionServiceEndpointTests
                 compilation.ExecutableDigest);
         }
 
-        return new PublishedFixture(contract, contractDigest, compilation.ExecutableDigest);
+        return new DeployedFixture(contract, contractDigest, compilation.ExecutableDigest);
     }
 
     private static async Task AssertProblemAsync(
@@ -541,7 +541,7 @@ public sealed class DecisionServiceEndpointTests
         Assert.True(response.Headers.Contains(CorrelationIds.HeaderName));
     }
 
-    private sealed record PublishedFixture(
+    private sealed record DeployedFixture(
         DecisionContract Contract,
         string ContractDigest,
         string ExecutableDigest);

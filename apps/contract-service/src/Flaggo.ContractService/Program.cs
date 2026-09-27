@@ -87,22 +87,22 @@ app.MapPut(
             var contract = await HttpJson.ReadAsync<DecisionContract>(
                 context.Request,
                 cancellationToken);
-            var publication = await lifecycle.PublishAsync(
+            var deployment = await lifecycle.DeployAsync(
                 scope,
                 contractName,
                 contract,
                 cancellationToken);
-            if (publication.Created)
+            if (deployment.Created)
             {
                 context.Response.Headers.Location =
                     $"/v3/decision-contracts/{Uri.EscapeDataString(contractName)}"
-                    + $"/versions/{publication.Version.ContractDigest}";
+                    + $"/versions/{deployment.Version.ContractDigest}";
             }
 
             return Results.Json(
-                publication.Version,
+                deployment.Version,
                 StrictJson.Options,
-                statusCode: publication.Created
+                statusCode: deployment.Created
                     ? StatusCodes.Status201Created
                     : StatusCodes.Status200OK);
         })

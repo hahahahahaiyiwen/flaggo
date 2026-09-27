@@ -784,7 +784,7 @@
         },
         "status": {
           "const": "ready",
-          "description": "A version is published only after its generated default executable has been activated."
+          "description": "A version is deployed only after its generated default executable has been activated."
         },
         "acceptedAt": {
           "type": "string",
@@ -815,7 +815,7 @@
         },
         "status": {
           "const": "ready",
-          "description": "A version is published only after its generated default executable has been activated."
+          "description": "A version is deployed only after its generated default executable has been activated."
         },
         "acceptedAt": {
           "type": "string",

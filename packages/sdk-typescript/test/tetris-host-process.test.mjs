@@ -91,7 +91,7 @@ describe("Tetris integration host discovery", () => {
 });
 
 describe("Tetris integration host lifecycle", () => {
-  it("aborts during publication before creating a Decision Service host", async () => {
+  it("aborts after Contract Service readiness before creating Decision Service", async () => {
     const lifecycle = createHostLifecycle({
       removeRunDirectory: async () => {},
     });
@@ -104,11 +104,9 @@ describe("Tetris integration host lifecycle", () => {
       const workflow = startContractAndDecisionHosts({
         lifecycle,
         createContractHost: () => host("contract-service"),
-        waitForContractReady: async () => {},
-        publishContract: async () => {
+        waitForContractReady: async () => {
           processTarget.emit("SIGINT");
           processTarget.emit("SIGTERM");
-          return {};
         },
         createDecisionHost: () => {
           dataHostCreated = true;
@@ -405,7 +403,7 @@ describe("Tetris integration host lifecycle", () => {
     expect(managed.stopCount).toBe(1);
   });
 
-  it("detects a Contract Service crash immediately after publication", async () => {
+  it("detects a Contract Service crash immediately after readiness", async () => {
     const lifecycle = createHostLifecycle({
       removeRunDirectory: async () => {},
     });
@@ -415,10 +413,8 @@ describe("Tetris integration host lifecycle", () => {
     await expect(startContractAndDecisionHosts({
       lifecycle,
       createContractHost: () => control,
-      waitForContractReady: async () => {},
-      publishContract: async () => {
+      waitForContractReady: async () => {
         control.crash(0);
-        return {};
       },
       createDecisionHost: () => {
         dataHostCreated = true;

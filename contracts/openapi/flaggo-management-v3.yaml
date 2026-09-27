@@ -35,8 +35,8 @@
         "tags": [
           "decision-contracts"
         ],
-        "operationId": "putDecisionContract",
-        "summary": "Create or update a named DecisionContract.",
+        "operationId": "deployDecisionContract",
+        "summary": "Deploy a named DecisionContract.",
         "description": "Validates the payload, requires its name to equal contractName, computes its semantic contractDigest, durably creates the immutable version when new, generates and activates its default executable, and then moves the named resource's current-version and learning-head pointers. Older digest activations remain available. Repeating the same semantic payload is idempotent and returns the existing version; non-semantic-only changes do not create a version.",
         "security": [
           {

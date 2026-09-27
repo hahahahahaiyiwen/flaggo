@@ -60,6 +60,11 @@ The SDK:
 - does not reinterpret server failures as successful decisions; and
 - emits exposure evidence only after the application applies the result.
 
+The current TypeScript SDK phase implements this flow through the returned
+`RuntimeDecision`. Its exposure API and OpenTelemetry emission are deferred
+until the Flaggo OpenTelemetry ingestion profile is defined; the exposure
+steps in this document describe that future ownership boundary.
+
 Future SDK-local fallback to a contract default or cached prior decision is a
 separate policy. It does not change the Decision Service response or create a
 server decision retroactively.
@@ -119,7 +124,7 @@ The Decision Service owns:
 
 It does not own:
 
-- contract publication or current-version selection;
+- contract deployment or current-version selection;
 - executable generation or activation;
 - application attribute binding;
 - evidence queries or learning analysis;

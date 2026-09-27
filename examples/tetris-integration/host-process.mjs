@@ -332,7 +332,6 @@ export async function startContractAndDecisionHosts({
   lifecycle,
   createContractHost,
   waitForContractReady,
-  publishContract,
   createDecisionHost,
   waitForDecisionReady,
 }) {
@@ -345,11 +344,7 @@ export async function startContractAndDecisionHosts({
   lifecycle.assertHealthy();
   lifecycle.signal.throwIfAborted();
 
-  const publication = await publishContract(contractUrl, lifecycle.signal);
-  lifecycle.assertHealthy();
-  lifecycle.signal.throwIfAborted();
-
-  const decision = lifecycle.startHost(() => createDecisionHost(publication));
+  const decision = lifecycle.startHost(createDecisionHost);
   const decisionUrl = await decision.waitForListening({
     signal: lifecycle.signal,
   });
@@ -363,7 +358,6 @@ export async function startContractAndDecisionHosts({
     contractUrl,
     decision,
     decisionUrl,
-    publication,
   };
 }
 

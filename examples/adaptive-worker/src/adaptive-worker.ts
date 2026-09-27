@@ -1,8 +1,8 @@
 import {
-  type FlaggoClient,
-  type RuntimeContractBindings,
+  type DecisionClient,
+  type DecisionSpec,
   type RuntimeDecision,
-} from "@flaggo/sdk";
+} from "@flaggo/sdk/runtime";
 import type {
   ApplicationLogger,
 } from "./telemetry.js";
@@ -52,6 +52,14 @@ export interface WorkerTickResult {
   appliedAt?: string;
 }
 
+export type WorkerDecisions = {
+  readonly "demo.workerBatchSize": DecisionSpec<{
+    readonly workerId: string;
+    readonly cohort: string;
+    readonly queuePressure: number;
+  }, number>;
+};
+
 interface ProfileDefinition {
   count: number;
   processingMs: number;
@@ -69,7 +77,7 @@ export class AdaptiveWorker {
   private tickNumber = 0;
 
   constructor(
-    private readonly flaggo: FlaggoClient<RuntimeContractBindings>,
+    private readonly flaggo: DecisionClient<WorkerDecisions>,
     private readonly telemetry: ApplicationLogger,
     private readonly clock: WorkerClock = new DeterministicWorkerClock(),
     private readonly queueCapacity = 8,
@@ -90,7 +98,7 @@ export class AdaptiveWorker {
     this.telemetry.emit({ eventName: "worker.queue.pressure", body: queuePressure });
     const flaggo = this.flaggo;
 
-    const decision = await flaggo.decide<number>(
+    const { value: decision } = await flaggo.decide(
       "demo.workerBatchSize",
       {
         attributes: {
