@@ -42,6 +42,7 @@ export type {
   FlaggoResponseMetadata,
   JsonObject,
   JsonValue,
+  ProblemDetails,
   RequestOptions,
   RetryPolicy,
   Sha256Digest,

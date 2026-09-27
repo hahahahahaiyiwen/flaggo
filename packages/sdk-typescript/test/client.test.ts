@@ -196,20 +196,51 @@ describe("v3 runtime client", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects nonstandard Problem Details extensions", async () => {
-    const fetch = vi.fn<FetchLike>(async () => jsonResponse({
-      type: "https://flaggo.dev/problems/no-active-executable",
-      status: 503,
-      code: "no-active-executable",
-    }, 503));
+  it("accepts optional Problem Details members and extensions", async () => {
+    const problem = {
+      title: "No active executable",
+      traceId: "trace-1",
+    };
+    const fetch = vi.fn<FetchLike>(async () => jsonResponse(problem, 503));
     const client = createDecisionClient<Decisions>({
       baseUrl: "https://decisions.test",
       bindings,
       fetch,
     });
 
-    await expect(client.decide("parallelism"))
-      .rejects.toBeInstanceOf(InvalidServerResponseError);
+    const request = client.decide("parallelism");
+    await expect(request).rejects.toBeInstanceOf(FlaggoHttpError);
+    await expect(request).rejects.toMatchObject({
+      problem,
+      response: { status: 503 },
+      message: "No active executable",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes response stream failures", async () => {
+    const streamFailure = new Error("response stream failed");
+    const fetch = vi.fn<FetchLike>(async () => new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(streamFailure);
+        },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+    const client = createDecisionClient<Decisions>({
+      baseUrl: "https://decisions.test",
+      bindings,
+      fetch,
+    });
+
+    await expect(client.decide("parallelism")).rejects.toMatchObject({
+      name: "FlaggoTransportError",
+      cause: streamFailure,
+    });
   });
 
   it.each([

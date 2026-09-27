@@ -35,13 +35,6 @@ import {
 } from "./validators.js";
 
 const retryableStatuses = new Set([429, 502, 503, 504]);
-const standardProblemKeys = new Set([
-  "type",
-  "title",
-  "status",
-  "detail",
-  "instance",
-]);
 const defaultRetryPolicy: Required<RetryPolicy> = {
   maxAttempts: 1,
   baseDelayMs: 50,
@@ -304,48 +297,72 @@ async function responseText(
     }
   }
 
-  if (response.body === null) {
-    const body = await abortable(response.text(), signal);
-    if (utf8Length(body) > maximumDocumentBytes) {
-      throw new InvalidServerResponseError(
-        `Flaggo returned a JSON document larger than ${maximumDocumentBytes} UTF-8 bytes.`,
-      );
-    }
-    return body;
-  }
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
   try {
-    while (true) {
-      const next = await abortable(reader.read(), signal);
-      if (next.done) break;
-      totalBytes += next.value.byteLength;
-      if (totalBytes > maximumDocumentBytes) {
-        await reader.cancel();
+    if (response.body === null) {
+      const body = await abortable(response.text(), signal);
+      if (utf8Length(body) > maximumDocumentBytes) {
         throw new InvalidServerResponseError(
           `Flaggo returned a JSON document larger than ${maximumDocumentBytes} UTF-8 bytes.`,
         );
       }
-      chunks.push(next.value);
+      return body;
     }
-  } finally {
-    reader.releaseLock();
-  }
 
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const next = await abortable(reader.read(), signal);
+        if (next.done) break;
+        totalBytes += next.value.byteLength;
+        if (totalBytes > maximumDocumentBytes) {
+          await abortable(reader.cancel(), signal);
+          throw new InvalidServerResponseError(
+            `Flaggo returned a JSON document larger than ${maximumDocumentBytes} UTF-8 bytes.`,
+          );
+        }
+        chunks.push(next.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (error) {
+      throw new InvalidServerResponseError(
+        `Flaggo returned invalid UTF-8 for HTTP ${response.status}.`,
+        [],
+        { cause: error },
+      );
+    }
   } catch (error) {
-    throw new InvalidServerResponseError(
-      `Flaggo returned invalid UTF-8 for HTTP ${response.status}.`,
-      [],
+    if (signal.aborted || error instanceof FlaggoError) throw error;
+    throw new FlaggoTransportError(
+      `The Flaggo response body could not be read for HTTP ${response.status}.`,
+      { cause: error },
+    );
+  }
+}
+
+async function discardResponseBody(
+  response: Response,
+  signal: AbortSignal,
+): Promise<void> {
+  if (response.body === null) return;
+  try {
+    await abortable(response.body.cancel(), signal);
+  } catch (error) {
+    if (signal.aborted || error instanceof FlaggoError) throw error;
+    throw new FlaggoTransportError(
+      `The Flaggo response body could not be discarded for HTTP ${response.status}.`,
       { cause: error },
     );
   }
@@ -353,19 +370,13 @@ async function responseText(
 
 function problemOrThrow(value: unknown, response: Response): ProblemDetails {
   assertResponseSchema(validateProblemDetails, value, "Problem Details");
-  const problem = record(value);
-  if (
-    problem === undefined
-    || !hasOnlyKeys(problem, standardProblemKeys)
-    || !isUriReference(problem.type)
-    || problem.type.length === 0
-    || problem.status !== response.status
-  ) {
+  const problem = value as ProblemDetails;
+  if (problem.status !== undefined && problem.status !== response.status) {
     throw new InvalidServerResponseError(
       `Flaggo returned malformed Problem Details for HTTP ${response.status}.`,
     );
   }
-  return value as ProblemDetails;
+  return problem;
 }
 
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -577,7 +588,7 @@ export function createTransport(
             retryableStatuses.has(response.status)
             && attempt < policy.maxAttempts
           ) {
-            await response.body?.cancel();
+            await discardResponseBody(response, controller.signal);
             await sleep(
               retryDelay(response, attempt, policy),
               controller.signal,

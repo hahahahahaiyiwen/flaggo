@@ -359,6 +359,48 @@ public sealed class ContractServiceEndpointTests
             nullMemberResponse,
             HttpStatusCode.BadRequest,
             ProblemTypes.InvalidRequest);
+
+        using var schemaMismatchRequest = AuthorizedRequest(
+            HttpMethod.Put,
+            "/v3/decision-contracts/schema.parity",
+            """
+            {
+              "name": "schema.parity",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "outcome", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "binding": "not a valid binding",
+                    "correlateBy": []
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """);
+        using var schemaMismatchResponse = await client.SendAsync(schemaMismatchRequest);
+        await AssertProblemAsync(
+            schemaMismatchResponse,
+            HttpStatusCode.UnprocessableEntity,
+            ProblemTypes.InvalidDecisionContract);
     }
 
     [Fact]

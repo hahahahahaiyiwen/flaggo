@@ -45,14 +45,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
+      - run: dotnet restore Flaggo.slnx --configfile NuGet.config
       - run: dotnet build Flaggo.slnx --configuration Release --no-restore
       - name: Run bounded service tests with hang diagnostics
         timeout-minutes: 10
         run: |
           results_directory="$RUNNER_TEMP/service-test-results"
           mkdir -p "$results_directory"
-          echo "[$(date --iso-8601=seconds)] Starting bounded decision-service test command"
+          echo "[$(date --iso-8601=seconds)] Starting bounded service test command"
           dotnet test Flaggo.slnx \
             --configuration Release \
             --no-build \
@@ -63,7 +63,7 @@ jobs:
             --blame-hang-dump-type mini \
             --results-directory "$results_directory" \
             --diag "$results_directory/vstest.log"
-      - name: Upload decision-service failure diagnostics
+      - name: Upload service failure diagnostics
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
@@ -85,7 +85,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - run: npm ci
-      - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
+      - run: dotnet restore Flaggo.slnx --configfile NuGet.config
       - run: npm run test:tetris-app
       - run: npm run test:tetris-integration
 
@@ -102,5 +102,5 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - run: npm ci
-      - run: dotnet restore Flaggo.slnx --source https://api.nuget.org/v3/index.json
+      - run: dotnet restore Flaggo.slnx --configfile NuGet.config
       - run: npm run test:adaptive-worker

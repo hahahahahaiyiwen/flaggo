@@ -12,10 +12,7 @@ export type JsonValue = DeepReadonly<GeneratedJsonValue>;
 export type JsonObject = Readonly<Record<string, JsonValue>>;
 export type Sha256Digest = `sha256:${string}`;
 
-export type ProblemDetails = DeepReadonly<RFC9457ProblemDetails> & {
-  readonly type: string;
-  readonly status: number;
-};
+export type ProblemDetails = DeepReadonly<RFC9457ProblemDetails>;
 
 export interface FlaggoResponseMetadata {
   readonly status: number;

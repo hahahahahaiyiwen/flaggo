@@ -42,6 +42,7 @@ type OpenApiDocument = {
 };
 
 type JsonSchema = {
+  additionalProperties?: boolean | JsonSchema;
   required?: string[];
   properties?: Record<string, unknown>;
   allOf?: JsonSchema[];
@@ -122,6 +123,8 @@ describe("OpenAPI shared-contract alignment", () => {
       "/v3/decision-contracts/{contractName}/validate",
       "/v3/decision-contracts/{contractName}/versions",
       "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
+      "/health/live",
+      "/health/ready",
     ]);
 
     const validate = operation(
@@ -248,6 +251,36 @@ describe("OpenAPI shared-contract alignment", () => {
     ]);
   });
 
+  it("documents unauthenticated Contract Service health probes", () => {
+    const live = operation(management, "/health/live", "get");
+    expect(live.security).toEqual([]);
+    expectResponseSchema(
+      live,
+      "200",
+      "../schemas/runtime-models-v3.schema.json#/$defs/LivenessResult",
+    );
+
+    const ready = operation(management, "/health/ready", "get");
+    expect(ready.security).toEqual([]);
+    expectResponseSchema(
+      ready,
+      "200",
+      "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult",
+    );
+    expectResponseSchema(
+      ready,
+      "503",
+      "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult",
+    );
+    for (const status of ["200", "503"]) {
+      expect(ready.responses[status]?.headers).toMatchObject({
+        "X-Flaggo-Correlation-Id": {
+          $ref: "#/components/headers/CorrelationId",
+        },
+      });
+    }
+  });
+
   it("keeps stateless runtime evaluation and retry contracts", () => {
     expect(runtime.openapi).toBe("3.1.0");
     const createDecision = operation(
@@ -319,6 +352,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "Retry-After": { $ref: "#/components/headers/RetryAfter" },
     });
     expect(problemDetails.required).toBeUndefined();
+    expect(problemDetails.additionalProperties).toBe(true);
     expect(Object.keys(problemDetails.properties!)).toEqual([
       "type",
       "title",

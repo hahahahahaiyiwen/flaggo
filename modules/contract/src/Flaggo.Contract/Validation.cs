@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Xml;
 
 namespace Flaggo.Contract;
 
@@ -405,17 +404,18 @@ public static partial class ContractValidator
                 "The initial learning policy mode is auto-activation.");
         }
 
-        try
-        {
-            if (XmlConvert.ToTimeSpan(contract.Learning.Policy.Evaluate.Interval) <= TimeSpan.Zero)
-            {
-                throw new FormatException();
-            }
-        }
-        catch (FormatException)
+        var interval = contract.Learning.Policy.Evaluate.Interval;
+        if (!LearningIntervalPattern().IsMatch(interval)
+            || !interval.Any(character => character is >= '1' and <= '9'))
         {
             Error(issues, "invalid-learning-interval", "/learning/policy/evaluate/interval",
                 "The learning interval must be a positive ISO 8601 duration.");
+        }
+
+        if (contract.Learning.Evidence.Count == 0)
+        {
+            Error(issues, "empty-evidence", "/learning/evidence",
+                "A learning declaration must contain at least one evidence entry.");
         }
 
         var evidenceNames = new HashSet<string>(StringComparer.Ordinal);
@@ -443,6 +443,8 @@ public static partial class ContractValidator
                 Error(issues, "unknown-evidence-attribute", $"{path}/attribute",
                     $"Evidence attribute '{evidence.Attribute}' is not declared.");
             }
+
+            ValidateEvidenceBinding(evidence.Binding, $"{path}/binding", issues);
 
             var correlations = new HashSet<string>(StringComparer.Ordinal);
             for (var correlationIndex = 0; correlationIndex < evidence.CorrelateBy.Count; correlationIndex++)
@@ -599,6 +601,20 @@ public static partial class ContractValidator
         }
     }
 
+    private static void ValidateEvidenceBinding(
+        string? value,
+        string path,
+        ICollection<ValidationIssue> issues)
+    {
+        if (value is null
+            || value.Length is < 1 or > 256
+            || !DecisionNamePattern().IsMatch(value))
+        {
+            Error(issues, "invalid-evidence-binding", path,
+                "Evidence binding must match ^[A-Za-z][A-Za-z0-9._-]*$ and contain at most 256 characters.");
+        }
+    }
+
     internal static void Error(
         ICollection<ValidationIssue> issues,
         string code,
@@ -623,6 +639,11 @@ public static partial class ContractValidator
 
     [GeneratedRegex("^[A-Za-z][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)]
     private static partial Regex AttributeNamePattern();
+
+    [GeneratedRegex(
+        "^P(?=\\d|T\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+W)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+(?:\\.\\d+)?S)?)?$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex LearningIntervalPattern();
 }
 
 public static class ValueSchemaValidator
@@ -647,11 +668,20 @@ public static class ValueSchemaValidator
                 RejectNumericAndCollectionKeywords(schema, path, issues);
                 break;
             case "integer":
+                ValidateIntegerSchema(schema, path, issues);
+                ValidateNumericSchema(schema, path, issues);
+                break;
             case "number":
                 ValidateNumericSchema(schema, path, issues);
                 break;
             case "string":
-                ValidateRange(schema.MinLength, schema.MaxLength, path, "length", issues);
+                ValidateRange(
+                    schema.MinLength,
+                    schema.MaxLength,
+                    StrictJson.MaximumStringBytes,
+                    path,
+                    "length",
+                    issues);
                 RejectNumericKeywords(schema, path, issues);
                 RejectCollectionKeywords(schema, path, issues);
                 break;
@@ -666,7 +696,13 @@ public static class ValueSchemaValidator
                     ValidateSchema(schema.Items, $"{path}/items", issues, depth + 1);
                 }
 
-                ValidateRange(schema.MinItems, schema.MaxItems, path, "items", issues);
+                ValidateRange(
+                    schema.MinItems,
+                    schema.MaxItems,
+                    ContractValidator.MaximumCollectionSize,
+                    path,
+                    "items",
+                    issues);
                 RejectNumericKeywords(schema, path, issues);
                 RejectObjectKeywords(schema, path, issues);
                 break;
@@ -737,7 +773,13 @@ public static class ValueSchemaValidator
                     }
                 }
 
-                ValidateRange(schema.MinProperties, schema.MaxProperties, path, "properties", issues);
+                ValidateRange(
+                    schema.MinProperties,
+                    schema.MaxProperties,
+                    ContractValidator.MaximumCollectionSize,
+                    path,
+                    "properties",
+                    issues);
                 RejectNumericKeywords(schema, path, issues);
                 RejectArrayKeywords(schema, path, issues);
                 break;
@@ -921,6 +963,42 @@ public static class ValueSchemaValidator
         RejectCollectionKeywords(schema, path, issues);
     }
 
+    private static void ValidateIntegerSchema(
+        ValueSchema schema,
+        string path,
+        ICollection<ValidationIssue> issues)
+    {
+        ValidateIntegerKeyword(schema.Minimum, "minimum", path, issues);
+        ValidateIntegerKeyword(schema.Maximum, "maximum", path, issues);
+        ValidateIntegerKeyword(
+            schema.ExclusiveMinimum,
+            "exclusiveMinimum",
+            path,
+            issues);
+        ValidateIntegerKeyword(
+            schema.ExclusiveMaximum,
+            "exclusiveMaximum",
+            path,
+            issues);
+        ValidateIntegerKeyword(schema.MultipleOf, "multipleOf", path, issues);
+    }
+
+    private static void ValidateIntegerKeyword(
+        double? value,
+        string keyword,
+        string path,
+        ICollection<ValidationIssue> issues)
+    {
+        if (value is not null && value != Math.Truncate(value.Value))
+        {
+            ContractValidator.Error(
+                issues,
+                "non-integer-schema-keyword",
+                $"{path}/{keyword}",
+                $"{keyword} must be an integer for an integer schema.");
+        }
+    }
+
     private static void ValidateNumber(
         double value,
         ValueSchema schema,
@@ -950,14 +1028,19 @@ public static class ValueSchemaValidator
     private static void ValidateRange(
         int? minimum,
         int? maximum,
+        int profileMaximum,
         string path,
         string noun,
         ICollection<ValidationIssue> issues)
     {
-        if (minimum is < 0 || maximum is < 0 || minimum > maximum)
+        if (minimum is < 0
+            || maximum is < 0
+            || minimum > maximum
+            || minimum > profileMaximum
+            || maximum > profileMaximum)
         {
             ContractValidator.Error(issues, "invalid-schema-range", path,
-                $"Invalid {noun} bounds.");
+                $"Invalid {noun} bounds; values must be between 0 and {profileMaximum}.");
         }
     }
 

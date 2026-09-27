@@ -3,15 +3,15 @@
   "info": {
     "title": "Flaggo Management API",
     "version": "3.0.0",
-    "description": "Management API for named, versioned DecisionContract resources. A contract name identifies the logical resource and contractDigest identifies one immutable accepted version. Strict wire models live in ../schemas/management-models-v3.schema.json and ../schemas/problem-details-v3.schema.json.",
+    "description": "Management API for named, versioned DecisionContract resources. A contract name identifies the logical resource and contractDigest identifies one immutable accepted version. Strict management wire models live in ../schemas/management-models-v3.schema.json, shared health models live in ../schemas/runtime-models-v3.schema.json, and errors use ../schemas/problem-details-v3.schema.json.",
     "license": {
       "name": "Apache-2.0"
     }
   },
   "servers": [
     {
-      "url": "https://control.flaggo.dev",
-      "description": "Control plane"
+      "url": "https://contracts.flaggo.dev",
+      "description": "Contract Service"
     },
     {
       "url": "http://localhost:8080",
@@ -27,6 +27,10 @@
     {
       "name": "decision-contracts",
       "description": "Named DecisionContract resources and their immutable digest versions"
+    },
+    {
+      "name": "health",
+      "description": "Liveness and readiness"
     }
   ],
   "paths": {
@@ -270,6 +274,76 @@
           },
           "404": {
             "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthLive",
+        "summary": "Liveness probe. No external dependency checks.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process can serve the handler.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/LivenessResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthReady",
+        "summary": "Readiness probe over required and optional dependencies.",
+        "description": "200 ready requires every check up. 200 degraded is allowed when only optional checks are impaired. Any required check that is not up returns 503 not-ready.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ready or degraded readiness.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not-ready: a required dependency is not up.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
           }
         }
       }

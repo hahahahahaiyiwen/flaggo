@@ -35,7 +35,9 @@ export class FlaggoHttpError extends FlaggoError {
     readonly problem: ProblemDetails,
     readonly response: FlaggoResponseMetadata,
   ) {
-    super(`${problem.type}: ${problem.detail ?? problem.title ?? "Flaggo request failed"}`);
+    const summary =
+      problem.detail ?? problem.title ?? "Flaggo request failed";
+    super(problem.type === undefined ? summary : `${problem.type}: ${summary}`);
   }
 }
 

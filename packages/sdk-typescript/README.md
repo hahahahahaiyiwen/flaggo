@@ -143,6 +143,12 @@ All SDK failures derive from `FlaggoError`. Public categories distinguish
 invalid input, missing bindings, transport failure, timeout, cancellation,
 HTTP Problem Details, and malformed server responses.
 
+`FlaggoHttpError.problem` preserves the RFC 9457 response object: standard
+members are optional and problem-type extensions are retained. The actual HTTP
+status and response headers remain available through `FlaggoHttpError.response`.
+Failures while reading a response stream are reported as
+`FlaggoTransportError`.
+
 ## Contract authority
 
 Wire models and standalone validators are generated from the v3 JSON Schemas.

@@ -1,15 +1,14 @@
 # Flaggo
 
-Flaggo is a closed-loop decisioning system for bounded runtime variables. It
-gives application code an explicit way to deploy a versioned
-`DecisionContract`, activate one immutable `DecisionExecutable`, request a
-deterministic result, and correlate outcomes after the application reports
-exposure.
+Flaggo is a decisioning system for bounded runtime variables. It gives
+application code an explicit way to deploy a versioned `DecisionContract`,
+activate one immutable `DecisionExecutable`, and request a deterministic
+result for an exact contract version.
 
-The application and SDK own complete input construction, application of
-returned results, and OpenTelemetry exposure emission. Flaggo owns contract
-acceptance, executable generation and validation, atomic activation, stateless
-runtime evaluation, evidence ingestion, and asynchronous learning.
+Phase 3 implements complete SDK input construction, contract acceptance,
+default and deterministic authored-executable generation, atomic activation,
+and stateless runtime evaluation. Exposure telemetry, evidence ingestion and
+correlation, and asynchronous evidence-based generation remain future work.
 
 ## Target product model
 
@@ -23,17 +22,19 @@ DecisionContract
 
 ActiveExecutable + complete RuntimeInput
   -> deterministic RuntimeDecision
-  -> applied exposure and correlated evidence
+  -> application applies result
+  -> future exposure, evidence, and learning loop
 ```
 
 Activation is the only transition that grants runtime authority. The initial
-learning policy is `mode: auto-activation`: a valid evidence-generated
-candidate from the current learning head immediately attempts atomic
-activation. Runtime still reads only the activation mapping.
+learning declaration uses `mode: auto-activation` to define how a future valid
+evidence-generated candidate would attempt activation. Phase 3 stores that
+declaration but does not run evidence ingestion or a learning worker. Runtime
+reads only the activation mapping.
 
 The repository implements this v3 model through Contract Service, Decision
 Service, reusable domain/store modules, the TypeScript SDK, and real-host
-examples. The former v1 control-plane and data-plane stacks have been removed.
+examples. The pre-v3 service stack has been removed.
 
 ## Start here
 
@@ -45,18 +46,29 @@ examples. The former v1 control-plane and data-plane stacks have been removed.
 
 ## Quickstart
 
+Run the interactive Tetris example against real local Contract and Decision
+Services:
+
+```powershell
+npm ci
+dotnet restore Flaggo.slnx --configfile NuGet.config
+npm run tetris:flaggo
+```
+
+The launcher builds both services, creates an isolated SQLite database,
+deploys the Tetris contract, and removes its local state when the game exits.
+No cloud account is required.
+
+Validate the executable contracts independently:
+
 ```powershell
 python -m pip install -r contracts\conformance\requirements.txt
 python tools\dev.py check
 ```
 
-Start the fixture-backed local API:
-
-```powershell
-python tools\dev.py serve
-```
-
-No cloud account is required.
+`python tools\dev.py serve` starts only the fixture server used for contract
+and SDK conformance development; it does not start Contract Service or
+Decision Service.
 
 ## Repository layout
 
@@ -67,7 +79,7 @@ packages/      Reusable SDK and data-contract packages
 contracts/     OpenAPI, JSON Schema, fixtures, and conformance
 tests/         Cross-module and end-to-end verification
 examples/      Integrations and showcase links
-deploy/        Container and deployment assets
+deploy/        Fixture-container assets; production service topology is deferred
 tools/         Repository development commands
 docs/          Product, architecture, scenarios, and boundary designs
 ```

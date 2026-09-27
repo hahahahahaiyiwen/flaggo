@@ -331,16 +331,40 @@ public sealed class SqliteExecutableStore : IExecutableStore
         try
         {
             await using var connection = await OpenAsync(cancellationToken);
+            if (!await HasExpectedSchemaVersionAsync(connection, cancellationToken))
+            {
+                return false;
+            }
+
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT 1;";
-            return Convert.ToInt32(
-                await command.ExecuteScalarAsync(cancellationToken),
-                CultureInfo.InvariantCulture) == 1;
+            command.CommandText =
+                """
+                SELECT application, environment, executable_digest, contract_digest,
+                       executable_json, checked_executable_json, provenance_json,
+                       lifecycle_state, state_version, created_at, activated_at
+                FROM decision_executables
+                LIMIT 0;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            _ = await reader.ReadAsync(cancellationToken);
+            return true;
         }
         catch (SqliteException)
         {
             return false;
         }
+    }
+
+    private static async Task<bool> HasExpectedSchemaVersionAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT version FROM flaggo_schema_versions WHERE component = $component;";
+        command.Parameters.AddWithValue("$component", ComponentName);
+        return await command.ExecuteScalarAsync(cancellationToken) is long version
+            && version == SchemaVersion;
     }
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)

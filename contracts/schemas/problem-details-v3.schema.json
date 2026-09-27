@@ -4,6 +4,7 @@
   "title": "RFC 9457 Problem Details",
   "description": "The standard application/problem+json object from RFC 9457 Appendix A. Problem type definitions may add extension members.",
   "type": "object",
+  "additionalProperties": true,
   "properties": {
     "type": {
       "type": "string",

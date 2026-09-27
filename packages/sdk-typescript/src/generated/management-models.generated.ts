@@ -167,6 +167,8 @@ export interface ObjectValueSchema {
     [k: string]: ValueSchema;
   };
   /**
+   * Required property names form an unordered set; order is non-semantic.
+   *
    * @maxItems 256
    */
   required?: string[];
@@ -289,7 +291,7 @@ export interface Evidence {
    */
   binding: string;
   /**
-   * Additional contract attributes used with the implicit exposure ID to correlate evidence.
+   * Unordered set of additional contract attributes used with the implicit exposure ID to correlate evidence.
    */
   correlateBy: AttributeName[];
 }
@@ -317,7 +319,7 @@ export interface Guardrail {
 export interface LearningObjective {
   primary: PrimaryObjective;
   /**
-   * Guardrail names must be unique.
+   * Guardrail names must be unique; order is non-semantic.
    */
   guardrails?: Guardrail[];
 }
@@ -328,7 +330,7 @@ export interface LearningObjective {
 export interface Learning {
   policy: LearningPolicy;
   /**
-   * One logical observed value per entry. Evidence names must be unique.
+   * One logical observed value per entry. Evidence names must be unique; order is non-semantic.
    *
    * @minItems 1
    */

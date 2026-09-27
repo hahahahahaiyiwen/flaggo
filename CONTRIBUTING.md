@@ -23,13 +23,24 @@ python -m pip install -r contracts\conformance\requirements.txt
 python tools\dev.py check
 ```
 
-Start the fixture-backed API:
+Install JavaScript dependencies, restore through the repository NuGet
+configuration, and run a real-host smoke path:
+
+```powershell
+npm ci
+dotnet restore Flaggo.slnx --configfile NuGet.config
+npm run test:adaptive-worker
+```
+
+No cloud account or external service is required.
+
+For fixture-only contract and SDK development, run:
 
 ```powershell
 python tools\dev.py serve
 ```
 
-No cloud account or external service is required.
+That command does not start Contract Service or Decision Service.
 
 ## Change expectations
 
@@ -47,9 +58,10 @@ No cloud account or external service is required.
 
 ## Repository architecture
 
-Flaggo uses a modular monorepo for its open-source core. Repository boundaries do not define runtime boundaries: Contract Service,
-Decision Service, future workers, and operator interfaces may be built and
-deployed independently while sharing one versioned source tree.
+Flaggo uses a modular monorepo for its open-source core. Repository boundaries
+do not define runtime boundaries: Contract Service, Decision Service, future
+workers, and operator interfaces may be built and deployed independently while
+sharing one versioned source tree.
 
 ### Why a monorepo
 
@@ -68,7 +80,7 @@ publishing temporary coordination packages.
 | `contracts/` | Language-neutral OpenAPI, schemas, fixtures, and conformance |
 | `tests/` | Cross-module and end-to-end verification |
 | `examples/` | Small integrations and links to external showcase applications |
-| `deploy/` | Container and local deployment assets |
+| `deploy/` | Fixture-container assets; production service topology remains deferred |
 | `tools/` | Repository development and automation commands |
 | `docs/` | Product, architecture, scenario, and service/store design sources |
 
@@ -88,20 +100,12 @@ Flaggo must remain runnable without a managed cloud dependency. Domain and API
 logic use provider-neutral contracts and standard protocols; provider SDKs
 belong only in adapters at application composition boundaries.
 
-Cross-cutting infrastructure concerns stay behind explicit, injected,
-module-owned ports:
-
-- `IConfigProvider` for environment variables and explicit configuration;
-- `ISecretProvider` for credentials and secrets;
-- `IClock` for observable time;
-- `IIdGenerator` for generated identities; and
-- `IHealthReporter` for dependency and readiness health.
-
-These interfaces are owned beside the behavior that consumes them rather than
-collected in a shared interface package. Current domain libraries own their
-contract-version, executable-lifecycle, and runtime-evaluation ports. Interface
-names describe executable behavior; logical ownership follows Contract Service,
-Decision Service, Contract Store, and Executable Store.
+Cross-cutting infrastructure is configured at application composition roots.
+Business capabilities use module-owned ports when substitutability is needed;
+the current stack injects `TimeProvider`, `IContractVersionStore`, and
+`IExecutableStore` rather than defining speculative shared-provider
+interfaces. Logical ownership follows Contract Service, Decision Service,
+Contract Store, and Executable Store.
 
 | Concern | Local implementation | Optional cloud adapter |
 | --- | --- | --- |
@@ -109,7 +113,7 @@ Decision Service, Contract Store, and Executable Store.
 | Secrets | Environment variables or local development secret store | Provider secret manager |
 | Contract and executable stores | SQLite | Managed SQL or document store |
 | Runtime evaluation | In-process bounded evaluator | Independently scaled Decision Service |
-| Evidence transport | Application-owned OpenTelemetry pipeline | Managed telemetry or analytics pipeline |
+| Future evidence transport | Application-owned OpenTelemetry pipeline | Managed telemetry or analytics pipeline |
 
 Public APIs, DecisionContracts, executable semantics, and durable store schemas
 must remain usable without a cloud account. New providers add adapters behind
@@ -129,7 +133,7 @@ executables, but they do not participate in the synchronous decision path.
 ### Parallel contract implementation
 
 Executable API artifacts change before or with client and service
-implementations. The management client validates, publishes, and reads
+implementations. The management client validates, deploys, and reads
 immutable DecisionContract versions. The runtime client binds names to exact
 contract digests, constructs complete RuntimeInput values, and preserves input
 bytes across retries. SDK fallback remains outside the current contract.
@@ -145,7 +149,7 @@ it implements. A contract-breaking change uses a dedicated contract pull
 request that updates executable artifacts, compatibility notes, fixtures, and
 both tracks' conformance coverage. Tracks merge small vertical increments and
 run cross-track contract tests continuously; end-to-end integration starts as
-soon as one fixture-backed decision call can complete.
+soon as one real-host exact-version decision call can complete.
 
 Extensions must use the owning seam instead of bypassing it:
 

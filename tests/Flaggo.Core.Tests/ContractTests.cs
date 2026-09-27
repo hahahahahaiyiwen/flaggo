@@ -86,6 +86,207 @@ public sealed class ContractTests
     }
 
     [Fact]
+    public void RequiredPropertiesAndGuardrailsAreUnordered()
+    {
+        var first = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                {
+                  "name": "context",
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "outer_b": {
+                        "type": "object",
+                        "properties": {
+                          "inner_b": { "type": "integer" },
+                          "inner_a": { "type": "integer" }
+                        },
+                        "required": ["inner_b", "inner_a"],
+                        "additionalProperties": false
+                      },
+                      "outer_a": { "type": "integer" }
+                    },
+                    "required": ["outer_b", "outer_a"],
+                    "additionalProperties": false
+                  }
+                },
+                { "name": "outcome", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "binding": "demo.outcome",
+                    "correlateBy": []
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  },
+                  "guardrails": [
+                    { "name": "z", "expression": "true" },
+                    { "name": "a", "expression": "false" }
+                  ]
+                }
+              }
+            }
+            """);
+        var second = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                {
+                  "name": "context",
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "outer_b": {
+                        "type": "object",
+                        "properties": {
+                          "inner_b": { "type": "integer" },
+                          "inner_a": { "type": "integer" }
+                        },
+                        "required": ["inner_a", "inner_b"],
+                        "additionalProperties": false
+                      },
+                      "outer_a": { "type": "integer" }
+                    },
+                    "required": ["outer_a", "outer_b"],
+                    "additionalProperties": false
+                  }
+                },
+                { "name": "outcome", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "binding": "demo.outcome",
+                    "correlateBy": []
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  },
+                  "guardrails": [
+                    { "name": "a", "expression": "false" },
+                    { "name": "z", "expression": "true" }
+                  ]
+                }
+              }
+            }
+            """);
+
+        Assert.Equal(
+            ContractDigests.ComputeContractDigest(first),
+            ContractDigests.ComputeContractDigest(second));
+    }
+
+    [Fact]
+    public void RuleAndLiteralArrayOrderRemainSemantic()
+    {
+        var first = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [],
+              "result": {
+                "schema": {
+                  "type": "array",
+                  "items": { "type": "integer" }
+                },
+                "default": [1, 2]
+              },
+              "authoredExecutable": {
+                "rules": [
+                  {
+                    "name": "first",
+                    "when": { "expression": "true" },
+                    "return": { "value": [1] }
+                  },
+                  {
+                    "name": "second",
+                    "when": { "expression": "true" },
+                    "return": { "value": [2] }
+                  }
+                ]
+              }
+            }
+            """);
+        var reversedRules = first with
+        {
+            AuthoredExecutable = first.AuthoredExecutable! with
+            {
+                Rules = first.AuthoredExecutable.Rules.Reverse().ToArray()
+            }
+        };
+        var reversedDefault = first with
+        {
+            Result = first.Result with
+            {
+                Default = JsonSerializer.SerializeToElement(new[] { 2, 1 })
+            }
+        };
+        var executable = new DecisionExecutable
+        {
+            ContractDigest =
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            Rules =
+            [
+                new ExecutableRule
+                {
+                    Name = "first",
+                    When = new ExpressionWhen("true"),
+                    Return = new LiteralReturn(JsonSerializer.SerializeToElement(new[] { 1 }))
+                },
+                new ExecutableRule
+                {
+                    Name = "second",
+                    When = new ExpressionWhen("true"),
+                    Return = new LiteralReturn(JsonSerializer.SerializeToElement(new[] { 2 }))
+                }
+            ]
+        };
+
+        Assert.NotEqual(
+            ContractDigests.ComputeContractDigest(first),
+            ContractDigests.ComputeContractDigest(reversedRules));
+        Assert.NotEqual(
+            ContractDigests.ComputeContractDigest(first),
+            ContractDigests.ComputeContractDigest(reversedDefault));
+        Assert.NotEqual(
+            ContractDigests.ComputeExecutableDigest(executable),
+            ContractDigests.ComputeExecutableDigest(
+                executable with { Rules = executable.Rules.Reverse().ToArray() }));
+    }
+
+    [Fact]
     public void ResultPropertiesNamedDescriptionRemainSemantic()
     {
         var first = ParseContract("""
@@ -308,6 +509,165 @@ public sealed class ContractTests
 
         Assert.Equal("invalid", validation.Status);
         Assert.Contains(validation.Issues, issue => issue.Code == "default-out-of-schema");
+    }
+
+    [Fact]
+    public void LearningEvidenceBindingMustSatisfyTheWireSchema()
+    {
+        var contract = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "outcome", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "binding": "not a valid binding",
+                    "correlateBy": []
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """);
+
+        var validation = ContractValidator.Validate(contract);
+
+        Assert.Equal("invalid", validation.Status);
+        Assert.Contains(
+            validation.Issues,
+            issue => issue.Code == "invalid-evidence-binding"
+                && issue.Path == "/learning/evidence/0/binding");
+    }
+
+    [Fact]
+    public void ValueSchemaBoundsMustSatisfyTheWireProfile()
+    {
+        var contract = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                {
+                  "name": "fractional_integer_bound",
+                  "schema": { "type": "integer", "minimum": 0.5 }
+                },
+                {
+                  "name": "long_string",
+                  "schema": { "type": "string", "maxLength": 16385 }
+                },
+                {
+                  "name": "large_array",
+                  "schema": {
+                    "type": "array",
+                    "items": { "type": "boolean" },
+                    "maxItems": 257
+                  }
+                },
+                {
+                  "name": "large_object",
+                  "schema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                    "minProperties": 257
+                  }
+                }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              }
+            }
+            """);
+
+        var validation = ContractValidator.Validate(contract);
+
+        Assert.Equal("invalid", validation.Status);
+        Assert.Contains(
+            validation.Issues,
+            issue => issue.Code == "non-integer-schema-keyword"
+                && issue.Path == "/attributes/0/schema/minimum");
+        Assert.Equal(
+            3,
+            validation.Issues.Count(issue => issue.Code == "invalid-schema-range"));
+    }
+
+    [Fact]
+    public void LearningIntervalMustSatisfyTheWirePattern()
+    {
+        var invalidContract = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "outcome", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "P1DT" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "binding": "demo.outcome",
+                    "correlateBy": []
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """);
+        var validWeekContract = invalidContract with
+        {
+            Learning = invalidContract.Learning! with
+            {
+                Policy = invalidContract.Learning.Policy with
+                {
+                    Evaluate = new LearningEvaluationPolicy
+                    {
+                        Interval = "P1W"
+                    }
+                }
+            }
+        };
+
+        var invalidValidation = ContractValidator.Validate(invalidContract);
+        var validWeekValidation = ContractValidator.Validate(validWeekContract);
+
+        Assert.Equal("invalid", invalidValidation.Status);
+        Assert.Contains(
+            invalidValidation.Issues,
+            issue => issue.Code == "invalid-learning-interval");
+        Assert.Equal("valid", validWeekValidation.Status);
     }
 
     [Fact]

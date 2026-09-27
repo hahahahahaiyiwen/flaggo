@@ -338,6 +338,11 @@ expression_syntax = flaggo.cel/v1
 Rule names are unique within the authored executable. `description` explains
 the rule for people but is not semantic digest input.
 
+Rule array order is the priority mechanism. The first listed eligible rule has
+the highest precedence, so reordering rules changes contract and executable
+identity. The contract does not add a separate `priority` property or define
+tie-breaking rules for duplicate priorities.
+
 `when` is an object with exactly one of two possible representations:
 
 | Field | Meaning |
@@ -515,8 +520,19 @@ objective, guardrail, or learning policy produces a new digest.
 Descriptions are non-semantic and do not affect the digest, including
 `description` annotations nested inside JSON Schemas. Formatting, comments,
 attribute/evidence list order, and deployment metadata also do not change the
-digest. Attribute and evidence declarations canonicalize by name; authored
-rule order remains semantic because the first matching rule wins.
+digest. Canonicalization applies these collection rules:
+
+- attribute, evidence, and guardrail declarations are unordered and sort by
+  unique `name`;
+- `correlateBy` and JSON Schema `required` are unordered sets and sort
+  lexically, including `required` in nested value schemas;
+- authored and generated executable rules preserve authored order because the
+  first matching rule wins; and
+- arrays used as literal values, defaults, or schema-valid application data
+  preserve element order.
+
+Ordered collections do not gain a second `priority` field. Their array
+position is the single source of precedence.
 
 Expression canonicalization must use the accepted CEL profile and canonical
 expression text rather than raw author formatting. Its checked protobuf is

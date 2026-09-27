@@ -161,9 +161,12 @@ Operational telemetry may record request facts for service observability. Such
 telemetry does not become ambient evaluator input and does not make a runtime
 response a durable domain record.
 
-Readiness requires the dependencies needed to resolve and evaluate a request.
-Optional observability exporters may degrade without changing decision
-semantics. The Runtime API defines the externally visible health responses.
+Readiness verifies that required stores expose their exact supported schema
+version and readable owned tables. It does not scan every stored artifact.
+Exact contract and executable integrity is enforced when that authority is
+resolved, before evaluation. Optional observability exporters may degrade
+without changing decision semantics. The Runtime API defines the externally
+visible health responses.
 
 ## Activation concurrency and retries
 

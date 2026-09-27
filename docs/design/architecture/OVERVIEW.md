@@ -48,7 +48,7 @@ runtime authority.
 ## System context
 
 ```text
-                          control and learning plane
+                    management and future learning path
 
 contract source
       |
@@ -84,7 +84,7 @@ Application / CI
                                         |
                               OpenTelemetry pipeline
 
-                               runtime data plane
+                           runtime evaluation path
 
 Application
     |

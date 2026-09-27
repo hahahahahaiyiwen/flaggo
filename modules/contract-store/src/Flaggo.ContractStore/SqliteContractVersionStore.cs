@@ -306,16 +306,57 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
         try
         {
             await using var connection = await OpenAsync(cancellationToken);
-            await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT 1;";
-            return Convert.ToInt32(
-                await command.ExecuteScalarAsync(cancellationToken),
-                CultureInfo.InvariantCulture) == 1;
+            if (!await HasExpectedSchemaVersionAsync(connection, cancellationToken))
+            {
+                return false;
+            }
+
+            await ProbeTableAsync(
+                connection,
+                """
+                SELECT application, environment, contract_name, contract_digest,
+                       accepted_at, contract_json
+                FROM decision_contract_versions
+                LIMIT 0;
+                """,
+                cancellationToken);
+            await ProbeTableAsync(
+                connection,
+                """
+                SELECT application, environment, contract_name, contract_digest
+                FROM decision_contract_current
+                LIMIT 0;
+                """,
+                cancellationToken);
+            return true;
         }
         catch (SqliteException)
         {
             return false;
         }
+    }
+
+    private static async Task<bool> HasExpectedSchemaVersionAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT version FROM flaggo_schema_versions WHERE component = $component;";
+        command.Parameters.AddWithValue("$component", ComponentName);
+        return await command.ExecuteScalarAsync(cancellationToken) is long version
+            && version == SchemaVersion;
+    }
+
+    private static async Task ProbeTableAsync(
+        SqliteConnection connection,
+        string query,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = query;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        _ = await reader.ReadAsync(cancellationToken);
     }
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)

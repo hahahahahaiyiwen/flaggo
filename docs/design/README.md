@@ -17,6 +17,12 @@ The application and SDK own complete input construction and the transition
 from a returned decision to an applied exposure. Evidence flows through
 OpenTelemetry into asynchronous learning; it is not a runtime operand.
 
+## Implementation phase
+
+[Phase 3 implementation scope](PHASE_3.md) distinguishes behavior implemented
+by the current v3 stack from accepted-but-inactive contract declarations and
+deferred evidence, learning, telemetry, fallback, and deployment work.
+
 ## Architecture
 
 | Question | Current design |

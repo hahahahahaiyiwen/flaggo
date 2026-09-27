@@ -27,4 +27,5 @@ export interface RFC9457ProblemDetails {
    * A URI reference that identifies the specific occurrence of the problem.
    */
   instance?: string;
+  [k: string]: unknown;
 }

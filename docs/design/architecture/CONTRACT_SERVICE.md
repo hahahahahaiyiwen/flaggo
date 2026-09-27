@@ -249,7 +249,7 @@ and confirming that its learning head is still current, the Contract Service
 immediately attempts atomic activation. Failure or supersession preserves the
 existing executable.
 
-Auto-activation is a control-plane transition:
+Auto-activation is a Contract Service transition:
 
 ```text
 valid current candidate

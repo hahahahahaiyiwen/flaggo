@@ -3,6 +3,7 @@ using Flaggo.Contract;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
 using Flaggo.Expressions;
+using Microsoft.Data.Sqlite;
 
 namespace Flaggo.Core.Tests;
 
@@ -275,6 +276,53 @@ public sealed class StoreTests
         Assert.True(await executableStore.IsAvailableAsync());
     }
 
+    [Fact]
+    public async Task AvailabilityRejectsUnknownOwnedSchemaVersions()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "UPDATE flaggo_schema_versions SET version = 2 "
+            + "WHERE component = 'contract-store';");
+        Assert.False(await contractStore.IsAvailableAsync());
+        Assert.True(await executableStore.IsAvailableAsync());
+
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "UPDATE flaggo_schema_versions SET version = 1 "
+            + "WHERE component = 'contract-store'; "
+            + "UPDATE flaggo_schema_versions SET version = 2 "
+            + "WHERE component = 'executable-store';");
+        Assert.True(await contractStore.IsAvailableAsync());
+        Assert.False(await executableStore.IsAvailableAsync());
+    }
+
+    [Fact]
+    public async Task AvailabilityRejectsMissingOwnedTables()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "DROP TABLE decision_contract_current;");
+        Assert.False(await contractStore.IsAvailableAsync());
+        Assert.True(await executableStore.IsAvailableAsync());
+
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "DROP TABLE decision_executables;");
+        Assert.False(await executableStore.IsAvailableAsync());
+    }
+
     private static AcceptedContractVersion CreateAcceptedVersion(
         int defaultValue,
         DateTimeOffset acceptedAt)
@@ -356,6 +404,17 @@ public sealed class StoreTests
         {
             return (null, exception);
         }
+    }
+
+    private static async Task ExecuteSqlAsync(
+        string connectionString,
+        string commandText)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = commandText;
+        await command.ExecuteNonQueryAsync();
     }
 
     private sealed class TemporaryDatabase : IDisposable

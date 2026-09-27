@@ -191,7 +191,7 @@ return errors === 0;
 }
 validate24.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-const schema43 = {"type":"object","additionalProperties":false,"required":["type","properties","additionalProperties"],"properties":{"type":{"const":"object"},"properties":{"type":"object","maxProperties":256,"additionalProperties":{"$ref":"#/$defs/ValueSchema"}},"required":{"type":"array","maxItems":256,"items":{"type":"string"},"uniqueItems":true},"additionalProperties":{"const":false},"minProperties":{"type":"integer","minimum":0,"maximum":256},"maxProperties":{"type":"integer","minimum":0,"maximum":256},"description":{"type":"string"}}};
+const schema43 = {"type":"object","additionalProperties":false,"required":["type","properties","additionalProperties"],"properties":{"type":{"const":"object"},"properties":{"type":"object","maxProperties":256,"additionalProperties":{"$ref":"#/$defs/ValueSchema"}},"required":{"type":"array","maxItems":256,"items":{"type":"string"},"uniqueItems":true,"description":"Required property names form an unordered set; order is non-semantic."},"additionalProperties":{"const":false},"minProperties":{"type":"integer","minimum":0,"maximum":256},"maxProperties":{"type":"integer","minimum":0,"maximum":256},"description":{"type":"string"}}};
 
 function validate26(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -2128,7 +2128,7 @@ return errors === 0;
 }
 validate35.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-const schema57 = {"type":"object","additionalProperties":false,"required":["policy","evidence","objective"],"properties":{"policy":{"$ref":"#/$defs/LearningPolicy"},"evidence":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/Evidence"},"description":"One logical observed value per entry. Evidence names must be unique."},"objective":{"$ref":"#/$defs/LearningObjective"}}};
+const schema57 = {"type":"object","additionalProperties":false,"required":["policy","evidence","objective"],"properties":{"policy":{"$ref":"#/$defs/LearningPolicy"},"evidence":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/Evidence"},"description":"One logical observed value per entry. Evidence names must be unique; order is non-semantic."},"objective":{"$ref":"#/$defs/LearningObjective"}}};
 const schema58 = {"type":"object","additionalProperties":false,"required":["mode","evaluate"],"properties":{"mode":{"const":"auto-activation","description":"Automatically attempt atomic activation after an evidence-generated candidate passes validation and current-learning-head checks."},"evaluate":{"$ref":"#/$defs/LearningEvaluationPolicy"}}};
 const schema59 = {"type":"object","additionalProperties":false,"required":["interval"],"properties":{"interval":{"type":"string","pattern":"^P(?=\\d|T\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+W)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+(?:\\.\\d+)?S)?)?$","description":"A positive ISO 8601 duration expressing the minimum delay between completed analysis attempts."}}};
 const pattern7 = new RegExp("^P(?=\\d|T\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+W)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+(?:\\.\\d+)?S)?)?$", "u");
@@ -2266,7 +2266,7 @@ return errors === 0;
 }
 validate51.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-const schema60 = {"type":"object","additionalProperties":false,"required":["name","attribute","binding","correlateBy"],"properties":{"name":{"$ref":"#/$defs/MemberName"},"description":{"type":"string"},"attribute":{"$ref":"#/$defs/AttributeName","description":"The contract attribute whose value semantics this observed evidence shares."},"binding":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[A-Za-z][A-Za-z0-9._-]*$","description":"Logical SDK-to-OpenTelemetry evidence binding."},"correlateBy":{"type":"array","items":{"$ref":"#/$defs/AttributeName"},"uniqueItems":true,"description":"Additional contract attributes used with the implicit exposure ID to correlate evidence."}}};
+const schema60 = {"type":"object","additionalProperties":false,"required":["name","attribute","binding","correlateBy"],"properties":{"name":{"$ref":"#/$defs/MemberName"},"description":{"type":"string"},"attribute":{"$ref":"#/$defs/AttributeName","description":"The contract attribute whose value semantics this observed evidence shares."},"binding":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[A-Za-z][A-Za-z0-9._-]*$","description":"Logical SDK-to-OpenTelemetry evidence binding."},"correlateBy":{"type":"array","items":{"$ref":"#/$defs/AttributeName"},"uniqueItems":true,"description":"Unordered set of additional contract attributes used with the implicit exposure ID to correlate evidence."}}};
 const func0 = require("ajv/dist/runtime/equal").default;
 
 function validate53(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
@@ -2576,7 +2576,7 @@ return errors === 0;
 }
 validate53.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-const schema64 = {"type":"object","additionalProperties":false,"required":["primary"],"properties":{"primary":{"$ref":"#/$defs/PrimaryObjective"},"guardrails":{"type":"array","items":{"$ref":"#/$defs/Guardrail"},"description":"Guardrail names must be unique."}}};
+const schema64 = {"type":"object","additionalProperties":false,"required":["primary"],"properties":{"primary":{"$ref":"#/$defs/PrimaryObjective"},"guardrails":{"type":"array","items":{"$ref":"#/$defs/Guardrail"},"description":"Guardrail names must be unique; order is non-semantic."}}};
 const schema65 = {"type":"object","additionalProperties":false,"required":["evidence","direction"],"properties":{"evidence":{"$ref":"#/$defs/MemberName"},"direction":{"type":"string","enum":["minimize","maximize"]}}};
 
 function validate56(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){

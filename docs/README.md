@@ -4,10 +4,11 @@ Flaggo lets applications delegate selected runtime variables to explicit,
 versioned `DecisionContract` resources and immutable `DecisionExecutable`
 artifacts.
 
-The application and SDK own complete runtime input construction, application
-of returned results, and OpenTelemetry exposure emission. Flaggo owns contract
-acceptance, executable generation and validation, atomic activation, stateless
-runtime evaluation, evidence ingestion, and asynchronous learning.
+In Phase 3, the SDK constructs complete runtime input and the application
+decides how to apply returned results. Flaggo implements contract acceptance,
+default and deterministic authored-executable generation, atomic activation,
+and stateless runtime evaluation. Exposure telemetry, evidence ingestion and
+correlation, and asynchronous evidence-based generation remain future work.
 
 ## Product model
 
@@ -22,16 +23,14 @@ DecisionContract
 ActiveExecutable + complete RuntimeInput
   -> deterministic RuntimeDecision
   -> application applies result
-  -> SDK emits exposure evidence
-  -> correlated outcome evidence
-  -> asynchronous generation
-  -> next candidate and activation
+  -> future exposure, evidence, and learning loop
 ```
 
 Activation is the only transition that grants runtime authority. The initial
-learning policy is `mode: auto-activation`: after candidate validation and
-current-learning-head checks, Contract Service attempts atomic activation.
-Runtime never selects a contract or executable by generation recency.
+learning declaration uses `mode: auto-activation` to define how a future valid
+evidence-generated candidate would attempt activation. Phase 3 stores that
+declaration but does not run evidence ingestion or a learning worker. Runtime
+never selects a contract or executable by generation recency.
 
 ## Current state
 
@@ -42,8 +41,7 @@ addresses a logical decision by name and immutable versions by
 executable active for that digest in the authenticated application/environment
 scope.
 
-The former v1 definition, target, durable-record, confirmation, control-plane,
-and data-plane implementation has been removed. Evidence ingestion and
+The pre-v3 implementation has been removed. Evidence ingestion and
 asynchronous evidence-based generation remain future implementation work.
 
 [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3), native issue
@@ -55,6 +53,7 @@ roadmap and status source. This page is orientation, not a second roadmap.
 | Question | Source |
 | --- | --- |
 | Why does Flaggo exist? | [Manifesto](MANIFESTO.md) |
+| What is implemented in Phase 3 and what remains deferred? | [Phase 3 implementation scope](design/PHASE_3.md) |
 | How do clients, services, workers, and stores fit together? | [Architecture overview](design/architecture/OVERVIEW.md) |
 | How do authoring clients deploy and inspect contracts? | [Contract clients and Contract Service](design/architecture/CONTRACT_SERVICE.md) |
 | How do applications and the SDK call runtime? | [Runtime client and Decision Service](design/architecture/RUNTIME.md) |

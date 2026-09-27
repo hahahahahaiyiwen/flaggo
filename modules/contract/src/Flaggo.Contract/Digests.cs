@@ -96,7 +96,20 @@ public static class ContractDigests
         JsonObject contract,
         IExpressionCanonicalizer? expressionCanonicalizer)
     {
-        SortNamedArray(contract["attributes"]);
+        if (contract["attributes"] is JsonArray attributes)
+        {
+            foreach (var attribute in attributes.OfType<JsonObject>())
+            {
+                NormalizeValueSchema(attribute["schema"]);
+            }
+
+            SortNamedArray(attributes);
+        }
+
+        if (contract["result"] is JsonObject result)
+        {
+            NormalizeValueSchema(result["schema"]);
+        }
 
         if (contract["learning"] is JsonObject learning)
         {
@@ -112,6 +125,7 @@ public static class ContractDigests
             if (learning["objective"] is JsonObject objective
                 && objective["guardrails"] is JsonArray guardrails)
             {
+                SortNamedArray(guardrails);
                 foreach (var guardrail in guardrails.OfType<JsonObject>())
                 {
                     CanonicalizeExpressionProperty(guardrail, "expression", expressionCanonicalizer);
@@ -123,6 +137,24 @@ public static class ContractDigests
             && authored["rules"] is JsonArray rules)
         {
             CanonicalizeRuleExpressions(rules, expressionCanonicalizer);
+        }
+    }
+
+    private static void NormalizeValueSchema(JsonNode? node)
+    {
+        if (node is not JsonObject schema)
+        {
+            return;
+        }
+
+        SortStringArray(schema["required"]);
+        NormalizeValueSchema(schema["items"]);
+        if (schema["properties"] is JsonObject properties)
+        {
+            foreach (var property in properties)
+            {
+                NormalizeValueSchema(property.Value);
+            }
         }
     }
 

@@ -261,7 +261,8 @@
           "items": {
             "type": "string"
           },
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "Required property names form an unordered set; order is non-semantic."
         },
         "additionalProperties": {
           "const": false
@@ -487,7 +488,7 @@
             "$ref": "#/$defs/AttributeName"
           },
           "uniqueItems": true,
-          "description": "Additional contract attributes used with the implicit exposure ID to correlate evidence."
+          "description": "Unordered set of additional contract attributes used with the implicit exposure ID to correlate evidence."
         }
       }
     },
@@ -545,7 +546,7 @@
           "items": {
             "$ref": "#/$defs/Guardrail"
           },
-          "description": "Guardrail names must be unique."
+          "description": "Guardrail names must be unique; order is non-semantic."
         }
       }
     },
@@ -567,7 +568,7 @@
           "items": {
             "$ref": "#/$defs/Evidence"
           },
-          "description": "One logical observed value per entry. Evidence names must be unique."
+          "description": "One logical observed value per entry. Evidence names must be unique; order is non-semantic."
         },
         "objective": {
           "$ref": "#/$defs/LearningObjective"

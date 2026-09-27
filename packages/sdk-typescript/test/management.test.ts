@@ -213,19 +213,17 @@ describe("v3 Contract Service client", () => {
       .rejects.toBeInstanceOf(InvalidServerResponseError);
   });
 
-  it("rejects nonstandard Problem Details extensions", async () => {
+  it("rejects a Problem Details status that conflicts with HTTP", async () => {
     const fetch = vi.fn<FetchLike>(async () => response(404, {
       type: "https://flaggo.dev/problems/contract-version-not-found",
-      status: 404,
-      code: "not-found",
+      status: 409,
+      traceId: "trace-1",
     }));
     const client = createContractClient({
       baseUrl: "https://contracts.test",
       fetch,
     });
 
-    await expect(client.getCurrent(contract.name))
-      .rejects.not.toBeInstanceOf(FlaggoHttpError);
     await expect(client.getCurrent(contract.name))
       .rejects.toBeInstanceOf(InvalidServerResponseError);
   });

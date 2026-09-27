@@ -1,11 +1,11 @@
 # Executable Contracts
 
-This directory is the executable projection of the service-owned API designs:
-[Contract Service](../docs/design/architecture/CONTRACT_SERVICE.md),
-[Decision Service](../docs/design/architecture/RUNTIME.md), and
-[Evidence](../docs/design/architecture/EVIDENCE.md). The OpenAPI documents and
-JSON Schemas are the authority for current wire behavior. Their conformance
-gate must remain green for every change.
+This directory is the executable projection of the current service-owned API
+designs: [Contract Service](../docs/design/architecture/CONTRACT_SERVICE.md)
+and [Decision Service](../docs/design/architecture/RUNTIME.md). Evidence
+ingestion remains a future design and has no executable Phase 3 API. The
+OpenAPI documents and JSON Schemas are the authority for current wire behavior.
+Their conformance gate must remain green for every change.
 
 ## Layout
 
@@ -29,7 +29,8 @@ dry-run validation, idempotent create-or-update by name, current-version lookup,
 and cursor-paginated historical-version lookup. A newly created version is
 returned only after its generated default executable is active. The API has no
 bundle, numeric server revision, compatibility classification, or manual
-bundle-approval resource.
+bundle-approval resource. Unauthenticated liveness and readiness probes use the
+shared health models from `runtime-models-v3.schema.json`.
 
 [`management-models-v3.schema.json`](schemas/management-models-v3.schema.json)
 contains the strict `DecisionContract`, `DecisionExecutable`, validation-result,
@@ -41,8 +42,9 @@ the deferred design work recorded in
 
 Errors use the RFC 9457 members from
 [`problem-details-v3.schema.json`](schemas/problem-details-v3.schema.json)
-without Flaggo-specific body fields. Problem identity is the `type` URI;
-request correlation and retry timing remain HTTP headers.
+and may include problem-type extension members. Flaggo defines no shared custom
+body fields: problem identity is the `type` URI, while request correlation and
+retry timing remain HTTP headers.
 
 The runtime contract is
 [`flaggo-runtime-v3.yaml`](openapi/flaggo-runtime-v3.yaml). Its main operation
@@ -54,7 +56,8 @@ POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
 The route never resolves the named resource's current version. Every successful
-response identifies the exact contract and executable digests. The obsolete v2 definition-bundle contract and its consumers have been removed.
+response identifies the exact contract and executable digests. The obsolete v2
+definition-bundle contract and its consumers have been removed.
 
 The Phase 3 runtime fixture surface is JSON-only. It covers runtime decisions
 and health; there are no executable Evidence or OTLP routes.
@@ -74,16 +77,17 @@ the v3 management and runtime APIs; the deleted v2 bundle schema is no longer
 part of their validation path.
 It does not start network services or access remote schema registries.
 
-The `Contracts` GitHub Actions workflow runs the local Tetris host harness in a
-separate `tetris-integration` job rather than folding it into the workspace
-`npm test` gate. Worker and stock-Collector integrations have their own jobs.
+The `Contracts` GitHub Actions workflow runs the local Tetris and Adaptive
+Worker real-host integrations in dedicated jobs rather than folding them into
+the workspace `npm test` gate.
 
-## Run the mock
+## Run the fixture server
 
 ```powershell
 python contracts\mock\fixture-server\server.py --port 8080
 ```
 
+This server is a conformance tool, not Contract Service or Decision Service.
 See the [fixture server README](mock/fixture-server/README.md) for request
 selection and discovery endpoints.
 
