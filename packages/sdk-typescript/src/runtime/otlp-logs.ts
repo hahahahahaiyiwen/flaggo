@@ -15,20 +15,20 @@ import {
   record,
 } from "../internal/guards.js";
 
-export type FlaggoLocalOtelLogger = Pick<Logger, "emit"> & {
-  readonly events: readonly FlaggoLocalOtelEvent[];
+export type FlaggoOtlpLogger = Pick<Logger, "emit"> & {
+  readonly events: readonly FlaggoOtlpEvent[];
   flush(): Promise<void>;
   shutdown(): Promise<void>;
   toOtlpJson(): FlaggoOtlpJsonLogs;
 };
 
-export interface FlaggoLocalOtelConfiguration {
+export interface FlaggoOtlpLoggerConfiguration {
   readonly serviceName: string;
   readonly serviceVersion?: string;
   readonly collectorLogsUrl?: string;
 }
 
-export interface FlaggoLocalOtelEvent {
+export interface FlaggoOtlpEvent {
   readonly eventName?: string;
   readonly body?: unknown;
   readonly attributes?: ReadableLogRecord["attributes"];
@@ -68,9 +68,9 @@ type OtlpJsonLogRecord = {
   readonly attributes: readonly OtlpAttribute[];
 };
 
-export function createFlaggoLocalOtelLogger(
-  configuration: FlaggoLocalOtelConfiguration,
-): FlaggoLocalOtelLogger {
+export function createFlaggoOtlpLogger(
+  configuration: FlaggoOtlpLoggerConfiguration,
+): FlaggoOtlpLogger {
   validateConfiguration(configuration);
   const inMemoryExporter = new InMemoryLogRecordExporter();
   const processors = [
@@ -116,7 +116,7 @@ export function createFlaggoLocalOtelLogger(
   };
 }
 
-function validateConfiguration(configuration: FlaggoLocalOtelConfiguration): void {
+function validateConfiguration(configuration: FlaggoOtlpLoggerConfiguration): void {
   const raw = record(configuration);
   if (
     raw === undefined
@@ -141,7 +141,7 @@ function validateConfiguration(configuration: FlaggoLocalOtelConfiguration): voi
   }
 }
 
-function recordsToEvents(records: readonly ReadableLogRecord[]): readonly FlaggoLocalOtelEvent[] {
+function recordsToEvents(records: readonly ReadableLogRecord[]): readonly FlaggoOtlpEvent[] {
   return records.map((record) => ({
     ...(record.eventName === undefined ? {} : { eventName: record.eventName }),
     ...(record.body === undefined ? {} : { body: record.body }),
@@ -154,8 +154,8 @@ function recordsToEvents(records: readonly ReadableLogRecord[]): readonly Flaggo
 }
 
 function eventsToOtlpJson(
-  configuration: FlaggoLocalOtelConfiguration,
-  events: readonly FlaggoLocalOtelEvent[],
+  configuration: FlaggoOtlpLoggerConfiguration,
+  events: readonly FlaggoOtlpEvent[],
 ): FlaggoOtlpJsonLogs {
   return {
     resourceLogs: [{

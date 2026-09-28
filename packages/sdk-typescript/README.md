@@ -84,7 +84,7 @@ attributes do not match, allowing the Decision Service to return the contract
 default. Transport retries reuse the exact serialized input while resolving
 the executable active for each later attempt.
 
-After a successful response, `decide()` emits a local OpenTelemetry log event
+After a successful response, `decide()` emits a Flaggo OTLP logs mapping event
 named `flaggo.decision.received` through `@opentelemetry/api-logs`. That event
 is a raw decision observation, not proof that the app applied the result and
 not clean learning evidence by itself. If no OpenTelemetry logger provider is
@@ -115,16 +115,16 @@ Apps may also emit ordinary OpenTelemetry telemetry without the helper. The
 Flaggo Collector/Ingestion profile treats SDK helpers as convenience APIs, not
 the only valid source of outcome observations.
 
-For local examples, the runtime package also provides a small OpenTelemetry
-Logs setup helper:
+For examples and development harnesses, the runtime package also provides a
+small OTLP logs setup helper:
 
 ```ts
 import {
   createDecisionClient,
-  createFlaggoLocalOtelLogger,
+  createFlaggoOtlpLogger,
 } from "@flaggo/sdk/runtime";
 
-const logger = createFlaggoLocalOtelLogger({
+const logger = createFlaggoOtlpLogger({
   serviceName: "worker",
   collectorLogsUrl: "http://localhost:4318/v1/logs",
 });
@@ -138,9 +138,9 @@ const flaggo = createDecisionClient({
 ```
 
 `collectorLogsUrl` points to an OpenTelemetry Collector OTLP HTTP receiver. The
-included local Collector config forwards logs to Flaggo OTel Ingestion as OTLP
-HTTP JSON. If `collectorLogsUrl` is omitted, the helper still captures local
-events in memory and can project them to OTLP JSON for tests.
+included Collector config forwards logs to Flaggo OTel Ingestion as OTLP HTTP
+JSON. If `collectorLogsUrl` is omitted, the helper still captures events in
+memory and can project them to OTLP JSON for tests.
 
 ## Contract management
 

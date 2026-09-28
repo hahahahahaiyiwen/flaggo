@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDecisionClient,
-  createFlaggoLocalOtelLogger,
+  createFlaggoOtlpLogger,
   createFlaggoTelemetry,
   InvalidFlaggoInputError,
   type DecisionBindings,
@@ -171,8 +171,8 @@ describe("runtime telemetry", () => {
     });
   });
 
-  it("creates a local OTel logger with Collector-compatible JSON projection", async () => {
-    const logger = createFlaggoLocalOtelLogger({
+  it("creates an OTLP logger with Collector-compatible JSON projection", async () => {
+    const logger = createFlaggoOtlpLogger({
       serviceName: "adaptive-worker",
     });
 

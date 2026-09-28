@@ -2,20 +2,20 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Logger, LogRecord } from "@opentelemetry/api-logs";
 import {
-  createFlaggoLocalOtelLogger,
-  type FlaggoLocalOtelLogger,
+  createFlaggoOtlpLogger,
+  type FlaggoOtlpLogger,
 } from "@flaggo/sdk/runtime";
 
 export type ApplicationLogger = Pick<Logger, "emit">;
 
-export class LocalOtelLogs implements ApplicationLogger {
-  private readonly logger: FlaggoLocalOtelLogger;
+export class ExampleOtlpLogs implements ApplicationLogger {
+  private readonly logger: FlaggoOtlpLogger;
 
   constructor(
     private readonly filePath?: string,
     collectorLogsUrl = process.env.FLAGGO_OTEL_COLLECTOR_LOGS_URL,
   ) {
-    this.logger = createFlaggoLocalOtelLogger({
+    this.logger = createFlaggoOtlpLogger({
       serviceName: "adaptive-worker",
       ...(collectorLogsUrl === undefined ? {} : { collectorLogsUrl }),
     });

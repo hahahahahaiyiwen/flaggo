@@ -15,7 +15,7 @@ import {
   AdaptiveWorker,
   DeterministicWorkerClock,
 } from "./dist/adaptive-worker.js";
-import { LocalOtelLogs } from "./dist/telemetry.js";
+import { ExampleOtlpLogs } from "./dist/telemetry.js";
 import { startAdaptiveWorkerService } from "./service.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +39,7 @@ async function runSmoke(lifecycle) {
         ? lifecycle.signal
         : AbortSignal.any([init.signal, lifecycle.signal]),
     });
-  const telemetry = new LocalOtelLogs(service.paths.telemetry);
+  const telemetry = new ExampleOtlpLogs(service.paths.telemetry);
   const client = createDecisionClient({
     bindings: service.connection.bindings,
     baseUrl: service.decisionUrl,

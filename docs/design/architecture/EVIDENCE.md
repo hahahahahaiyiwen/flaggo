@@ -39,8 +39,9 @@ application activity
 
 The application's OpenTelemetry provider, processor, exporter, and Collector
 pipeline remain the transport boundary. Collector configuration is intentionally
-coarse-grained: a local profile may forward all telemetry to Flaggo ingestion,
-or forward telemetry under configured service/instrumentation namespaces.
+coarse-grained: the Phase 4 Flaggo OTLP logs mapping may forward all telemetry
+to Flaggo ingestion, or forward telemetry under configured
+service/instrumentation namespaces.
 Collector configuration does not need to understand decision contracts,
 evidence bindings, or dynamic contract-aware filters. Flaggo OTel Ingestion
 always owns contract/profile filtering.
@@ -54,8 +55,8 @@ A successful `RuntimeDecision` identifies the exact `contractDigest`,
 `executableDigest`, result, and evaluation source. It does not prove the
 application used the result.
 
-For the Phase 4 local profile, `decide()` emits a Flaggo-owned OpenTelemetry
-log event after a successful response:
+For the Phase 4 Flaggo OTLP logs mapping, `decide()` emits a Flaggo-owned
+OpenTelemetry log event after a successful response:
 
 ```text
 eventName = "flaggo.decision.received"
@@ -117,7 +118,7 @@ may share an underlying activity through their SDK bindings.
 
 Applications may emit telemetry that is not Flaggo-specific, as they would
 without the Flaggo SDK. The SDK also provides convenience helpers that emit the
-local profile's outcome log event:
+Flaggo OTLP logs mapping's outcome log event:
 
 ```text
 eventName = "flaggo.outcome.observed"
@@ -232,9 +233,9 @@ reconstruction but cannot activate. Evidence observed for the older digest
 remains attached to it; Flaggo does not silently reinterpret it as evidence
 for the newer contract.
 
-## Local OpenTelemetry profile
+## Phase 4 Flaggo OTLP logs mapping
 
-Phase 4 defines a local OTel logs profile for Flaggo ingestion. It is not a
+Phase 4 defines a Flaggo-specific OTLP logs mapping for ingestion. It is not a
 portable OpenTelemetry semantic convention.
 
 Supported signal names:

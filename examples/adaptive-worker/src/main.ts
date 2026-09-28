@@ -8,7 +8,7 @@ import {
 } from "@flaggo/sdk/runtime";
 
 import { AdaptiveWorker, type WorkerDecisions } from "./adaptive-worker.js";
-import { LocalOtelLogs } from "./telemetry.js";
+import { ExampleOtlpLogs } from "./telemetry.js";
 interface ServiceConnection {
   decisionServiceUrl: string;
   telemetryPath: string;
@@ -28,7 +28,7 @@ export async function runMain(): Promise<void> {
   const service = JSON.parse(
     await readFile(serviceFile, "utf8"),
   ) as ServiceConnection;
-  const telemetry = new LocalOtelLogs(service.telemetryPath);
+  const telemetry = new ExampleOtlpLogs(service.telemetryPath);
   const client = createDecisionClient<WorkerDecisions>({
     bindings: service.bindings,
     baseUrl: service.decisionServiceUrl,
