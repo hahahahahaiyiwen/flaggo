@@ -11,60 +11,73 @@ The architecture distinguishes:
 | --- | --- |
 | Runtime attribute | Explicit value supplied to evaluate the current request |
 | Runtime decision | Result returned by the Decision Service |
-| Exposure evidence | Flaggo-owned observation that the application applied a decision |
-| Outcome evidence | User-declared observation associated with an applied exposure |
+| Decision observation | Flaggo-owned observation that the SDK received a decision |
+| Outcome observation | Application telemetry that may be relevant to declared evidence |
+| Correlated evidence | Async-analysis output that links decisions and outcomes as usable evidence |
 | Generation provenance | Record of which evidence and method produced a candidate executable |
 
 Conflating these concepts would make runtime depend on delayed telemetry or
-would treat a returned-but-unused decision as an exposure.
+would treat a returned-but-unused decision as clean learning evidence.
 
 ## Evidence flow
 
 ```text
 Decision Service
   -> RuntimeDecision
-  -> application applies result
-  -> SDK creates exposure context
-  -> SDK emits Flaggo exposure evidence
+  -> SDK emits decision-received telemetry
                                       \
-                                       -> OpenTelemetry pipeline
+                                       -> OpenTelemetry pipeline / Collector
                                       /
 application activity
-  -> SDK logical evidence binding
-  -> outcome evidence
-  -> evidence ingestion and correlation
+  -> ordinary app telemetry or SDK outcome helper
+  -> evidence ingestion and raw observation storage
   -> Evidence Store
-  -> asynchronous learning analysis
+  -> asynchronous learning analysis and correlation
   -> CandidateExecutable
   -> Contract Service validation and activation
 ```
 
 The application's OpenTelemetry provider, processor, exporter, and Collector
-pipeline remain the transport boundary. The SDK does not make the Decision
-Service persist a decision session and does not require a synchronous
-exposure-confirmation call.
+pipeline remain the transport boundary. Collector configuration is intentionally
+coarse-grained: a local profile may forward all telemetry to Flaggo ingestion,
+or forward telemetry under configured service/instrumentation namespaces.
+Collector configuration does not need to understand decision contracts,
+evidence bindings, or dynamic contract-aware filters. Flaggo OTel Ingestion
+always owns contract/profile filtering.
 
-## Exposure evidence
+The SDK does not make the Decision Service persist a decision session and does
+not require a synchronous exposure-confirmation call.
+
+## Decision observations
 
 A successful `RuntimeDecision` identifies the exact `contractDigest`,
 `executableDigest`, result, and evaluation source. It does not prove the
 application used the result.
 
-After application, the SDK creates or updates its exposure context and emits a
-Flaggo-owned OpenTelemetry observation. That observation must make the
-following semantic information available for later correlation:
+For the Phase 4 local profile, `decide()` emits a Flaggo-owned OpenTelemetry
+log event after a successful response:
 
-- the SDK-managed exposure ID;
+```text
+eventName = "flaggo.decision.received"
+flaggo.signal = "decision.received"
+```
+
+That observation must make the following semantic information available for
+later analysis:
+
+- the SDK-generated decision ID;
 - authenticated application/environment scope as supplied by the ingestion
   boundary, not by decision attributes;
+- contract name;
 - contract and executable digests;
-- the applied result and relevant evaluation provenance;
-- exposure time; and
-- contract attributes required by declared correlations.
+- the returned result JSON and result hash;
+- evaluation source and optional rule name;
+- observation time; and
+- optional correlation attributes supplied by the surrounding app/request
+  context.
 
-This is a conceptual requirement, not a final OpenTelemetry attribute layout.
-The exact signal type, instrumentation scope, field names, projection, and
-batching behavior remain deferred.
+This is a raw decision observation. It is not, by itself, proof that the app
+applied the result and is not clean learning evidence.
 
 The next logical evaluation may carry the prior applied exposure as
 `RuntimeInput.currentExposure`. That value supplies application context only.
@@ -100,50 +113,78 @@ span path, or log field. One application activity may supply several logical
 values, but the contract declares each value separately. Multiple declarations
 may share an underlying activity through their SDK bindings.
 
-## Correlation
+## Outcome observations
 
-Outcome evidence is associated with an applied decision using both:
+Applications may emit telemetry that is not Flaggo-specific, as they would
+without the Flaggo SDK. The SDK also provides convenience helpers that emit the
+local profile's outcome log event:
 
-1. the exact exposure ID; and
-2. every contract attribute named by `correlateBy`.
+```text
+eventName = "flaggo.outcome.observed"
+flaggo.signal = "outcome.observed"
+```
 
-The exposure ID identifies the applied decision. Correlation attributes bind
-and validate the surrounding application activity. Neither replaces the
-other, and neither is authentication data.
+The ingestion service accepts supported Flaggo outcome observations, ignores
+non-Flaggo telemetry, and stores raw observations scoped by the authenticated
+application/environment. Outcome observations may carry:
+
+- `flaggo.evidence.binding`;
+- `flaggo.evidence.value.json`;
+- optional `flaggo.observation.id`;
+- optional `flaggo.decision.id`;
+- optional contract name/digest; and
+- correlation attributes under `flaggo.correlation.<name>`.
+
+## Correlation and analysis
+
+Correlation is no longer an ingestion guarantee in Phase 4. The Evidence Store
+persists raw decision and outcome observations. The Async Analysis Service
+decides whether a decision observation plus outcome telemetry is sufficient,
+unambiguous, timely, and contract-relevant enough to become usable learning
+evidence.
+
+Analysis may use:
+
+1. a direct `flaggo.decision.id` when the app provides it;
+2. every contract attribute named by `correlateBy`;
+3. contract name/digest and evidence binding; and
+4. analysis-owned time windows or other documented heuristics.
+
+Direct decision identity and correlation attributes bind and validate the
+surrounding application activity. Neither replaces authentication data.
 
 Conceptually:
 
 ```text
 OutcomeObservation {
-  exposureId,
+  decisionId?,
   binding,
   value,
   correlationAttributes
 }
 
-ExposureObservation {
-  exposureId,
+DecisionObservation {
+  decisionId,
   contractDigest,
   executableDigest,
-  appliedResult,
+  result,
   correlationAttributes
 }
 
-correlate(exposureId, required attributes)
+analyze(decision observations, outcome observations, required attributes)
   -> Evidence scoped to exact contractDigest
 ```
 
-Missing or unknown exposure IDs, absent correlation attributes, mismatched
-values, duplicate observations, and ambiguous matches must not be presented
-as successful unambiguous correlation. Whether ingestion rejects, quarantines,
-or retains such observations is part of the deferred evidence-correlation
-failure design.
+Missing or unknown decision IDs, absent correlation attributes, mismatched
+values, duplicate observations, and ambiguous matches must not be presented as
+successful unambiguous evidence.
 
 ## Evidence storage boundary
 
-The Evidence Store contains observations and correlation results needed by
+The Evidence Store contains raw decision and outcome observations needed by
 asynchronous learning and generation provenance. Evidence remains associated
-with the contract digest under which the exposure occurred.
+with the contract digest under which the decision occurred when that identity
+is known.
 
 The store is not:
 
@@ -153,9 +194,9 @@ The store is not:
 - proof that every returned decision was applied; or
 - authorization data.
 
-Retention, deduplication, late-arrival handling, aggregation, and physical
-storage are evidence-service concerns. They do not alter Runtime Evaluation
-semantics.
+Filtering, retention, deduplication, late-arrival handling, aggregation, and
+physical storage are evidence-service concerns. They do not alter Runtime
+Evaluation semantics.
 
 ## Learning loop
 
@@ -191,35 +232,52 @@ reconstruction but cannot activate. Evidence observed for the older digest
 remains attached to it; Flaggo does not silently reinterpret it as evidence
 for the newer contract.
 
-## OpenTelemetry profile boundary
+## Local OpenTelemetry profile
 
-The following protocol details are intentionally deferred:
+Phase 4 defines a local OTel logs profile for Flaggo ingestion. It is not a
+portable OpenTelemetry semantic convention.
 
-- supported span, log, and metric representations;
-- instrumentation scope and semantic-convention names;
-- selector and projection syntax;
-- event-time and ingestion-time semantics;
-- multi-match and duplicate behavior;
-- propagation and allocation of exposure IDs;
-- required SDK and Collector transformations; and
-- failure behavior for invalid or ambiguous correlation.
+Supported signal names:
 
-Until that profile is defined, the architecture establishes logical ownership
-and correlation requirements but does not claim a portable wire mapping for
-all OpenTelemetry backends.
+| Event name | `flaggo.signal` | Meaning |
+| --- | --- | --- |
+| `flaggo.decision.received` | `decision.received` | SDK received a runtime decision |
+| `flaggo.outcome.observed` | `outcome.observed` | App/SDK reported a potentially relevant outcome |
+
+Required decision attributes:
+
+- `flaggo.decision.id`
+- `flaggo.contract.name`
+- `flaggo.contract.digest`
+- `flaggo.executable.digest`
+- `flaggo.result.json`
+- `flaggo.result.hash`
+- `flaggo.evaluation.source`
+- optional `flaggo.evaluation.rule`
+
+Required outcome attributes:
+
+- `flaggo.evidence.binding`
+- `flaggo.evidence.value.json`
+- optional `flaggo.observation.id`
+- optional `flaggo.decision.id`
+- optional `flaggo.contract.name`
+- optional `flaggo.contract.digest`
+
+Correlation attributes use `flaggo.correlation.<name>`.
 
 ## Invariants
 
 1. Runtime Evaluation never waits for or queries evidence.
-2. Only an applied result creates exposure evidence.
-3. The SDK emits exposure evidence through OpenTelemetry rather than requiring
-   server-side runtime session state.
+2. `decide()` emits decision-received telemetry, not clean learning evidence.
+3. The SDK emits telemetry through OpenTelemetry rather than requiring
+   server-side runtime session state or confirmation RPCs.
 4. Outcome evidence is declared as one logical observed value per contract
    entry.
-5. Correlation uses both exact exposure identity and declared activity
-   attributes.
+5. Async analysis, not ingestion, decides whether decision and outcome
+   observations are usable evidence.
 6. Evidence remains scoped to the exact contract digest under which it was
-   observed.
+   observed when that identity is known.
 7. Learning produces an immutable candidate and cannot activate it directly.
 8. Evidence delay or analysis failure leaves the existing runtime activation
    unchanged.

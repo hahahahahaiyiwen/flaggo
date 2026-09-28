@@ -20,7 +20,7 @@ import {
   assertInputSchema,
   assertResponseSchema,
 } from "../internal/validators.js";
-import type { JsonValue, Sha256Digest } from "../shared/types.js";
+import type { JsonValue, RequestOptions, Sha256Digest } from "../shared/types.js";
 import type {
   DecisionBinding,
   DecisionCatalog,
@@ -30,8 +30,17 @@ import type {
   DecisionSpec,
   RuntimeDecision,
 } from "./types.js";
+import {
+  createFlaggoTelemetry,
+  emitDecisionReceived,
+} from "./telemetry.js";
 
 const attributeNamePattern = /^[A-Za-z][A-Za-z0-9_]{0,127}$/u;
+
+type ResultOf<TSpec> =
+  TSpec extends DecisionSpec<Readonly<Record<string, JsonValue>>, infer TResult>
+    ? TResult
+    : never;
 
 function validateConfiguration<TCatalog extends DecisionCatalog>(
   configuration: DecisionClientConfiguration<TCatalog>,
@@ -49,6 +58,7 @@ function validateConfiguration<TCatalog extends DecisionCatalog>(
         "timeoutMs",
         "retry",
         "random",
+        "telemetry",
       ]),
     )
   ) {
@@ -177,9 +187,14 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
   const bindings = validateConfiguration(configuration);
   const random = configuration.random ?? Math.random;
   const transport = createTransport(configuration);
+  const telemetry = createFlaggoTelemetry(configuration.telemetry);
 
   return {
-    async decide(contractName, request = {}, options = {}) {
+    async decide<TName extends Extract<keyof TCatalog, string>>(
+      contractName: TName,
+      request: DecisionRequest<TCatalog[TName]> = {},
+      options: RequestOptions = {},
+    ) {
       const binding = bindings[contractName];
       if (binding === undefined) {
         throw new MissingDecisionBindingError(contractName);
@@ -187,7 +202,7 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
       const input = completeInput(request, random);
       const encodedName = encodeURIComponent(contractName);
       const encodedDigest = encodeURIComponent(binding.contractDigest);
-      return transport.request({
+      const response = await transport.request({
         method: "POST",
         path: `/v3/decision-contracts/${encodedName}/versions/${encodedDigest}/decisions`,
         body: input,
@@ -198,9 +213,18 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
           assertInputSchema(validateRuntimeInput, value, "RuntimeInput");
         },
         parse(value) {
-          return decisionOrThrow(value, binding.contractDigest);
+          return decisionOrThrow<ResultOf<TCatalog[TName]>>(
+            value,
+            binding.contractDigest,
+          );
         },
       });
+      emitDecisionReceived(telemetry, {
+        contractName,
+        decision: response.value,
+        metadata: response.metadata,
+      });
+      return response;
     },
   };
 }

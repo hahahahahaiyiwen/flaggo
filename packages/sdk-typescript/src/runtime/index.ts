@@ -14,6 +14,18 @@ export {
   type RuntimeEvaluation,
 } from "./types.js";
 export {
+  createFlaggoTelemetry,
+  recordDecisionReceived,
+  recordOutcome,
+  type CorrelationAttributes,
+  type DecisionReceivedTelemetryInput,
+  type DecisionTelemetryContext,
+  type FlaggoTelemetry,
+  type FlaggoTelemetryConfiguration,
+  type FlaggoTelemetryLogger,
+  type OutcomeTelemetryInput,
+} from "./telemetry.js";
+export {
   FlaggoAbortError,
   FlaggoError,
   FlaggoHttpError,

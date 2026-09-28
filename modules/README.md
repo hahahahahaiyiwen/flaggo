@@ -8,6 +8,7 @@ expression
 decision
 contract-store
 executable-store
+evidence-store
 hosting
 ```
 
@@ -23,6 +24,8 @@ not depend on an app composition root or on the legacy
   projections.
 - Executable Store persists immutable executable artifacts and atomically owns
   scoped Candidate, Active, and Inactive lifecycle state.
+- Evidence Store persists raw decision-received and outcome-observed telemetry
+  observations for asynchronous analysis.
 - Hosting owns reusable strict HTTP, authentication, correlation, Problem
   Details, and health mechanics without domain routes.
 
@@ -34,7 +37,6 @@ Contract Store and Executable Store use direct
 `Microsoft.Data.Sqlite` dependencies and store-owned SQL. They share one
 configured local database but no custom storage-infrastructure package.
 
-Future OTel Ingestion, Evidence Store, and Async Analysis Pipeline modules
-require a separately accepted design.
+Future Async Analysis Pipeline modules require a separately accepted design.
 
 The `-service` suffix is reserved for executable projects under `apps`.

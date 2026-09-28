@@ -29,6 +29,9 @@ await build({
     "src/runtime/index.ts",
     "src/management/index.ts",
   ],
+  external: [
+    "@opentelemetry/api-logs",
+  ],
   format: "esm",
   legalComments: "none",
   outbase: "src",

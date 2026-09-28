@@ -8,8 +8,7 @@ import { createDecisionClient } from "@flaggo/sdk/runtime";
 import { createContractClient } from "@flaggo/sdk/management";
 ```
 
-The package is ESM-only and targets Node.js 20+, modern browsers, and edge
-runtimes with the standard Fetch API. It has no runtime dependencies.
+The package is ESM-only and targets Node.js 20+ with the standard Fetch API.
 
 ## Runtime decisions
 
@@ -85,9 +84,36 @@ attributes do not match, allowing the Decision Service to return the contract
 default. Transport retries reuse the exact serialized input while resolving
 the executable active for each later attempt.
 
-SDK fallback and exposure telemetry are not part of this release. Service
-failures remain explicit, and exposure emission will be added through the
-future OpenTelemetry ingestion path.
+After a successful response, `decide()` emits a local OpenTelemetry log event
+named `flaggo.decision.received` through `@opentelemetry/api-logs`. That event
+is a raw decision observation, not proof that the app applied the result and
+not clean learning evidence by itself. If no OpenTelemetry logger provider is
+configured, the API behaves as a no-op.
+
+Applications can report potentially relevant outcomes with SDK helpers when
+convenient:
+
+```ts
+import { createFlaggoTelemetry } from "@flaggo/sdk/runtime";
+
+const telemetry = createFlaggoTelemetry();
+
+telemetry.recordOutcome({
+  binding: "worker.latency_ms",
+  value: 125,
+  decisionId: "optional-decision-id",
+  contractName: "worker.batch-size",
+  contractDigest:
+    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  correlation: {
+    workerId: "worker-17",
+  },
+});
+```
+
+Apps may also emit ordinary OpenTelemetry telemetry without the helper. The
+Flaggo Collector/Ingestion profile treats SDK helpers as convenience APIs, not
+the only valid source of outcome observations.
 
 ## Contract management
 

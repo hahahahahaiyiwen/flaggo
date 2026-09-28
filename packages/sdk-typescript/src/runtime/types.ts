@@ -11,6 +11,7 @@ import type {
   Sha256Digest,
   TransportConfiguration,
 } from "../shared/types.js";
+import type { FlaggoTelemetryConfiguration } from "./telemetry.js";
 
 export interface DecisionSpec<
   TAttributes extends Readonly<Record<string, JsonValue>> =
@@ -70,6 +71,7 @@ export interface DecisionClientConfiguration<TCatalog extends DecisionCatalog>
   extends TransportConfiguration {
   readonly bindings: DecisionBindings<TCatalog>;
   readonly random?: () => number;
+  readonly telemetry?: FlaggoTelemetryConfiguration;
 }
 
 export interface DecisionClient<TCatalog extends DecisionCatalog> {

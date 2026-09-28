@@ -18,6 +18,9 @@
     "README.md",
     "LICENSE"
   ],
+  "dependencies": {
+    "@opentelemetry/api-logs": "0.222.0"
+  },
   "scripts": {
     "build": "npm run generate && node scripts/build.mjs",
     "check:generated": "node scripts/generate.mjs --check",
