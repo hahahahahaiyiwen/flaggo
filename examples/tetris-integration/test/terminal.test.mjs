@@ -133,19 +133,26 @@ test("piece locks update the window without triggering an immediate request", as
     input: terminal.input,
     output: terminal.output,
     provider,
+    game: {
+      pieceSource: new SequencePieceSource(["O"]),
+      sessionId: "lock-window-test",
+    },
     policyRefreshIntervalMs: 40,
   });
-  await waitFor(() => contexts.length === 1);
-  terminal.input.emit("keypress", "", { name: "space" });
-  terminal.input.emit("keypress", "", { name: "space" });
-  await new Promise((resolve) => setImmediate(resolve));
+  try {
+    await waitFor(() => contexts.length === 1);
+    terminal.input.emit("keypress", "", { name: "space" });
+    terminal.input.emit("keypress", "", { name: "space" });
+    await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(contexts.length, 1);
-  await waitFor(() => contexts.length >= 2);
-  assert.equal(contexts[1].piecesLocked5s, 2);
-  assert.equal(contexts[1].boardPressureMax5s, 0.2);
-  terminal.input.emit("keypress", "", { name: "q" });
-  await session;
+    assert.equal(contexts.length, 1);
+    await waitFor(() => contexts.length >= 2);
+    assert.equal(contexts[1].piecesLocked5s, 2);
+    assert.equal(contexts[1].boardPressureMax5s, 0.2);
+  } finally {
+    terminal.input.emit("keypress", "", { name: "q" });
+    await session;
+  }
 });
 
 test("policy responses do not reset an already scheduled gravity tick", async () => {
