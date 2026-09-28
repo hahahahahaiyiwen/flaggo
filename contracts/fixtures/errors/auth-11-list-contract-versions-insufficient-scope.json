@@ -1,0 +1,27 @@
+{
+  "name": "list-contract-versions-insufficient-scope",
+  "scenario": 49,
+  "invariant": "Contract version history lookup without flaggo.contracts:read returns 403 insufficient-scope.",
+  "responseSchema": "problem-details-v3.schema.json",
+  "request": {
+    "method": "GET",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions",
+    "headers": {
+      "Authorization": "******"
+    }
+  },
+  "expected": {
+    "status": 403,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-contract-list-versions-scope"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/insufficient-scope",
+      "title": "Insufficient scope",
+      "status": 403,
+      "instance": "/v3/decision-contracts/tetris.dropInterval/versions",
+      "detail": "Token lacks flaggo.contracts:read."
+    }
+  }
+}

@@ -1,55 +1,69 @@
 # Flaggo design index
 
-Detailed designs follow the logical server boundaries defined by the
-[architecture overview](../architecture/OVERVIEW.md). A boundary is first-class
-only when it owns a domain or external-system contract.
+The current target model is:
 
-## External boundaries
+```text
+DecisionContract
+  -> Contract Acceptance
+  -> Executable Generation
+  -> Activation
+  -> ActiveExecutable
 
-| Boundary | Design |
+ActiveExecutable + complete RuntimeInput
+  -> stateless deterministic RuntimeDecision
+```
+
+The application and SDK own complete input construction and the transition
+from a returned decision to an applied exposure. Evidence flows through
+OpenTelemetry into asynchronous learning; it is not a runtime operand.
+
+## Implementation phase
+
+[Phase 3 implementation scope](PHASE_3.md) distinguishes behavior implemented
+by the current v3 stack from accepted-but-inactive contract declarations and
+deferred evidence, learning, telemetry, fallback, and deployment work.
+
+## Architecture
+
+| Question | Current design |
 | --- | --- |
-| Client SDK | [Client library](client-library/README.md) |
-| Application telemetry pipeline | Application-owned OpenTelemetry APIs, providers, exporters, and Collector configuration; see [OTel Ingestion](otel-ingestion/README.md) for the Flaggo ingress boundary. |
+| How do clients, services, workers, and stores fit together? | [Architecture overview](architecture/OVERVIEW.md) |
+| What establishes accepted and active authority? | [Decision authority](architecture/AUTHORITY.md) |
+| How do authoring clients and Contract Service manage versions and activation? | [Contract clients and Contract Service](architecture/CONTRACT_SERVICE.md) |
+| How do applications, SDKs, and Decision Service evaluate an exact version? | [Runtime client and Decision Service](architecture/RUNTIME.md) |
+| How do exposure, outcomes, and learning relate? | [Evidence and learning](architecture/EVIDENCE.md) |
 
-## Server services and workers
+These documents define logical ownership. An implementation may co-locate
+services or stores without changing those boundaries.
 
-| Boundary | Responsibility | Design |
-| --- | --- | --- |
-| Contract Service | Definition lifecycle, approval, readiness, and authority activation orchestration. | [Contract Service](contract-service/README.md) |
-| Decision Service | Online decision and exposure APIs, deterministic execution, constraints, fallback, and durable record append. | [Decision Service](decision-service/README.md) |
-| OTel Ingestion | OTLP intake, binding validation, normalization, observation append, and confirmed-exposure outcome attribution. | [OTel Ingestion](otel-ingestion/README.md) |
-| Async Analysis Pipeline | Offline candidate production using contracts, evidence, and current state. | [Async Analysis Pipeline](async-analysis/README.md) |
+## Contract semantics and wire models
 
-## Durable stores
+| Concern | Current design |
+| --- | --- |
+| `DecisionContract` and `DecisionExecutable` shapes and identities | [Decision contracts and executables](contracts/CONTRACTS.md) |
+| Acceptance, generation, activation, and continuous learning | [Decision contract lifecycle](contracts/LIFECYCLE.md) |
+| Complete SDK input, exact-version resolution, evaluation, retries, and failures | [Runtime evaluation model](contracts/RUNTIME_EVALUATION.md) |
+| Executable API, JSON Schema, fixtures, and conformance | [`contracts/`](../../contracts/README.md) |
 
-| Boundary | Responsibility | Design |
-| --- | --- | --- |
-| Contract Store | Definitions, revisions, approvals, and readiness metadata. | Owned by [Contract Service](contract-service/README.md#contract-store) |
-| State Store | Stable authority heads, immutable state, CAS, replay, and lineage. | [State Store](state-store/README.md) |
-| Evidence Store | Observations, derived evidence, decisions, exposures, and outcomes. | [Evidence Store](evidence-store/README.md) |
+The v3 OpenAPI and JSON Schemas are authoritative for wire behavior. Design
+documents explain the target ownership and invariants behind those contracts.
 
-## Embedded capabilities
+## Implemented server boundary
 
-These are important behaviors, but not independent server components:
+Contract Service validates and accepts immutable named versions, persists
+canonical identities, generates default and expression-authored executables,
+activates them for the authenticated scope and exact digest, and exposes
+current and historical Management API v3 resources.
 
-- decision constraints are declared in definitions, validated by Contract
-  Service, and evaluated by Decision Service;
-- bounded numeric-rule execution runs inside Decision Service;
-- durable decision recording is part of Decision Service success;
-- explanation is a deterministic projection of stored decision facts; and
-- an operator console is a future client of service/query APIs.
+Decision Service validates complete SDK input, resolves the executable active
+for the requested exact version, evaluates its checked expressions, and
+returns a RuntimeDecision without persisting request state. Evidence-based
+generation can extend the existing candidate-validation-activation boundary
+without changing runtime contract identity.
 
-## Cross-cutting contracts
+## Archived designs
 
-[Shared contracts](shared-contracts/README.md) owns provider-neutral data and
-wire shapes. Module service and infrastructure ports stay beside their
-consumers.
-
-The [Phase 1 API contract proposal](API_CONTRACT_PROPOSAL.md) and executable
-[`contracts/`](../../contracts/README.md) describe current wire behavior.
-
-The [Tetris integration](tetris-integration/README.md) composes these
-service/store boundaries into the cloud-free hero scenario using authenticated
-manifest publication and trusted local governed state without moving
-management authority into the browser. Initial-authority/activation-ready
-publication remains the #40/#41 extension.
+The documents under [`archived/`](archived/) describe the earlier
+definition-bundle, target/State Store, durable-decision, explicit-confirmation,
+and synchronous evidence-input architecture. They are retained for historical
+implementation context and are not normative for the v3 target model.

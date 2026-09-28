@@ -1,0 +1,868 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/management-models-v3.schema.json",
+  "title": "Flaggo Management Models v3",
+  "description": "DecisionContract acceptance and status models for the Flaggo Management API v3.",
+  "type": "object",
+  "$defs": {
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "DecisionName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "AttributeName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+      "description": "A user-declared attribute name. Names beginning with '_' are reserved for Flaggo internal attributes."
+    },
+    "MemberName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "Expression": {
+      "type": "string",
+      "minLength": 1,
+      "description": "An expression in the DecisionContract's expression_syntax."
+    },
+    "JsonValue": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "ValueSchema": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NullValueSchema"
+        },
+        {
+          "$ref": "#/$defs/BooleanValueSchema"
+        },
+        {
+          "$ref": "#/$defs/NumberValueSchema"
+        },
+        {
+          "$ref": "#/$defs/IntegerValueSchema"
+        },
+        {
+          "$ref": "#/$defs/StringValueSchema"
+        },
+        {
+          "$ref": "#/$defs/ArrayValueSchema"
+        },
+        {
+          "$ref": "#/$defs/ObjectValueSchema"
+        }
+      ],
+      "description": "A JSON Schema 2020-12 document in the bounded flaggo.value-schema/v1 profile."
+    },
+    "NullValueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "null"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "BooleanValueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "boolean"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "NumberValueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "number"
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "exclusiveMinimum": {
+          "type": "number"
+        },
+        "exclusiveMaximum": {
+          "type": "number"
+        },
+        "multipleOf": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "IntegerValueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "integer"
+        },
+        "minimum": {
+          "type": "integer"
+        },
+        "maximum": {
+          "type": "integer"
+        },
+        "exclusiveMinimum": {
+          "type": "integer"
+        },
+        "exclusiveMaximum": {
+          "type": "integer"
+        },
+        "multipleOf": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "StringValueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "string"
+        },
+        "minLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "ArrayValueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "items"
+      ],
+      "properties": {
+        "type": {
+          "const": "array"
+        },
+        "items": {
+          "$ref": "#/$defs/ValueSchema"
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "uniqueItems": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "ObjectValueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "properties",
+        "additionalProperties"
+      ],
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "properties": {
+          "type": "object",
+          "maxProperties": 256,
+          "additionalProperties": {
+            "$ref": "#/$defs/ValueSchema"
+          }
+        },
+        "required": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Required property names form an unordered set; order is non-semantic."
+        },
+        "additionalProperties": {
+          "const": false
+        },
+        "minProperties": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "maxProperties": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "Attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "schema"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/AttributeName"
+        },
+        "schema": {
+          "$ref": "#/$defs/ValueSchema"
+        }
+      }
+    },
+    "Result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "default"
+      ],
+      "properties": {
+        "schema": {
+          "$ref": "#/$defs/ValueSchema"
+        },
+        "default": {
+          "$ref": "#/$defs/JsonValue",
+          "description": "Literal fallback result. Contract Acceptance verifies that it satisfies schema."
+        }
+      }
+    },
+    "NaturalLanguageWhen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "condition"
+      ],
+      "properties": {
+        "condition": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ExpressionWhen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expression"
+      ],
+      "properties": {
+        "expression": {
+          "$ref": "#/$defs/Expression"
+        }
+      }
+    },
+    "AuthoredWhen": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NaturalLanguageWhen"
+        },
+        {
+          "$ref": "#/$defs/ExpressionWhen"
+        }
+      ]
+    },
+    "LiteralReturn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      }
+    },
+    "ExpressionReturn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expression"
+      ],
+      "properties": {
+        "expression": {
+          "$ref": "#/$defs/Expression"
+        }
+      }
+    },
+    "RuleReturn": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/LiteralReturn"
+        },
+        {
+          "$ref": "#/$defs/ExpressionReturn"
+        }
+      ]
+    },
+    "AuthoredRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "when",
+        "return"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/MemberName"
+        },
+        "description": {
+          "type": "string"
+        },
+        "when": {
+          "$ref": "#/$defs/AuthoredWhen"
+        },
+        "return": {
+          "$ref": "#/$defs/RuleReturn"
+        }
+      }
+    },
+    "AuthoredExecutable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rules"
+      ],
+      "properties": {
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/AuthoredRule"
+          },
+          "description": "Ordered first-match-wins rules. Rule names must be unique."
+        }
+      }
+    },
+    "LearningEvaluationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interval"
+      ],
+      "properties": {
+        "interval": {
+          "type": "string",
+          "pattern": "^P(?=\\d|T\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+W)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+(?:\\.\\d+)?S)?)?$",
+          "description": "A positive ISO 8601 duration expressing the minimum delay between completed analysis attempts."
+        }
+      }
+    },
+    "LearningPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "evaluate"
+      ],
+      "properties": {
+        "mode": {
+          "const": "auto-activation",
+          "description": "Automatically attempt atomic activation after an evidence-generated candidate passes validation and current-learning-head checks."
+        },
+        "evaluate": {
+          "$ref": "#/$defs/LearningEvaluationPolicy"
+        }
+      }
+    },
+    "Evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "attribute",
+        "binding",
+        "correlateBy"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/MemberName"
+        },
+        "description": {
+          "type": "string"
+        },
+        "attribute": {
+          "$ref": "#/$defs/AttributeName",
+          "description": "The contract attribute whose value semantics this observed evidence shares."
+        },
+        "binding": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$",
+          "description": "Logical SDK-to-OpenTelemetry evidence binding."
+        },
+        "correlateBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AttributeName"
+          },
+          "uniqueItems": true,
+          "description": "Unordered set of additional contract attributes used with the implicit exposure ID to correlate evidence."
+        }
+      }
+    },
+    "PrimaryObjective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence",
+        "direction"
+      ],
+      "properties": {
+        "evidence": {
+          "$ref": "#/$defs/MemberName"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "minimize",
+            "maximize"
+          ]
+        }
+      }
+    },
+    "Guardrail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "expression"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/MemberName"
+        },
+        "description": {
+          "type": "string"
+        },
+        "expression": {
+          "$ref": "#/$defs/Expression"
+        }
+      }
+    },
+    "LearningObjective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary"
+      ],
+      "properties": {
+        "primary": {
+          "$ref": "#/$defs/PrimaryObjective"
+        },
+        "guardrails": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Guardrail"
+          },
+          "description": "Guardrail names must be unique; order is non-semantic."
+        }
+      }
+    },
+    "Learning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "evidence",
+        "objective"
+      ],
+      "properties": {
+        "policy": {
+          "$ref": "#/$defs/LearningPolicy"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "description": "One logical observed value per entry. Evidence names must be unique; order is non-semantic."
+        },
+        "objective": {
+          "$ref": "#/$defs/LearningObjective"
+        }
+      }
+    },
+    "DecisionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "expression_syntax",
+        "attributes",
+        "result"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "expression_syntax": {
+          "const": "flaggo.cel/v1"
+        },
+        "attributes": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/Attribute"
+          },
+          "description": "User-declared runtime attributes. Attribute names must be unique; order is non-semantic."
+        },
+        "result": {
+          "$ref": "#/$defs/Result"
+        },
+        "authoredExecutable": {
+          "$ref": "#/$defs/AuthoredExecutable"
+        },
+        "learning": {
+          "$ref": "#/$defs/Learning"
+        }
+      }
+    },
+    "ExecutableRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "when",
+        "return"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/MemberName"
+        },
+        "when": {
+          "$ref": "#/$defs/ExpressionWhen"
+        },
+        "return": {
+          "$ref": "#/$defs/RuleReturn"
+        }
+      }
+    },
+    "DecisionExecutable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractDigest",
+        "kind",
+        "rules"
+      ],
+      "properties": {
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "kind": {
+          "const": "rules"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExecutableRule"
+          },
+          "description": "Ordered deterministic rules. An empty array is the default executable."
+        }
+      }
+    },
+    "ValidationIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "path",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "JSON Pointer to the affected contract location; an empty string identifies the root."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "WarningIssue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ValidationIssue"
+        },
+        {
+          "properties": {
+            "severity": {
+              "const": "warning"
+            }
+          }
+        }
+      ]
+    },
+    "ErrorIssue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ValidationIssue"
+        },
+        {
+          "properties": {
+            "severity": {
+              "const": "error"
+            }
+          }
+        }
+      ]
+    },
+    "ValidDecisionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "contractDigest",
+        "issues"
+      ],
+      "properties": {
+        "status": {
+          "const": "valid"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WarningIssue"
+          }
+        }
+      }
+    },
+    "InvalidDecisionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "issues"
+      ],
+      "properties": {
+        "status": {
+          "const": "invalid"
+        },
+        "issues": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ValidationIssue"
+          },
+          "contains": {
+            "$ref": "#/$defs/ErrorIssue"
+          }
+        }
+      }
+    },
+    "DecisionContractValidationResult": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ValidDecisionContract"
+        },
+        {
+          "$ref": "#/$defs/InvalidDecisionContract"
+        }
+      ]
+    },
+    "DecisionContractVersionSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractDigest",
+        "status",
+        "acceptedAt",
+        "activeExecutableDigest"
+      ],
+      "properties": {
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "status": {
+          "const": "ready",
+          "description": "A version is deployed only after its generated default executable has been activated."
+        },
+        "acceptedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "activeExecutableDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      }
+    },
+    "DecisionContractVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "contractDigest",
+        "status",
+        "acceptedAt",
+        "activeExecutableDigest",
+        "contract"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "status": {
+          "const": "ready",
+          "description": "A version is deployed only after its generated default executable has been activated."
+        },
+        "acceptedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "activeExecutableDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "contract": {
+          "$ref": "#/$defs/DecisionContract",
+          "description": "The immutable accepted contract document. Its name must equal the enclosing resource name."
+        }
+      }
+    },
+    "DecisionContractVersionList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "currentContractDigest",
+        "versions",
+        "nextCursor"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "currentContractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecisionContractVersionSummary"
+          },
+          "description": "Versions ordered by acceptedAt descending and then contractDigest descending."
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Opaque cursor for the next page, or null when this is the final page."
+        }
+      }
+    }
+  }
+}

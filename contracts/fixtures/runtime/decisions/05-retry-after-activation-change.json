@@ -1,0 +1,39 @@
+{
+  "name": "runtime-retry-after-activation-change",
+  "scenario": 5,
+  "retryOf": "runtime-rule-result",
+  "invariant": "A retry reuses the same complete RuntimeInput but independently resolves and applies the replacement executable active at the later request.",
+  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+  "request": {
+    "method": "POST",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "attributes": {
+        "_random": 0.42,
+        "user_id": "user-123",
+        "recovery_failures": 1
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-retry-new-activation"
+    },
+    "body": {
+      "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "executableDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "result": 650,
+      "evaluation": {
+        "source": "rule",
+        "rule": "faster-recovery-policy"
+      }
+    }
+  }
+}

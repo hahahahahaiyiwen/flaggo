@@ -1,13 +1,13 @@
 {
-  "name": "decide-schema-negative-cases",
+  "name": "runtime-and-management-schema-negative-cases",
   "scenario": 33,
-  "invariant": "Value/type mismatch, non-finite number (absent from JSON), empty/out-of-range confidence, and invalid exposure union are rejected by the strict runtime schemas.",
+  "invariant": "Malformed complete runtime inputs, invalid evaluation provenance, non-finite JSON numbers, and invalid DecisionContract shapes are rejected.",
   "schemaNegative": true,
   "request": {
     "method": "POST",
-    "path": "/v1/decisions/tetris.dropInterval:decide",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
     "headers": {
-      "Authorization": "Bearer test-access-token",
+      "Authorization": "******",
       "Content-Type": "application/json"
     }
   },
@@ -18,270 +18,199 @@
   },
   "rejectedSamples": [
     {
-      "why": "valueType/value mismatch (string valueType with number value)",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult",
+      "why": "the complete RuntimeInput must include SDK-generated _random",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
       "body": {
-        "decisionKey": "tetris.dropInterval",
-        "definition": {
-          "appId": "tetris-demo",
-          "environment": "dev",
-          "key": "tetris.dropInterval",
-          "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-          "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3"
-        },
-        "decisionId": "decision-123",
-        "value": 700,
-        "valueType": "string",
-        "decisionMode": "strategy",
-        "strategyId": "strategy-tetris-new-players-v1",
-        "runtimeTarget": {
-          "type": "session",
-          "id": "game-456"
-        },
-        "controlTarget": {
-          "type": "cohort",
-          "id": "new_players"
-        },
-        "targetProvenance": [
-          {
-            "targetType": "cohort",
-            "claimedId": "new_players",
-            "resolvedId": "new_players",
-            "source": "client-verified"
-          }
-        ],
-        "resolutionChain": [
-          "session:game-456",
-          "user:user-123",
-          "cohort:new_players",
-          "global"
-        ],
-        "confidence": {
-          "evidenceQuality": 0.82,
-          "modelUncertainty": 0.31,
-          "expectedOutcome": 0.72
-        },
-        "fallback": {
-          "source": "server",
-          "resolutionFallbackUsed": false,
-          "decisionFallbackUsed": false,
-          "reason": null
-        },
-        "policy": {
-          "result": "approved",
-          "reasons": [],
-          "appliedConstraints": [
-            "cooldown",
-            "max-delta",
-            "number-bounds"
-          ]
-        },
-        "definitionStatus": {
-          "definitionId": "def_01JQ8Y7M6X3K9P2W4R5T6V7N8A",
-          "revision": "rev_01JQ8YB4E5H6J7K8M9N0P1Q2R3",
-          "contractDigest": "sha256:377a1df50a8538bb3642fde744fbc0f8ef8790e6b5ade74086c5f14e28a633e8",
-          "bundleDigest": "sha256:349b31fb07056df576e8d8e0fe31b746bf1e9e8f55275796cce88d7723ac0f2c",
-          "buildId": "tetris-web-2026-07-25.1",
-          "deploymentId": "tetris-web-dev-a",
-          "integrity": "verified",
-          "compatibility": "identical"
-        },
-        "exposure": {
-          "confirmationRequired": true,
-          "confirmToken": "confirm-abc"
-        },
-        "reason": "Approved strategy slowed the drop interval within policy bounds.",
-        "auditId": "audit-789"
+        "attributes": {
+          "user_id": "user-123"
+        }
       }
     },
     {
-      "why": "out-of-range confidence field",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ConfidenceReport",
+      "why": "_random must be less than one",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
       "body": {
-        "evidenceQuality": 1.5
+        "attributes": {
+          "_random": 1
+        }
       }
     },
     {
-      "why": "empty confidence object missing evidenceQuality",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ConfidenceReport",
-      "body": {}
-    },
-    {
-      "why": "invalid exposure union: confirmationRequired true without confirmToken",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureDirective",
+      "why": "_random must not be negative",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
       "body": {
-        "confirmationRequired": true
+        "attributes": {
+          "_random": -0.01
+        }
       }
     },
     {
-      "why": "invalid exposure union: confirmationRequired false with confirmToken",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureDirective",
+      "why": "the v3 wire profile defines no internal attribute other than _random",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
       "body": {
-        "confirmationRequired": false,
-        "confirmToken": "x"
+        "attributes": {
+          "_random": 0.42,
+          "_bucket": 17
+        }
       }
     },
     {
-      "why": "malformed RFC 3339 appliedAt timestamp",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "why": "current exposure requires a non-empty exposure identity",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
       "body": {
-        "confirmToken": "confirm-abc",
-        "appliedAt": "not-a-date"
+        "attributes": {
+          "_random": 0.42
+        },
+        "currentExposure": {
+          "exposureId": ""
+        }
       }
     },
     {
       "why": "runtime request correlation is header-only",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/DecideRequest",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
       "body": {
-        "expectedContract": {
-          "definitionId": "def_example",
-          "revision": "rev_example",
-          "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        },
-        "runtimeContext": {},
-        "client": {
-          "appId": "example",
-          "environment": "test"
+        "attributes": {
+          "_random": 0.42
         },
         "correlationId": "body-source-is-forbidden"
       }
     },
     {
-      "why": "exposure confirmation correlation is header-only",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ExposureConfirmationRequest",
+      "why": "a runtime decision must identify its executable",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
       "body": {
-        "confirmToken": "confirm-abc",
-        "correlationId": "body-source-is-forbidden"
+        "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "result": 700,
+        "evaluation": {
+          "source": "default"
+        }
       }
     },
     {
-      "why": "approval correlation is header-only",
-      "schemaRef": "management-models-v1.schema.json#/$defs/ApproveRequest",
+      "why": "rule evaluation provenance requires the matching rule name",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
       "body": {
-        "expectedBundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "correlationId": "body-source-is-forbidden"
+        "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executableDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "result": 700,
+        "evaluation": {
+          "source": "rule"
+        }
       }
     },
     {
-      "why": "rejection correlation is header-only",
-      "schemaRef": "management-models-v1.schema.json#/$defs/RejectRequest",
+      "why": "default evaluation provenance cannot claim a rule",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
       "body": {
-        "expectedBundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "reasonCode": "operator-rejected",
-        "correlationId": "body-source-is-forbidden"
+        "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executableDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "result": 800,
+        "evaluation": {
+          "source": "default",
+          "rule": "unexpected-rule"
+        }
       }
     },
     {
-      "why": "Legacy producer declarations are not evidence bindings.",
-      "schemaRef": "decision-definition-bundle-v2.schema.json#/$defs/EvidenceBinding",
+      "why": "user-declared attribute names cannot use the reserved internal prefix",
+      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContract",
       "body": {
-        "kind": "metric",
-        "key": "system.load",
-        "type": "number",
-        "source": "app-emitted",
-        "schemaDigest": "not-a-digest"
+        "name": "example.decision",
+        "expression_syntax": "flaggo.cel/v1",
+        "attributes": [
+          {
+            "name": "_random",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "result": {
+          "schema": {
+            "type": "boolean"
+          },
+          "default": false
+        }
+      }
+    },
+    {
+      "why": "an authored rule cannot contain both a natural-language condition and a deterministic expression",
+      "schemaRef": "management-models-v3.schema.json#/$defs/AuthoredWhen",
+      "body": {
+        "condition": "The user needs recovery time.",
+        "expression": "attributes.recovery_failures > 0"
       }
     },
     {
       "why": "runtime timestamp uses an offset instead of the required UTC Z suffix",
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/Rfc3339",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/Rfc3339",
       "body": "2026-07-30T14:30:00-04:00"
     },
     {
-      "why": "management timestamp uses an offset instead of the required UTC Z suffix",
-      "schemaRef": "management-models-v1.schema.json#/$defs/Rfc3339",
-      "body": "2026-07-30T14:30:00-04:00"
-    },
-    {
-      "why": "number definition cannot use string action space and boolean fallback",
-      "schemaRef": "decision-definition-bundle-v2.schema.json#/$defs/DecisionDefinition",
+      "why": "the retired auto-approval policy name is invalid; the initial learning policy supports only auto-activation",
+      "schemaRef": "management-models-v3.schema.json#/$defs/LearningPolicy",
       "body": {
-        "result": {
-          "type": "number",
-          "allowedValues": [
-            "a",
-            "b"
-          ],
-          "default": false
-        },
-        "targeting": {
-          "hierarchy": [
-            "global"
-          ],
-          "primary": "global",
-          "fallbackOrder": []
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
+        "mode": "auto-approval",
+        "evaluate": {
+          "interval": "PT15M"
         }
       }
     },
     {
-      "why": "number action-space step must be positive",
-      "schemaRef": "decision-definition-bundle-v2.schema.json#/$defs/DecisionDefinition",
-      "body": {
-        "result": {
-          "type": "number",
-          "min": 0,
-          "max": 10,
-          "step": 0,
-          "default": 5
-        },
-        "targeting": {
-          "hierarchy": [
-            "global"
-          ],
-          "primary": "global",
-          "fallbackOrder": []
-        },
-        "policy": {
-          "kind": "inline",
-          "constraints": []
-        }
-      }
-    },
-    {
-      "why": "valid validation result requires digest, compatibility, and definitions",
-      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "why": "a valid contract validation result requires the computed contract digest",
+      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
       "body": {
         "status": "valid",
         "issues": []
       }
     },
     {
-      "why": "invalid validation result requires a non-empty error issue",
-      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "why": "an invalid contract validation result requires a non-empty error issue",
+      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
       "body": {
         "status": "invalid",
         "issues": [
           {
             "code": "informational-warning",
             "severity": "warning",
-            "path": "/definitions/0",
+            "path": "/result",
             "message": "Warning only."
           }
         ]
       }
     },
     {
-      "why": "valid validation result cannot contain an error issue",
-      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleValidationResult",
+      "why": "a valid contract validation result cannot contain an error issue",
+      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
       "body": {
         "status": "valid",
-        "bundleDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "compatibility": "identical",
-        "validatedDefinitions": {
-          "example.key": {
-            "contractDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-          }
-        },
+        "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "issues": [
           {
             "code": "contradictory-error",
             "severity": "error",
-            "path": "/definitions/0",
+            "path": "/result",
             "message": "A valid result cannot contain this error."
+          }
+        ]
+      }
+    },
+    {
+      "why": "a generated DecisionExecutable cannot contain a natural-language condition",
+      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionExecutable",
+      "body": {
+        "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "rules",
+        "rules": [
+          {
+            "name": "recovery",
+            "when": {
+              "condition": "A recent recovery attempt failed."
+            },
+            "return": {
+              "value": 700
+            }
           }
         ]
       }
@@ -289,89 +218,41 @@
   ],
   "rejectedFixtureMutations": [
     {
-      "why": "A non-null confidence report must have its required fields.",
-      "fixture": "runtime/decide/02-active-numeric-strategy.json",
-      "path": "/confidence",
-      "value": {},
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+      "why": "rule provenance cannot be relabeled as default while retaining a rule",
+      "fixture": "runtime/decisions/01-rule-result.json",
+      "path": "/evaluation/source",
+      "value": "default",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
     },
     {
-      "why": "strategy result cannot claim decision fallback",
-      "fixture": "runtime/decide/02-active-numeric-strategy.json",
-      "path": "/fallback/decisionFallbackUsed",
-      "value": true,
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+      "why": "default provenance cannot gain a rule field",
+      "fixture": "runtime/decisions/02-default-result.json",
+      "path": "/evaluation/rule",
+      "value": "unexpected-rule",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
     },
     {
-      "why": "fallback result must claim decision fallback",
-      "fixture": "runtime/decide/04-policy-decision-fallback-null-confidence.json",
-      "path": "/fallback/decisionFallbackUsed",
-      "value": false,
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
-    },
-    {
-      "why": "fallback result requires null confidence",
-      "fixture": "runtime/decide/04-policy-decision-fallback-null-confidence.json",
-      "path": "/confidence",
-      "value": {
-        "evidenceQuality": 0.8
-      },
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
-    },
-    {
-      "why": "requires-approval must contain a semantic change",
-      "fixture": "management/definition-bundle/06-apply-requires-approval.json",
-      "path": "/changes",
-      "value": [],
-      "schemaRef": "management-models-v1.schema.json#/$defs/RequiresApprovalResult"
-    },
-    {
-      "why": "requires-approval issues must be warning-only",
-      "fixture": "management/definition-bundle/06-apply-requires-approval.json",
-      "path": "/issues",
-      "value": [
-        {
-          "code": "contradictory-error",
-          "severity": "error",
-          "path": "/definitions/0",
-          "message": "Approval cannot proceed with an error."
-        }
-      ],
-      "schemaRef": "management-models-v1.schema.json#/$defs/RequiresApprovalResult"
-    },
-    {
-      "why": "semantic changes require a non-empty canonical diff",
-      "fixture": "management/definition-bundle/06-apply-requires-approval.json",
-      "path": "/changes/0/semanticDiff",
-      "value": [],
-      "schemaRef": "management-models-v1.schema.json#/$defs/RequiresApprovalResult"
-    },
-    {
-      "why": "approval resources must contain a semantic change",
-      "fixture": "management/approvals/01-get-approval-review.json",
-      "path": "/changes",
-      "value": [],
-      "schemaRef": "management-models-v1.schema.json#/$defs/DefinitionBundleApprovalResult"
+      "why": "executable digests use the canonical sha256 form",
+      "fixture": "runtime/decisions/01-rule-result.json",
+      "path": "/executableDigest",
+      "value": "not-a-digest",
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
     }
   ],
   "acceptedFixtureMutations": [
     {
-      "why": "evidence-backed active value may carry confidence",
-      "fixture": "runtime/decide/01-active-fixed-value.json",
-      "path": "/confidence",
+      "why": "A runtime result may be any JSON value before semantic validation against the contract result schema.",
+      "fixture": "runtime/decisions/02-default-result.json",
+      "path": "/result",
       "value": {
-        "evidenceQuality": 0.8,
-        "modelUncertainty": 0.2,
-        "expectedOutcome": 0.7
+        "mode": "safe",
+        "limits": [
+          1,
+          2,
+          3
+        ]
       },
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
-    },
-    {
-      "why": "Deterministic numeric rules carry null learned confidence.",
-      "fixture": "runtime/decide/02-active-numeric-strategy.json",
-      "path": "/confidence",
-      "value": null,
-      "schemaRef": "runtime-models-v1.schema.json#/$defs/ServerDecisionResult"
+      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
     }
   ],
   "rejectedJsonDocuments": [

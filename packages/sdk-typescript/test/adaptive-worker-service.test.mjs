@@ -13,7 +13,7 @@ describe("adaptive-worker service lifecycle", () => {
       assertHealthy() {
         checks += 1;
         if (checks === 2) {
-          throw new Error("data plane exited unexpectedly");
+          throw new Error("Decision Service exited unexpectedly");
         }
       },
     };
@@ -22,7 +22,7 @@ describe("adaptive-worker service lifecycle", () => {
       waitForServiceShutdown(lifecycle, {
         pollIntervalMilliseconds: 1,
       }),
-    ).rejects.toThrow("data plane exited unexpectedly");
+    ).rejects.toThrow("Decision Service exited unexpectedly");
   });
 
   it("returns when service shutdown is requested", async () => {

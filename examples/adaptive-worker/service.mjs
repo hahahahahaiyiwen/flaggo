@@ -2,22 +2,20 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { deployContracts } from "../contract-deployment.mjs";
 import {
   createHostLifecycle,
   installSignalHandlers,
   runWithCleanup,
-  startControlAndDataHosts,
+  startContractAndDecisionHosts,
   startHost,
   waitForReady,
 } from "../tetris-integration/host-process.mjs";
-import {
-  bootstrapAdaptiveWorker,
-  loadManifestBundle,
-} from "./scenario.mjs";
 import { waitForServiceShutdown } from "./service-health.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleDirectory, "../..");
+const deploymentManifestPath = resolve(exampleDirectory, "flaggo.deploy.json");
 
 export async function startAdaptiveWorkerService({
   lifecycle,
@@ -27,113 +25,82 @@ export async function startAdaptiveWorkerService({
   await mkdir(runDirectory, { recursive: true });
   lifecycle.signal.throwIfAborted();
   const paths = {
-    registry: resolve(runDirectory, "definition-registry-v1.json"),
-    bootstrap: resolve(runDirectory, "bootstrap"),
-    audit: resolve(runDirectory, "audit.jsonl"),
+    database: resolve(runDirectory, "flaggo.db"),
     telemetry: resolve(runDirectory, "telemetry.jsonl"),
     connection: resolve(runDirectory, "service.json"),
-    controlLog: resolve(runDirectory, "control-plane.log"),
-    dataLog: resolve(runDirectory, "data-plane.log"),
+    contractLog: resolve(runDirectory, "contract-service.log"),
+    decisionLog: resolve(runDirectory, "decision-service.log"),
   };
-  const bundle = await loadManifestBundle(lifecycle.signal);
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
-      signal: init.signal ?? lifecycle.signal,
+      signal: init.signal === undefined
+        ? lifecycle.signal
+        : AbortSignal.any([init.signal, lifecycle.signal]),
     });
   const commonConfiguration = {
-    Flaggo__Authentication__LocalDevelopmentAppId:
-      bundle.application.id,
-    Flaggo__Authentication__LocalDevelopmentEnvironment:
-      bundle.application.environment,
-    Flaggo__Registry__LocalFilePath: paths.registry,
+    ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
+    Flaggo__Authentication__Application: "adaptive-worker",
+    Flaggo__Authentication__Environment: "development",
   };
-  const runtime = await startControlAndDataHosts({
+  const hosts = await startContractAndDecisionHosts({
     lifecycle,
-    createControlHost: () => startHost(
-      "adaptive-worker-control-plane",
+    createContractHost: () => startHost(
+      "adaptive-worker-contract-service",
       resolve(
         repositoryRoot,
-        "apps/control-plane/src/Flaggo.ControlPlane/bin/Debug/net10.0/Flaggo.ControlPlane.dll",
+        "apps/contract-service/src/Flaggo.ContractService/bin/Debug/net10.0/Flaggo.ContractService.dll",
       ),
-      paths.controlLog,
+      paths.contractLog,
       repositoryRoot,
       commonConfiguration,
     ),
-    waitForControlReady: (controlUrl, control, signal) =>
-      waitForReady(async (probeSignal) => {
-        const response = await fetchWithAbort(
-          `${controlUrl}/v1/definition-bundles:validate`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: "Flaggo-Local-Development",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(bundle),
-            signal: probeSignal,
-          },
-        );
-        const body = await response.text();
-        if (!response.ok) {
-          throw new Error(
-            `control-plane readiness returned HTTP ${response.status}: ${body}`,
-          );
-        }
-        return true;
-      }, control, signal),
-    bootstrap: (controlUrl, signal) => bootstrapAdaptiveWorker({
-      controlPlaneUrl: controlUrl,
-      publicationPath: paths.bootstrap,
-      fetchImpl: fetchWithAbort,
-      signal,
-    }),
-    createDataHost: () => startHost(
-      "adaptive-worker-data-plane",
+    waitForContractReady: (url, host, signal) =>
+      waitForReady(
+        (probeSignal) => ready(url, fetchWithAbort, probeSignal),
+        host,
+        signal,
+      ),
+    createDecisionHost: () => startHost(
+      "adaptive-worker-decision-service",
       resolve(
         repositoryRoot,
-        "apps/data-plane/src/Flaggo.DataPlane/bin/Debug/net10.0/Flaggo.DataPlane.dll",
+        "apps/decision-service/src/Flaggo.DecisionService/bin/Debug/net10.0/Flaggo.DecisionService.dll",
       ),
-      paths.dataLog,
+      paths.decisionLog,
       repositoryRoot,
-      {
-        ...commonConfiguration,
-        Flaggo__Bootstrap__LocalGenerationPath: paths.bootstrap,
-        Flaggo__Audit__LocalFilePath: paths.audit,
-        Flaggo__Telemetry__CommitDescriptorPath:
-          resolve(runDirectory, "telemetry", "current.commit.json"),
-        "Flaggo__Targeting__AuthoritativeCohorts__worker-canary":
-          "adaptive-workers",
-        "Flaggo__Targeting__AuthoritativeCohorts__adaptive-workers":
-          "adaptive-workers",
-      },
+      commonConfiguration,
     ),
-    waitForDataReady: (dataUrl, data, signal) =>
-      waitForReady(async (probeSignal) => {
-        const response = await fetchWithAbort(
-          `${dataUrl}/health/ready`,
-          { signal: probeSignal },
-        );
-        const body = await response.text();
-        if (!response.ok) {
-          throw new Error(
-            `data-plane readiness returned HTTP ${response.status}: ${body}`,
-          );
-        }
-        const readiness = JSON.parse(body);
-        if (readiness.status !== "ready") {
-          throw new Error(
-            `data-plane readiness reported '${readiness.status}': ${body}`,
-          );
-        }
-        return true;
-      }, data, signal),
+    waitForDecisionReady: (url, host, signal) =>
+      waitForReady(
+        (probeSignal) => ready(url, fetchWithAbort, probeSignal),
+        host,
+        signal,
+      ),
   });
+  const deployedContracts = await deployContracts({
+    manifestPath: deploymentManifestPath,
+    baseUrl: hosts.contractUrl,
+    credential: { mode: "local-development" },
+    fetch: fetchWithAbort,
+    signal: lifecycle.signal,
+  });
+  const deployed = deployedContracts.contracts[0];
+  if (deployed === undefined || deployedContracts.contracts.length !== 1) {
+    throw new Error(
+      "The Adaptive Worker deployment manifest must contain exactly one DecisionContract.",
+    );
+  }
+  const deployment = deployed.deployment;
   const connection = {
-    controlPlaneUrl: runtime.controlUrl,
-    dataPlaneUrl: runtime.dataUrl,
+    contractServiceUrl: hosts.contractUrl,
+    decisionServiceUrl: hosts.decisionUrl,
+    bindings: {
+      [deployment.name]: {
+        contractDigest: deployment.contractDigest,
+      },
+    },
     telemetryPath: paths.telemetry,
-    receipt: runtime.bootstrap.receipt,
   };
   if (writeConnection) {
     await writeFile(
@@ -143,11 +110,25 @@ export async function startAdaptiveWorkerService({
     );
   }
   return {
-    ...runtime,
-    bundle,
+    ...hosts,
     connection,
+    contract: deployed.contract,
+    deployment,
     paths,
   };
+}
+
+async function ready(url, fetchImpl, signal) {
+  const response = await fetchImpl(`${url}/health/ready`, { signal });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`service readiness returned HTTP ${response.status}: ${body}`);
+  }
+  const readiness = JSON.parse(body);
+  if (readiness.status !== "ready") {
+    throw new Error(`service readiness reported '${readiness.status}': ${body}`);
+  }
+  return true;
 }
 
 async function runService(lifecycle, runDirectory) {
@@ -157,26 +138,21 @@ async function runService(lifecycle, runDirectory) {
   });
   process.stdout.write(`${JSON.stringify({
     status: "ready",
-    controlPlaneUrl: service.controlUrl,
-    dataPlaneUrl: service.dataUrl,
+    contractServiceUrl: service.contractUrl,
+    decisionServiceUrl: service.decisionUrl,
+    contractDigest: service.deployment.contractDigest,
     connectionPath: service.paths.connection,
     telemetryPath: service.paths.telemetry,
-    bundleDigest: service.bootstrap.receipt.bundleDigest,
   }, null, 2)}\n`);
   await waitForServiceShutdown(lifecycle);
 }
 
 async function main() {
-  const runDirectory = resolve(
-    repositoryRoot,
-    ".flaggo",
-    "adaptive-worker",
-  );
+  const runDirectory = resolve(repositoryRoot, ".flaggo", "adaptive-worker");
   await mkdir(dirname(runDirectory), { recursive: true });
   await mkdir(runDirectory);
   const lifecycle = createHostLifecycle({
-    removeRunDirectory: () =>
-      rm(runDirectory, { recursive: true, force: true }),
+    removeRunDirectory: () => rm(runDirectory, { recursive: true, force: true }),
   });
   const uninstallSignalHandlers = installSignalHandlers(lifecycle);
   try {
@@ -201,8 +177,8 @@ function formatError(error) {
 }
 
 if (
-  process.argv[1] !== undefined &&
-  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+  process.argv[1] !== undefined
+  && pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
   await main();
 }

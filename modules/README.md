@@ -1,8 +1,40 @@
-# Domain Modules
+# Domain and store modules
 
-Each directory is a business capability with its own interfaces, invariants,
-tests, and documentation. Modules collaborate through constructor-injected
-ports owned by the module where the behavior belongs.
+Phase 3 uses explicit service and store boundaries:
 
-Infrastructure adapters may implement these ports in application projects or
-future adapter packages. Do not create a global interfaces project.
+```text
+contract
+expression
+decision
+contract-store
+executable-store
+hosting
+```
+
+Each module owns one cohesive domain, store, or hosting boundary. Modules do
+not depend on an app composition root or on the legacy
+`packages/shared-contracts` project.
+
+- Contract owns v3 contract/executable/runtime models, bounded value-schema
+  validation, canonicalization, and semantic digests.
+- Expression owns the bounded `flaggo.cel/v1` compiler and evaluator.
+- Decision owns one stateless exact-version runtime evaluation.
+- Contract Store persists immutable accepted versions and management
+  projections.
+- Executable Store persists immutable executable artifacts and atomically owns
+  scoped Candidate, Active, and Inactive lifecycle state.
+- Hosting owns reusable strict HTTP, authentication, correlation, Problem
+  Details, and health mechanics without domain routes.
+
+The former Audit, Policy, Reasoning, Registry, Evidence, and State modules were
+removed by #49. Do not reintroduce forwarding projects, namespace aliases,
+dual registrations, migration readers, or compatibility fixtures.
+
+Contract Store and Executable Store use direct
+`Microsoft.Data.Sqlite` dependencies and store-owned SQL. They share one
+configured local database but no custom storage-infrastructure package.
+
+Future OTel Ingestion, Evidence Store, and Async Analysis Pipeline modules
+require a separately accepted design.
+
+The `-service` suffix is reserved for executable projects under `apps`.

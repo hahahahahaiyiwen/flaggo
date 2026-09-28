@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.standalone.json",
+  "compilerOptions": {
+    "outDir": "dist/flaggo"
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

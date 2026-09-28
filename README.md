@@ -1,69 +1,74 @@
 # Flaggo
 
-Flaggo is a closed-loop decisioning system for bounded runtime variables. It
-gives application code an explicit way to register a versioned decision
-definition, activate approved authority, request a deterministic value, and
-attribute outcomes after the application confirms use.
+Flaggo is a decisioning system for bounded runtime variables. It gives
+application code an explicit way to deploy a versioned `DecisionContract`,
+activate one immutable `DecisionExecutable`, and request a deterministic
+result for an exact contract version.
 
-The application owns execution and its OpenTelemetry pipeline. Flaggo owns the
-registered definition, approved authority, deterministic constraint evaluation,
-durable decision and exposure records, and future asynchronous candidate path.
+Phase 3 implements complete SDK input construction, contract acceptance,
+default and deterministic authored-executable generation, atomic activation,
+and stateless runtime evaluation. Exposure telemetry, evidence ingestion and
+correlation, and asynchronous evidence-based generation remain future work.
 
-## Current product slice
-
-The current client uses a single manifest and explicit authenticated publication:
+## Target product model
 
 ```text
-JSON manifest
-  -> explicit publication + approval
-  -> generated typed catalog + approved receipt
-  -> key + live request inputs / materialized OTel inputs
-  -> existing governed state
-  -> deterministic runtime decision
-  -> deterministic constraints + durable decision record
-  -> confirmed exposure
-  -> attributed outcome
+DecisionContract
+  -> Contract Acceptance
+  -> Executable Generation
+  -> CandidateExecutable
+  -> Activation
+  -> ActiveExecutable
+
+ActiveExecutable + complete RuntimeInput
+  -> deterministic RuntimeDecision
+  -> application applies result
+  -> future exposure, evidence, and learning loop
 ```
 
-Current authority is either an approved fixed value or an approved numeric
-rule. #49 aligns executable server boundaries and terminology; #40 extends
-the manifest with initial authority and activation-ready
-receipts; the current examples provision local state in trusted bootstrap.
-Proposal generation, learned evidence, experiments, rollouts, and other
-proposal-managed workflows remain future Phase 4 work.
+Activation is the only transition that grants runtime authority. The initial
+learning declaration uses `mode: auto-activation` to define how a future valid
+evidence-generated candidate would attempt activation. Phase 3 stores that
+declaration but does not run evidence ingestion or a learning worker. Runtime
+reads only the activation mapping.
 
-The first scenario governs `tetris.dropInterval`, returning an approved
-`750ms` or `850ms` value from live game inputs with an `800ms` fallback.
-
-Applications keep their existing OTel instrumentation and Collector pipelines.
-Flaggo binds selected observations to declared operands; its runtime SDK
-creates no telemetry provider or exporter. See the
-[SDK](packages/sdk-typescript/README.md),
-[Tetris integration](examples/tetris-integration/README.md), and
-[real Collector example](examples/otel-evidence/README.md).
+The repository implements this v3 model through Contract Service, Decision
+Service, reusable domain/store modules, the TypeScript SDK, and real-host
+examples. The pre-v3 service stack has been removed.
 
 ## Start here
 
 - [Documentation home](docs/README.md)
 - [Manifesto](docs/MANIFESTO.md)
-- [Architecture overview](docs/architecture/OVERVIEW.md)
+- [Architecture overview](docs/design/architecture/OVERVIEW.md)
 - [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
 - [Contributing](CONTRIBUTING.md)
 
 ## Quickstart
+
+Run the interactive Tetris example against real local Contract and Decision
+Services:
+
+```powershell
+npm ci
+dotnet restore Flaggo.slnx --configfile NuGet.config
+npm run tetris:flaggo
+```
+
+The launcher builds both services, creates an isolated SQLite database,
+deploys the Tetris contract, and removes its local state when the game exits.
+No cloud account is required.
+
+Validate the executable contracts independently:
 
 ```powershell
 python -m pip install -r contracts\conformance\requirements.txt
 python tools\dev.py check
 ```
 
-Start the fixture-backed local API:
-
-```powershell
-python tools\dev.py serve
-```
-
-No cloud account is required.
+`python tools\dev.py serve` starts only the fixture server used for contract
+and SDK conformance development; it does not start Contract Service or
+Decision Service.
 
 ## Repository layout
 
@@ -74,7 +79,7 @@ packages/      Reusable SDK and data-contract packages
 contracts/     OpenAPI, JSON Schema, fixtures, and conformance
 tests/         Cross-module and end-to-end verification
 examples/      Integrations and showcase links
-deploy/        Container and deployment assets
+deploy/        Fixture-container assets; production service topology is deferred
 tools/         Repository development commands
 docs/          Product, architecture, scenarios, and boundary designs
 ```

@@ -1,0 +1,46 @@
+{
+  "name": "validate-decision-contract-invalid",
+  "scenario": 45,
+  "invariant": "A structurally valid contract with a default outside its result schema is reported invalid without mutation.",
+  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
+  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
+  "request": {
+    "method": "POST",
+    "path": "/v3/decision-contracts/tetris.dropInterval/validate",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "name": "tetris.dropInterval",
+      "expression_syntax": "flaggo.cel/v1",
+      "attributes": [],
+      "result": {
+        "schema": {
+          "type": "number",
+          "minimum": 100,
+          "maximum": 1000
+        },
+        "default": 1200
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-contract-validate-invalid"
+    },
+    "body": {
+      "status": "invalid",
+      "issues": [
+        {
+          "code": "default-out-of-schema",
+          "severity": "error",
+          "path": "/result/default",
+          "message": "The default value does not satisfy result.schema."
+        }
+      ]
+    }
+  }
+}

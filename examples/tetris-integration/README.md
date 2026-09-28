@@ -1,169 +1,102 @@
-# Tetris Phase 3 Local Integration
+# Interactive Tetris and Flaggo integration
 
-The manifest-first client and ordinary application OTel path are implemented.
-This harness explicitly publishes/approves definitions, then provisions
-receipt-bound local state. #49 aligns executable service/store terminology;
-#40 replaces that local authority bootstrap with manifest initial authority
-and activation-ready receipts; #41 verifies the final integrated path.
-The current fixture and Audit-named inspection are not parallel public
-contracts or compatibility paths.
+This example is a playable terminal Tetris application. The game owns its
+board, pieces, controls, scoring, levels, and gravity scheduling. It runs
+standalone with a local gravity policy and can optionally ask Flaggo for the
+drop interval.
 
-This example is the trusted, backend-only integration boundary for
-`tetris.dropInterval`. It does not contain frontend game behavior.
+## Play standalone
 
-## Artifacts
-
-- `tetris-definition-bundle.json`: one authored manifest. Compilation emits
-  `generated/definitions.json` and `generated/catalog.ts`; runtime uses the
-  compiled catalog and approved receipt.
-- `strategy-activation.json`: application-neutral governed numeric-rule
-  configuration using all four live inputs.
-- `bootstrap.mjs`: explicitly applies through the management entry point, handles typed
-  `requires-approval`, approves through the management API, retries
-  publication, and atomically publishes receipt-bound state, an empty
-  policy-evidence artifact, and receipt as one generation. No model-quality
-  fixture is required for this deterministic rule.
-- `run.mjs`: deterministic real-host integration harness.
-- `inspect.mjs`: local audit and linked outcome summary.
-
-The generated state identity always comes from
-`receipt.acceptedDefinitions["tetris.dropInterval"]`; it is never duplicated in
-the activation fixture. The canonical bundle contains no approval hint:
-bootstrap approval behavior is triggered only by the control plane's typed
-`requires-approval` response.
-
-## Trusted bootstrap
-
-Build the SDK and hosts, start the control plane with local-development
-authentication and an isolated registry path, then run:
+From the repository root:
 
 ```powershell
-node examples\tetris-integration\bootstrap.mjs `
-  --control-plane http://127.0.0.1:5081 `
-  --output .flaggo\tetris-bootstrap
+npm run tetris
 ```
 
-The command is trusted startup tooling. Do not move it or management
-credentials into browser code.
+This build contains only the game engine, terminal UI, and local
+`DropIntervalProvider`. It does not import the Flaggo SDK or require either
+Flaggo service.
 
-## Outcome linkage contract
+## Play with local Flaggo services
 
-After applying a server receipt:
+Install the npm dependencies and .NET 10 SDK, then run:
 
-1. call `flaggo.exposures.confirm(decisionId, confirmToken)`;
-2. emit a native `game.outcome` log through the application's OTel provider;
-3. attach `confirmedExposureAttributes(confirmation)` to the log;
-4. include the applied `dropIntervalMs` and application outcome.
+```powershell
+npm run tetris:flaggo
+```
 
-Client fallback and unused receipts have no confirmed exposure and must not
-emit this linked event.
+The command builds and starts Contract Service and Decision Service against an
+isolated SQLite database, then deploys the contracts listed in
+`flaggo.deploy.json`. It binds the returned immutable contract digest and
+starts the game. Both services and the temporary database are stopped and
+removed when the game exits.
 
-## Automated run
+The game starts immediately with local gravity while requesting its first
+Flaggo interval in the background. It summarizes a trailing five-second
+observation window and refreshes the decision every five seconds, with at most
+one request in flight. Piece locks update that window but do not trigger
+requests. Responses update the value used by future gravity ticks without
+resetting an already scheduled tick.
+
+If Flaggo is unavailable before the first successful response, the app keeps
+running with local level-based gravity and displays `Local fallback`. After a
+successful response, a failed refresh retains the last Flaggo interval and
+displays `Flaggo cached`. This is application behavior implemented by the
+terminal and optional provider; the SDK does not synthesize fallback decisions.
+
+## Controls
+
+| Action | Keys |
+| --- | --- |
+| Move left or right | Left/Right arrows or `A`/`D` |
+| Rotate clockwise | Up arrow or `W` |
+| Soft drop | Down arrow or `S` |
+| Hard drop | Space |
+| Pause or resume | `P` |
+| Restart | `R` |
+| Quit | `Q` or Ctrl+C |
+
+The board is 10x20 and uses a seven-bag piece source. The engine supports all
+seven tetrominoes, clockwise rotation with simple horizontal kicks, line
+clearing, scoring, levels, soft drop, hard drop, pause, restart, and game over.
+
+## Decision contract
+
+`flaggo/contracts/tetris.dropInterval.decision-contract.json` defines
+`tetris.dropInterval`. The file name must preserve the exact decision name and
+end in `.decision-contract.json`; `flaggo.deploy.json` references the file.
+
+| Condition | Interval |
+| --- | --- |
+| Five-second mean pressure is at least `0.75`, maximum pressure is at least `0.9`, or recovery failures are at least `3` | `850ms` |
+| Lower mean and maximum pressure with fewer than `3` recovery failures | `750ms` |
+| No authored rule is eligible | Contract default `800ms` |
+
+Runtime attributes state their temporal meaning explicitly:
+`board_pressure_mean_5s`, `board_pressure_max_5s`,
+`placement_time_mean_ms_5s`, `recovery_failures_5s`,
+`pieces_locked_5s`, `current_level`, and `session_id`.
+
+The optional adapter uses `createDecisionClient` from `@flaggo/sdk/runtime`.
+The deployment helper uses `createContractClient` from
+`@flaggo/sdk/management` after both local services are ready. Its `deploy`
+operation sends the authoritative `PUT`; it does not call the optional remote
+validation endpoint first.
+
+## Automated checks
+
+Run deterministic engine, provider, renderer, and terminal-cleanup tests:
+
+```powershell
+npm run test:tetris-app
+```
+
+Run the real-host integration independently:
 
 ```powershell
 npm run test:tetris-integration
 ```
 
-The harness uses repository-local `.flaggo/integration-*` paths, starts
-separate control/data processes, and removes its generated files afterward.
-It verifies request-input-only inference with empty policy evidence, null
-learned confidence, current weighted `850ms`/`750ms` branches, and the
-`800ms` cooldown fallback. No telemetry producer declaration is needed.
-Required telemetry-input failure/recovery belongs to the separate
-[OTel example](../otel-evidence/README.md) and service materialization tests.
-Initial-authority publication and stronger activation-ready receipts remain
-#40; this bootstrap deliberately provisions an existing local governed rule.
-Each ASP.NET host binds directly to loopback port `0`; the harness enables
-structured JSON console logs and discovers the assigned listening URL before
-making requests. This removes the allocate-close-bind race, including the
-data-plane process started after bootstrap. The SDK fallback check uses a
-dedicated loopback server that returns a deterministic fallback-eligible `503`,
-binds port `0`, and remains bound until the check completes, so it cannot race
-another process for its endpoint.
-Every readiness fetch receives a per-probe abort signal bounded by the
-remaining overall readiness deadline and combined with lifecycle cancellation;
-an accepted connection that never responds therefore cannot extend startup.
-Readiness timeout errors retain the latest HTTP status and response body so
-dependency states such as unavailable audit storage are visible without
-reconstructing them from host logs. A later transport failure or probe deadline
-is reported alongside that meaningful diagnostic instead of replacing it.
-Both `ASPNETCORE_ENVIRONMENT` and `DOTNET_ENVIRONMENT` are forced to
-`Development`, regardless of parent-process values. `SIGHUP`, `SIGINT`, and
-`SIGTERM` abort the active bootstrap/workflow before another host can start.
-Cleanup first closes host registration, drains every in-flight factory and
-host stop, then removes the run directory. A factory that resolves after
-cleanup begins is immediately stopped and fully drained rather than becoming
-active. Transient Windows-style open-log removal races are retried after stop
-completion. Cleanup failures are aggregated and reported without replacing the
-workflow failure; repeated signals and cleanup calls are idempotent. Any host
-exit before its requested stop, including exit code zero, is checked at startup
-boundaries and again during cleanup and fails an otherwise passing run.
-
-Bootstrap writes receipt, state, and evidence through explicit handles into a
-unique `generations/<id>` directory. The exact bytes, byte length, and sha256
-of every immutable artifact are recorded in the strict
-`flaggo.committed-generation` manifest. All sibling writes are settled, every
-file and the generation directory are flushed, then the immediate
-`generations` parent directory and publication root are synced before
-`current.json` can be published. The root barrier makes a first-run
-`generations/` entry durable. Only after that ordering barrier is
-`current.json` atomically replaced and the root synced again where supported.
-For a wholly missing publication path, the durable JSON helper starts at the
-nearest existing ancestor and creates components downward. Every `mkdir` is
-followed by an immediate-parent sync and then a sync of the new directory
-before it is used. Before descendant creation, the helper syncs the nearest
-existing ancestor's immediate parent and then the ancestor itself, making an
-intermediate entry durable even when a concurrent creator paused before its
-parent barrier. Every successful ensure then syncs the requested directory's
-immediate parent and the directory itself. Filesystem and volume roots safely
-sync only themselves. Existing trees avoid creation work but retain this final
-boundary barrier, concurrent creators accept `EEXIST` only when the path is
-now a directory, and a failed creation or final barrier leaves no published
-descriptor or generation pointer.
-Directory-open permission failures are surfaced. Platform-specific directory
-flush results that mean the runtime/filesystem does not support directory sync
-remain explicit best effort.
-Pre-switch failures remove the unpublished generation; old generations remain
-available to readers that already resolved them. The data-plane request-scoped
-resolver validates the manifest and exact artifact digests, so later harness
-changes publish a complete new receipt/state/evidence generation rather than
-mutating an existing artifact in place. A pointer switch between state and
-evidence cannot produce an old/new mix because each request pins one
-generation. The next request observes the new pointer. The receipt remains a
-bootstrap/SDK output rather than a runtime adapter input.
-`publishJsonArtifact` provides the same
-immutable-artifact/descriptor flow for trusted direct local tooling and rejects
-any generated artifact filename outside the reader's 128-character safe
-sibling protocol before publication. Audit
-inspection follows the durable audit manifest.
-
-On Windows, directory barriers use the checked-in
-`Flaggo.DirectoryFlush` helper. Windows committed writes, generation
-publication, and generation resolution run entirely inside that native helper:
-components are opened relative to pinned handles, exact opened final paths and
-volume/file identities are checked, reparse points are rejected, file and
-directory flushes are ordered before the handle-relative pointer rename, and
-staging files are cleaned on pre-commit failure. Successful native rename is
-recorded before post-rename validation and root flushing, so a later failure
-leaves the committed pointer and generation recoverable instead of deleting
-them as unpublished. Node callers share one helper-start promise and one owned
-server process; failed startup is reaped and retryable, while idle, signal,
-exit, and test-reset paths shut down the owned child. `EISDIR` and failed
-`FlushFileBuffers` calls are not accepted as success. Linux retains the
-`O_NOFOLLOW` path and performs directory creation, file open, rename, cleanup,
-and committed reads relative to pinned `/proc/self/fd` directory handles.
-Directory-component links are reported as explicit symbolic-link rejections,
-and a pre-existing symbolic-link publication pointer is rejected before the
-atomic rename rather than silently replaced;
-other Unix platforms fail closed until an equivalent native traversal exists.
-
-The harness computes all four weighted normalizations explicitly. Opposing
-board-only/aggregate vectors and paired placement-time, recovery-failure, and
-current-level perturbations prove that every non-board input can cross the
-threshold while board pressure remains fixed. Responses and persisted audit
-details must retain the expected value, strategy ID, inputs, and reason.
-
-The `Contracts` GitHub Actions workflow runs this command in a dedicated
-`tetris-integration` job with Node 20 and .NET 10. The job uses only local
-processes and files; it requires no cloud service or secret and is kept
-separate from `npm test`.
+The real-host harness verifies the `850`, `750`, and `800` paths, SDK-owned
+`_random`, exact digest provenance, retired-field absence, and explicit
+failure after Decision Service stops.

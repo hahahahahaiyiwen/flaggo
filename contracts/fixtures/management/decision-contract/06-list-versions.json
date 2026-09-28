@@ -1,0 +1,39 @@
+{
+  "name": "list-decision-contract-versions",
+  "scenario": 50,
+  "invariant": "Version history is cursor-paginated and ordered newest-first without implying runtime latest resolution.",
+  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersionList",
+  "request": {
+    "method": "GET",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions",
+    "headers": {
+      "Authorization": "******"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-contract-list-versions"
+    },
+    "body": {
+      "name": "tetris.dropInterval",
+      "currentContractDigest": "sha256:5ac7477d55d7dfb1b4993e87118182b55a848fdc36fa5617196f27f1400e2ab1",
+      "versions": [
+        {
+          "contractDigest": "sha256:5ac7477d55d7dfb1b4993e87118182b55a848fdc36fa5617196f27f1400e2ab1",
+          "status": "ready",
+          "acceptedAt": "2026-08-01T12:00:00Z",
+          "activeExecutableDigest": "sha256:bf693713abb032d7257141839c38f8b3943d463d464f1b4dc2dba356e3902398"
+        },
+        {
+          "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f",
+          "status": "ready",
+          "acceptedAt": "2026-07-15T10:00:00Z",
+          "activeExecutableDigest": "sha256:1cbf2d048b3d8c2f0339623466ef521e411bb531247d337230d05256536b4db3"
+        }
+      ],
+      "nextCursor": null
+    }
+  }
+}

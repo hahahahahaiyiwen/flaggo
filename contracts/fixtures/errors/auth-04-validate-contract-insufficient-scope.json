@@ -1,0 +1,40 @@
+{
+  "name": "validate-contract-insufficient-scope",
+  "scenario": 49,
+  "invariant": "Contract validation without flaggo.contracts:validate returns 403 insufficient-scope.",
+  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
+  "responseSchema": "problem-details-v3.schema.json",
+  "request": {
+    "method": "POST",
+    "path": "/v3/decision-contracts/tetris.dropInterval/validate",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "name": "tetris.dropInterval",
+      "expression_syntax": "flaggo.cel/v1",
+      "attributes": [],
+      "result": {
+        "schema": {
+          "type": "number"
+        },
+        "default": 500
+      }
+    }
+  },
+  "expected": {
+    "status": 403,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "srv-contract-validate-scope"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/insufficient-scope",
+      "title": "Insufficient scope",
+      "status": 403,
+      "instance": "/v3/decision-contracts/tetris.dropInterval/validate",
+      "detail": "Token lacks flaggo.contracts:validate."
+    }
+  }
+}

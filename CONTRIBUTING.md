@@ -11,6 +11,8 @@ from [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3).
 Requirements:
 
 - Python 3.11 or newer
+- .NET SDK 10
+- Node.js 20 or newer
 - Git
 - Docker with Compose (optional)
 
@@ -21,13 +23,24 @@ python -m pip install -r contracts\conformance\requirements.txt
 python tools\dev.py check
 ```
 
-Start the fixture-backed API:
+Install JavaScript dependencies, restore through the repository NuGet
+configuration, and run a real-host smoke path:
+
+```powershell
+npm ci
+dotnet restore Flaggo.slnx --configfile NuGet.config
+npm run test:adaptive-worker
+```
+
+No cloud account or external service is required.
+
+For fixture-only contract and SDK development, run:
 
 ```powershell
 python tools\dev.py serve
 ```
 
-No cloud account or external service is required.
+That command does not start Contract Service or Decision Service.
 
 ## Change expectations
 
@@ -46,7 +59,7 @@ No cloud account or external service is required.
 ## Repository architecture
 
 Flaggo uses a modular monorepo for its open-source core. Repository boundaries
-do not define runtime boundaries: control-plane hosts, data-plane hosts,
+do not define runtime boundaries: Contract Service, Decision Service, future
 workers, and operator interfaces may be built and deployed independently while
 sharing one versioned source tree.
 
@@ -67,7 +80,7 @@ publishing temporary coordination packages.
 | `contracts/` | Language-neutral OpenAPI, schemas, fixtures, and conformance |
 | `tests/` | Cross-module and end-to-end verification |
 | `examples/` | Small integrations and links to external showcase applications |
-| `deploy/` | Container and local deployment assets |
+| `deploy/` | Fixture-container assets; production service topology remains deferred |
 | `tools/` | Repository development and automation commands |
 | `docs/` | Product, architecture, scenario, and service/store design sources |
 
@@ -75,8 +88,8 @@ publishing temporary coordination packages.
 
 1. Business behavior depends on module-owned interfaces, not infrastructure.
 2. Interface dependencies use constructor injection.
-3. `packages/shared-contracts` contains data contracts, not a global interface
-   collection.
+3. Language-neutral wire contracts live under `contracts/`; language clients
+   and services validate against those same artifacts.
 4. Applications compose modules and adapters; modules do not depend on apps.
 5. Cross-process behavior is governed by executable artifacts in `contracts/`.
 6. Every module boundary maintains focused documentation and tests.
@@ -87,57 +100,48 @@ Flaggo must remain runnable without a managed cloud dependency. Domain and API
 logic use provider-neutral contracts and standard protocols; provider SDKs
 belong only in adapters at application composition boundaries.
 
-Cross-cutting infrastructure concerns stay behind explicit, injected,
-module-owned ports:
-
-- `IConfigProvider` for environment variables and explicit configuration;
-- `ISecretProvider` for credentials and secrets;
-- `IClock` for observable time;
-- `IIdGenerator` for generated identities; and
-- `IHealthReporter` for dependency and readiness health.
-
-These interfaces are owned beside the behavior that consumes them rather than
-collected in `packages/shared-contracts`, which remains a data-contract
-package. Current domain libraries keep their own ports, including contract
-read/lifecycle ports, `IStateStore`, `IEvidenceProvider`, `IPolicyEvaluator`,
-and `IAuditSink`. Interface names describe the current executable code; logical
-ownership follows Contract Service, Decision Service, State Store, and Evidence
-Store.
+Cross-cutting infrastructure is configured at application composition roots.
+Business capabilities use module-owned ports when substitutability is needed;
+the current stack injects `TimeProvider`, `IContractVersionStore`, and
+`IExecutableStore` rather than defining speculative shared-provider
+interfaces. Logical ownership follows Contract Service, Decision Service,
+Contract Store, and Executable Store.
 
 | Concern | Local implementation | Optional cloud adapter |
 | --- | --- | --- |
 | Configuration | Environment variables or explicit local files | Provider configuration service |
 | Secrets | Environment variables or local development secret store | Provider secret manager |
-| Contract and state stores | In-memory or local durable store | Managed SQL, document, or cache service |
-| Evidence Store | In-process aggregation or local telemetry pipeline | OpenTelemetry-backed metrics or analytics store |
-| Decision/exposure records | Durable local Evidence Store adapter; memory only in tests | Object storage, event stream, or managed analytics store |
+| Contract and executable stores | SQLite | Managed SQL or document store |
+| Runtime evaluation | In-process bounded evaluator | Independently scaled Decision Service |
+| Future evidence transport | Application-owned OpenTelemetry pipeline | Managed telemetry or analytics pipeline |
 
-Public APIs, bundles, decision constraints, strategies, and durable record
-schemas must remain usable without a cloud account. New providers add adapters
-behind existing ports
-instead of changing core contracts.
+Public APIs, DecisionContracts, executable semantics, and durable store schemas
+must remain usable without a cloud account. New providers add adapters behind
+existing ports instead of changing core contracts.
 
 ### Initial implementation shape
 
-The target server architecture has Contract Service, Decision Service, OTel
-Ingestion, Async Analysis Pipeline, Contract Store, State Store, and Evidence
-Store. Current registry, policy, state, evidence, decisioning/reasoning, and
-audit assemblies remain internal libraries mapped into those logical
-boundaries. Assembly count does not define product components or deployments.
+The executable server stack has Contract Service, Decision Service, Contract
+Store, Executable Store, a bounded expression compiler, and a stateless
+evaluator. Contract and Decision Services share a configured SQLite database
+while each store owns its tables and schema version.
+
+OTel Ingestion, Evidence Store, and asynchronous analysis are future components
+that require separately accepted designs. They may generate candidate
+executables, but they do not participate in the synchronous decision path.
 
 ### Parallel contract implementation
 
-Executable API artifacts merge before client and service implementations
-diverge. The client track owns JSON manifest compilation, generated typed
-catalogs, canonical normalization/digesting, separate trusted publication,
-plain request serialization, runtime identity propagation, exposure
-confirmation, and configured availability fallback. Application OTel
-instrumentation and Collector pipelines remain application-owned.
-Trusted deployment tooling, not the runtime client, publishes manifests. The service
-track owns management/runtime endpoints, contract-integrity verification,
-target and input resolution, authority and strategy execution, decision
-constraints, durable decision records, exposure/outcome attribution, local
-adapters, and health.
+Executable API artifacts change before or with client and service
+implementations. The management client validates, deploys, and reads
+immutable DecisionContract versions. The runtime client binds names to exact
+contract digests, constructs complete RuntimeInput values, and preserves input
+bytes across retries. SDK fallback remains outside the current contract.
+
+Contract Service owns acceptance, default/authored executable generation,
+activation, and management projections. Decision Service validates complete
+input, resolves one active executable for the exact contract digest, evaluates
+it, and returns a RuntimeDecision without persisting request state.
 
 Both tracks test against the same OpenAPI documents, schemas, fixtures, and
 conformance suites. Each implementation branch records the contract revision
@@ -145,22 +149,18 @@ it implements. A contract-breaking change uses a dedicated contract pull
 request that updates executable artifacts, compatibility notes, fixtures, and
 both tracks' conformance coverage. Tracks merge small vertical increments and
 run cross-track contract tests continuously; end-to-end integration starts as
-soon as one fixture-backed decision call can complete.
+soon as one real-host exact-version decision call can complete.
 
 Extensions must use the owning seam instead of bypassing it:
 
-- add a result primitive only through an accepted shared and wire contract;
-- add strategy behavior through the strategy contract and executor;
-- add input projections through the evidence module's `IInputTelemetrySink`
-  and `IInputEvidenceReader`; keep constraint-quality evidence behind `IEvidenceProvider`;
-- add storage through Contract Store lifecycle/read ports, `IStateStore`, or
-  Evidence Store append/query ports;
-- add decision constraints through the current `IPolicyEvaluator` seam until
-  issue #49 completes executable server alignment;
-- add asynchronous reasoning as an authorized proposal producer feeding the
+- add wire behavior through an accepted OpenAPI/schema/fixture change;
+- add executable behavior through the contract, compiler, and evaluator
+  boundaries;
+- add storage through Contract Store or Executable Store ports;
+- add asynchronous analysis as an authorized candidate producer feeding the
   Contract Service activation boundary;
-- add telemetry transports through the application SDK/OTel pipeline and OTel
-  Ingestion host adapter, not the runtime decision client; and
+- add telemetry transports through the application SDK/OpenTelemetry pipeline,
+  not the runtime decision client; and
 - add cloud providers through adapters behind existing ports.
 
 ### When to split a repository

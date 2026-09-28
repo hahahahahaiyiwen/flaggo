@@ -1,0 +1,6 @@
+{
+  "format": "flaggo.deploy/v1",
+  "contracts": [
+    "flaggo/contracts/demo.workerBatchSize.decision-contract.json"
+  ]
+}

@@ -1,117 +1,161 @@
 # Tetris drop-speed scenario
 
-## Purpose and current boundary
+## Purpose and boundary
 
-The game delegates `tetris.dropInterval` while retaining execution and
-telemetry ownership. Flaggo returns a deterministic value inside an explicit
-definition, approved authority, constraints, durable recording, fallback and
-attribution boundary.
+Tetris is a complete application before Flaggo is introduced. The game owns
+board state, player input, piece placement, scoring, levels, and application of
+the current gravity interval. A `DropIntervalProvider` is the narrow boundary
+through which gravity policy can vary:
 
-The current manifest-first integration uses existing approved numeric-rule
-state provisioned by trusted local bootstrap. #49 aligns executable server
-boundaries, #40 adds initial-authority/activation-ready publication, and #41
-verifies the final bundle-approved path. No telemetry learning, proposal
-generation, experiments, rollout or request-time AI is claimed.
+```text
+TetrisGame
+  -> DropIntervalObservation
+  -> rolling five-second DropIntervalContext
+  -> periodic policy-refresh loop
+  -> DropIntervalProvider
+       -> LocalDropIntervalProvider
+       -> FlaggoDropIntervalProvider
+            -> Decision Service
+            -> LocalDropIntervalProvider on failure
+  -> cached selected interval
+
+terminal game loop
+  -> gravity timer
+  -> cached selected interval
+```
+
+The local provider makes the game independently usable. The Flaggo provider is
+an optional adapter, dynamically loaded only by the Flaggo launch path. Its
+failure branch visibly selects local gravity; that branch is application
+policy, not SDK fallback. Gameplay and policy refresh are concurrent regions:
+network completion never blocks input or resets an already scheduled gravity
+tick.
+
+| Concern | Owner |
+| --- | --- |
+| Game state and deterministic mechanics | `TetrisGame` |
+| Local level-based gravity | `LocalDropIntervalProvider` |
+| Point-in-time game observation | `TetrisGame` |
+| Five-second feature aggregation | Terminal integration |
+| Exact-version decision request | `FlaggoDropIntervalProvider` and SDK |
+| Active executable resolution and evaluation | Decision Service |
+| Refresh cadence and latest-success cache | Terminal integration |
+| Applying the cached interval | Terminal game loop |
+| Degraded-mode status | Terminal game loop |
+
+## Contract and runtime authority
 
 | Concern | Tetris contract |
 | --- | --- |
-| Runtime identity | Exact `{ definitionId, revision, contractDigest }` |
-| Runtime target | `session:game-456` |
-| Control target | `cohort:new_players` |
-| Request inputs | `boardPressure`, `recentPlacementTimeMs`, `recoveryFailures`, `currentLevel` |
-| Result | Number `200..1500ms`, step `50ms`, default `800ms` |
-| Authority | Approved numeric rule; current local fixture is not a runtime authoring surface |
-| Constraints | Bounds, step, fixed-default `max-delta = 50`, required inputs and explicit runtime guards |
-| Recording | Durable decision record before success |
-| Attribution | Explicit confirmation supplies `exposureId` for outcomes |
-
-## Current flow
+| Management identity | Name `tetris.dropInterval`; immutable versions use `contractDigest` |
+| Runtime identity | Exact `{ contractName, contractDigest }` |
+| Runtime attributes | `board_pressure_mean_5s`, `board_pressure_max_5s`, `placement_time_mean_ms_5s`, `recovery_failures_5s`, `pieces_locked_5s`, `current_level`, `session_id` |
+| Result | Number `200..1500ms`, multiple of `50ms`, default `800ms` |
+| Runtime authority | One active immutable executable for the authenticated scope and exact digest |
+| Learning | Auto-activation policy with placement-time objective and recovery-failure guardrail |
 
 ```text
-one authored JSON manifest
-  -> trusted Contract Service publication
-  -> authenticated exact-snapshot approval -> approved-definition receipt
-  -> trusted local bootstrap of receipt-bound State Store authority
-  -> generated catalog + receipt initialize the runtime client
+flaggo/contracts/tetris.dropInterval.decision-contract.json
+  -> flaggo.deploy.json
+  -> SDK validation and Contract Service PUT
+  -> immutable accepted contract version
+  -> default executable activation
+  -> authored executable validation and activation
+  -> returned { contractName, contractDigest }
 
-key + live inputs -> Decision Service
-  -> compatible contract/state + resolved inputs
-  -> approved numeric rule -> deterministic constraints
-  -> durable record -> 750ms / 850ms / governed 800ms fallback
-
-game applies result -> explicit confirmation
-  -> ordinary application OTel telemetry with confirmed attributes
+five-second rolling context + SDK-owned _random
+  -> exact-version Decision Service request
+  -> active executable evaluation
+  -> RuntimeDecision
+  -> refresh loop caches interval
+  -> a future gravity tick uses the cached interval
 ```
 
-OTel Ingestion can validate declared outcome bindings against completed
-confirmation and materialize attributed evidence. The separate
-[Collector example](../../examples/otel-evidence/README.md) demonstrates that
-bound outcome path; the current Tetris harness emits and inspects correlated
-native logs without claiming a general Outcome store.
+The game starts from local gravity and requests the first decision
+asynchronously. While the game is running, it refreshes every five seconds with
+at most one request in flight. Piece locks contribute observations but do not
+trigger requests. Refresh stops while paused or after game over, and restart
+creates a new observation window. Decision Service does not consult the
+management current pointer. Missing attributes make dependent rules ineligible;
+when no rule is eligible, runtime returns the contract default.
 
-## Approved numeric rule
+## Authored executable
+
+The contract uses two ordered rules:
 
 ```text
-score = sum(normalizedInput * weight) / sum(weight)
-score >= 0.55 -> 850ms
-score <  0.55 -> 750ms
+board_pressure_mean_5s >= 0.75
+  or board_pressure_max_5s >= 0.9
+  or recovery_failures_5s >= 3              -> 850ms
+lower pressure and fewer recovery failures  -> 750ms
+no eligible rule                            -> 800ms default
 ```
 
-| Input | Range | Weight |
-| --- | --- | --- |
-| `boardPressure` | `0..1` | `0.45` |
-| `recentPlacementTimeMs` | `0..2000` | `0.25` |
-| `recoveryFailures` | `0..5` | `0.20` |
-| `currentLevel` | `0..20` | `0.10` |
-
-The executor takes only definition, approved rule and resolved primitives.
-These are live request operands, not telemetry handles, so Collector failure
-does not affect their resolution. Numeric confidence is null.
+The adapter declares the decision catalog and binds the exact accepted digest:
 
 ```ts
-const decision = await flaggo.tune.number("tetris.dropInterval", {
-  context: { sessionId, userId, cohort, deviceType },
-  inputs: { boardPressure, recentPlacementTimeMs, recoveryFailures, currentLevel }
+type TetrisDecisions = {
+  "tetris.dropInterval": DecisionSpec<{
+    board_pressure_mean_5s: number;
+    board_pressure_max_5s: number;
+    current_level: number;
+    placement_time_mean_ms_5s: number;
+    recovery_failures_5s: number;
+    pieces_locked_5s: number;
+    session_id: string;
+  }, number>;
+};
+
+const client = createDecisionClient<TetrisDecisions>({
+  baseUrl: decisionServiceUrl,
+  bindings: {
+    "tetris.dropInterval": { contractDigest },
+  },
 });
+
+const response = await client.decide("tetris.dropInterval", {
+  attributes: {
+    board_pressure_mean_5s: context.boardPressureMean5s,
+    board_pressure_max_5s: context.boardPressureMax5s,
+    current_level: context.currentLevel,
+    placement_time_mean_ms_5s: context.placementTimeMeanMs5s,
+    recovery_failures_5s: context.recoveryFailures5s,
+    pieces_locked_5s: context.piecesLocked5s,
+    session_id: context.sessionId,
+  },
+});
+
+applyDropInterval(response.value.result);
 ```
 
-The client has a generated catalog and approved receipt. Type/range/meaning,
-targeting and constraints are not repeated in application call sites.
+The SDK constructs complete `RuntimeInput`, adds `_random`, and reuses the
+serialized input on retries.
 
 ## Required behavior
 
 | Situation | Outcome |
 | --- | --- |
-| Score at/above `0.55` | Exact approved `850ms` |
-| Score below `0.55` | Exact approved `750ms` |
-| No compatible authority or constraint-required fallback | Recorded server `800ms` |
-| Recognized outage with configured SDK fallback | Client `800ms`, no server record/exposure identity |
-| Invalid/unknown/conflicting/retired/non-ready identity | Explicit fallback-ineligible error |
-| Invalid persisted authority | Readiness failure, never repair |
+| Standalone mode | Local interval from level, with no SDK or service dependency |
+| Startup before the first response | Gameplay starts immediately with local gravity |
+| Piece lock | Rolling observations update; no request is sent |
+| Five-second refresh while a request is active | Refresh is skipped; requests never overlap |
+| High pressure or repeated recovery failure | Flaggo rule result `850ms` |
+| Lower pressure without repeated recovery failure | Flaggo rule result `750ms` |
+| Attributes needed by both rules are missing | Contract default `800ms` |
+| No active executable for the exact digest | Provider shows degraded status and applies local policy |
+| Decision Service unavailable before success | Provider shows degraded status and applies local policy |
+| Refresh failure after success | Last successful Flaggo interval remains cached |
+| Pause or game over | Policy refresh stops |
+| Invalid persisted authority | Decision Service returns an explicit integrity failure; never implicit repair |
 
-Both branches independently satisfy `abs(value - 800) <= 50`; a `750 -> 850`
-sequence is valid. The existing last-change cooldown fixture proves server
-fallback, not previous-result stabilization or hysteresis.
-
-## Reconstructability and Phase 3 exit
-
-Current records retain exact contract, targets, caller/resolved inputs,
-strategy, constraint/fallback facts, value and timestamp. Exposure exists only
-after application confirmation and cannot replace the input vector.
-Ordinary telemetry stays unlinked when it is not caused by confirmed use.
-
-The final #49/#40/#41 path additionally verifies activation-converged receipts,
-stable-head CAS/replay, complete state/activation lineage in Evidence Store,
-and server-side outcome recording under the canonical logical boundaries.
-It uses no standalone Policy, Audit, Reasoning or Operator Console service.
-
-Future async proposals still require Contract Service approval and State Store
-activation. Learned strategies, experiments, rollouts and operator workflows
-need their own accepted contracts.
+The automated real-host integration remains separate from interactive play. It
+starts Contract Service and Decision Service against one isolated SQLite
+database, deploys the contract, evaluates all three result paths, and
+verifies that retired v1 request fields are absent.
 
 ## Related documents
 
-- [Architecture overview](../architecture/OVERVIEW.md)
-- [Authority](../architecture/AUTHORITY.md)
-- [Runtime execution](../architecture/RUNTIME_EXECUTION.md)
-- [Tetris integration](../design/tetris-integration/README.md)
+- [Architecture overview](../design/architecture/OVERVIEW.md)
+- [Contract Service](../design/architecture/CONTRACT_SERVICE.md)
+- [Runtime client and Decision Service](../design/architecture/RUNTIME.md)
+- [Interactive Tetris example](../../examples/tetris-integration/README.md)

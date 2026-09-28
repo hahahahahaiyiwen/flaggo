@@ -328,42 +328,36 @@ export async function runWithCleanup(
   return result;
 }
 
-export async function startControlAndDataHosts({
+export async function startContractAndDecisionHosts({
   lifecycle,
-  createControlHost,
-  waitForControlReady,
-  bootstrap,
-  createDataHost,
-  waitForDataReady,
+  createContractHost,
+  waitForContractReady,
+  createDecisionHost,
+  waitForDecisionReady,
 }) {
-  const control = lifecycle.startHost(createControlHost);
-  const controlUrl = await control.waitForListening({
+  const contract = lifecycle.startHost(createContractHost);
+  const contractUrl = await contract.waitForListening({
     signal: lifecycle.signal,
   });
   lifecycle.assertHealthy();
-  await waitForControlReady(controlUrl, control, lifecycle.signal);
+  await waitForContractReady(contractUrl, contract, lifecycle.signal);
   lifecycle.assertHealthy();
   lifecycle.signal.throwIfAborted();
 
-  const bootstrapResult = await bootstrap(controlUrl, lifecycle.signal);
-  lifecycle.assertHealthy();
-  lifecycle.signal.throwIfAborted();
-
-  const data = lifecycle.startHost(() => createDataHost(bootstrapResult));
-  const dataUrl = await data.waitForListening({
+  const decision = lifecycle.startHost(createDecisionHost);
+  const decisionUrl = await decision.waitForListening({
     signal: lifecycle.signal,
   });
   lifecycle.assertHealthy();
-  await waitForDataReady(dataUrl, data, lifecycle.signal);
+  await waitForDecisionReady(decisionUrl, decision, lifecycle.signal);
   lifecycle.assertHealthy();
   lifecycle.signal.throwIfAborted();
 
   return {
-    bootstrap: bootstrapResult,
-    control,
-    controlUrl,
-    data,
-    dataUrl,
+    contract,
+    contractUrl,
+    decision,
+    decisionUrl,
   };
 }
 
@@ -729,14 +723,10 @@ export async function startUnavailableEndpoint() {
       Connection: "close",
     });
     response.end(JSON.stringify({
-      type: "about:blank",
+      type: "https://flaggo.dev/problems/dependency-unavailable",
+      title: "Dependency unavailable",
       status: 503,
-      code: "service-unavailable",
       detail: "The deterministic unavailable endpoint is not ready.",
-      clientFallback: {
-        eligible: true,
-        reason: "service-unavailable",
-      },
     }));
   });
   server.on("connection", (socket) => {

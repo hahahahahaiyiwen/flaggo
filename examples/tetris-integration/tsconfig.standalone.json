@@ -1,0 +1,20 @@
+{
+  "extends": "../../packages/sdk-typescript/tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist/standalone",
+    "declaration": false,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/drop-interval.ts",
+    "src/game.ts",
+    "src/main.ts",
+    "src/terminal.ts"
+  ],
+  "exclude": [
+    "dist"
+  ]
+}

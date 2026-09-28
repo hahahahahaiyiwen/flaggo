@@ -1,0 +1,38 @@
+{
+  "name": "runtime-rule-result",
+  "scenario": 1,
+  "invariant": "Runtime evaluates the executable active for the exact contract digest and identifies the first matching rule without persisting a decision record.",
+  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+  "request": {
+    "method": "POST",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "headers": {
+      "Authorization": "******",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "attributes": {
+        "_random": 0.42,
+        "user_id": "user-123",
+        "recovery_failures": 1
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "srv-rule-result"
+    },
+    "body": {
+      "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "executableDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "result": 700,
+      "evaluation": {
+        "source": "rule",
+        "rule": "slow-after-recovery-failure"
+      }
+    }
+  }
+}

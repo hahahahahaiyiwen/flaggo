@@ -11,9 +11,9 @@ Usage:
     python contracts/mock/fixture-server/server.py --port 8080
 
 Then send a request naming the fixture:
-    curl -si -X POST http://localhost:8080/v1/decisions/tetris.dropInterval:decide \
-         -H "X-Flaggo-Fixture: decide-active-numeric-strategy" \
-         -H "Content-Type: application/json" --data '{}'
+    curl -si -X POST http://localhost:8080/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions \
+         -H "X-Flaggo-Fixture: runtime-rule-result" \
+         -H "Content-Type: application/json" --data '{"attributes":{"_random":0.42}}'
 
 Discovery endpoints (no fixture header required):
     GET /_fixtures        -> list every selectable fixture name
@@ -37,10 +37,9 @@ SCHEMAS_DIR = CONTRACTS / "schemas"
 FIXTURE_HEADER = "X-Flaggo-Fixture"
 SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 SCHEMA_FILES = [
-    "runtime-models-v1.schema.json",
-    "management-models-v1.schema.json",
-    "decision-definition-bundle-v2.schema.json",
-    "problem-details-v1.schema.json",
+    "runtime-models-v3.schema.json",
+    "management-models-v3.schema.json",
+    "problem-details-v3.schema.json",
 ]
 
 # name -> fixture dict, loaded once at startup
@@ -92,7 +91,7 @@ def load_fixtures() -> None:
         with path.open(encoding="utf-8") as fh:
             fx = json.load(fh)
         # Native Protobuf fixtures execute against the real .NET receiver.
-        if fx.get("sdkLocal") or fx.get("schemaNegative") or fx.get("protocol") == "otlp-protobuf":
+        if fx.get("sdkLocal") or fx.get("schemaNegative"):
             continue
         FIXTURES[fx["name"]] = fx
 
@@ -102,7 +101,6 @@ def problem_bytes(status: int, code: str, detail: str) -> bytes:
         "type": f"https://flaggo.dev/problems/{code}",
         "title": code.replace("-", " ").capitalize(),
         "status": status,
-        "code": code,
         "detail": detail,
     }).encode("utf-8")
 

@@ -2,7 +2,7 @@
   "name": "health-readiness-ready",
   "scenario": 38,
   "invariant": "200 ready requires every check up.",
-  "responseSchema": "runtime-models-v1.schema.json#/$defs/ReadinessResult",
+  "responseSchema": "runtime-models-v3.schema.json#/$defs/ReadinessResult",
   "request": {
     "method": "GET",
     "path": "/health/ready",
@@ -19,29 +19,14 @@
       "observedAt": "2026-07-30T18:30:00Z",
       "checks": [
         {
-          "name": "contract-registry",
+          "name": "contract-store",
           "status": "up",
           "required": true
         },
         {
-          "name": "decision-state",
+          "name": "executable-store",
           "status": "up",
           "required": true
-        },
-        {
-          "name": "policy",
-          "status": "up",
-          "required": true
-        },
-        {
-          "name": "audit",
-          "status": "up",
-          "required": true
-        },
-        {
-          "name": "evidence",
-          "status": "up",
-          "required": false
         }
       ]
     }

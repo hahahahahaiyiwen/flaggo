@@ -1,48 +1,44 @@
 {
   "name": "@flaggo/sdk",
-  "version": "0.1.0",
-  "description": "TypeScript client for Flaggo AI-native runtime decisioning.",
+  "version": "0.2.0",
+  "description": "TypeScript clients for Flaggo runtime decisions and contract management.",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./manifest": {
-      "types": "./dist/manifest.d.ts",
-      "import": "./dist/manifest.js"
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "import": "./dist/runtime/index.js"
     },
     "./management": {
-      "types": "./dist/management.d.ts",
-      "import": "./dist/management.js"
+      "types": "./dist/management/index.d.ts",
+      "import": "./dist/management/index.js"
     }
-  },
-  "bin": {
-    "flaggo-manifest": "./dist/manifest-cli.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "build": "npm run generate && node scripts/build.mjs",
+    "check:generated": "node scripts/generate.mjs --check",
     "check:openapi": "vitest run test/openapi-conformance.test.ts",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "check:package": "npm run build && node scripts/check-package.mjs",
+    "generate": "node scripts/generate.mjs",
+    "test": "npm run generate && vitest run",
+    "typecheck": "npm run generate && tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "json-canonicalize": "2.0.0",
-    "typescript": "5.8.3"
-  },
+  "sideEffects": false,
   "devDependencies": {
     "@types/node": "24.1.0",
-    "vitest": "3.2.4",
-    "yaml": "2.8.1"
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "esbuild": "0.28.2",
+    "json-schema-to-typescript": "16.0.0",
+    "vitest": "4.1.11",
+    "yaml": "2.9.1"
   },
   "engines": {
     "node": ">=20"
   },
-  "license": "Apache-2.0"
+  "license": "MIT"
 }

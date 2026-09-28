@@ -1,51 +1,41 @@
 <Solution>
   <Folder Name="/apps/" />
-  <Folder Name="/apps/control-plane/" />
-  <Folder Name="/apps/control-plane/src/">
-    <Project Path="apps/control-plane/src/Flaggo.ControlPlane/Flaggo.ControlPlane.csproj" />
+  <Folder Name="/apps/contract-service/" />
+  <Folder Name="/apps/contract-service/src/">
+    <Project Path="apps/contract-service/src/Flaggo.ContractService/Flaggo.ContractService.csproj" />
   </Folder>
-  <Folder Name="/apps/data-plane/" />
-  <Folder Name="/apps/data-plane/src/">
-    <Project Path="apps/data-plane/src/Flaggo.DataPlane/Flaggo.DataPlane.csproj" />
-  </Folder>
-  <Folder Name="/apps/shared/" />
-  <Folder Name="/apps/shared/src/">
-    <Project Path="apps/shared/src/Flaggo.Hosting/Flaggo.Hosting.csproj" />
+  <Folder Name="/apps/decision-service/" />
+  <Folder Name="/apps/decision-service/src/">
+    <Project Path="apps/decision-service/src/Flaggo.DecisionService/Flaggo.DecisionService.csproj" />
   </Folder>
   <Folder Name="/modules/" />
-  <Folder Name="/modules/audit/" />
-  <Folder Name="/modules/audit/src/">
-    <Project Path="modules/audit/src/Flaggo.Audit/Flaggo.Audit.csproj" />
+  <Folder Name="/modules/contract/" />
+  <Folder Name="/modules/contract/src/">
+    <Project Path="modules/contract/src/Flaggo.Contract/Flaggo.Contract.csproj" />
   </Folder>
-  <Folder Name="/modules/evidence/" />
-  <Folder Name="/modules/evidence/src/">
-    <Project Path="modules/evidence/src/Flaggo.Evidence/Flaggo.Evidence.csproj" />
+  <Folder Name="/modules/contract-store/" />
+  <Folder Name="/modules/contract-store/src/">
+    <Project Path="modules/contract-store/src/Flaggo.ContractStore/Flaggo.ContractStore.csproj" />
   </Folder>
-  <Folder Name="/modules/policy/" />
-  <Folder Name="/modules/policy/src/">
-    <Project Path="modules/policy/src/Flaggo.Policy/Flaggo.Policy.csproj" />
+  <Folder Name="/modules/decision/" />
+  <Folder Name="/modules/decision/src/">
+    <Project Path="modules/decision/src/Flaggo.Decision/Flaggo.Decision.csproj" />
   </Folder>
-  <Folder Name="/modules/reasoning/" />
-  <Folder Name="/modules/reasoning/src/">
-    <Project Path="modules/reasoning/src/Flaggo.Decisioning/Flaggo.Decisioning.csproj" />
+  <Folder Name="/modules/executable-store/" />
+  <Folder Name="/modules/executable-store/src/">
+    <Project Path="modules/executable-store/src/Flaggo.ExecutableStore/Flaggo.ExecutableStore.csproj" />
   </Folder>
-  <Folder Name="/modules/registry/" />
-  <Folder Name="/modules/registry/src/">
-    <Project Path="modules/registry/src/Flaggo.Registry/Flaggo.Registry.csproj" />
+  <Folder Name="/modules/expression/" />
+  <Folder Name="/modules/expression/src/">
+    <Project Path="modules/expression/src/Flaggo.Expressions/Flaggo.Expressions.csproj" />
   </Folder>
-  <Folder Name="/modules/state/" />
-  <Folder Name="/modules/state/src/">
-    <Project Path="modules/state/src/Flaggo.State/Flaggo.State.csproj" />
-  </Folder>
-  <Folder Name="/packages/" />
-  <Folder Name="/packages/shared-contracts/" />
-  <Folder Name="/packages/shared-contracts/src/">
-    <Project Path="packages/shared-contracts/src/Flaggo.Shared.Contracts/Flaggo.Shared.Contracts.csproj" />
-  </Folder>
-  <Folder Name="/tools/Flaggo.DirectoryFlush/">
-    <Project Path="tools/Flaggo.DirectoryFlush/Flaggo.DirectoryFlush.csproj" />
+  <Folder Name="/modules/hosting/" />
+  <Folder Name="/modules/hosting/src/">
+    <Project Path="modules/hosting/src/Flaggo.ServiceHosting/Flaggo.ServiceHosting.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Flaggo.Decisioning.Tests/Flaggo.Decisioning.Tests.csproj" />
+    <Project Path="tests/Flaggo.ContractService.Tests/Flaggo.ContractService.Tests.csproj" />
+    <Project Path="tests/Flaggo.Core.Tests/Flaggo.Core.Tests.csproj" />
+    <Project Path="tests/Flaggo.DecisionService.Tests/Flaggo.DecisionService.Tests.csproj" />
   </Folder>
 </Solution>

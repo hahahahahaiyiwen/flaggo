@@ -1,9 +1,8 @@
 import type {
-  ContractIssue,
+  FlaggoResponseMetadata,
   ProblemDetails,
-  RequiresApprovalResult,
-  Sha256Digest,
-} from "./types.js";
+  SdkValidationIssue,
+} from "./shared/types.js";
 
 export class FlaggoError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -12,53 +11,56 @@ export class FlaggoError extends Error {
   }
 }
 
-export class RequiresApprovalError extends FlaggoError {
-  readonly approvalRequestId: string;
-  readonly bundleDigest: Sha256Digest;
-  readonly expiresAt: string;
-  readonly snapshotUrl: string;
-
-  constructor(result: RequiresApprovalResult) {
-    super(`Definition bundle requires approval: ${result.approvalRequestId}`);
-    this.approvalRequestId = result.approvalRequestId;
-    this.bundleDigest = result.bundleDigest;
-    this.expiresAt = result.expiresAt;
-    this.snapshotUrl = result.snapshotUrl;
+export class MissingDecisionBindingError extends FlaggoError {
+  constructor(readonly contractName: string) {
+    super(`No decision binding exists for '${contractName}'.`);
   }
 }
 
-export class MissingAcceptedDefinitionError extends FlaggoError {
-  constructor(readonly decisionKey: string) {
-    super(`No accepted runtime binding exists for '${decisionKey}'.`);
-  }
-}
+export class InvalidFlaggoInputError extends FlaggoError {
+  readonly issues: readonly SdkValidationIssue[];
 
-export class InvalidDecisionInputError extends FlaggoError {
-  readonly issues: ContractIssue[];
-
-  constructor(path: string, message: string, code = "invalid-inference-input") {
-    super(`${path}: ${message}`);
-    this.issues = [{ code, severity: "error", path, message }];
-  }
-}
-
-export class ContractConflictError extends FlaggoError {
   constructor(
-    readonly decisionKey: string,
-    readonly expectedDigest: Sha256Digest,
-    readonly actualDigest: Sha256Digest,
+    message: string,
+    issues: readonly SdkValidationIssue[] = [],
+    options?: ErrorOptions,
   ) {
-    super(
-      `Definition '${decisionKey}' hashes to ${actualDigest}, `
-      + `but startup accepted ${expectedDigest}.`,
-    );
+    super(message, options);
+    this.issues = issues;
   }
 }
 
 export class FlaggoHttpError extends FlaggoError {
-  constructor(readonly problem: ProblemDetails) {
-    super(`${problem.code}: ${problem.detail ?? problem.title ?? "Flaggo request failed"}`);
+  constructor(
+    readonly problem: ProblemDetails,
+    readonly response: FlaggoResponseMetadata,
+  ) {
+    const summary =
+      problem.detail ?? problem.title ?? "Flaggo request failed";
+    super(problem.type === undefined ? summary : `${problem.type}: ${summary}`);
   }
 }
 
-export class InvalidServerResponseError extends FlaggoError {}
+export class FlaggoTransportError extends FlaggoError {}
+
+export class FlaggoTimeoutError extends FlaggoTransportError {
+  constructor(readonly timeoutMs: number, options?: ErrorOptions) {
+    super(`Flaggo request timed out after ${timeoutMs} ms.`, options);
+  }
+}
+
+export class FlaggoAbortError extends FlaggoTransportError {
+  constructor(options?: ErrorOptions) {
+    super("Flaggo request was aborted.", options);
+  }
+}
+
+export class InvalidServerResponseError extends FlaggoError {
+  constructor(
+    message: string,
+    readonly issues: readonly SdkValidationIssue[] = [],
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}

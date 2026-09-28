@@ -1,0 +1,290 @@
+# Architecture overview
+
+## Status
+
+This document defines the target Flaggo architecture. It replaces the earlier
+definition-bundle, target-resolution, generic State Store, synchronous
+evidence-input, durable-decision-record, and explicit exposure-confirmation
+model.
+
+The v3 OpenAPI documents and JSON Schemas under `contracts/` are authoritative
+for wire behavior. The documents under `docs/design/contracts/` define the
+contract, executable, lifecycle, and runtime semantics used by this
+architecture.
+
+## Architectural foundations
+
+The architecture starts from these product requirements:
+
+1. Application code requests one exact immutable version of a named decision.
+2. A runtime result is determined only by one immutable active executable and
+   one complete runtime input.
+3. Contract acceptance, executable generation, and activation are different
+   transitions with different outcomes.
+4. Evidence-based generation may be slow or nondeterministic, but runtime
+   evaluation must remain bounded and deterministic.
+5. Returning a decision does not establish that the application applied it.
+6. Applications using an older contract digest must continue to use that
+   digest's active executable after a newer version is accepted.
+
+These requirements produce the core model:
+
+```text
+DecisionContract
+  -> Contract Acceptance
+  -> Executable Generation
+  -> CandidateExecutable
+  -> Activation
+  -> ActiveExecutable
+
+ActiveExecutable + RuntimeInput
+  -> deterministic RuntimeDecision
+```
+
+An accepted contract establishes an immutable interface and required default.
+Generation creates immutable candidates. Activation alone selects executable
+runtime authority.
+
+## System context
+
+```text
+                    management and future learning path
+
+contract source
+      |
+      v
+Application / CI
+      |
+      | Management API v3
+      v
++--------------------+       +----------------------+
+| Contract Service   |------>| Contract Store       |
+|                    |       | accepted versions    |
+| accept / validate  |       +----------------------+
+| generate / govern  |       +----------------------+
+| validate / activate|------>| Executable Store     |
++---------+----------+       | immutable artifacts  |
+          |                  | + scoped lifecycle   |
+                             +----------+-----------+
+                                        ^
+                                        |
+                              validated candidate
+                                        |
+                             +----------+-----------+
+                             | Learning Worker      |
+                             | asynchronous analysis|
+                             +----------+-----------+
+                                        ^
+                                        |
+                             +----------+-----------+
+                             | Evidence Store       |
+                             | exposure + outcomes  |
+                             +----------+-----------+
+                                        ^
+                                        |
+                              OpenTelemetry pipeline
+
+                           runtime evaluation path
+
+Application
+    |
+    | bind attributes; SDK adds internal attributes
+    v
+Flaggo SDK
+    |
+    | POST exact contract name + digest + RuntimeInput
+    v
++--------------------+
+| Decision Service   |
+| authenticate scope |
+| resolve activation |
+| evaluate executable|
++---------+----------+
+          |
+          v
+RuntimeDecision
+    |
+    | application applies result
+    v
+SDK exposure evidence ------------------> OpenTelemetry pipeline
+```
+
+An implementation may co-locate services or stores. The logical ownership and
+request-path boundaries remain the same even when deployment units are
+combined.
+
+## Component responsibilities
+
+### Application and SDK
+
+The application chooses the exact `contractName` and `contractDigest` with
+which it was built. Application values are bound to declared contract
+attributes through the SDK.
+
+The SDK:
+
+- constructs the complete `RuntimeInput`;
+- adds reserved internal attributes, initially `_random`;
+- reuses those internal values for transport retries of one logical
+  evaluation;
+- may carry the previous applied exposure as `currentExposure`;
+- sends the exact-version runtime request; and
+- emits exposure evidence through the application's OpenTelemetry pipeline
+  only after the application applies the returned result.
+
+Contract attributes, including user or principal identifiers, are decision
+data. They never establish authentication, authorization, application scope,
+or environment scope.
+
+### Contract Service
+
+The Contract Service owns the management resource and executable lifecycle:
+
+- validate and accept a named `DecisionContract`;
+- canonicalize semantic content and compute `contractDigest`;
+- persist immutable accepted versions;
+- generate and activate the required default executable before reporting the
+  version ready;
+- coordinate authored and evidence-based executable generation;
+- validate immutable candidates against their exact contract;
+- atomically activate one executable for a contract digest in an authenticated
+  application/environment scope.
+
+The management resource may expose a current version by name. That pointer is
+for authoring and discovery only; the Decision Service never follows it.
+
+### Executable generation and learning
+
+Executable Generation has three inputs but one output type:
+
+```text
+contract default ----------------------\
+authored executable --------------------+-> immutable DecisionExecutable
+contract + correlated evidence --------/
+```
+
+Default and authored generation may run as Contract Service capabilities or
+dedicated workers. Evidence-based analysis is asynchronous and consumes
+evidence outside the runtime path.
+
+Every candidate records its exact `contractDigest` and generation provenance.
+A learning worker may propose a candidate but cannot write runtime authority
+directly. The Contract Service validates the candidate and applies its
+activation policy.
+
+The initial evidence-based policy is `mode: auto-activation`. For a valid
+candidate from the current learning head, the Contract Service attempts an
+atomic activation immediately. This policy does not make runtime search for
+the latest generated artifact; runtime still reads only the activation index.
+
+### Decision Service
+
+The Decision Service owns one stateless runtime operation:
+
+```http
+POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+```
+
+For each request it authenticates application/environment scope, verifies the
+name and digest, validates the SDK-constructed input, resolves the active
+immutable executable, evaluates it, validates the result, and returns a
+`RuntimeDecision`.
+
+It does not:
+
+- select a current or latest contract version;
+- generate or activate executables;
+- query evidence or run analysis;
+- resolve a generic target hierarchy;
+- apply a separate generic constraints layer;
+- persist an evaluation session, idempotency record, or durable decision
+  record; or
+- decide whether the application exposed the result.
+
+### Evidence path
+
+Runtime traffic and evidence traffic are separate. The SDK emits Flaggo
+exposure evidence after application, while user-declared logical evidence
+bindings map application outcomes into OpenTelemetry. Evidence ingestion
+correlates the two using both exposure identity and declared activity
+attributes.
+
+The Evidence Store supports later analysis and provenance. It is not a
+synchronous operand store for Decision Service requests. Exact OpenTelemetry
+signals, scopes, selectors, projections, and multi-match behavior remain a
+deferred protocol design.
+
+## Data ownership
+
+| Data | Owner | Mutability | Runtime role |
+| --- | --- | --- | --- |
+| Accepted `DecisionContract` version | Contract Service / Contract Store | Immutable by `contractDigest` | Validates input and result for the requested digest |
+| Management current-version pointer | Contract Service | Mutable by name | None; runtime never resolves it |
+| `DecisionExecutable` and provenance | Contract Service / Executable Store | Immutable by `executableDigest` | Supplies bounded behavior |
+| Executable lifecycle state | Contract Service / Executable Store | Atomic Candidate/Active/Inactive transition per scope and `contractDigest` | Selects the only executable with runtime authority |
+| Runtime input | Application and SDK | Per logical evaluation | Complete explicit evaluator input |
+| Runtime decision | Decision Service | Response value; not retained by the semantic runtime contract | Returned to the caller |
+| Exposure and outcome evidence | SDK, application, and evidence pipeline | Append-oriented observations | Asynchronous learning only |
+| Learning head | Contract Service | Mutable by decision name | Selects the digest eligible for new analysis, never runtime evaluation |
+
+## Online and asynchronous dependency boundaries
+
+The online decision path depends only on:
+
+- authenticated scope;
+- the requested accepted contract version;
+- its current activation;
+- the referenced immutable executable; and
+- the complete runtime input.
+
+Evidence ingestion, learning schedules, candidate generation, activation
+workflows, and management current-version lookup are not online runtime
+dependencies. Their delay or failure cannot change the meaning of an
+in-progress evaluation. If a replacement cannot be generated or activated,
+the existing executable remains active.
+
+## Cross-version behavior
+
+Accepting a new digest creates a new runtime authority slot rather than
+mutating the old one:
+
+```text
+name = tetris.dropInterval
+
+D1 -> RuntimeActivation[scope, D1] = E1
+D2 -> RuntimeActivation[scope, D2] = DefaultExecutable(D2)
+
+ManagementCurrent[scope, name] = D2
+LearningHead[scope, name] = D2
+```
+
+Applications carrying `D1` continue to evaluate `E1`. Applications carrying
+`D2` begin with the default executable and later observe replacements
+activated for `D2`. Flaggo does not infer compatibility or migrate runtime
+authority across digests.
+
+## Architecture invariants
+
+1. A contract name identifies a logical management resource; a digest
+   identifies one exact immutable version.
+2. Every accepted-ready contract digest has an active default executable.
+3. Every executable is immutable and bound to one exact contract digest.
+4. Activation is the sole source of runtime executable authority.
+5. Runtime evaluates one active executable against one complete explicit
+   input and retains no semantic request state.
+6. Evidence-based generation never runs in the decision request path.
+7. A newer digest does not deactivate or reinterpret an older digest.
+8. Authentication establishes application/environment scope; contract
+   attributes never do.
+9. A returned decision becomes an exposure only when the application applies
+   it and the SDK reports that exposure.
+
+## Related documents
+
+- [Contract clients and Contract Service](CONTRACT_SERVICE.md)
+- [Decision authority](AUTHORITY.md)
+- [Runtime client and Decision Service](RUNTIME.md)
+- [Evidence and learning](EVIDENCE.md)
+- [Decision contracts and executables](../contracts/CONTRACTS.md)
+- [Decision contract lifecycle](../contracts/LIFECYCLE.md)
+- [Runtime evaluation model](../contracts/RUNTIME_EVALUATION.md)

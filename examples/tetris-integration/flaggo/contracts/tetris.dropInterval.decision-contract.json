@@ -1,0 +1,130 @@
+{
+  "name": "tetris.dropInterval",
+  "expression_syntax": "flaggo.cel/v1",
+  "attributes": [
+    {
+      "name": "board_pressure_mean_5s",
+      "schema": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    {
+      "name": "board_pressure_max_5s",
+      "schema": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    {
+      "name": "current_level",
+      "schema": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20
+      }
+    },
+    {
+      "name": "placement_time_mean_ms_5s",
+      "schema": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 60000
+      }
+    },
+    {
+      "name": "recovery_failures_5s",
+      "schema": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
+      }
+    },
+    {
+      "name": "pieces_locked_5s",
+      "schema": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
+      }
+    },
+    {
+      "name": "session_id",
+      "schema": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  ],
+  "result": {
+    "schema": {
+      "type": "number",
+      "minimum": 200,
+      "maximum": 1500,
+      "multipleOf": 50
+    },
+    "default": 800
+  },
+  "authoredExecutable": {
+    "rules": [
+      {
+        "name": "high-pressure",
+        "when": {
+          "expression": "attributes.board_pressure_mean_5s >= 0.75 || attributes.board_pressure_max_5s >= 0.9 || attributes.recovery_failures_5s >= 3"
+        },
+        "return": {
+          "value": 850
+        }
+      },
+      {
+        "name": "low-pressure",
+        "when": {
+          "expression": "attributes.board_pressure_mean_5s < 0.75 && attributes.board_pressure_max_5s < 0.9 && attributes.recovery_failures_5s < 3"
+        },
+        "return": {
+          "value": 750
+        }
+      }
+    ]
+  },
+  "learning": {
+    "policy": {
+      "mode": "auto-activation",
+      "evaluate": {
+        "interval": "PT15M"
+      }
+    },
+    "evidence": [
+      {
+        "name": "placement_time",
+        "attribute": "placement_time_mean_ms_5s",
+        "binding": "tetris.placement_time",
+        "correlateBy": [
+          "session_id"
+        ]
+      },
+      {
+        "name": "recovery_failure",
+        "attribute": "recovery_failures_5s",
+        "binding": "tetris.recovery_failure",
+        "correlateBy": [
+          "session_id"
+        ]
+      }
+    ],
+    "objective": {
+      "primary": {
+        "evidence": "placement_time",
+        "direction": "minimize"
+      },
+      "guardrails": [
+        {
+          "name": "no-recovery-failures",
+          "expression": "sum(evidence.recovery_failure) <= 0"
+        }
+      ]
+    }
+  }
+}
