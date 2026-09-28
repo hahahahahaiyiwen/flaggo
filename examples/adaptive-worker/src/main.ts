@@ -28,12 +28,13 @@ export async function runMain(): Promise<void> {
   const service = JSON.parse(
     await readFile(serviceFile, "utf8"),
   ) as ServiceConnection;
+  const telemetry = new LocalOtelLogs(service.telemetryPath);
   const client = createDecisionClient<WorkerDecisions>({
     bindings: service.bindings,
     baseUrl: service.decisionServiceUrl,
     credential: { mode: "local-development" },
+    telemetry: { logger: telemetry },
   });
-  const telemetry = new LocalOtelLogs(service.telemetryPath);
   try {
     const worker = new AdaptiveWorker(client, telemetry);
     const results = await worker.runProfiles([

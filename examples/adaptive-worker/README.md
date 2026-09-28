@@ -24,7 +24,10 @@ v3 flow.
 Application-owned OpenTelemetry logging includes
 `worker.item.enqueued`, `worker.item.completed`, `worker.queue.depth`,
 `worker.queue.pressure`, `worker.processing.latency`, and
-`worker.batch.applied`. Runtime evaluation itself remains stateless.
+`worker.batch.applied`. The SDK also emits `flaggo.decision.received`, and the
+example emits `flaggo.outcome.observed` for
+`demo.workerBatchSize.processingLatencyMs`. Runtime evaluation itself remains
+stateless.
 
 ## Automated acceptance
 
@@ -56,3 +59,15 @@ node examples\adaptive-worker\dist\main.js
 
 Stop the launcher with `Ctrl+C`. It owns and removes only its specific
 `.flaggo/adaptive-worker` directory.
+
+To stream example logs to a local OpenTelemetry Collector, start the Collector
+with `deploy\otel-collector-flaggo-local.yaml` and set:
+
+```powershell
+$env:FLAGGO_OTEL_COLLECTOR_LOGS_URL = "http://localhost:4318/v1/logs"
+node examples\adaptive-worker\dist\main.js
+```
+
+The Collector forwards OTLP logs to `Flaggo.OtelIngestion` at `/v1/logs`; the
+ingestion service performs contract/profile filtering and writes raw
+observations to Evidence Store.

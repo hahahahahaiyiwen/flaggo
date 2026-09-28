@@ -39,14 +39,15 @@ async function runSmoke(lifecycle) {
         ? lifecycle.signal
         : AbortSignal.any([init.signal, lifecycle.signal]),
     });
+  const telemetry = new LocalOtelLogs(service.paths.telemetry);
   const client = createDecisionClient({
     bindings: service.connection.bindings,
     baseUrl: service.decisionUrl,
     credential: { mode: "local-development" },
     fetch: fetchWithAbort,
     random: () => 0.25,
+    telemetry: { logger: telemetry },
   });
-  const telemetry = new LocalOtelLogs(service.paths.telemetry);
   try {
     const worker = new AdaptiveWorker(
       client,
@@ -87,15 +88,15 @@ async function runSmoke(lifecycle) {
     }
 
     await telemetry.flush();
-    const telemetryFromDisk = (await readFile(service.paths.telemetry, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-    assert.deepEqual(telemetryFromDisk, telemetry.events);
+    const telemetryFromDisk = JSON.parse(
+      (await readFile(service.paths.telemetry, "utf8")).trim(),
+    );
+    assert.deepEqual(telemetryFromDisk, telemetry.otlpJson);
     assert.deepEqual(
       new Set(telemetry.events.map((event) => event.eventName)),
       new Set([
+        "flaggo.decision.received",
+        "flaggo.outcome.observed",
         "worker.item.enqueued",
         "worker.item.completed",
         "worker.queue.depth",
@@ -103,6 +104,25 @@ async function runSmoke(lifecycle) {
         "worker.processing.latency",
         "worker.batch.applied",
       ]),
+    );
+    const decisionEvents = telemetry.events.filter((event) =>
+      event.eventName === "flaggo.decision.received");
+    const outcomeEvents = telemetry.events.filter((event) =>
+      event.eventName === "flaggo.outcome.observed");
+    assert.equal(decisionEvents.length, 4);
+    assert.equal(outcomeEvents.length, 4);
+    assert.equal(
+      decisionEvents[0].attributes["flaggo.correlation.workerId"],
+      "adaptive-worker-1",
+    );
+    assert.equal(
+      outcomeEvents[0].attributes["flaggo.evidence.binding"],
+      "demo.workerBatchSize.processingLatencyMs",
+    );
+    assert.equal(
+      telemetryFromDisk.resourceLogs[0].scopeLogs[0].logRecords
+        .filter((record) => record.eventName?.startsWith("flaggo.")).length,
+      8,
     );
 
     await service.decision.stop();

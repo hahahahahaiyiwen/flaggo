@@ -115,6 +115,33 @@ Apps may also emit ordinary OpenTelemetry telemetry without the helper. The
 Flaggo Collector/Ingestion profile treats SDK helpers as convenience APIs, not
 the only valid source of outcome observations.
 
+For local examples, the runtime package also provides a small OpenTelemetry
+Logs setup helper:
+
+```ts
+import {
+  createDecisionClient,
+  createFlaggoLocalOtelLogger,
+} from "@flaggo/sdk/runtime";
+
+const logger = createFlaggoLocalOtelLogger({
+  serviceName: "worker",
+  collectorLogsUrl: "http://localhost:4318/v1/logs",
+});
+
+const flaggo = createDecisionClient({
+  baseUrl,
+  bindings,
+  credential: { mode: "local-development" },
+  telemetry: { logger },
+});
+```
+
+`collectorLogsUrl` points to an OpenTelemetry Collector OTLP HTTP receiver. The
+included local Collector config forwards logs to Flaggo OTel Ingestion as OTLP
+HTTP JSON. If `collectorLogsUrl` is omitted, the helper still captures local
+events in memory and can project them to OTLP JSON for tests.
+
 ## Contract management
 
 The management client exposes dry-run validation, idempotent deployment,

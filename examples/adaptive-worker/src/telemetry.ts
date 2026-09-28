@@ -1,32 +1,32 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Logger, LogRecord } from "@opentelemetry/api-logs";
-import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
-  InMemoryLogRecordExporter,
-  LoggerProvider,
-  SimpleLogRecordProcessor,
-} from "@opentelemetry/sdk-logs";
+  createFlaggoLocalOtelLogger,
+  type FlaggoLocalOtelLogger,
+} from "@flaggo/sdk/runtime";
 
 export type ApplicationLogger = Pick<Logger, "emit">;
 
 export class LocalOtelLogs implements ApplicationLogger {
-  private readonly exporter = new InMemoryLogRecordExporter();
-  private readonly provider = new LoggerProvider({
-    resource: resourceFromAttributes({ "service.name": "adaptive-worker" }),
-    processors: [new SimpleLogRecordProcessor({ exporter: this.exporter })],
-  });
-  private readonly logger = this.provider.getLogger("adaptive-worker", "1");
+  private readonly logger: FlaggoLocalOtelLogger;
 
-  constructor(private readonly filePath?: string) {}
+  constructor(
+    private readonly filePath?: string,
+    collectorLogsUrl = process.env.FLAGGO_OTEL_COLLECTOR_LOGS_URL,
+  ) {
+    this.logger = createFlaggoLocalOtelLogger({
+      serviceName: "adaptive-worker",
+      ...(collectorLogsUrl === undefined ? {} : { collectorLogsUrl }),
+    });
+  }
 
   get events() {
-    return this.exporter.getFinishedLogRecords().map((record) => ({
-      eventName: record.eventName,
-      body: record.body,
-      attributes: record.attributes,
-      timeUnixNano: (BigInt(record.hrTime[0]) * 1_000_000_000n + BigInt(record.hrTime[1])).toString(),
-    }));
+    return this.logger.events;
+  }
+
+  get otlpJson() {
+    return this.logger.toOtlpJson();
   }
 
   emit(record: LogRecord): void {
@@ -34,12 +34,12 @@ export class LocalOtelLogs implements ApplicationLogger {
   }
 
   async flush(): Promise<void> {
-    await this.provider.forceFlush();
+    await this.logger.flush();
     if (this.filePath !== undefined) {
       mkdirSync(dirname(this.filePath), { recursive: true });
       writeFileSync(
         this.filePath,
-        this.events.map((record) => `${JSON.stringify(record)}\n`).join(""),
+        `${JSON.stringify(this.otlpJson)}\n`,
         "utf8",
       );
     }
@@ -47,6 +47,6 @@ export class LocalOtelLogs implements ApplicationLogger {
 
   async shutdown(): Promise<void> {
     await this.flush();
-    await this.provider.shutdown();
+    await this.logger.shutdown();
   }
 }

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDecisionClient,
+  createFlaggoLocalOtelLogger,
   createFlaggoTelemetry,
   InvalidFlaggoInputError,
   type DecisionBindings,
@@ -87,6 +88,7 @@ describe("runtime telemetry", () => {
       "flaggo.evaluation.source": "rule",
       "flaggo.evaluation.rule": "queue-pressure",
       "flaggo.request.correlation_id": "server-correlation",
+      "flaggo.correlation.queuePressure": 0.75,
     });
     expect(record.attributes?.["flaggo.decision.id"]).toEqual(expect.any(String));
     expect(record.attributes?.["flaggo.result.hash"]).toMatch(/^sha256:[0-9a-f]{64}$/u);
@@ -167,6 +169,48 @@ describe("runtime telemetry", () => {
       "flaggo.correlation.workerId": "worker-1",
       "flaggo.correlation.queuePressure": 0.75,
     });
+  });
+
+  it("creates a local OTel logger with Collector-compatible JSON projection", async () => {
+    const logger = createFlaggoLocalOtelLogger({
+      serviceName: "adaptive-worker",
+    });
+
+    logger.emit({
+      eventName: "flaggo.outcome.observed",
+      attributes: {
+        "flaggo.signal": "outcome.observed",
+        "flaggo.evidence.binding": "worker.latency_ms",
+        "flaggo.evidence.value.json": "125",
+      },
+    });
+    await logger.flush();
+
+    const otlp = logger.toOtlpJson();
+    expect(logger.events).toHaveLength(1);
+    expect(otlp.resourceLogs[0].resource.attributes).toContainEqual({
+      key: "service.name",
+      value: { stringValue: "adaptive-worker" },
+    });
+    expect(otlp.resourceLogs[0].scopeLogs[0].logRecords[0]).toMatchObject({
+      eventName: "flaggo.outcome.observed",
+      attributes: [
+        {
+          key: "flaggo.signal",
+          value: { stringValue: "outcome.observed" },
+        },
+        {
+          key: "flaggo.evidence.binding",
+          value: { stringValue: "worker.latency_ms" },
+        },
+        {
+          key: "flaggo.evidence.value.json",
+          value: { stringValue: "125" },
+        },
+      ],
+    });
+
+    await logger.shutdown();
   });
 
   it("rejects invalid outcome telemetry before emitting", () => {

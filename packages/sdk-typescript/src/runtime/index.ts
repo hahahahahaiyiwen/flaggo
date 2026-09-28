@@ -14,6 +14,13 @@ export {
   type RuntimeEvaluation,
 } from "./types.js";
 export {
+  createFlaggoLocalOtelLogger,
+  type FlaggoLocalOtelConfiguration,
+  type FlaggoLocalOtelEvent,
+  type FlaggoLocalOtelLogger,
+  type FlaggoOtlpJsonLogs,
+} from "./local-otel.js";
+export {
   createFlaggoTelemetry,
   recordDecisionReceived,
   recordOutcome,

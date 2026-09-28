@@ -21,6 +21,7 @@ import {
   assertResponseSchema,
 } from "../internal/validators.js";
 import type { JsonValue, RequestOptions, Sha256Digest } from "../shared/types.js";
+import type { CorrelationAttributes } from "./telemetry.js";
 import type {
   DecisionBinding,
   DecisionCatalog,
@@ -219,12 +220,33 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
           );
         },
       });
+      const correlation = scalarCorrelationAttributes(request.attributes);
       emitDecisionReceived(telemetry, {
         contractName,
         decision: response.value,
         metadata: response.metadata,
+        ...(correlation === undefined ? {} : { correlation }),
       });
       return response;
     },
   };
+}
+
+function scalarCorrelationAttributes(
+  attributes: unknown,
+): CorrelationAttributes | undefined {
+  if (attributes === undefined) return undefined;
+  const raw = record(attributes);
+  if (raw === undefined) return undefined;
+  const correlation: Record<string, string | number | boolean> = Object.create(null);
+  for (const [name, value] of Object.entries(raw)) {
+    if (
+      typeof value === "string"
+      || typeof value === "boolean"
+      || (typeof value === "number" && Number.isFinite(value))
+    ) {
+      correlation[name] = value;
+    }
+  }
+  return Object.keys(correlation).length === 0 ? undefined : correlation;
 }

@@ -7,6 +7,7 @@ receivers:
 exporters:
   otlphttp/flaggo:
     logs_endpoint: http://localhost:5090/v1/logs
+    encoding: json
 
 service:
   pipelines:

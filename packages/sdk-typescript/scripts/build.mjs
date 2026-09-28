@@ -31,6 +31,9 @@ await build({
   ],
   external: [
     "@opentelemetry/api-logs",
+    "@opentelemetry/exporter-logs-otlp-proto",
+    "@opentelemetry/resources",
+    "@opentelemetry/sdk-logs",
   ],
   format: "esm",
   legalComments: "none",

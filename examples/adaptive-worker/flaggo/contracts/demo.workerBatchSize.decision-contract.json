@@ -25,6 +25,13 @@
         "minimum": 0,
         "maximum": 1
       }
+    },
+    {
+      "name": "processingLatencyMs",
+      "schema": {
+        "type": "number",
+        "minimum": 0
+      }
     }
   ],
   "result": {
@@ -47,5 +54,31 @@
         }
       }
     ]
+  },
+  "learning": {
+    "policy": {
+      "mode": "auto-activation",
+      "evaluate": {
+        "interval": "PT1M"
+      }
+    },
+    "evidence": [
+      {
+        "name": "processing_latency",
+        "attribute": "processingLatencyMs",
+        "binding": "demo.workerBatchSize.processingLatencyMs",
+        "correlateBy": [
+          "workerId",
+          "cohort",
+          "queuePressure"
+        ]
+      }
+    ],
+    "objective": {
+      "primary": {
+        "evidence": "processing_latency",
+        "direction": "minimize"
+      }
+    }
   }
 }
