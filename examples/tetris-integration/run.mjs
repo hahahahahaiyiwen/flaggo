@@ -40,11 +40,16 @@ async function runIntegration(lifecycle) {
   const fetchWithAbort = hosts.fetch;
 
   const capturedBodies = [];
+  const capturedResponses = [];
   const forwardingFetch = async (input, init) => {
     if (String(input).includes("/v3/decision-contracts/")) {
       capturedBodies.push(JSON.parse(String(init?.body)));
     }
-    return fetchWithAbort(input, init);
+    const response = await fetchWithAbort(input, init);
+    if (String(input).includes("/decisions")) {
+      capturedResponses.push(await response.clone().json());
+    }
+    return response;
   };
   const client = createDecisionClient({
     baseUrl: hosts.decisionUrl,
@@ -63,26 +68,29 @@ async function runIntegration(lifecycle) {
     pieces_locked_5s: 2,
     session_id: "game-v3",
   };
+  const highAttributes = {
+    ...common,
+    board_pressure_mean_5s: 0.8,
+    board_pressure_max_5s: 0.9,
+    recovery_failures_5s: 3,
+  };
+  const lowAttributes = {
+    ...common,
+    board_pressure_mean_5s: 0.4,
+    board_pressure_max_5s: 0.5,
+    recovery_failures_5s: 0,
+  };
+  const missingAttributes = {
+    session_id: "game-v3",
+  };
   const { value: high } = await client.decide(contract.name, {
-    attributes: {
-      ...common,
-      board_pressure_mean_5s: 0.8,
-      board_pressure_max_5s: 0.9,
-      recovery_failures_5s: 3,
-    },
+    attributes: highAttributes,
   });
   const { value: low } = await client.decide(contract.name, {
-    attributes: {
-      ...common,
-      board_pressure_mean_5s: 0.4,
-      board_pressure_max_5s: 0.5,
-      recovery_failures_5s: 0,
-    },
+    attributes: lowAttributes,
   });
   const { value: missing } = await client.decide(contract.name, {
-    attributes: {
-      session_id: "game-v3",
-    },
+    attributes: missingAttributes,
   });
 
   assert.equal(high.result, 850);
@@ -97,26 +105,160 @@ async function runIntegration(lifecycle) {
       decision.executableDigest,
       deployment.activeExecutableDigest,
     );
+    assertNoRetiredRuntimeFields(decision);
   }
   assert.equal(capturedBodies.length, 3);
+  assert.equal(capturedResponses.length, 3);
   for (const body of capturedBodies) {
+    assert.deepEqual(Object.keys(body), ["attributes"]);
     assert.equal(body.attributes._random, 0.125);
-    assert.equal("runtimeTarget" in body, false);
-    assert.equal("idempotencyKey" in body, false);
-    assert.equal("fallback" in body, false);
+    assertNoRetiredRuntimeFields(body);
   }
+  for (const response of capturedResponses) {
+    assertNoRetiredRuntimeFields(response);
+  }
+
+  const restHigh = await postDecisionRest({
+    fetch: fetchWithAbort,
+    decisionUrl: hosts.decisionUrl,
+    contractName: contract.name,
+    contractDigest: deployment.contractDigest,
+    attributes: {
+      ...highAttributes,
+      _random: 0.125,
+    },
+    signal: lifecycle.signal,
+  });
+  const restMissing = await postDecisionRest({
+    fetch: fetchWithAbort,
+    decisionUrl: hosts.decisionUrl,
+    contractName: contract.name,
+    contractDigest: deployment.contractDigest,
+    attributes: {
+      ...missingAttributes,
+      _random: 0.125,
+    },
+    signal: lifecycle.signal,
+  });
+  assertEquivalentDecision(restHigh, high);
+  assertEquivalentDecision(restMissing, missing);
 
   await hosts.decision.stop();
   await assert.rejects(() => client.decide(contract.name));
+  await hosts.contract.stop();
+
+  const restartedHosts = await startLocalFlaggoHosts({
+    lifecycle,
+    repositoryRoot,
+    exampleDirectory,
+    runDirectory,
+  });
+  const restartedHigh = await postDecisionRest({
+    fetch: restartedHosts.fetch,
+    decisionUrl: restartedHosts.decisionUrl,
+    contractName: contract.name,
+    contractDigest: deployment.contractDigest,
+    attributes: {
+      ...highAttributes,
+      _random: 0.125,
+    },
+    signal: lifecycle.signal,
+  });
+  assertEquivalentDecision(restartedHigh, high);
 
   process.stdout.write(`${JSON.stringify({
     status: "passed",
     contractDigest: deployment.contractDigest,
     executableDigest: deployment.activeExecutableDigest,
-    high: high.result,
-    low: low.result,
-    missing: missing.result,
+    sdk: {
+      high: high.result,
+      low: low.result,
+      missing: missing.result,
+    },
+    restParity: {
+      high: restHigh.result,
+      missing: restMissing.result,
+    },
+    restartPersistence: {
+      high: restartedHigh.result,
+      executableDigest: restartedHigh.executableDigest,
+    },
+    retiredRuntimeFields: "absent",
   }, null, 2)}\n`);
+}
+
+async function postDecisionRest({
+  fetch,
+  decisionUrl,
+  contractName,
+  contractDigest,
+  attributes,
+  signal,
+}) {
+  const url = `${decisionUrl}/v3/decision-contracts/${
+    encodeURIComponent(contractName)
+  }/versions/${encodeURIComponent(contractDigest)}/decisions`;
+  const request = { attributes };
+  assertNoRetiredRuntimeFields(request);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: "Flaggo-Local-Development",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+    signal,
+  });
+  const body = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(body));
+  assertNoRetiredRuntimeFields(body);
+  return body;
+}
+
+function assertEquivalentDecision(actual, expected) {
+  assert.equal(actual.result, expected.result);
+  assert.deepEqual(actual.evaluation, expected.evaluation);
+  assert.equal(actual.contractDigest, expected.contractDigest);
+  assert.equal(actual.executableDigest, expected.executableDigest);
+}
+
+function assertNoRetiredRuntimeFields(value) {
+  const retiredFields = new Set([
+    "authoredExecutable",
+    "confidence",
+    "confirmation",
+    "confirmationRequired",
+    "confirmationToken",
+    "contract",
+    "evidence",
+    "EvidenceSnapshot",
+    "evidenceSnapshot",
+    "exposure",
+    "exposureId",
+    "exposureToken",
+    "fallback",
+    "idempotencyKey",
+    "runtimeTarget",
+    "staticDefinition",
+  ]);
+  const pending = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === null || typeof current !== "object") continue;
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    for (const [key, child] of Object.entries(current)) {
+      assert.equal(
+        retiredFields.has(key),
+        false,
+        `unexpected retired field '${key}'`,
+      );
+      pending.push(child);
+    }
+  }
 }
 
 async function main() {
