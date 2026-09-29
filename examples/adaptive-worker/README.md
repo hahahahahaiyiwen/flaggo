@@ -68,6 +68,7 @@ $env:FLAGGO_OTEL_COLLECTOR_LOGS_URL = "http://localhost:4318/v1/logs"
 node examples\adaptive-worker\dist\main.js
 ```
 
-The Collector forwards OTLP logs to `Flaggo.OtelIngestion` at `/v1/logs`; the
-ingestion service performs Flaggo signal filtering and writes accepted raw OTLP
-log records to Evidence Store.
+The Collector can forward OTLP logs, metrics, and traces to
+`Flaggo.OtelIngestion` at `/v1/logs`, `/v1/metrics`, and `/v1/traces`. The SDK
+helper emits logs for decision-received and explicit outcome events; ordinary
+app metrics and traces can also be collected as raw candidate evidence.

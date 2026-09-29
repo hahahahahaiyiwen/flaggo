@@ -8,7 +8,6 @@ using Flaggo.ServiceHosting;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Data.Sqlite;
 
-const string ingestPolicy = "IngestEvidence";
 const string evidenceWriteScope = "flaggo.evidence:write";
 const string serviceName = "flaggo-otel-ingestion";
 
@@ -18,20 +17,12 @@ var connectionString = builder.Configuration.GetConnectionString("Flaggo")
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IEvidenceStore>(_ => new SqliteEvidenceStore(connectionString));
-builder.Services.AddSingleton<ITelemetryFilter, FlaggoSignalTelemetryFilter>();
-builder.Services.AddSingleton<OtlpLogIngestionPipeline>();
+builder.Services.AddSingleton<ITelemetryFilter, CandidateTelemetryFilter>();
+builder.Services.AddSingleton<OtlpIngestionPipeline>();
 builder.Services.AddFlaggoAuthentication(
     builder.Configuration,
     builder.Environment,
     evidenceWriteScope);
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy(
-        ingestPolicy,
-        policy => policy
-            .RequireAuthenticatedUser()
-            .RequireAssertion(context => FlaggoClaims.HasScope(context.User, evidenceWriteScope)));
-});
 builder.Services.AddFlaggoAuthorizationProblemResults();
 
 var app = builder.Build();
@@ -44,32 +35,10 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
 });
 app.UseFlaggoProblemStatusPages();
 app.UseAuthentication();
-app.UseAuthorization();
 
-app.MapPost(
-        "/v1/logs",
-        async (
-            HttpContext context,
-            OtlpLogIngestionPipeline pipeline,
-            CancellationToken cancellationToken) =>
-        {
-            if (!FlaggoClaims.TryGetAuthorityScope(context.User, out var scope))
-            {
-                return ProblemResults.Create(
-                    context,
-                    StatusCodes.Status401Unauthorized,
-                    ProblemTypes.AuthenticationRequired,
-                    "Authentication required",
-                    "The credential must identify exactly one application and environment.");
-            }
-
-            var body = await HttpJson.ReadAsync<JsonElement>(
-                context.Request,
-                cancellationToken);
-            var result = await pipeline.IngestAsync(scope, body, cancellationToken);
-            return Results.Json(result, StrictJson.Options);
-        })
-    .RequireAuthorization(ingestPolicy);
+MapOtlpEndpoint(app, "/v1/logs", OtlpTelemetryType.Logs);
+MapOtlpEndpoint(app, "/v1/metrics", OtlpTelemetryType.Metrics);
+MapOtlpEndpoint(app, "/v1/traces", OtlpTelemetryType.Traces);
 
 app.MapGet(
     "/health/live",
@@ -116,6 +85,32 @@ app.MapGet(
 
 await app.Services.GetRequiredService<IEvidenceStore>().InitializeAsync();
 app.Run();
+
+static void MapOtlpEndpoint(WebApplication app, string route, OtlpTelemetryType type)
+{
+    app.MapPost(
+        route,
+        async (
+            HttpContext context,
+            OtlpIngestionPipeline pipeline,
+            CancellationToken cancellationToken) =>
+        {
+            var body = await HttpJson.ReadAsync<JsonElement>(
+                context.Request,
+                cancellationToken);
+            DecisionScope? authenticatedScope = FlaggoClaims.TryGetAuthorityScope(
+                context.User,
+                out var scope)
+                ? scope
+                : null;
+            var result = await pipeline.IngestAsync(
+                type,
+                body,
+                authenticatedScope,
+                cancellationToken);
+            return Results.Json(result, StrictJson.Options);
+        });
+}
 
 static async Task WriteExceptionAsync(HttpContext context)
 {
@@ -174,6 +169,13 @@ static async Task WriteExceptionAsync(HttpContext context)
 
 public partial class Program;
 
+internal enum OtlpTelemetryType
+{
+    Logs,
+    Metrics,
+    Traces
+}
+
 internal sealed record OtlpIngestionResult(
     int Accepted,
     int Ignored,
@@ -192,95 +194,204 @@ internal enum TelemetryFilterAction
 
 internal sealed record TelemetryFilterDecision(
     TelemetryFilterAction Action,
-    string? Signal = null,
-    string? ObservationId = null);
+    string Signal,
+    string ObservationId,
+    DateTimeOffset? ObservedAt = null);
+
+internal sealed record OtlpCandidate(
+    OtlpTelemetryType Type,
+    JsonElement Resource,
+    JsonElement Payload);
 
 internal interface ITelemetryFilter
 {
-    TelemetryFilterDecision Evaluate(JsonElement logRecord);
+    TelemetryFilterDecision Evaluate(OtlpCandidate candidate);
 }
 
-internal sealed class FlaggoSignalTelemetryFilter : ITelemetryFilter
+internal sealed class CandidateTelemetryFilter : ITelemetryFilter
 {
-    private static readonly HashSet<string> SupportedSignals = new(StringComparer.Ordinal)
+    public TelemetryFilterDecision Evaluate(OtlpCandidate candidate)
     {
-        "decision.received",
-        "outcome.observed"
-    };
-
-    public TelemetryFilterDecision Evaluate(JsonElement logRecord)
-    {
-        var attributes = OtlpAttributes.Read(logRecord);
-        if (!OtlpAttributes.TryGetString(attributes, "flaggo.signal", out var signal))
+        var signal = candidate.Type switch
         {
-            return new TelemetryFilterDecision(TelemetryFilterAction.Ignore);
-        }
-
-        if (!SupportedSignals.Contains(signal))
-        {
-            throw new TelemetryFilterException(
-                $"Unsupported Flaggo telemetry signal '{signal}'.");
-        }
-
-        var observationId =
-            OtlpAttributes.OptionalString(attributes, "flaggo.observation.id")
-            ?? OtlpAttributes.OptionalString(attributes, "flaggo.decision.id")
-            ?? StableObservationId(logRecord);
+            OtlpTelemetryType.Logs => LogSignal(candidate.Payload),
+            OtlpTelemetryType.Metrics => MetricSignal(candidate.Payload),
+            OtlpTelemetryType.Traces => SpanSignal(candidate.Payload),
+            _ => throw new TelemetryFilterException("Unsupported OTLP telemetry type.")
+        };
+        var observationId = ExplicitObservationId(candidate.Payload)
+            ?? StableObservationId(candidate.Type, candidate.Payload);
         return new TelemetryFilterDecision(
             TelemetryFilterAction.Accept,
             signal,
-            observationId);
+            observationId,
+            ObservedAt(candidate));
     }
 
-    private static string StableObservationId(JsonElement logRecord)
+    private static string LogSignal(JsonElement logRecord)
     {
-        var payload = JsonSerializer.Serialize(logRecord, StrictJson.Options);
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
-        return "otel:" + Convert.ToHexString(hash).ToLowerInvariant();
+        var attributes = OtlpAttributes.Read(logRecord);
+        if (OtlpAttributes.TryGetString(attributes, "flaggo.signal", out var flaggoSignal))
+        {
+            return flaggoSignal;
+        }
+        if (logRecord.TryGetProperty("eventName", out var eventName)
+            && eventName.ValueKind == JsonValueKind.String)
+        {
+            return $"log:{eventName.GetString()}";
+        }
+        return "log";
     }
+
+    private static string MetricSignal(JsonElement metric)
+    {
+        if (metric.TryGetProperty("name", out var name)
+            && name.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(name.GetString()))
+        {
+            return $"metric:{name.GetString()}";
+        }
+        return "metric";
+    }
+
+    private static string SpanSignal(JsonElement span)
+    {
+        if (span.TryGetProperty("name", out var name)
+            && name.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(name.GetString()))
+        {
+            return $"span:{name.GetString()}";
+        }
+        return "span";
+    }
+
+    private static string? ExplicitObservationId(JsonElement payload)
+    {
+        var attributes = OtlpAttributes.Read(payload);
+        if (OtlpAttributes.TryGetOptionalString(
+                attributes,
+                "flaggo.observation.id",
+                out var observationId))
+        {
+            return observationId;
+        }
+        if (OtlpAttributes.TryGetOptionalString(
+                attributes,
+                "flaggo.decision.id",
+                out var decisionId))
+        {
+            return decisionId;
+        }
+        if (payload.TryGetProperty("spanId", out var spanId)
+            && spanId.ValueKind == JsonValueKind.String)
+        {
+            return $"span:{spanId.GetString()}";
+        }
+        return null;
+    }
+
+    private static DateTimeOffset? ObservedAt(OtlpCandidate candidate)
+    {
+        if (candidate.Payload.TryGetProperty("timeUnixNano", out var timeUnixNano))
+        {
+            return OtlpTime.FromUnixNanos(timeUnixNano);
+        }
+        if (candidate.Payload.TryGetProperty("observedTimeUnixNano", out var observedTimeUnixNano))
+        {
+            return OtlpTime.FromUnixNanos(observedTimeUnixNano);
+        }
+        if (candidate.Payload.TryGetProperty("startTimeUnixNano", out var startTimeUnixNano))
+        {
+            return OtlpTime.FromUnixNanos(startTimeUnixNano);
+        }
+        return FirstDataPointTime(candidate.Payload);
+    }
+
+    private static DateTimeOffset? FirstDataPointTime(JsonElement metric)
+    {
+        foreach (var kind in new[] { "gauge", "sum", "histogram" })
+        {
+            if (!metric.TryGetProperty(kind, out var pointsContainer)
+                || !pointsContainer.TryGetProperty("dataPoints", out var dataPoints)
+                || dataPoints.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+            foreach (var dataPoint in dataPoints.EnumerateArray())
+            {
+                if (dataPoint.TryGetProperty("timeUnixNano", out var timeUnixNano))
+                {
+                    return OtlpTime.FromUnixNanos(timeUnixNano);
+                }
+                if (dataPoint.TryGetProperty(
+                        "startTimeUnixNano",
+                        out var startTimeUnixNano))
+                {
+                    return OtlpTime.FromUnixNanos(startTimeUnixNano);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static string StableObservationId(OtlpTelemetryType type, JsonElement payload)
+    {
+        var serialized = JsonSerializer.Serialize(payload, StrictJson.Options);
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(serialized));
+        return $"{TelemetryTypeName(type)}:"
+            + Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string TelemetryTypeName(OtlpTelemetryType type) => type switch
+    {
+        OtlpTelemetryType.Logs => "logs",
+        OtlpTelemetryType.Metrics => "metrics",
+        OtlpTelemetryType.Traces => "traces",
+        _ => throw new TelemetryFilterException("Unsupported OTLP telemetry type.")
+    };
 }
 
-internal sealed class OtlpLogIngestionPipeline(
+internal sealed class OtlpIngestionPipeline(
     IEvidenceStore store,
     ITelemetryFilter filter,
     TimeProvider timeProvider)
 {
     public async Task<OtlpIngestionResult> IngestAsync(
-        DecisionScope scope,
+        OtlpTelemetryType type,
         JsonElement root,
+        DecisionScope? authenticatedScope,
         CancellationToken cancellationToken)
     {
-        if (root.ValueKind != JsonValueKind.Object
-            || !root.TryGetProperty("resourceLogs", out var resourceLogs)
-            || resourceLogs.ValueKind != JsonValueKind.Array)
+        if (root.ValueKind != JsonValueKind.Object)
         {
-            throw new OtlpIngestionException("OTLP logs payload must contain resourceLogs[].");
+            throw new OtlpIngestionException("OTLP payload must be a JSON object.");
         }
 
         var ignored = 0;
         var receivedAt = timeProvider.GetUtcNow();
         var buffer = new List<EvidenceTelemetryRecord>();
-        foreach (var logRecord in EnumerateLogRecords(resourceLogs))
+        foreach (var candidate in EnumerateCandidates(type, root))
         {
-            var decision = filter.Evaluate(logRecord);
+            var scope = ScopeFrom(candidate.Resource, authenticatedScope);
+            if (scope is null)
+            {
+                ignored += 1;
+                continue;
+            }
+            var decision = filter.Evaluate(candidate);
             if (decision.Action == TelemetryFilterAction.Ignore)
             {
                 ignored += 1;
                 continue;
             }
 
-            if (decision.Signal is null || decision.ObservationId is null)
-            {
-                throw new OtlpIngestionException(
-                    "Accepted telemetry must include a signal and observation ID.");
-            }
-
             buffer.Add(new EvidenceTelemetryRecord(
-                scope,
+                scope.Value,
                 decision.ObservationId,
+                TelemetryTypeName(candidate.Type),
                 decision.Signal,
-                logRecord.Clone(),
-                ObservedAt(logRecord, receivedAt),
+                candidate.Payload.Clone(),
+                decision.ObservedAt ?? receivedAt,
                 receivedAt));
         }
 
@@ -292,75 +403,121 @@ internal sealed class OtlpLogIngestionPipeline(
             Duplicates: write.Existing);
     }
 
-    private static IEnumerable<JsonElement> EnumerateLogRecords(JsonElement resourceLogs)
-    {
-        foreach (var resourceLog in resourceLogs.EnumerateArray())
+    private static IEnumerable<OtlpCandidate> EnumerateCandidates(
+        OtlpTelemetryType type,
+        JsonElement root) =>
+        type switch
         {
-            if (!resourceLog.TryGetProperty("scopeLogs", out var scopeLogs)
-                || scopeLogs.ValueKind != JsonValueKind.Array)
+            OtlpTelemetryType.Logs => EnumerateNested(
+                root,
+                "resourceLogs",
+                "scopeLogs",
+                "logRecords",
+                type),
+            OtlpTelemetryType.Metrics => EnumerateNested(
+                root,
+                "resourceMetrics",
+                "scopeMetrics",
+                "metrics",
+                type),
+            OtlpTelemetryType.Traces => EnumerateNested(
+                root,
+                "resourceSpans",
+                "scopeSpans",
+                "spans",
+                type),
+            _ => throw new OtlpIngestionException("Unsupported OTLP telemetry type.")
+        };
+
+    private static IEnumerable<OtlpCandidate> EnumerateNested(
+        JsonElement root,
+        string resourceCollectionName,
+        string scopeCollectionName,
+        string recordCollectionName,
+        OtlpTelemetryType type)
+    {
+        if (!root.TryGetProperty(resourceCollectionName, out var resourceItems)
+            || resourceItems.ValueKind != JsonValueKind.Array)
+        {
+            throw new OtlpIngestionException(
+                $"OTLP payload must contain {resourceCollectionName}[].");
+        }
+
+        foreach (var resourceItem in resourceItems.EnumerateArray())
+        {
+            var resource = resourceItem.TryGetProperty("resource", out var value)
+                && value.ValueKind == JsonValueKind.Object
+                ? value
+                : default;
+            if (!resourceItem.TryGetProperty(scopeCollectionName, out var scopeItems)
+                || scopeItems.ValueKind != JsonValueKind.Array)
             {
                 continue;
             }
 
-            foreach (var scopeLog in scopeLogs.EnumerateArray())
+            foreach (var scopeItem in scopeItems.EnumerateArray())
             {
-                if (!scopeLog.TryGetProperty("logRecords", out var logRecords)
-                    || logRecords.ValueKind != JsonValueKind.Array)
+                if (!scopeItem.TryGetProperty(recordCollectionName, out var records)
+                    || records.ValueKind != JsonValueKind.Array)
                 {
                     continue;
                 }
 
-                foreach (var logRecord in logRecords.EnumerateArray())
+                foreach (var record in records.EnumerateArray())
                 {
-                    if (logRecord.ValueKind != JsonValueKind.Object)
+                    if (record.ValueKind != JsonValueKind.Object)
                     {
                         throw new OtlpIngestionException(
-                            "OTLP log records must be JSON objects.");
+                            $"OTLP {recordCollectionName} entries must be JSON objects.");
                     }
-                    yield return logRecord;
+                    yield return new OtlpCandidate(type, resource, record);
                 }
             }
         }
     }
 
-    private static DateTimeOffset ObservedAt(
-        JsonElement logRecord,
-        DateTimeOffset fallback)
+    private static DecisionScope? ScopeFrom(
+        JsonElement resource,
+        DecisionScope? authenticatedScope)
     {
-        if (logRecord.TryGetProperty("timeUnixNano", out var timeUnixNano))
-        {
-            return FromUnixNanos(timeUnixNano);
-        }
-        if (logRecord.TryGetProperty("observedTimeUnixNano", out var observedTimeUnixNano))
-        {
-            return FromUnixNanos(observedTimeUnixNano);
-        }
-        return fallback;
+        var attributes = OtlpAttributes.Read(resource);
+        var application =
+            OtlpAttributes.OptionalString(attributes, "flaggo.application")
+            ?? OtlpAttributes.OptionalString(attributes, "service.name")
+            ?? authenticatedScope?.Application;
+        var environment =
+            OtlpAttributes.OptionalString(attributes, "flaggo.environment")
+            ?? OtlpAttributes.OptionalString(attributes, "deployment.environment.name")
+            ?? OtlpAttributes.OptionalString(attributes, "deployment.environment")
+            ?? authenticatedScope?.Environment
+            ?? "default";
+        return string.IsNullOrWhiteSpace(application)
+            ? null
+            : new DecisionScope(application, environment);
     }
 
-    private static DateTimeOffset FromUnixNanos(JsonElement value)
+    private static string TelemetryTypeName(OtlpTelemetryType type) => type switch
     {
-        var nanos = value.ValueKind == JsonValueKind.String
-            ? long.Parse(value.GetString()!, CultureInfo.InvariantCulture)
-            : value.GetInt64();
-        var seconds = Math.DivRem(nanos, 1_000_000_000L, out var remainder);
-        return DateTimeOffset.FromUnixTimeSeconds(seconds)
-            .AddTicks(remainder / 100);
-    }
+        OtlpTelemetryType.Logs => "logs",
+        OtlpTelemetryType.Metrics => "metrics",
+        OtlpTelemetryType.Traces => "traces",
+        _ => throw new OtlpIngestionException("Unsupported OTLP telemetry type.")
+    };
 }
 
 internal static class OtlpAttributes
 {
-    public static Dictionary<string, JsonElement> Read(JsonElement logRecord)
+    public static Dictionary<string, JsonElement> Read(JsonElement owner)
     {
         var attributes = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        if (!logRecord.TryGetProperty("attributes", out var rawAttributes))
+        if (owner.ValueKind != JsonValueKind.Object
+            || !owner.TryGetProperty("attributes", out var rawAttributes))
         {
             return attributes;
         }
         if (rawAttributes.ValueKind != JsonValueKind.Array)
         {
-            throw new TelemetryFilterException("OTLP log attributes must be an array.");
+            throw new TelemetryFilterException("OTLP attributes must be an array.");
         }
         foreach (var attribute in rawAttributes.EnumerateArray())
         {
@@ -393,20 +550,30 @@ internal static class OtlpAttributes
         return true;
     }
 
-    public static string? OptionalString(
+    public static bool TryGetOptionalString(
         IReadOnlyDictionary<string, JsonElement> attributes,
-        string name)
+        string name,
+        out string? value)
     {
-        if (!attributes.TryGetValue(name, out var value))
+        value = null;
+        if (!attributes.TryGetValue(name, out var element))
         {
-            return null;
+            return false;
         }
-        if (value.ValueKind != JsonValueKind.String)
+        if (element.ValueKind != JsonValueKind.String)
         {
             throw new TelemetryFilterException($"Attribute '{name}' must be a string.");
         }
-        return value.GetString();
+        value = element.GetString();
+        return !string.IsNullOrWhiteSpace(value);
     }
+
+    public static string? OptionalString(
+        IReadOnlyDictionary<string, JsonElement> attributes,
+        string name) =>
+        TryGetOptionalString(attributes, name, out var value)
+            ? value
+            : null;
 
     private static JsonElement ReadAttributeValue(JsonElement value)
     {
@@ -432,5 +599,18 @@ internal static class OtlpAttributes
         }
         throw new TelemetryFilterException(
             "Only OTLP stringValue, boolValue, intValue, and doubleValue attributes are supported.");
+    }
+}
+
+internal static class OtlpTime
+{
+    public static DateTimeOffset FromUnixNanos(JsonElement value)
+    {
+        var nanos = value.ValueKind == JsonValueKind.String
+            ? long.Parse(value.GetString()!, CultureInfo.InvariantCulture)
+            : value.GetInt64();
+        var seconds = Math.DivRem(nanos, 1_000_000_000L, out var remainder);
+        return DateTimeOffset.FromUnixTimeSeconds(seconds)
+            .AddTicks(remainder / 100);
     }
 }

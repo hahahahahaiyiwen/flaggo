@@ -8,7 +8,7 @@ namespace Flaggo.EvidenceStore;
 public sealed class SqliteEvidenceStore : IEvidenceStore
 {
     private const string ComponentName = "evidence-store";
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = StrictJson.Options;
     private readonly string _connectionString;
 
@@ -37,6 +37,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                 application TEXT NOT NULL,
                 environment TEXT NOT NULL,
                 observation_id TEXT NOT NULL,
+                telemetry_type TEXT NOT NULL,
                 signal TEXT NOT NULL,
                 payload_json BLOB NOT NULL,
                 observed_at TEXT NOT NULL,
@@ -48,6 +49,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
             ON evidence_telemetry_records(
                 application,
                 environment,
+                telemetry_type,
                 signal,
                 observed_at DESC,
                 observation_id DESC
@@ -99,6 +101,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                     application,
                     environment,
                     observation_id,
+                    telemetry_type,
                     signal,
                     payload_json,
                     observed_at,
@@ -108,6 +111,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                     $application,
                     $environment,
                     $observationId,
+                    $telemetryType,
                     $signal,
                     $payloadJson,
                     $observedAt,
@@ -117,6 +121,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                 """;
             AddScope(command, record.Scope);
             command.Parameters.AddWithValue("$observationId", record.ObservationId);
+            command.Parameters.AddWithValue("$telemetryType", record.TelemetryType);
             command.Parameters.AddWithValue("$signal", record.Signal);
             command.Parameters.Add("$payloadJson", SqliteType.Blob).Value =
                 JsonSerializer.SerializeToUtf8Bytes(record.Payload, JsonOptions);
@@ -133,6 +138,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
     public async Task<IReadOnlyList<EvidenceTelemetryRecord>> ListTelemetryAsync(
         DecisionScope scope,
         int limit,
+        string? telemetryType = null,
         string? signal = null,
         CancellationToken cancellationToken = default)
     {
@@ -142,15 +148,17 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         await using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT observation_id, signal, payload_json, observed_at, received_at
+            SELECT observation_id, telemetry_type, signal, payload_json, observed_at, received_at
             FROM evidence_telemetry_records
             WHERE application = $application
               AND environment = $environment
+              AND ($telemetryType IS NULL OR telemetry_type = $telemetryType)
               AND ($signal IS NULL OR signal = $signal)
             ORDER BY observed_at DESC, observation_id DESC
             LIMIT $limit;
             """;
         AddScope(command, scope);
+        command.Parameters.AddWithValue("$telemetryType", telemetryType is null ? DBNull.Value : telemetryType);
         command.Parameters.AddWithValue("$signal", signal is null ? DBNull.Value : signal);
         command.Parameters.AddWithValue("$limit", limit);
         var records = new List<EvidenceTelemetryRecord>();
@@ -175,7 +183,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
             await using var command = connection.CreateCommand();
             command.CommandText =
                 """
-                SELECT application, environment, observation_id, signal,
+                SELECT application, environment, observation_id, telemetry_type, signal,
                        payload_json, observed_at, received_at
                 FROM evidence_telemetry_records
                 LIMIT 0;
@@ -216,6 +224,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
     {
         ValidateScope(record.Scope);
         ValidateIdentity(record.ObservationId, nameof(record.ObservationId));
+        ValidateIdentity(record.TelemetryType, nameof(record.TelemetryType));
         ValidateIdentity(record.Signal, nameof(record.Signal));
         if (record.Payload.ValueKind != JsonValueKind.Object)
         {
@@ -260,14 +269,15 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         SqliteDataReader reader,
         DecisionScope scope)
     {
-        using var payload = JsonDocument.Parse((byte[])reader.GetValue(2));
+        using var payload = JsonDocument.Parse((byte[])reader.GetValue(3));
         return new EvidenceTelemetryRecord(
             scope,
             reader.GetString(0),
             reader.GetString(1),
+            reader.GetString(2),
             payload.RootElement.Clone(),
-            ParseTime(reader.GetString(3)),
-            ParseTime(reader.GetString(4)));
+            ParseTime(reader.GetString(4)),
+            ParseTime(reader.GetString(5)));
     }
 
     private static string FormatTime(DateTimeOffset value) =>

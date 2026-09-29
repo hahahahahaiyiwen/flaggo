@@ -6,6 +6,7 @@ namespace Flaggo.EvidenceStore;
 public sealed record EvidenceTelemetryRecord(
     DecisionScope Scope,
     string ObservationId,
+    string TelemetryType,
     string Signal,
     JsonElement Payload,
     DateTimeOffset ObservedAt,
@@ -28,6 +29,7 @@ public interface IEvidenceStore
     Task<IReadOnlyList<EvidenceTelemetryRecord>> ListTelemetryAsync(
         DecisionScope scope,
         int limit,
+        string? telemetryType = null,
         string? signal = null,
         CancellationToken cancellationToken = default);
 }

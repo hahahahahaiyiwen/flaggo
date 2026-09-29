@@ -67,7 +67,10 @@ public sealed class EvidenceStoreTests
 
         Assert.Equal(new EvidenceTelemetryWriteResult(Created: 2, Existing: 0), write);
         Assert.Equal(2, (await store.ListTelemetryAsync(Scope, 10)).Count);
-        var outcomes = await store.ListTelemetryAsync(Scope, 10, "outcome.observed");
+        var outcomes = await store.ListTelemetryAsync(
+            Scope,
+            10,
+            signal: "outcome.observed");
         var outcome = Assert.Single(outcomes);
         Assert.Equal("outcome-1", outcome.ObservationId);
     }
@@ -83,13 +86,13 @@ public sealed class EvidenceStoreTests
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 2 "
+            "UPDATE flaggo_schema_versions SET version = 3 "
             + "WHERE component = 'evidence-store';");
         Assert.False(await store.IsAvailableAsync());
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 1 "
+            "UPDATE flaggo_schema_versions SET version = 2 "
             + "WHERE component = 'evidence-store'; "
             + "DROP TABLE evidence_telemetry_records;");
         Assert.False(await store.IsAvailableAsync());
@@ -103,6 +106,7 @@ public sealed class EvidenceStoreTests
         new(
             Scope,
             observationId,
+            "logs",
             signal,
             Payload(signal, result),
             observedAt ?? new DateTimeOffset(2026, 4, 1, 10, 0, 0, TimeSpan.Zero),

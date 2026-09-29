@@ -12,8 +12,8 @@ The architecture distinguishes:
 | Runtime attribute | Explicit value supplied to evaluate the current request |
 | Runtime decision | Result returned by the Decision Service |
 | Decision observation | Flaggo-owned observation that the SDK received a decision |
-| Outcome observation | Application telemetry that may be relevant to declared evidence |
-| Correlated evidence | Async-analysis output that links decisions and outcomes as usable evidence |
+| Candidate evidence telemetry | Application logs, metrics, or traces that may contain contract-relevant evidence |
+| Correlated evidence | Async-analysis output that links decisions and app telemetry as usable evidence |
 | Generation provenance | Record of which evidence and method produced a candidate executable |
 
 Conflating these concepts would make runtime depend on delayed telemetry or
@@ -29,8 +29,8 @@ Decision Service
                                        -> OpenTelemetry pipeline / Collector
                                       /
 application activity
-  -> ordinary app telemetry or SDK outcome helper
-  -> evidence ingestion and raw observation storage
+  -> ordinary OpenTelemetry logs, metrics, and traces
+  -> candidate evidence ingestion and raw observation storage
   -> Evidence Store
   -> asynchronous learning analysis and correlation
   -> CandidateExecutable
@@ -39,32 +39,41 @@ application activity
 
 The application's OpenTelemetry provider, processor, exporter, and Collector
 pipeline remain the transport boundary. Collector configuration is intentionally
-coarse-grained: the Phase 4 Flaggo OTLP logs mapping may forward all telemetry
-to Flaggo ingestion, or forward telemetry under configured
-service/instrumentation namespaces.
-Collector configuration does not need to understand decision contracts,
-evidence bindings, or dynamic contract-aware filters. Flaggo OTel Ingestion
-always owns Flaggo signal filtering and any later contract-aware filtering.
+coarse-grained: it may forward all telemetry to Flaggo ingestion, or forward
+telemetry under configured service/instrumentation namespaces. Collector
+configuration does not need to understand decision contracts, evidence
+bindings, or dynamic contract-aware filters. Flaggo OTel Ingestion accepts
+candidate telemetry, and async analysis owns contract-aware interpretation.
 
 The SDK does not make the Decision Service persist a decision session and does
 not require a synchronous exposure-confirmation call.
 
-## Phase 4 OTLP signal
+## Phase 4 OTLP signals
 
-Phase 4 implements the OTLP HTTP logs endpoint (`/v1/logs`) first because
-decision-received and outcome-observed records are discrete events with
-per-observation identity, attributes, timestamps, and raw payloads. Metrics are
-aggregated numeric instruments and can lose decision identity, correlation
-attributes, and payload shape before ingestion. Traces describe span lifecycles
-and distributed causality; they are useful context when already present, but a
-Flaggo outcome should not require an application span to exist.
+Phase 4 implements OTLP HTTP JSON endpoints for logs (`/v1/logs`), metrics
+(`/v1/metrics`), and traces (`/v1/traces`). Decision-received observations are
+a clear Flaggo-owned log event because they describe a discrete runtime
+decision. App telemetry such as `board_pressure_mean_5s`,
+`board_pressure_max_5s`, `current_level`, latency, queue depth, and failure
+rate may be represented as metrics, logs, or span attributes depending on how
+the application is instrumented. Flaggo must not require those signals to be
+re-emitted through a Flaggo-specific outcome abstraction before they can become
+candidate evidence.
+
+`flaggo.outcome.observed` remains a convenience log shape for applications
+that want to publish an explicit outcome value, but it is not the only outcome
+model. Outcome is defined by the decision contract's learning/evidence
+declarations and by async analysis over raw candidate telemetry, not by the
+existence of a single SDK helper event.
 
 An application does not need the Flaggo SDK to send telemetry to Flaggo OTel
-Ingestion. It can emit standard OTLP logs directly, through any OpenTelemetry
-SDK or Collector, as long as those logs follow the Flaggo OTLP logs mapping and
-the sender is authenticated for the target application/environment. Ingestion
-parses only enough of the OTLP envelope and log attributes to filter supported
-`flaggo.signal` values and persist accepted log records.
+Ingestion. It can emit standard OTLP logs, metrics, or traces directly through
+any OpenTelemetry SDK or Collector. For Phase 4, authentication may be added
+later; ingestion accepts telemetry with application/environment scope from OTLP
+resource attributes such as `service.name`, `flaggo.application`,
+`deployment.environment.name`, or `flaggo.environment`. Ingestion parses only
+enough of the OTLP envelope to find resource scope, candidate records,
+timestamps, stable observation IDs, and indexable signal names.
 
 ## Decision observations
 
@@ -84,8 +93,8 @@ That observation must make the following semantic information available for
 later analysis:
 
 - the SDK-generated decision ID;
-- authenticated application/environment scope as supplied by the ingestion
-  boundary, not by decision attributes;
+- application/environment scope from OTLP resource attributes or, when present,
+  an authenticated ingestion credential;
 - contract name;
 - contract and executable digests;
 - the returned result JSON and result hash;
@@ -135,16 +144,16 @@ may share an underlying activity through their SDK bindings.
 
 Applications may emit telemetry that is not Flaggo-specific, as they would
 without the Flaggo SDK. The SDK also provides convenience helpers that emit the
-Flaggo OTLP logs mapping's outcome log event:
+Flaggo OTLP logs mapping's explicit outcome log event:
 
 ```text
 eventName = "flaggo.outcome.observed"
 flaggo.signal = "outcome.observed"
 ```
 
-The ingestion service accepts supported Flaggo outcome observations, ignores
-non-Flaggo telemetry, and stores accepted raw OTLP log records scoped by the
-authenticated application/environment. Outcome observations may carry:
+The ingestion service stores ordinary application logs, metrics, and traces as
+raw candidate evidence when they carry application/resource scope. Explicit
+outcome observations may carry:
 
 - `flaggo.evidence.binding`;
 - `flaggo.evidence.value.json`;
@@ -156,11 +165,11 @@ authenticated application/environment. Outcome observations may carry:
 ## Correlation and analysis
 
 Correlation is no longer an ingestion guarantee in Phase 4. The Evidence Store
-persists accepted raw OTLP log records plus indexed metadata such as
-authenticated scope, Flaggo signal, observation ID, and observation time. The
-Async Analysis Service decides whether a decision observation plus outcome
-telemetry is sufficient, unambiguous, timely, and contract-relevant enough to
-become usable learning evidence.
+persists accepted raw OTLP logs, metrics, and traces plus indexed metadata such
+as telemetry type, resource-derived scope, signal/name, observation ID, and
+observation time. The Async Analysis Service decides whether a decision
+observation plus app telemetry is sufficient, unambiguous, timely, and
+contract-relevant enough to become usable learning evidence.
 
 Analysis may use:
 
@@ -169,8 +178,11 @@ Analysis may use:
 3. contract name/digest and evidence binding; and
 4. analysis-owned time windows or other documented heuristics.
 
-Direct decision identity and correlation attributes bind and validate the
-surrounding application activity. Neither replaces authentication data.
+Direct decision identity, metric names, span attributes, resource attributes,
+and correlation attributes bind and validate the surrounding application
+activity. They are candidate evidence facts; later auth policy can restrict
+who may write them, but Phase 4 ingestion does not make auth the evidence
+scope authority.
 
 Conceptually, analysis reads raw telemetry and interprets it as:
 
@@ -202,9 +214,9 @@ successful unambiguous evidence.
 
 The Evidence Store contains accepted raw telemetry records needed by
 asynchronous learning and generation provenance. Ingestion does not transform
-OTLP log records into decision/outcome tables. It parses only enough of the
-OTLP envelope and log attributes to filter supported `flaggo.signal` values,
-derive an idempotency key, and index the record for later analysis. Evidence
+OTLP logs, metrics, or traces into decision/outcome tables. It parses only
+enough of the OTLP envelope to derive resource scope, telemetry type,
+signal/name, idempotency key, and observation time for later analysis. Evidence
 remains associated with the contract digest under which the decision occurred
 when that identity is present in the raw telemetry payload.
 

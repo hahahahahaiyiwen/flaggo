@@ -22,7 +22,7 @@ public sealed class OtelIngestionEndpointTests
     private static readonly DecisionScope Scope = new("test-application", "test-environment");
 
     [Fact]
-    public async Task IngestsDecisionAndOutcomeObservationsFromOtlpJsonLogs()
+    public async Task IngestsFlaggoAndApplicationLogsAsCandidateEvidence()
     {
         using var factory = new OtelIngestionFactory();
         using var client = factory.CreateClient();
@@ -43,6 +43,7 @@ public sealed class OtelIngestionEndpointTests
             10,
             signal: "decision.received"));
         Assert.Equal("decision-1", decision.ObservationId);
+        Assert.Equal("logs", decision.TelemetryType);
         Assert.Equal("decision.received", decision.Signal);
         Assert.Equal("flaggo.decision.received", decision.Payload.GetProperty("eventName").GetString());
         Assert.Equal("game-1", AttributeValue(decision.Payload, "flaggo.correlation.gameId"));
@@ -50,6 +51,7 @@ public sealed class OtelIngestionEndpointTests
         var outcome = Assert.Single(await store.ListTelemetryAsync(
             Scope,
             10,
+            telemetryType: "logs",
             signal: "outcome.observed"));
         Assert.Equal("outcome-1", outcome.ObservationId);
         Assert.Equal("outcome.observed", outcome.Signal);
@@ -57,7 +59,7 @@ public sealed class OtelIngestionEndpointTests
     }
 
     [Fact]
-    public async Task IgnoresNonFlaggoTelemetryAndReportsDuplicates()
+    public async Task IngestsNonFlaggoTelemetryAndReportsDuplicates()
     {
         using var factory = new OtelIngestionFactory();
         using var client = factory.CreateClient();
@@ -70,56 +72,59 @@ public sealed class OtelIngestionEndpointTests
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(2, body.GetProperty("accepted").GetInt32());
-        Assert.Equal(1, body.GetProperty("ignored").GetInt32());
-        Assert.Equal(1, body.GetProperty("created").GetInt32());
+        Assert.Equal(3, body.GetProperty("accepted").GetInt32());
+        Assert.Equal(0, body.GetProperty("ignored").GetInt32());
+        Assert.Equal(2, body.GetProperty("created").GetInt32());
         Assert.Equal(1, body.GetProperty("duplicates").GetInt32());
+
+        var store = new SqliteEvidenceStore(factory.ConnectionString);
+        var logs = await store.ListTelemetryAsync(Scope, 10, telemetryType: "logs");
+        Assert.Contains(logs, record => record.Signal == "log");
     }
 
     [Fact]
-    public async Task ReturnsProblemDetailsForInvalidFlaggoTelemetry()
+    public async Task IngestsMetricsAndTracesAsRawCandidateEvidence()
     {
         using var factory = new OtelIngestionFactory();
         using var client = factory.CreateClient();
-        using var request = LogsRequest(new
-        {
-            timeUnixNano = "1770000000000000000",
-            attributes = new[]
-            {
-                Attribute("flaggo.signal", "unsupported.signal")
-            }
-        });
 
-        using var response = await client.SendAsync(request);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        using var metricsResponse = await client.SendAsync(MetricsRequest());
+        using var tracesResponse = await client.SendAsync(TracesRequest());
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(ProblemTypes.InvalidRequest, body.GetProperty("type").GetString());
-        Assert.Contains("Unsupported Flaggo telemetry signal", body.GetProperty("detail").GetString());
+        Assert.Equal(HttpStatusCode.OK, metricsResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, tracesResponse.StatusCode);
+
+        var store = new SqliteEvidenceStore(factory.ConnectionString);
+        var metric = Assert.Single(await store.ListTelemetryAsync(
+            Scope,
+            10,
+            telemetryType: "metrics",
+            signal: "metric:tetris.board_pressure_mean_5s"));
+        Assert.Equal("metrics", metric.TelemetryType);
+        Assert.Equal("tetris.board_pressure_mean_5s", metric.Payload.GetProperty("name").GetString());
+
+        var span = Assert.Single(await store.ListTelemetryAsync(
+            Scope,
+            10,
+            telemetryType: "traces",
+            signal: "span:tetris.tick"));
+        Assert.Equal("traces", span.TelemetryType);
+        Assert.Equal("span-1", span.Payload.GetProperty("spanId").GetString());
     }
 
-    [Theory]
-    [InlineData(null, HttpStatusCode.Unauthorized, ProblemTypes.AuthenticationRequired)]
-    [InlineData("forbidden", HttpStatusCode.Forbidden, ProblemTypes.InsufficientScope)]
-    public async Task EnforcesEvidenceWriteScope(
-        string? authentication,
-        HttpStatusCode status,
-        string problemType)
+    [Fact]
+    public async Task AcceptsUnauthenticatedTelemetryWhenResourceScopeIsPresent()
     {
         using var factory = new OtelIngestionFactory();
         using var client = factory.CreateClient();
         using var request = LogsRequest(DecisionRecord("decision-1"));
         request.Headers.Remove(TestAuthenticationHandler.HeaderName);
-        if (authentication is not null)
-        {
-            request.Headers.Add(TestAuthenticationHandler.HeaderName, authentication);
-        }
 
         using var response = await client.SendAsync(request);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
-        Assert.Equal(status, response.StatusCode);
-        Assert.Equal(problemType, body.GetProperty("type").GetString());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, body.GetProperty("accepted").GetInt32());
     }
 
     private static HttpRequestMessage LogsRequest(params object[] records)
@@ -130,6 +135,7 @@ public sealed class OtelIngestionEndpointTests
             {
                 new
                 {
+                    resource = Resource(),
                     scopeLogs = new[]
                     {
                         new
@@ -147,6 +153,105 @@ public sealed class OtelIngestionEndpointTests
         request.Headers.Add(TestAuthenticationHandler.HeaderName, "authorized");
         return request;
     }
+
+    private static HttpRequestMessage MetricsRequest()
+    {
+        var payload = new
+        {
+            resourceMetrics = new[]
+            {
+                new
+                {
+                    resource = Resource(),
+                    scopeMetrics = new[]
+                    {
+                        new
+                        {
+                            metrics = new[]
+                            {
+                                new
+                                {
+                                    name = "tetris.board_pressure_mean_5s",
+                                    gauge = new
+                                    {
+                                        dataPoints = new[]
+                                        {
+                                            new
+                                            {
+                                                timeUnixNano = "1770000000000000000",
+                                                asDouble = 0.82,
+                                                attributes = new[]
+                                                {
+                                                    Attribute("game.id", "game-1")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/metrics")
+        {
+            Content = JsonContent.Create(payload)
+        };
+        request.Headers.Add(TestAuthenticationHandler.HeaderName, "authorized");
+        return request;
+    }
+
+    private static HttpRequestMessage TracesRequest()
+    {
+        var payload = new
+        {
+            resourceSpans = new[]
+            {
+                new
+                {
+                    resource = Resource(),
+                    scopeSpans = new[]
+                    {
+                        new
+                        {
+                            spans = new[]
+                            {
+                                new
+                                {
+                                    traceId = "trace-1",
+                                    spanId = "span-1",
+                                    name = "tetris.tick",
+                                    startTimeUnixNano = "1770000000000000000",
+                                    endTimeUnixNano = "1770000001000000000",
+                                    attributes = new[]
+                                    {
+                                        Attribute("game.id", "game-1"),
+                                        Attribute("current_level", "9")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/traces")
+        {
+            Content = JsonContent.Create(payload)
+        };
+        request.Headers.Add(TestAuthenticationHandler.HeaderName, "authorized");
+        return request;
+    }
+
+    private static object Resource() => new
+    {
+        attributes = new[]
+        {
+            Attribute("service.name", "test-application"),
+            Attribute("deployment.environment.name", "test-environment")
+        }
+    };
 
     private static object DecisionRecord(string decisionId) => new
     {

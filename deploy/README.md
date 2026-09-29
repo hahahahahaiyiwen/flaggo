@@ -6,9 +6,9 @@ Service and is not a production topology.
 
 Use `npm run tetris:flaggo` or `npm run test:adaptive-worker` for cloud-free
 real-host execution. `otel-collector-flaggo-local.yaml` is a minimal local
-Collector example that receives OTLP HTTP logs from the SDK helper on
-`localhost:4318/v1/logs` and forwards them as OTLP HTTP JSON to
-`Flaggo.OtelIngestion` at `/v1/logs`; production service images and
+Collector example that receives OTLP HTTP logs, metrics, and traces on
+`localhost:4318` and forwards them as OTLP HTTP JSON to `Flaggo.OtelIngestion`
+at `/v1/logs`, `/v1/metrics`, and `/v1/traces`; production service images and
 orchestration remain deferred.
 Future assets must keep services independently deployable and must use
 environment configuration without committing credentials.

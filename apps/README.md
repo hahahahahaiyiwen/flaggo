@@ -10,9 +10,10 @@ apps/otel-ingestion
 ```
 
 Contract Service owns management routes. Decision Service owns decide and
-health routes. OTel Ingestion owns the local `/v1/logs` telemetry endpoint and
-writes raw observations to Evidence Store. Reusable strict HTTP mechanics live
-under `modules/hosting`; apps do not reference another app project.
+health routes. OTel Ingestion owns the `/v1/logs`, `/v1/metrics`, and
+`/v1/traces` telemetry endpoints and writes raw candidate observations to
+Evidence Store. Reusable strict HTTP mechanics live under `modules/hosting`;
+apps do not reference another app project.
 
 The pre-v3 shared host stack was removed after the v3 consumer cutover.
 Neither service exposes forwarding projects, compatibility routes, or
