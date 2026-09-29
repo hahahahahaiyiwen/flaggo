@@ -58,12 +58,13 @@ The SDK:
 - carries the previous applied exposure when available;
 - authenticates and sends the exact-version request;
 - does not reinterpret server failures as successful decisions; and
-- emits exposure evidence only after the application applies the result.
+- emits a raw decision-received observation after a successful decision when
+  SDK telemetry is configured.
 
 The current TypeScript SDK phase implements this flow through the returned
-`RuntimeDecision`. Its exposure API and OpenTelemetry emission are deferred
-until the Flaggo OpenTelemetry ingestion profile is defined; the exposure
-steps in this document describe that future ownership boundary.
+`RuntimeDecision`. The decision-received observation is not proof that the
+application applied the result. Application outcome telemetry and async
+analysis own later interpretation and correlation.
 
 Future SDK-local fallback to a contract default or cached prior decision is a
 separate policy. It does not change the Decision Service response or create a

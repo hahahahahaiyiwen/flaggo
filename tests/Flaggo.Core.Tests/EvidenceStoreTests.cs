@@ -8,83 +8,68 @@ namespace Flaggo.Core.Tests;
 public sealed class EvidenceStoreTests
 {
     private static readonly DecisionScope Scope = new("checkout", "production");
-    private const string ContractDigest =
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    private const string ExecutableDigest =
-        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-    private const string ResultHash =
-        "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
     [Fact]
-    public async Task DecisionObservationsAreImmutableScopedAndPersistent()
+    public async Task TelemetryRecordsAreImmutableScopedAndPersistent()
     {
         using var database = new TemporaryDatabase();
         var store = new SqliteEvidenceStore(database.ConnectionString);
         await store.InitializeAsync();
         var observedAt = new DateTimeOffset(2026, 4, 1, 10, 0, 0, TimeSpan.Zero);
-        var observation = DecisionObservation(
-            decisionId: "decision-1",
+        var record = TelemetryRecord(
+            observationId: "decision-1",
+            signal: "decision.received",
             observedAt: observedAt,
             result: 850);
 
         Assert.Equal(
-            EvidenceObservationWriteResult.Created,
-            await store.PutDecisionAsync(observation));
+            new EvidenceTelemetryWriteResult(Created: 1, Existing: 0),
+            await store.PutTelemetryBatchAsync([record]));
         Assert.Equal(
-            EvidenceObservationWriteResult.Existing,
-            await store.PutDecisionAsync(observation with
-            {
-                Result = JsonSerializer.SerializeToElement(900),
-                ObservedAt = observedAt.AddMinutes(1)
-            }));
+            new EvidenceTelemetryWriteResult(Created: 0, Existing: 1),
+            await store.PutTelemetryBatchAsync([
+                record with
+                {
+                    Payload = Payload("decision.received", 900),
+                    ObservedAt = observedAt.AddMinutes(1)
+                }
+            ]));
 
         var persisted = await new SqliteEvidenceStore(database.ConnectionString)
-            .ListDecisionsAsync(Scope, limit: 10, contractName: "tetris.dropInterval");
+            .ListTelemetryAsync(Scope, limit: 10, signal: "decision.received");
 
         var actual = Assert.Single(persisted);
-        Assert.Equal("decision-1", actual.DecisionId);
-        Assert.Equal(850, actual.Result.GetInt32());
+        Assert.Equal("decision-1", actual.ObservationId);
+        Assert.Equal("decision.received", actual.Signal);
         Assert.Equal(observedAt, actual.ObservedAt);
-        Assert.Equal("session-1", actual.CorrelationAttributes["sessionId"].GetString());
-        Assert.Empty(await store.ListDecisionsAsync(
+        Assert.Equal("flaggo.decision.received", actual.Payload.GetProperty("eventName").GetString());
+        Assert.Equal("850", actual.Payload
+            .GetProperty("attributes")[2]
+            .GetProperty("value")
+            .GetProperty("stringValue")
+            .GetString());
+        Assert.Empty(await store.ListTelemetryAsync(
             new DecisionScope("checkout", "staging"),
             limit: 10));
     }
 
     [Fact]
-    public async Task OutcomeObservationsAreImmutableScopedAndQueryableByBinding()
+    public async Task TelemetryBatchPersistsMultipleSignalsAndCanFilter()
     {
         using var database = new TemporaryDatabase();
         var store = new SqliteEvidenceStore(database.ConnectionString);
         await store.InitializeAsync();
-        var observedAt = new DateTimeOffset(2026, 4, 1, 10, 5, 0, TimeSpan.Zero);
-        var observation = OutcomeObservation(
-            observationId: "outcome-1",
-            binding: "tetris.survival_ms",
-            observedAt: observedAt,
-            value: 18_400);
 
-        Assert.Equal(
-            EvidenceObservationWriteResult.Created,
-            await store.PutOutcomeAsync(observation));
-        Assert.Equal(
-            EvidenceObservationWriteResult.Existing,
-            await store.PutOutcomeAsync(observation with
-            {
-                Value = JsonSerializer.SerializeToElement(1),
-                ObservedAt = observedAt.AddMinutes(1)
-            }));
+        var write = await store.PutTelemetryBatchAsync([
+            TelemetryRecord("decision-1", "decision.received"),
+            TelemetryRecord("outcome-1", "outcome.observed")
+        ]);
 
-        var persisted = await new SqliteEvidenceStore(database.ConnectionString)
-            .ListOutcomesAsync(Scope, limit: 10, binding: "tetris.survival_ms");
-
-        var actual = Assert.Single(persisted);
-        Assert.Equal("outcome-1", actual.ObservationId);
-        Assert.Equal("decision-1", actual.DecisionId);
-        Assert.Equal(18_400, actual.Value.GetInt32());
-        Assert.Equal(observedAt, actual.ObservedAt);
-        Assert.Equal("session-1", actual.CorrelationAttributes["sessionId"].GetString());
-        Assert.Empty(await store.ListOutcomesAsync(Scope, limit: 10, binding: "other.binding"));
+        Assert.Equal(new EvidenceTelemetryWriteResult(Created: 2, Existing: 0), write);
+        Assert.Equal(2, (await store.ListTelemetryAsync(Scope, 10)).Count);
+        var outcomes = await store.ListTelemetryAsync(Scope, 10, "outcome.observed");
+        var outcome = Assert.Single(outcomes);
+        Assert.Equal("outcome-1", outcome.ObservationId);
     }
 
     [Fact]
@@ -106,49 +91,46 @@ public sealed class EvidenceStoreTests
             database.ConnectionString,
             "UPDATE flaggo_schema_versions SET version = 1 "
             + "WHERE component = 'evidence-store'; "
-            + "DROP TABLE evidence_outcome_observations;");
+            + "DROP TABLE evidence_telemetry_records;");
         Assert.False(await store.IsAvailableAsync());
     }
 
-    private static DecisionObservation DecisionObservation(
-        string decisionId,
-        DateTimeOffset observedAt,
-        int result) =>
-        new(
-            Scope,
-            decisionId,
-            "tetris.dropInterval",
-            ContractDigest,
-            ExecutableDigest,
-            JsonSerializer.SerializeToElement(result),
-            ResultHash,
-            "rule",
-            "high-pressure",
-            new Dictionary<string, JsonElement>
-            {
-                ["sessionId"] = JsonSerializer.SerializeToElement("session-1"),
-                ["level"] = JsonSerializer.SerializeToElement(9)
-            },
-            observedAt);
-
-    private static OutcomeObservation OutcomeObservation(
+    private static EvidenceTelemetryRecord TelemetryRecord(
         string observationId,
-        string binding,
-        DateTimeOffset observedAt,
-        int value) =>
+        string signal,
+        DateTimeOffset? observedAt = null,
+        int result = 850) =>
         new(
             Scope,
             observationId,
-            binding,
-            JsonSerializer.SerializeToElement(value),
-            "decision-1",
-            "tetris.dropInterval",
-            ContractDigest,
-            new Dictionary<string, JsonElement>
+            signal,
+            Payload(signal, result),
+            observedAt ?? new DateTimeOffset(2026, 4, 1, 10, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 4, 1, 10, 0, 1, TimeSpan.Zero));
+
+    private static JsonElement Payload(string signal, int result)
+    {
+        var eventName = signal == "decision.received"
+            ? "flaggo.decision.received"
+            : "flaggo.outcome.observed";
+        return JsonSerializer.SerializeToElement(new
+        {
+            eventName,
+            timeUnixNano = "1770000000000000000",
+            attributes = new object[]
             {
-                ["sessionId"] = JsonSerializer.SerializeToElement("session-1")
-            },
-            observedAt);
+                Attribute("flaggo.signal", signal),
+                Attribute("flaggo.decision.id", "decision-1"),
+                Attribute("flaggo.result.json", result.ToString())
+            }
+        });
+    }
+
+    private static object Attribute(string key, string value) => new
+    {
+        key,
+        value = new { stringValue = value }
+    };
 
     private static async Task ExecuteSqlAsync(
         string connectionString,

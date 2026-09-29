@@ -44,10 +44,27 @@ to Flaggo ingestion, or forward telemetry under configured
 service/instrumentation namespaces.
 Collector configuration does not need to understand decision contracts,
 evidence bindings, or dynamic contract-aware filters. Flaggo OTel Ingestion
-always owns contract/profile filtering.
+always owns Flaggo signal filtering and any later contract-aware filtering.
 
 The SDK does not make the Decision Service persist a decision session and does
 not require a synchronous exposure-confirmation call.
+
+## Phase 4 OTLP signal
+
+Phase 4 implements the OTLP HTTP logs endpoint (`/v1/logs`) first because
+decision-received and outcome-observed records are discrete events with
+per-observation identity, attributes, timestamps, and raw payloads. Metrics are
+aggregated numeric instruments and can lose decision identity, correlation
+attributes, and payload shape before ingestion. Traces describe span lifecycles
+and distributed causality; they are useful context when already present, but a
+Flaggo outcome should not require an application span to exist.
+
+An application does not need the Flaggo SDK to send telemetry to Flaggo OTel
+Ingestion. It can emit standard OTLP logs directly, through any OpenTelemetry
+SDK or Collector, as long as those logs follow the Flaggo OTLP logs mapping and
+the sender is authenticated for the target application/environment. Ingestion
+parses only enough of the OTLP envelope and log attributes to filter supported
+`flaggo.signal` values and persist accepted log records.
 
 ## Decision observations
 
@@ -126,8 +143,8 @@ flaggo.signal = "outcome.observed"
 ```
 
 The ingestion service accepts supported Flaggo outcome observations, ignores
-non-Flaggo telemetry, and stores raw observations scoped by the authenticated
-application/environment. Outcome observations may carry:
+non-Flaggo telemetry, and stores accepted raw OTLP log records scoped by the
+authenticated application/environment. Outcome observations may carry:
 
 - `flaggo.evidence.binding`;
 - `flaggo.evidence.value.json`;
@@ -139,10 +156,11 @@ application/environment. Outcome observations may carry:
 ## Correlation and analysis
 
 Correlation is no longer an ingestion guarantee in Phase 4. The Evidence Store
-persists raw decision and outcome observations. The Async Analysis Service
-decides whether a decision observation plus outcome telemetry is sufficient,
-unambiguous, timely, and contract-relevant enough to become usable learning
-evidence.
+persists accepted raw OTLP log records plus indexed metadata such as
+authenticated scope, Flaggo signal, observation ID, and observation time. The
+Async Analysis Service decides whether a decision observation plus outcome
+telemetry is sufficient, unambiguous, timely, and contract-relevant enough to
+become usable learning evidence.
 
 Analysis may use:
 
@@ -154,7 +172,7 @@ Analysis may use:
 Direct decision identity and correlation attributes bind and validate the
 surrounding application activity. Neither replaces authentication data.
 
-Conceptually:
+Conceptually, analysis reads raw telemetry and interprets it as:
 
 ```text
 OutcomeObservation {
@@ -182,10 +200,13 @@ successful unambiguous evidence.
 
 ## Evidence storage boundary
 
-The Evidence Store contains raw decision and outcome observations needed by
-asynchronous learning and generation provenance. Evidence remains associated
-with the contract digest under which the decision occurred when that identity
-is known.
+The Evidence Store contains accepted raw telemetry records needed by
+asynchronous learning and generation provenance. Ingestion does not transform
+OTLP log records into decision/outcome tables. It parses only enough of the
+OTLP envelope and log attributes to filter supported `flaggo.signal` values,
+derive an idempotency key, and index the record for later analysis. Evidence
+remains associated with the contract digest under which the decision occurred
+when that identity is present in the raw telemetry payload.
 
 The store is not:
 

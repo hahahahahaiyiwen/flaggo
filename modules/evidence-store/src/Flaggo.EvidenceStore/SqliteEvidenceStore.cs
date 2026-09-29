@@ -33,51 +33,22 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
             VALUES ($component, $version)
             ON CONFLICT(component) DO NOTHING;
 
-            CREATE TABLE IF NOT EXISTS evidence_decision_observations (
-                application TEXT NOT NULL,
-                environment TEXT NOT NULL,
-                decision_id TEXT NOT NULL,
-                contract_name TEXT NOT NULL,
-                contract_digest TEXT NOT NULL,
-                executable_digest TEXT NOT NULL,
-                result_json BLOB NOT NULL,
-                result_hash TEXT NOT NULL,
-                evaluation_source TEXT NOT NULL
-                    CHECK(evaluation_source IN ('rule', 'default')),
-                evaluation_rule TEXT NULL,
-                correlation_json BLOB NOT NULL,
-                observed_at TEXT NOT NULL,
-                PRIMARY KEY(application, environment, decision_id)
-            );
-
-            CREATE INDEX IF NOT EXISTS ix_evidence_decisions_contract_time
-            ON evidence_decision_observations(
-                application,
-                environment,
-                contract_name,
-                observed_at DESC,
-                decision_id DESC
-            );
-
-            CREATE TABLE IF NOT EXISTS evidence_outcome_observations (
+            CREATE TABLE IF NOT EXISTS evidence_telemetry_records (
                 application TEXT NOT NULL,
                 environment TEXT NOT NULL,
                 observation_id TEXT NOT NULL,
-                binding TEXT NOT NULL,
-                value_json BLOB NOT NULL,
-                decision_id TEXT NULL,
-                contract_name TEXT NULL,
-                contract_digest TEXT NULL,
-                correlation_json BLOB NOT NULL,
+                signal TEXT NOT NULL,
+                payload_json BLOB NOT NULL,
                 observed_at TEXT NOT NULL,
+                received_at TEXT NOT NULL,
                 PRIMARY KEY(application, environment, observation_id)
             );
 
-            CREATE INDEX IF NOT EXISTS ix_evidence_outcomes_binding_time
-            ON evidence_outcome_observations(
+            CREATE INDEX IF NOT EXISTS ix_evidence_telemetry_signal_time
+            ON evidence_telemetry_records(
                 application,
                 environment,
-                binding,
+                signal,
                 observed_at DESC,
                 observation_id DESC
             );
@@ -100,172 +71,69 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         }
     }
 
-    public async Task<EvidenceObservationWriteResult> PutDecisionAsync(
-        DecisionObservation observation,
+    public async Task<EvidenceTelemetryWriteResult> PutTelemetryBatchAsync(
+        IReadOnlyList<EvidenceTelemetryRecord> records,
         CancellationToken cancellationToken = default)
     {
-        ValidateDecision(observation);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            """
-            INSERT INTO evidence_decision_observations(
-                application,
-                environment,
-                decision_id,
-                contract_name,
-                contract_digest,
-                executable_digest,
-                result_json,
-                result_hash,
-                evaluation_source,
-                evaluation_rule,
-                correlation_json,
-                observed_at
-            )
-            VALUES (
-                $application,
-                $environment,
-                $decisionId,
-                $contractName,
-                $contractDigest,
-                $executableDigest,
-                $resultJson,
-                $resultHash,
-                $evaluationSource,
-                $evaluationRule,
-                $correlationJson,
-                $observedAt
-            )
-            ON CONFLICT(application, environment, decision_id) DO NOTHING;
-            """;
-        AddScope(command, observation.Scope);
-        command.Parameters.AddWithValue("$decisionId", observation.DecisionId);
-        command.Parameters.AddWithValue("$contractName", observation.ContractName);
-        command.Parameters.AddWithValue("$contractDigest", observation.ContractDigest);
-        command.Parameters.AddWithValue("$executableDigest", observation.ExecutableDigest);
-        command.Parameters.Add("$resultJson", SqliteType.Blob).Value =
-            JsonSerializer.SerializeToUtf8Bytes(observation.Result, JsonOptions);
-        command.Parameters.AddWithValue("$resultHash", observation.ResultHash);
-        command.Parameters.AddWithValue("$evaluationSource", observation.EvaluationSource);
-        command.Parameters.AddWithValue(
-            "$evaluationRule",
-            observation.EvaluationRule is null
-                ? DBNull.Value
-                : observation.EvaluationRule);
-        command.Parameters.Add("$correlationJson", SqliteType.Blob).Value =
-            SerializeCorrelation(observation.CorrelationAttributes);
-        command.Parameters.AddWithValue("$observedAt", FormatTime(observation.ObservedAt));
-        var rows = await command.ExecuteNonQueryAsync(cancellationToken);
-        return rows == 1
-            ? EvidenceObservationWriteResult.Created
-            : EvidenceObservationWriteResult.Existing;
-    }
-
-    public async Task<EvidenceObservationWriteResult> PutOutcomeAsync(
-        OutcomeObservation observation,
-        CancellationToken cancellationToken = default)
-    {
-        ValidateOutcome(observation);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            """
-            INSERT INTO evidence_outcome_observations(
-                application,
-                environment,
-                observation_id,
-                binding,
-                value_json,
-                decision_id,
-                contract_name,
-                contract_digest,
-                correlation_json,
-                observed_at
-            )
-            VALUES (
-                $application,
-                $environment,
-                $observationId,
-                $binding,
-                $valueJson,
-                $decisionId,
-                $contractName,
-                $contractDigest,
-                $correlationJson,
-                $observedAt
-            )
-            ON CONFLICT(application, environment, observation_id) DO NOTHING;
-            """;
-        AddScope(command, observation.Scope);
-        command.Parameters.AddWithValue("$observationId", observation.ObservationId);
-        command.Parameters.AddWithValue("$binding", observation.Binding);
-        command.Parameters.Add("$valueJson", SqliteType.Blob).Value =
-            JsonSerializer.SerializeToUtf8Bytes(observation.Value, JsonOptions);
-        command.Parameters.AddWithValue(
-            "$decisionId",
-            observation.DecisionId is null
-                ? DBNull.Value
-                : observation.DecisionId);
-        command.Parameters.AddWithValue(
-            "$contractName",
-            observation.ContractName is null
-                ? DBNull.Value
-                : observation.ContractName);
-        command.Parameters.AddWithValue(
-            "$contractDigest",
-            observation.ContractDigest is null
-                ? DBNull.Value
-                : observation.ContractDigest);
-        command.Parameters.Add("$correlationJson", SqliteType.Blob).Value =
-            SerializeCorrelation(observation.CorrelationAttributes);
-        command.Parameters.AddWithValue("$observedAt", FormatTime(observation.ObservedAt));
-        var rows = await command.ExecuteNonQueryAsync(cancellationToken);
-        return rows == 1
-            ? EvidenceObservationWriteResult.Created
-            : EvidenceObservationWriteResult.Existing;
-    }
-
-    public async Task<IReadOnlyList<DecisionObservation>> ListDecisionsAsync(
-        DecisionScope scope,
-        int limit,
-        string? contractName = null,
-        CancellationToken cancellationToken = default)
-    {
-        ValidateScope(scope);
-        ValidateLimit(limit);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            """
-            SELECT decision_id, contract_name, contract_digest, executable_digest,
-                   result_json, result_hash, evaluation_source, evaluation_rule,
-                   correlation_json, observed_at
-            FROM evidence_decision_observations
-            WHERE application = $application
-              AND environment = $environment
-              AND ($contractName IS NULL OR contract_name = $contractName)
-            ORDER BY observed_at DESC, decision_id DESC
-            LIMIT $limit;
-            """;
-        AddScope(command, scope);
-        command.Parameters.AddWithValue(
-            "$contractName",
-            contractName is null ? DBNull.Value : contractName);
-        command.Parameters.AddWithValue("$limit", limit);
-        var observations = new List<DecisionObservation>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        ArgumentNullException.ThrowIfNull(records);
+        if (records.Count == 0)
         {
-            observations.Add(ReadDecision(reader, scope));
+            return new EvidenceTelemetryWriteResult(Created: 0, Existing: 0);
         }
-        return observations;
+
+        foreach (var record in records)
+        {
+            ValidateRecord(record);
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var created = 0;
+        foreach (var record in records)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = (SqliteTransaction)transaction;
+            command.CommandText =
+                """
+                INSERT INTO evidence_telemetry_records(
+                    application,
+                    environment,
+                    observation_id,
+                    signal,
+                    payload_json,
+                    observed_at,
+                    received_at
+                )
+                VALUES (
+                    $application,
+                    $environment,
+                    $observationId,
+                    $signal,
+                    $payloadJson,
+                    $observedAt,
+                    $receivedAt
+                )
+                ON CONFLICT(application, environment, observation_id) DO NOTHING;
+                """;
+            AddScope(command, record.Scope);
+            command.Parameters.AddWithValue("$observationId", record.ObservationId);
+            command.Parameters.AddWithValue("$signal", record.Signal);
+            command.Parameters.Add("$payloadJson", SqliteType.Blob).Value =
+                JsonSerializer.SerializeToUtf8Bytes(record.Payload, JsonOptions);
+            command.Parameters.AddWithValue("$observedAt", FormatTime(record.ObservedAt));
+            command.Parameters.AddWithValue("$receivedAt", FormatTime(record.ReceivedAt));
+            created += await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return new EvidenceTelemetryWriteResult(
+            Created: created,
+            Existing: records.Count - created);
     }
 
-    public async Task<IReadOnlyList<OutcomeObservation>> ListOutcomesAsync(
+    public async Task<IReadOnlyList<EvidenceTelemetryRecord>> ListTelemetryAsync(
         DecisionScope scope,
         int limit,
-        string? binding = null,
+        string? signal = null,
         CancellationToken cancellationToken = default)
     {
         ValidateScope(scope);
@@ -274,25 +142,24 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         await using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT observation_id, binding, value_json, decision_id,
-                   contract_name, contract_digest, correlation_json, observed_at
-            FROM evidence_outcome_observations
+            SELECT observation_id, signal, payload_json, observed_at, received_at
+            FROM evidence_telemetry_records
             WHERE application = $application
               AND environment = $environment
-              AND ($binding IS NULL OR binding = $binding)
+              AND ($signal IS NULL OR signal = $signal)
             ORDER BY observed_at DESC, observation_id DESC
             LIMIT $limit;
             """;
         AddScope(command, scope);
-        command.Parameters.AddWithValue("$binding", binding is null ? DBNull.Value : binding);
+        command.Parameters.AddWithValue("$signal", signal is null ? DBNull.Value : signal);
         command.Parameters.AddWithValue("$limit", limit);
-        var observations = new List<OutcomeObservation>();
+        var records = new List<EvidenceTelemetryRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            observations.Add(ReadOutcome(reader, scope));
+            records.Add(ReadRecord(reader, scope));
         }
-        return observations;
+        return records;
     }
 
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
@@ -305,26 +172,16 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                 return false;
             }
 
-            await ProbeTableAsync(
-                connection,
+            await using var command = connection.CreateCommand();
+            command.CommandText =
                 """
-                SELECT application, environment, decision_id, contract_name,
-                       contract_digest, executable_digest, result_json, result_hash,
-                       evaluation_source, evaluation_rule, correlation_json, observed_at
-                FROM evidence_decision_observations
+                SELECT application, environment, observation_id, signal,
+                       payload_json, observed_at, received_at
+                FROM evidence_telemetry_records
                 LIMIT 0;
-                """,
-                cancellationToken);
-            await ProbeTableAsync(
-                connection,
-                """
-                SELECT application, environment, observation_id, binding, value_json,
-                       decision_id, contract_name, contract_digest, correlation_json,
-                       observed_at
-                FROM evidence_outcome_observations
-                LIMIT 0;
-                """,
-                cancellationToken);
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            _ = await reader.ReadAsync(cancellationToken);
             return true;
         }
         catch (SqliteException)
@@ -345,17 +202,6 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
             && version == SchemaVersion;
     }
 
-    private static async Task ProbeTableAsync(
-        SqliteConnection connection,
-        string query,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = query;
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        _ = await reader.ReadAsync(cancellationToken);
-    }
-
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var connection = new SqliteConnection(_connectionString);
@@ -366,47 +212,15 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         return connection;
     }
 
-    private static void ValidateDecision(DecisionObservation observation)
+    private static void ValidateRecord(EvidenceTelemetryRecord record)
     {
-        ValidateScope(observation.Scope);
-        ValidateIdentity(observation.DecisionId, nameof(observation.DecisionId));
-        ValidateIdentity(observation.ContractName, nameof(observation.ContractName));
-        ValidateDigest(observation.ContractDigest, nameof(observation.ContractDigest));
-        ValidateDigest(observation.ExecutableDigest, nameof(observation.ExecutableDigest));
-        ValidateDigest(observation.ResultHash, nameof(observation.ResultHash));
-        if (observation.EvaluationSource is not ("rule" or "default"))
+        ValidateScope(record.Scope);
+        ValidateIdentity(record.ObservationId, nameof(record.ObservationId));
+        ValidateIdentity(record.Signal, nameof(record.Signal));
+        if (record.Payload.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("Evaluation source must be 'rule' or 'default'.", nameof(observation));
+            throw new ArgumentException("Telemetry payload must be a JSON object.", nameof(record));
         }
-        if (observation.EvaluationSource == "rule")
-        {
-            ValidateIdentity(observation.EvaluationRule, nameof(observation.EvaluationRule));
-        }
-        if (observation.EvaluationSource == "default" && observation.EvaluationRule is not null)
-        {
-            throw new ArgumentException("Default evaluations cannot carry a rule name.", nameof(observation));
-        }
-        ValidateCorrelation(observation.CorrelationAttributes);
-    }
-
-    private static void ValidateOutcome(OutcomeObservation observation)
-    {
-        ValidateScope(observation.Scope);
-        ValidateIdentity(observation.ObservationId, nameof(observation.ObservationId));
-        ValidateIdentity(observation.Binding, nameof(observation.Binding));
-        if (observation.DecisionId is not null)
-        {
-            ValidateIdentity(observation.DecisionId, nameof(observation.DecisionId));
-        }
-        if (observation.ContractName is not null)
-        {
-            ValidateIdentity(observation.ContractName, nameof(observation.ContractName));
-        }
-        if (observation.ContractDigest is not null)
-        {
-            ValidateDigest(observation.ContractDigest, nameof(observation.ContractDigest));
-        }
-        ValidateCorrelation(observation.CorrelationAttributes);
     }
 
     private static void ValidateScope(DecisionScope scope)
@@ -415,36 +229,16 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         ArgumentException.ThrowIfNullOrWhiteSpace(scope.Environment);
     }
 
-    private static void ValidateIdentity(string? value, string parameterName)
+    private static void ValidateIdentity(string value, string parameterName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
-        if (value.Length > 512 || value.Contains('\r', StringComparison.Ordinal)
+        if (value.Length > 512
+            || value.Contains('\r', StringComparison.Ordinal)
             || value.Contains('\n', StringComparison.Ordinal))
         {
-            throw new ArgumentException("Evidence identity values must be single-line strings up to 512 characters.", parameterName);
-        }
-    }
-
-    private static void ValidateDigest(string value, string parameterName)
-    {
-        ValidateIdentity(value, parameterName);
-        if (value.Length != 71 || !value.StartsWith("sha256:", StringComparison.Ordinal))
-        {
-            throw new ArgumentException("Digest values must use the sha256:<64 hex> form.", parameterName);
-        }
-    }
-
-    private static void ValidateCorrelation(
-        IReadOnlyDictionary<string, JsonElement> correlation)
-    {
-        ArgumentNullException.ThrowIfNull(correlation);
-        foreach (var (name, value) in correlation)
-        {
-            ValidateIdentity(name, nameof(correlation));
-            if (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
-            {
-                throw new ArgumentException("Correlation values must be scalar JSON values.", nameof(correlation));
-            }
+            throw new ArgumentException(
+                "Evidence identity values must be single-line strings up to 512 characters.",
+                parameterName);
         }
     }
 
@@ -462,58 +256,19 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         command.Parameters.AddWithValue("$environment", scope.Environment);
     }
 
-    private static DecisionObservation ReadDecision(
+    private static EvidenceTelemetryRecord ReadRecord(
         SqliteDataReader reader,
-        DecisionScope scope) =>
-        new(
+        DecisionScope scope)
+    {
+        using var payload = JsonDocument.Parse((byte[])reader.GetValue(2));
+        return new EvidenceTelemetryRecord(
             scope,
             reader.GetString(0),
             reader.GetString(1),
-            reader.GetString(2),
-            reader.GetString(3),
-            ReadJson(reader, 4),
-            reader.GetString(5),
-            reader.GetString(6),
-            reader.IsDBNull(7) ? null : reader.GetString(7),
-            ReadCorrelation(reader, 8),
-            ParseTime(reader.GetString(9)));
-
-    private static OutcomeObservation ReadOutcome(
-        SqliteDataReader reader,
-        DecisionScope scope) =>
-        new(
-            scope,
-            reader.GetString(0),
-            reader.GetString(1),
-            ReadJson(reader, 2),
-            reader.IsDBNull(3) ? null : reader.GetString(3),
-            reader.IsDBNull(4) ? null : reader.GetString(4),
-            reader.IsDBNull(5) ? null : reader.GetString(5),
-            ReadCorrelation(reader, 6),
-            ParseTime(reader.GetString(7)));
-
-    private static JsonElement ReadJson(SqliteDataReader reader, int ordinal)
-    {
-        using var document = JsonDocument.Parse((byte[])reader.GetValue(ordinal));
-        return document.RootElement.Clone();
+            payload.RootElement.Clone(),
+            ParseTime(reader.GetString(3)),
+            ParseTime(reader.GetString(4)));
     }
-
-    private static IReadOnlyDictionary<string, JsonElement> ReadCorrelation(
-        SqliteDataReader reader,
-        int ordinal)
-    {
-        using var document = JsonDocument.Parse((byte[])reader.GetValue(ordinal));
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var property in document.RootElement.EnumerateObject())
-        {
-            result[property.Name] = property.Value.Clone();
-        }
-        return result;
-    }
-
-    private static byte[] SerializeCorrelation(
-        IReadOnlyDictionary<string, JsonElement> correlation) =>
-        JsonSerializer.SerializeToUtf8Bytes(correlation, JsonOptions);
 
     private static string FormatTime(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);

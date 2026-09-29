@@ -69,5 +69,5 @@ node examples\adaptive-worker\dist\main.js
 ```
 
 The Collector forwards OTLP logs to `Flaggo.OtelIngestion` at `/v1/logs`; the
-ingestion service performs contract/profile filtering and writes raw
-observations to Evidence Store.
+ingestion service performs Flaggo signal filtering and writes accepted raw OTLP
+log records to Evidence Store.

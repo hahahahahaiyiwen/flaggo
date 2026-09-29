@@ -35,21 +35,25 @@ public sealed class OtelIngestionEndpointTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, body.GetProperty("accepted").GetInt32());
-        Assert.Equal(1, body.GetProperty("decisionObservationsCreated").GetInt32());
-        Assert.Equal(1, body.GetProperty("outcomeObservationsCreated").GetInt32());
+        Assert.Equal(2, body.GetProperty("created").GetInt32());
 
         var store = new SqliteEvidenceStore(factory.ConnectionString);
-        var decision = Assert.Single(await store.ListDecisionsAsync(Scope, 10));
-        Assert.Equal("decision-1", decision.DecisionId);
-        Assert.Equal("tetris.dropInterval", decision.ContractName);
-        Assert.Equal(850, decision.Result.GetInt32());
-        Assert.Equal("game-1", decision.CorrelationAttributes["gameId"].GetString());
+        var decision = Assert.Single(await store.ListTelemetryAsync(
+            Scope,
+            10,
+            signal: "decision.received"));
+        Assert.Equal("decision-1", decision.ObservationId);
+        Assert.Equal("decision.received", decision.Signal);
+        Assert.Equal("flaggo.decision.received", decision.Payload.GetProperty("eventName").GetString());
+        Assert.Equal("game-1", AttributeValue(decision.Payload, "flaggo.correlation.gameId"));
 
-        var outcome = Assert.Single(await store.ListOutcomesAsync(Scope, 10));
+        var outcome = Assert.Single(await store.ListTelemetryAsync(
+            Scope,
+            10,
+            signal: "outcome.observed"));
         Assert.Equal("outcome-1", outcome.ObservationId);
-        Assert.Equal("decision-1", outcome.DecisionId);
-        Assert.Equal("tetris.survival_ms", outcome.Binding);
-        Assert.Equal(18_400, outcome.Value.GetInt32());
+        Assert.Equal("outcome.observed", outcome.Signal);
+        Assert.Equal("tetris.survival_ms", AttributeValue(outcome.Payload, "flaggo.evidence.binding"));
     }
 
     [Fact]
@@ -68,7 +72,7 @@ public sealed class OtelIngestionEndpointTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, body.GetProperty("accepted").GetInt32());
         Assert.Equal(1, body.GetProperty("ignored").GetInt32());
-        Assert.Equal(1, body.GetProperty("decisionObservationsCreated").GetInt32());
+        Assert.Equal(1, body.GetProperty("created").GetInt32());
         Assert.Equal(1, body.GetProperty("duplicates").GetInt32());
     }
 
@@ -82,7 +86,7 @@ public sealed class OtelIngestionEndpointTests
             timeUnixNano = "1770000000000000000",
             attributes = new[]
             {
-                Attribute("flaggo.signal", "decision.received")
+                Attribute("flaggo.signal", "unsupported.signal")
             }
         });
 
@@ -91,7 +95,7 @@ public sealed class OtelIngestionEndpointTests
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal(ProblemTypes.InvalidRequest, body.GetProperty("type").GetString());
-        Assert.Contains("flaggo.decision.id", body.GetProperty("detail").GetString());
+        Assert.Contains("Unsupported Flaggo telemetry signal", body.GetProperty("detail").GetString());
     }
 
     [Theory]
@@ -146,6 +150,7 @@ public sealed class OtelIngestionEndpointTests
 
     private static object DecisionRecord(string decisionId) => new
     {
+        eventName = "flaggo.decision.received",
         timeUnixNano = "1770000000000000000",
         attributes = new[]
         {
@@ -164,6 +169,7 @@ public sealed class OtelIngestionEndpointTests
 
     private static object OutcomeRecord(string observationId) => new
     {
+        eventName = "flaggo.outcome.observed",
         timeUnixNano = "1770000300000000000",
         attributes = new[]
         {
@@ -192,6 +198,21 @@ public sealed class OtelIngestionEndpointTests
         key,
         value = new { stringValue = value }
     };
+
+    private static string? AttributeValue(JsonElement logRecord, string name)
+    {
+        foreach (var attribute in logRecord.GetProperty("attributes").EnumerateArray())
+        {
+            if (attribute.GetProperty("key").GetString() == name)
+            {
+                return attribute
+                    .GetProperty("value")
+                    .GetProperty("stringValue")
+                    .GetString();
+            }
+        }
+        return null;
+    }
 
     private static string Digest(char value) => $"sha256:{new string(value, 64)}";
 }

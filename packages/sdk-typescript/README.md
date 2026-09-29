@@ -112,8 +112,10 @@ telemetry.recordOutcome({
 ```
 
 Apps may also emit ordinary OpenTelemetry telemetry without the helper. The
-Flaggo Collector/Ingestion profile treats SDK helpers as convenience APIs, not
-the only valid source of outcome observations.
+Phase 4 Flaggo OTLP logs mapping treats SDK helpers as convenience APIs, not
+the only valid source of outcome observations. Non-SDK apps can send compatible
+OTLP logs directly when they emit the mapped `flaggo.*` attributes and
+authenticate to the ingestion boundary.
 
 For examples and development harnesses, the runtime package also provides a
 small OTLP logs setup helper:
