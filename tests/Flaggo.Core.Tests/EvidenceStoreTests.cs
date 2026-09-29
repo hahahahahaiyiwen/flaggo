@@ -30,7 +30,7 @@ public sealed class EvidenceStoreTests
             await store.PutTelemetryBatchAsync([
                 record with
                 {
-                    Payload = Payload("decision.received", 900),
+                    Envelope = Envelope("decision.received", 900),
                     ObservedAt = observedAt.AddMinutes(1)
                 }
             ]));
@@ -42,8 +42,9 @@ public sealed class EvidenceStoreTests
         Assert.Equal("decision-1", actual.ObservationId);
         Assert.Equal("decision.received", actual.Signal);
         Assert.Equal(observedAt, actual.ObservedAt);
-        Assert.Equal("flaggo.decision.received", actual.Payload.GetProperty("eventName").GetString());
-        Assert.Equal("850", actual.Payload
+        var payload = actual.Envelope.GetProperty("record");
+        Assert.Equal("flaggo.decision.received", payload.GetProperty("eventName").GetString());
+        Assert.Equal("850", payload
             .GetProperty("attributes")[2]
             .GetProperty("value")
             .GetProperty("stringValue")
@@ -86,13 +87,13 @@ public sealed class EvidenceStoreTests
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 3 "
+            "UPDATE flaggo_schema_versions SET version = 4 "
             + "WHERE component = 'evidence-store';");
         Assert.False(await store.IsAvailableAsync());
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 2 "
+            "UPDATE flaggo_schema_versions SET version = 3 "
             + "WHERE component = 'evidence-store'; "
             + "DROP TABLE evidence_telemetry_records;");
         Assert.False(await store.IsAvailableAsync());
@@ -108,24 +109,35 @@ public sealed class EvidenceStoreTests
             observationId,
             "logs",
             signal,
-            Payload(signal, result),
+            Envelope(signal, result),
             observedAt ?? new DateTimeOffset(2026, 4, 1, 10, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2026, 4, 1, 10, 0, 1, TimeSpan.Zero));
 
-    private static JsonElement Payload(string signal, int result)
+    private static JsonElement Envelope(string signal, int result)
     {
         var eventName = signal == "decision.received"
             ? "flaggo.decision.received"
             : "flaggo.outcome.observed";
         return JsonSerializer.SerializeToElement(new
         {
-            eventName,
-            timeUnixNano = "1770000000000000000",
-            attributes = new object[]
+            resource = new
             {
-                Attribute("flaggo.signal", signal),
-                Attribute("flaggo.decision.id", "decision-1"),
-                Attribute("flaggo.result.json", result.ToString())
+                attributes = new[]
+                {
+                    Attribute("service.name", "checkout")
+                }
+            },
+            scope = new { name = "@flaggo/sdk" },
+            record = new
+            {
+                eventName,
+                timeUnixNano = "1770000000000000000",
+                attributes = new object[]
+                {
+                    Attribute("flaggo.signal", signal),
+                    Attribute("flaggo.decision.id", "decision-1"),
+                    Attribute("flaggo.result.json", result.ToString())
+                }
             }
         });
     }

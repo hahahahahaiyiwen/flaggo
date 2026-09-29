@@ -75,6 +75,11 @@ resource attributes such as `service.name`, `flaggo.application`,
 enough of the OTLP envelope to find resource scope, candidate records,
 timestamps, stable observation IDs, and indexable signal names.
 
+OTLP/HTTP senders may use no compression or standard gzip compression.
+Ingestion supports both and enforces a configurable decompressed request limit,
+defaulting to the OTLP-recommended 64 MiB rather than the smaller contract API
+JSON limits.
+
 ## Decision observations
 
 A successful `RuntimeDecision` identifies the exact `contractDigest`,
@@ -93,8 +98,7 @@ That observation must make the following semantic information available for
 later analysis:
 
 - the SDK-generated decision ID;
-- application/environment scope from OTLP resource attributes or, when present,
-  an authenticated ingestion credential;
+- application/environment scope from OTLP resource attributes;
 - contract name;
 - contract and executable digests;
 - the returned result JSON and result hash;
@@ -105,6 +109,12 @@ later analysis:
 
 This is a raw decision observation. It is not, by itself, proof that the app
 applied the result and is not clean learning evidence.
+
+The SDK-generated decision ID is correlation metadata, not the Evidence Store
+record key. A stable observation identity is derived separately from the raw
+OTLP envelope unless the event supplies an explicit observation ID. Trace
+records use the pair `(traceId, spanId)` as identity; a span ID alone is not
+globally sufficient.
 
 The next logical evaluation may carry the prior applied exposure as
 `RuntimeInput.currentExposure`. That value supplies application context only.
@@ -219,6 +229,16 @@ enough of the OTLP envelope to derive resource scope, telemetry type,
 signal/name, idempotency key, and observation time for later analysis. Evidence
 remains associated with the contract digest under which the decision occurred
 when that identity is present in the raw telemetry payload.
+
+Each stored record preserves a canonical raw envelope containing:
+
+- the complete OTLP resource and resource schema URL;
+- the complete instrumentation scope and scope schema URL; and
+- the original log record, metric descriptor, or span.
+
+Indexed metadata does not replace this envelope. It only supports bounded
+selection and idempotent writes while later analysis retains access to service
+instance, deployment, instrumentation, and schema context.
 
 The store is not:
 

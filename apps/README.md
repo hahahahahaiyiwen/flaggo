@@ -15,6 +15,10 @@ health routes. OTel Ingestion owns the `/v1/logs`, `/v1/metrics`, and
 Evidence Store. Reusable strict HTTP mechanics live under `modules/hosting`;
 apps do not reference another app project.
 
+Phase 4 OTel Ingestion derives scope from OTLP resource attributes and does not
+require authentication. Authentication and authorization for telemetry writes
+are deferred to a later phase.
+
 The pre-v3 shared host stack was removed after the v3 consumer cutover.
 Neither service exposes forwarding projects, compatibility routes, or
 alternate legacy APIs.

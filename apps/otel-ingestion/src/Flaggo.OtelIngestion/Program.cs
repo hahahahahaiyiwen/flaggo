@@ -2,28 +2,38 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Flaggo.Contract;
 using Flaggo.EvidenceStore;
 using Flaggo.ServiceHosting;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.RequestDecompression;
 using Microsoft.Data.Sqlite;
+using Microsoft.Net.Http.Headers;
 
-const string evidenceWriteScope = "flaggo.evidence:write";
 const string serviceName = "flaggo-otel-ingestion";
+const long defaultMaximumRequestBodyBytes = 67_108_864;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Flaggo")
     ?? "Data Source=flaggo.db";
+var maximumRequestBodyBytes = builder.Configuration.GetValue<long?>(
+    "Flaggo:OtlpIngestion:MaximumRequestBodyBytes")
+    ?? defaultMaximumRequestBodyBytes;
+if (maximumRequestBodyBytes < 1)
+{
+    throw new InvalidOperationException(
+        "Flaggo:OtlpIngestion:MaximumRequestBodyBytes must be positive.");
+}
 
+builder.WebHost.ConfigureKestrel(options =>
+    options.Limits.MaxRequestBodySize = maximumRequestBodyBytes);
+builder.Services.AddRequestDecompression();
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(new OtlpJsonReader(maximumRequestBodyBytes));
 builder.Services.AddSingleton<IEvidenceStore>(_ => new SqliteEvidenceStore(connectionString));
 builder.Services.AddSingleton<ITelemetryFilter, CandidateTelemetryFilter>();
 builder.Services.AddSingleton<OtlpIngestionPipeline>();
-builder.Services.AddFlaggoAuthentication(
-    builder.Configuration,
-    builder.Environment,
-    evidenceWriteScope);
-builder.Services.AddFlaggoAuthorizationProblemResults();
 
 var app = builder.Build();
 
@@ -33,8 +43,8 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
     AllowStatusCode404Response = true,
     ExceptionHandler = WriteExceptionAsync
 });
+app.UseRequestDecompression();
 app.UseFlaggoProblemStatusPages();
-app.UseAuthentication();
 
 MapOtlpEndpoint(app, "/v1/logs", OtlpTelemetryType.Logs);
 MapOtlpEndpoint(app, "/v1/metrics", OtlpTelemetryType.Metrics);
@@ -92,23 +102,18 @@ static void MapOtlpEndpoint(WebApplication app, string route, OtlpTelemetryType 
         route,
         async (
             HttpContext context,
+            OtlpJsonReader reader,
             OtlpIngestionPipeline pipeline,
             CancellationToken cancellationToken) =>
         {
-            var body = await HttpJson.ReadAsync<JsonElement>(
+            var body = await reader.ReadAsync(
                 context.Request,
                 cancellationToken);
-            DecisionScope? authenticatedScope = FlaggoClaims.TryGetAuthorityScope(
-                context.User,
-                out var scope)
-                ? scope
-                : null;
             var result = await pipeline.IngestAsync(
                 type,
                 body,
-                authenticatedScope,
                 cancellationToken);
-            return Results.Json(result, StrictJson.Options);
+            return Results.Json(new { }, StrictJson.Options);
         });
 }
 
@@ -169,6 +174,91 @@ static async Task WriteExceptionAsync(HttpContext context)
 
 public partial class Program;
 
+internal static class OtlpJson
+{
+    public const int MaximumDepth = 64;
+
+    public static JsonSerializerOptions Options { get; } = new(JsonSerializerDefaults.Web)
+    {
+        AllowTrailingCommas = false,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        MaxDepth = MaximumDepth,
+        PropertyNameCaseInsensitive = false,
+        ReadCommentHandling = JsonCommentHandling.Disallow
+    };
+}
+
+internal sealed class OtlpJsonReader(long maximumDocumentBytes)
+{
+    public async ValueTask<JsonElement> ReadAsync(
+        HttpRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var contentType)
+            || !string.Equals(
+                contentType.MediaType.Value,
+                "application/json",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HttpContractException(
+                StatusCodes.Status415UnsupportedMediaType,
+                ProblemTypes.UnsupportedMediaType,
+                "Unsupported media type",
+                "Content-Type must be application/json.");
+        }
+
+        if (request.ContentLength > maximumDocumentBytes)
+        {
+            throw PayloadTooLarge();
+        }
+
+        await using var body = new MemoryStream();
+        var buffer = new byte[65_536];
+        while (true)
+        {
+            var read = await request.Body.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+            if (body.Length + read > maximumDocumentBytes)
+            {
+                throw PayloadTooLarge();
+            }
+            await body.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(
+                body.ToArray(),
+                new JsonDocumentOptions
+                {
+                    AllowTrailingCommas = false,
+                    CommentHandling = JsonCommentHandling.Disallow,
+                    MaxDepth = OtlpJson.MaximumDepth
+                });
+            return document.RootElement.Clone();
+        }
+        catch (JsonException exception)
+        {
+            throw new HttpContractException(
+                StatusCodes.Status400BadRequest,
+                ProblemTypes.InvalidRequest,
+                "Invalid request",
+                $"Request body is invalid: {exception.Message}",
+                exception);
+        }
+    }
+
+    private static HttpContractException PayloadTooLarge() =>
+        new(
+            StatusCodes.Status413PayloadTooLarge,
+            ProblemTypes.InvalidRequest,
+            "Payload too large",
+            "OTLP request body exceeds the configured decompressed-size limit.");
+}
+
 internal enum OtlpTelemetryType
 {
     Logs,
@@ -201,7 +291,8 @@ internal sealed record TelemetryFilterDecision(
 internal sealed record OtlpCandidate(
     OtlpTelemetryType Type,
     JsonElement Resource,
-    JsonElement Payload);
+    JsonElement Payload,
+    JsonElement Envelope);
 
 internal interface ITelemetryFilter
 {
@@ -220,7 +311,8 @@ internal sealed class CandidateTelemetryFilter : ITelemetryFilter
             _ => throw new TelemetryFilterException("Unsupported OTLP telemetry type.")
         };
         var observationId = ExplicitObservationId(candidate.Payload)
-            ?? StableObservationId(candidate.Type, candidate.Payload);
+            ?? SpanObservationId(candidate)
+            ?? StableObservationId(candidate.Type, candidate.Envelope);
         return new TelemetryFilterDecision(
             TelemetryFilterAction.Accept,
             signal,
@@ -275,19 +367,22 @@ internal sealed class CandidateTelemetryFilter : ITelemetryFilter
         {
             return observationId;
         }
-        if (OtlpAttributes.TryGetOptionalString(
-                attributes,
-                "flaggo.decision.id",
-                out var decisionId))
-        {
-            return decisionId;
-        }
-        if (payload.TryGetProperty("spanId", out var spanId)
-            && spanId.ValueKind == JsonValueKind.String)
-        {
-            return $"span:{spanId.GetString()}";
-        }
         return null;
+    }
+
+    private static string? SpanObservationId(OtlpCandidate candidate)
+    {
+        if (candidate.Type != OtlpTelemetryType.Traces
+            || !candidate.Payload.TryGetProperty("traceId", out var traceId)
+            || traceId.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(traceId.GetString())
+            || !candidate.Payload.TryGetProperty("spanId", out var spanId)
+            || spanId.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(spanId.GetString()))
+        {
+            return null;
+        }
+        return $"traces:{traceId.GetString()}:{spanId.GetString()}";
     }
 
     private static DateTimeOffset? ObservedAt(OtlpCandidate candidate)
@@ -334,9 +429,9 @@ internal sealed class CandidateTelemetryFilter : ITelemetryFilter
         return null;
     }
 
-    private static string StableObservationId(OtlpTelemetryType type, JsonElement payload)
+    private static string StableObservationId(OtlpTelemetryType type, JsonElement envelope)
     {
-        var serialized = JsonSerializer.Serialize(payload, StrictJson.Options);
+        var serialized = JsonSerializer.Serialize(envelope, OtlpJson.Options);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(serialized));
         return $"{TelemetryTypeName(type)}:"
             + Convert.ToHexString(hash).ToLowerInvariant();
@@ -359,7 +454,6 @@ internal sealed class OtlpIngestionPipeline(
     public async Task<OtlpIngestionResult> IngestAsync(
         OtlpTelemetryType type,
         JsonElement root,
-        DecisionScope? authenticatedScope,
         CancellationToken cancellationToken)
     {
         if (root.ValueKind != JsonValueKind.Object)
@@ -372,7 +466,7 @@ internal sealed class OtlpIngestionPipeline(
         var buffer = new List<EvidenceTelemetryRecord>();
         foreach (var candidate in EnumerateCandidates(type, root))
         {
-            var scope = ScopeFrom(candidate.Resource, authenticatedScope);
+            var scope = ScopeFrom(candidate.Resource);
             if (scope is null)
             {
                 ignored += 1;
@@ -390,7 +484,7 @@ internal sealed class OtlpIngestionPipeline(
                 decision.ObservationId,
                 TelemetryTypeName(candidate.Type),
                 decision.Signal,
-                candidate.Payload.Clone(),
+                candidate.Envelope.Clone(),
                 decision.ObservedAt ?? receivedAt,
                 receivedAt));
         }
@@ -445,10 +539,8 @@ internal sealed class OtlpIngestionPipeline(
 
         foreach (var resourceItem in resourceItems.EnumerateArray())
         {
-            var resource = resourceItem.TryGetProperty("resource", out var value)
-                && value.ValueKind == JsonValueKind.Object
-                ? value
-                : default;
+            var resource = ObjectPropertyOrEmpty(resourceItem, "resource");
+            var resourceSchemaUrl = OptionalStringProperty(resourceItem, "schemaUrl");
             if (!resourceItem.TryGetProperty(scopeCollectionName, out var scopeItems)
                 || scopeItems.ValueKind != JsonValueKind.Array)
             {
@@ -457,6 +549,8 @@ internal sealed class OtlpIngestionPipeline(
 
             foreach (var scopeItem in scopeItems.EnumerateArray())
             {
+                var instrumentationScope = ObjectPropertyOrEmpty(scopeItem, "scope");
+                var scopeSchemaUrl = OptionalStringProperty(scopeItem, "schemaUrl");
                 if (!scopeItem.TryGetProperty(recordCollectionName, out var records)
                     || records.ValueKind != JsonValueKind.Array)
                 {
@@ -470,26 +564,78 @@ internal sealed class OtlpIngestionPipeline(
                         throw new OtlpIngestionException(
                             $"OTLP {recordCollectionName} entries must be JSON objects.");
                     }
-                    yield return new OtlpCandidate(type, resource, record);
+                    yield return new OtlpCandidate(
+                        type,
+                        resource,
+                        record,
+                        CreateEnvelope(
+                            resource,
+                            resourceSchemaUrl,
+                            instrumentationScope,
+                            scopeSchemaUrl,
+                            record));
                 }
             }
         }
     }
 
-    private static DecisionScope? ScopeFrom(
+    private static JsonElement CreateEnvelope(
         JsonElement resource,
-        DecisionScope? authenticatedScope)
+        string? resourceSchemaUrl,
+        JsonElement instrumentationScope,
+        string? scopeSchemaUrl,
+        JsonElement record) =>
+        JsonSerializer.SerializeToElement(
+            new
+            {
+                resource,
+                resourceSchemaUrl,
+                scope = instrumentationScope,
+                scopeSchemaUrl,
+                record
+            },
+            OtlpJson.Options);
+
+    private static JsonElement ObjectPropertyOrEmpty(
+        JsonElement owner,
+        string name)
+    {
+        if (!owner.TryGetProperty(name, out var value))
+        {
+            return JsonSerializer.SerializeToElement(new { });
+        }
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw new OtlpIngestionException($"OTLP {name} must be a JSON object.");
+        }
+        return value;
+    }
+
+    private static string? OptionalStringProperty(
+        JsonElement owner,
+        string name)
+    {
+        if (!owner.TryGetProperty(name, out var value))
+        {
+            return null;
+        }
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            throw new OtlpIngestionException($"OTLP {name} must be a string.");
+        }
+        return value.GetString();
+    }
+
+    private static DecisionScope? ScopeFrom(JsonElement resource)
     {
         var attributes = OtlpAttributes.Read(resource);
         var application =
             OtlpAttributes.OptionalString(attributes, "flaggo.application")
-            ?? OtlpAttributes.OptionalString(attributes, "service.name")
-            ?? authenticatedScope?.Application;
+            ?? OtlpAttributes.OptionalString(attributes, "service.name");
         var environment =
             OtlpAttributes.OptionalString(attributes, "flaggo.environment")
             ?? OtlpAttributes.OptionalString(attributes, "deployment.environment.name")
             ?? OtlpAttributes.OptionalString(attributes, "deployment.environment")
-            ?? authenticatedScope?.Environment
             ?? "default";
         return string.IsNullOrWhiteSpace(application)
             ? null

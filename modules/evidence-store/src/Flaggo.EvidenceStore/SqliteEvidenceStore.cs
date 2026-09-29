@@ -8,8 +8,11 @@ namespace Flaggo.EvidenceStore;
 public sealed class SqliteEvidenceStore : IEvidenceStore
 {
     private const string ComponentName = "evidence-store";
-    private const int SchemaVersion = 2;
-    private static readonly JsonSerializerOptions JsonOptions = StrictJson.Options;
+    private const int SchemaVersion = 3;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        MaxDepth = 64
+    };
     private readonly string _connectionString;
 
     public SqliteEvidenceStore(string connectionString)
@@ -39,7 +42,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                 observation_id TEXT NOT NULL,
                 telemetry_type TEXT NOT NULL,
                 signal TEXT NOT NULL,
-                payload_json BLOB NOT NULL,
+                envelope_json BLOB NOT NULL,
                 observed_at TEXT NOT NULL,
                 received_at TEXT NOT NULL,
                 PRIMARY KEY(application, environment, observation_id)
@@ -103,7 +106,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                     observation_id,
                     telemetry_type,
                     signal,
-                    payload_json,
+                    envelope_json,
                     observed_at,
                     received_at
                 )
@@ -113,7 +116,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
                     $observationId,
                     $telemetryType,
                     $signal,
-                    $payloadJson,
+                    $envelopeJson,
                     $observedAt,
                     $receivedAt
                 )
@@ -123,8 +126,8 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
             command.Parameters.AddWithValue("$observationId", record.ObservationId);
             command.Parameters.AddWithValue("$telemetryType", record.TelemetryType);
             command.Parameters.AddWithValue("$signal", record.Signal);
-            command.Parameters.Add("$payloadJson", SqliteType.Blob).Value =
-                JsonSerializer.SerializeToUtf8Bytes(record.Payload, JsonOptions);
+            command.Parameters.Add("$envelopeJson", SqliteType.Blob).Value =
+                JsonSerializer.SerializeToUtf8Bytes(record.Envelope, JsonOptions);
             command.Parameters.AddWithValue("$observedAt", FormatTime(record.ObservedAt));
             command.Parameters.AddWithValue("$receivedAt", FormatTime(record.ReceivedAt));
             created += await command.ExecuteNonQueryAsync(cancellationToken);
@@ -148,7 +151,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         await using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT observation_id, telemetry_type, signal, payload_json, observed_at, received_at
+            SELECT observation_id, telemetry_type, signal, envelope_json, observed_at, received_at
             FROM evidence_telemetry_records
             WHERE application = $application
               AND environment = $environment
@@ -184,7 +187,7 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
             command.CommandText =
                 """
                 SELECT application, environment, observation_id, telemetry_type, signal,
-                       payload_json, observed_at, received_at
+                       envelope_json, observed_at, received_at
                 FROM evidence_telemetry_records
                 LIMIT 0;
                 """;
@@ -226,9 +229,9 @@ public sealed class SqliteEvidenceStore : IEvidenceStore
         ValidateIdentity(record.ObservationId, nameof(record.ObservationId));
         ValidateIdentity(record.TelemetryType, nameof(record.TelemetryType));
         ValidateIdentity(record.Signal, nameof(record.Signal));
-        if (record.Payload.ValueKind != JsonValueKind.Object)
+        if (record.Envelope.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("Telemetry payload must be a JSON object.", nameof(record));
+            throw new ArgumentException("Telemetry envelope must be a JSON object.", nameof(record));
         }
     }
 

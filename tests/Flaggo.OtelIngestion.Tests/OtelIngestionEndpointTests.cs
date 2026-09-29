@@ -1,19 +1,12 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Claims;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using Flaggo.Contract;
 using Flaggo.EvidenceStore;
-using Flaggo.ServiceHosting;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace Flaggo.OtelIngestion.Tests;
 
@@ -28,34 +21,59 @@ public sealed class OtelIngestionEndpointTests
         using var client = factory.CreateClient();
         using var request = LogsRequest(
             DecisionRecord("decision-1"),
-            OutcomeRecord("outcome-1"));
+            OutcomeRecord("decision-1"));
 
         using var response = await client.SendAsync(request);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(2, body.GetProperty("accepted").GetInt32());
-        Assert.Equal(2, body.GetProperty("created").GetInt32());
+        Assert.Empty(body.EnumerateObject());
 
         var store = new SqliteEvidenceStore(factory.ConnectionString);
         var decision = Assert.Single(await store.ListTelemetryAsync(
             Scope,
             10,
             signal: "decision.received"));
-        Assert.Equal("decision-1", decision.ObservationId);
+        Assert.NotEqual("decision-1", decision.ObservationId);
         Assert.Equal("logs", decision.TelemetryType);
         Assert.Equal("decision.received", decision.Signal);
-        Assert.Equal("flaggo.decision.received", decision.Payload.GetProperty("eventName").GetString());
-        Assert.Equal("game-1", AttributeValue(decision.Payload, "flaggo.correlation.gameId"));
+        var decisionRecord = StoredRecord(decision);
+        Assert.Equal(
+            "flaggo.decision.received",
+            decisionRecord.GetProperty("eventName").GetString());
+        Assert.Equal("decision-1", AttributeValue(decisionRecord, "flaggo.decision.id"));
+        Assert.Equal(
+            "game-1",
+            AttributeValue(decisionRecord, "flaggo.correlation.gameId"));
+        Assert.Equal(
+            "instance-1",
+            AttributeValue(
+                decision.Envelope.GetProperty("resource"),
+                "service.instance.id"));
+        Assert.Equal(
+            "@flaggo/test",
+            decision.Envelope.GetProperty("scope").GetProperty("name").GetString());
+        Assert.Equal(
+            "https://opentelemetry.io/schemas/1.27.0",
+            decision.Envelope.GetProperty("resourceSchemaUrl").GetString());
+        Assert.Equal(
+            "https://flaggo.dev/schemas/telemetry/v1",
+            decision.Envelope.GetProperty("scopeSchemaUrl").GetString());
 
         var outcome = Assert.Single(await store.ListTelemetryAsync(
             Scope,
             10,
             telemetryType: "logs",
             signal: "outcome.observed"));
-        Assert.Equal("outcome-1", outcome.ObservationId);
+        Assert.NotEqual(decision.ObservationId, outcome.ObservationId);
+        Assert.NotEqual("decision-1", outcome.ObservationId);
         Assert.Equal("outcome.observed", outcome.Signal);
-        Assert.Equal("tetris.survival_ms", AttributeValue(outcome.Payload, "flaggo.evidence.binding"));
+        Assert.Equal(
+            "decision-1",
+            AttributeValue(StoredRecord(outcome), "flaggo.decision.id"));
+        Assert.Equal(
+            "tetris.survival_ms",
+            AttributeValue(StoredRecord(outcome), "flaggo.evidence.binding"));
     }
 
     [Fact]
@@ -69,16 +87,11 @@ public sealed class OtelIngestionEndpointTests
             DecisionRecord("decision-1"));
 
         using var response = await client.SendAsync(request);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(3, body.GetProperty("accepted").GetInt32());
-        Assert.Equal(0, body.GetProperty("ignored").GetInt32());
-        Assert.Equal(2, body.GetProperty("created").GetInt32());
-        Assert.Equal(1, body.GetProperty("duplicates").GetInt32());
 
         var store = new SqliteEvidenceStore(factory.ConnectionString);
         var logs = await store.ListTelemetryAsync(Scope, 10, telemetryType: "logs");
+        Assert.Equal(2, logs.Count);
         Assert.Contains(logs, record => record.Signal == "log");
     }
 
@@ -101,7 +114,9 @@ public sealed class OtelIngestionEndpointTests
             telemetryType: "metrics",
             signal: "metric:tetris.board_pressure_mean_5s"));
         Assert.Equal("metrics", metric.TelemetryType);
-        Assert.Equal("tetris.board_pressure_mean_5s", metric.Payload.GetProperty("name").GetString());
+        Assert.Equal(
+            "tetris.board_pressure_mean_5s",
+            StoredRecord(metric).GetProperty("name").GetString());
 
         var span = Assert.Single(await store.ListTelemetryAsync(
             Scope,
@@ -109,7 +124,8 @@ public sealed class OtelIngestionEndpointTests
             telemetryType: "traces",
             signal: "span:tetris.tick"));
         Assert.Equal("traces", span.TelemetryType);
-        Assert.Equal("span-1", span.Payload.GetProperty("spanId").GetString());
+        Assert.Equal("traces:trace-1:span-1", span.ObservationId);
+        Assert.Equal("span-1", StoredRecord(span).GetProperty("spanId").GetString());
     }
 
     [Fact]
@@ -118,41 +134,92 @@ public sealed class OtelIngestionEndpointTests
         using var factory = new OtelIngestionFactory();
         using var client = factory.CreateClient();
         using var request = LogsRequest(DecisionRecord("decision-1"));
-        request.Headers.Remove(TestAuthenticationHandler.HeaderName);
 
         using var response = await client.SendAsync(request);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(1, body.GetProperty("accepted").GetInt32());
+    }
+
+    [Fact]
+    public async Task AcceptsGzipCompressedOtlpJson()
+    {
+        using var factory = new OtelIngestionFactory();
+        using var client = factory.CreateClient();
+        var json = JsonSerializer.SerializeToUtf8Bytes(
+            LogsPayload(DecisionRecord("decision-1")));
+        using var compressed = new MemoryStream();
+        using (var gzip = new GZipStream(
+            compressed,
+            CompressionLevel.Fastest,
+            leaveOpen: true))
+        {
+            gzip.Write(json);
+        }
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/logs")
+        {
+            Content = new ByteArrayContent(compressed.ToArray())
+        };
+        request.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        request.Content.Headers.ContentEncoding.Add("gzip");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var store = new SqliteEvidenceStore(factory.ConnectionString);
+        Assert.Single(await store.ListTelemetryAsync(Scope, 10));
+    }
+
+    [Fact]
+    public async Task AcceptsLogStringsBeyondContractJsonLimit()
+    {
+        using var factory = new OtelIngestionFactory();
+        using var client = factory.CreateClient();
+        using var request = LogsRequest(new
+        {
+            timeUnixNano = "1770000000000000000",
+            body = new { stringValue = new string('x', 20_000) },
+            attributes = new[]
+            {
+                Attribute("service.event", "large-stack-trace")
+            }
+        });
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     private static HttpRequestMessage LogsRequest(params object[] records)
     {
-        var payload = new
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/logs")
         {
-            resourceLogs = new[]
+            Content = JsonContent.Create(LogsPayload(records))
+        };
+        return request;
+    }
+
+    private static object LogsPayload(params object[] records) =>
+        new
+        {
+            resourceLogs = new object[]
             {
                 new
                 {
                     resource = Resource(),
+                    schemaUrl = "https://opentelemetry.io/schemas/1.27.0",
                     scopeLogs = new[]
                     {
                         new
                         {
+                            scope = InstrumentationScope(),
+                            schemaUrl = "https://flaggo.dev/schemas/telemetry/v1",
                             logRecords = records
                         }
                     }
                 }
             }
         };
-        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/logs")
-        {
-            Content = JsonContent.Create(payload)
-        };
-        request.Headers.Add(TestAuthenticationHandler.HeaderName, "authorized");
-        return request;
-    }
 
     private static HttpRequestMessage MetricsRequest()
     {
@@ -163,10 +230,13 @@ public sealed class OtelIngestionEndpointTests
                 new
                 {
                     resource = Resource(),
+                    schemaUrl = "https://opentelemetry.io/schemas/1.27.0",
                     scopeMetrics = new[]
                     {
                         new
                         {
+                            scope = InstrumentationScope(),
+                            schemaUrl = "https://flaggo.dev/schemas/telemetry/v1",
                             metrics = new[]
                             {
                                 new
@@ -198,7 +268,6 @@ public sealed class OtelIngestionEndpointTests
         {
             Content = JsonContent.Create(payload)
         };
-        request.Headers.Add(TestAuthenticationHandler.HeaderName, "authorized");
         return request;
     }
 
@@ -211,10 +280,13 @@ public sealed class OtelIngestionEndpointTests
                 new
                 {
                     resource = Resource(),
+                    schemaUrl = "https://opentelemetry.io/schemas/1.27.0",
                     scopeSpans = new[]
                     {
                         new
                         {
+                            scope = InstrumentationScope(),
+                            schemaUrl = "https://flaggo.dev/schemas/telemetry/v1",
                             spans = new[]
                             {
                                 new
@@ -240,7 +312,6 @@ public sealed class OtelIngestionEndpointTests
         {
             Content = JsonContent.Create(payload)
         };
-        request.Headers.Add(TestAuthenticationHandler.HeaderName, "authorized");
         return request;
     }
 
@@ -249,7 +320,18 @@ public sealed class OtelIngestionEndpointTests
         attributes = new[]
         {
             Attribute("service.name", "test-application"),
-            Attribute("deployment.environment.name", "test-environment")
+            Attribute("deployment.environment.name", "test-environment"),
+            Attribute("service.instance.id", "instance-1")
+        }
+    };
+
+    private static object InstrumentationScope() => new
+    {
+        name = "@flaggo/test",
+        version = "1.0.0",
+        attributes = new[]
+        {
+            Attribute("scope.attribute", "scope-value")
         }
     };
 
@@ -272,17 +354,16 @@ public sealed class OtelIngestionEndpointTests
         }
     };
 
-    private static object OutcomeRecord(string observationId) => new
+    private static object OutcomeRecord(string decisionId) => new
     {
         eventName = "flaggo.outcome.observed",
         timeUnixNano = "1770000300000000000",
         attributes = new[]
         {
             Attribute("flaggo.signal", "outcome.observed"),
-            Attribute("flaggo.observation.id", observationId),
             Attribute("flaggo.evidence.binding", "tetris.survival_ms"),
             Attribute("flaggo.evidence.value.json", "18400"),
-            Attribute("flaggo.decision.id", "decision-1"),
+            Attribute("flaggo.decision.id", decisionId),
             Attribute("flaggo.contract.name", "tetris.dropInterval"),
             Attribute("flaggo.contract.digest", Digest('0')),
             Attribute("flaggo.correlation.gameId", "game-1")
@@ -319,6 +400,9 @@ public sealed class OtelIngestionEndpointTests
         return null;
     }
 
+    private static JsonElement StoredRecord(EvidenceTelemetryRecord record) =>
+        record.Envelope.GetProperty("record");
+
     private static string Digest(char value) => $"sha256:{new string(value, 64)}";
 }
 
@@ -332,26 +416,7 @@ public sealed class OtelIngestionFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
-        builder.UseSetting(
-            "Flaggo:Authentication:LocalDevelopmentBypass",
-            "true");
         builder.UseSetting("ConnectionStrings:Flaggo", ConnectionString);
-        builder.ConfigureTestServices(services =>
-        {
-            services
-                .AddAuthentication(options =>
-                {
-                    options.DefaultAuthenticateScheme =
-                        TestAuthenticationHandler.SchemeName;
-                    options.DefaultChallengeScheme =
-                        TestAuthenticationHandler.SchemeName;
-                    options.DefaultForbidScheme =
-                        TestAuthenticationHandler.SchemeName;
-                })
-                .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(
-                    TestAuthenticationHandler.SchemeName,
-                    _ => { });
-        });
     }
 
     protected override void Dispose(bool disposing)
@@ -368,39 +433,5 @@ public sealed class OtelIngestionFactory : WebApplicationFactory<Program>
         {
             File.Delete(path);
         }
-    }
-}
-
-public sealed class TestAuthenticationHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger,
-    UrlEncoder encoder)
-    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
-{
-    public const string SchemeName = "Test";
-    public const string HeaderName = "X-Test-Authentication";
-
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-    {
-        var value = Request.Headers[HeaderName].FirstOrDefault();
-        if (value is null)
-        {
-            return Task.FromResult(AuthenticateResult.NoResult());
-        }
-
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.NameIdentifier, "test"),
-            new(FlaggoClaimTypes.Application, "test-application"),
-            new(FlaggoClaimTypes.Environment, "test-environment")
-        };
-        if (string.Equals(value, "authorized", StringComparison.Ordinal))
-        {
-            claims.Add(new Claim("scope", "flaggo.evidence:write"));
-        }
-
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
-        return Task.FromResult(AuthenticateResult.Success(
-            new AuthenticationTicket(principal, SchemeName)));
     }
 }

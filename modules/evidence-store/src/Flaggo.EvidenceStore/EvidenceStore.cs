@@ -8,7 +8,7 @@ public sealed record EvidenceTelemetryRecord(
     string ObservationId,
     string TelemetryType,
     string Signal,
-    JsonElement Payload,
+    JsonElement Envelope,
     DateTimeOffset ObservedAt,
     DateTimeOffset ReceivedAt);
 
