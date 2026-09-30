@@ -8,10 +8,10 @@ import {
 } from "@flaggo/sdk/runtime";
 
 import { AdaptiveWorker, type WorkerDecisions } from "./adaptive-worker.js";
-import { ExampleOtlpLogs } from "./telemetry.js";
+import { AdaptiveWorkerTelemetry } from "./telemetry.js";
 interface ServiceConnection {
   decisionServiceUrl: string;
-  telemetryPath: string;
+  otelIngestionUrl: string;
   bindings: DecisionBindings<WorkerDecisions>;
 }
 
@@ -28,12 +28,14 @@ export async function runMain(): Promise<void> {
   const service = JSON.parse(
     await readFile(serviceFile, "utf8"),
   ) as ServiceConnection;
-  const telemetry = new ExampleOtlpLogs(service.telemetryPath);
+  const telemetry = new AdaptiveWorkerTelemetry({
+    flaggoOtlpBaseUrl: service.otelIngestionUrl,
+  });
   const client = createDecisionClient<WorkerDecisions>({
     bindings: service.bindings,
     baseUrl: service.decisionServiceUrl,
     credential: { mode: "local-development" },
-    telemetry: { logger: telemetry },
+    telemetry: { logger: telemetry.flaggoLogger },
   });
   try {
     const worker = new AdaptiveWorker(client, telemetry);
@@ -56,8 +58,6 @@ export async function runMain(): Promise<void> {
         evaluation: result.decision.evaluation,
         executableDigest: result.decision.executableDigest,
       })),
-      telemetryEvents: telemetry.events.length,
-      telemetryPath: service.telemetryPath,
     }, null, 2)}\n`);
   } finally {
     await telemetry.shutdown();

@@ -46,8 +46,8 @@ examples. The pre-v3 service stack has been removed.
 
 ## Quickstart
 
-Run the interactive Tetris example against real local Contract and Decision
-Services:
+Run the interactive Tetris example against real local Contract, Decision, and
+OTel Ingestion services:
 
 ```powershell
 npm ci
@@ -55,9 +55,11 @@ dotnet restore Flaggo.slnx --configfile NuGet.config
 npm run tetris:flaggo
 ```
 
-The launcher builds both services, creates an isolated SQLite database,
+The launcher builds all three services, creates an isolated SQLite database,
 deploys the Tetris contract, and removes its local state when the game exits.
-No cloud account is required.
+Tetris-owned OpenTelemetry providers export application logs, metrics, and
+traces directly to ingestion. No cloud account or Collector process is
+required.
 
 Validate the executable contracts independently:
 

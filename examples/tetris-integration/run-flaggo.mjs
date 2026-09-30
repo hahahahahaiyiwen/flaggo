@@ -36,21 +36,31 @@ async function play(lifecycle) {
 
   const [
     { createFlaggoDropIntervalProvider },
+    { TetrisTelemetryProviders },
     { runTerminalTetris },
   ] = await Promise.all([
     import("./dist/flaggo/flaggo-provider.js"),
+    import("./dist/flaggo/otel.js"),
     import("./dist/flaggo/terminal.js"),
   ]);
-  const provider = createFlaggoDropIntervalProvider({
-    baseUrl: hosts.decisionUrl,
-    contractDigest: deployed.deployment.contractDigest,
-    credential: { mode: "local-development" },
-    fetch: hosts.fetch,
+  const telemetry = new TetrisTelemetryProviders({
+    flaggoOtlpBaseUrl: hosts.otelIngestionUrl,
   });
-  await runTerminalTetris({
-    provider,
-    signal: lifecycle.signal,
-  });
+  try {
+    const provider = createFlaggoDropIntervalProvider({
+      baseUrl: hosts.decisionUrl,
+      contractDigest: deployed.deployment.contractDigest,
+      credential: { mode: "local-development" },
+      fetch: hosts.fetch,
+      telemetry: telemetry.instrumentation,
+    });
+    await runTerminalTetris({
+      provider,
+      signal: lifecycle.signal,
+    });
+  } finally {
+    await telemetry.shutdown();
+  }
 }
 
 async function main() {

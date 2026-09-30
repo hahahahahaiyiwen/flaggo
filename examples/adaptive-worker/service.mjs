@@ -26,10 +26,10 @@ export async function startAdaptiveWorkerService({
   lifecycle.signal.throwIfAborted();
   const paths = {
     database: resolve(runDirectory, "flaggo.db"),
-    telemetry: resolve(runDirectory, "telemetry.jsonl"),
     connection: resolve(runDirectory, "service.json"),
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
+    otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
   };
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
@@ -92,15 +92,35 @@ export async function startAdaptiveWorkerService({
     );
   }
   const deployment = deployed.deployment;
+  const otelIngestion = lifecycle.startHost(() => startHost(
+    "adaptive-worker-otel-ingestion",
+    resolve(
+      repositoryRoot,
+      "apps/otel-ingestion/src/Flaggo.OtelIngestion/bin/Debug/net10.0/Flaggo.OtelIngestion.dll",
+    ),
+    paths.otelIngestionLog,
+    repositoryRoot,
+    commonConfiguration,
+  ));
+  const otelIngestionUrl = await otelIngestion.waitForListening({
+    signal: lifecycle.signal,
+  });
+  lifecycle.assertHealthy();
+  await waitForReady(
+    (probeSignal) => ready(otelIngestionUrl, fetchWithAbort, probeSignal),
+    otelIngestion,
+    lifecycle.signal,
+  );
+  lifecycle.assertHealthy();
   const connection = {
     contractServiceUrl: hosts.contractUrl,
     decisionServiceUrl: hosts.decisionUrl,
+    otelIngestionUrl,
     bindings: {
       [deployment.name]: {
         contractDigest: deployment.contractDigest,
       },
     },
-    telemetryPath: paths.telemetry,
   };
   if (writeConnection) {
     await writeFile(
@@ -111,6 +131,8 @@ export async function startAdaptiveWorkerService({
   }
   return {
     ...hosts,
+    otelIngestion,
+    otelIngestionUrl,
     connection,
     contract: deployed.contract,
     deployment,
@@ -140,9 +162,9 @@ async function runService(lifecycle, runDirectory) {
     status: "ready",
     contractServiceUrl: service.contractUrl,
     decisionServiceUrl: service.decisionUrl,
+    otelIngestionUrl: service.otelIngestionUrl,
     contractDigest: service.deployment.contractDigest,
     connectionPath: service.paths.connection,
-    telemetryPath: service.paths.telemetry,
   }, null, 2)}\n`);
   await waitForServiceShutdown(lifecycle);
 }

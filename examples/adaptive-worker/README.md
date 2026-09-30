@@ -11,8 +11,9 @@ local environment:
    database;
 2. deploys the contract through
    `PUT /v3/decision-contracts/demo.workerBatchSize`;
-3. records the returned exact `contractDigest`; and
-4. configures the worker to call the exact-version Runtime API.
+3. starts Flaggo OTel Ingestion against the same database;
+4. records the returned exact `contractDigest`; and
+5. configures the worker to call the exact-version Runtime API.
 
 The authored executable returns `6` when `queuePressure >= 0.7`; otherwise the
 contract default is `3`. The worker supplies `workerId`, `cohort`, and
@@ -21,13 +22,15 @@ Targets, approval receipts, runtime idempotency keys, server decision records,
 confirmation calls, generic constraints, and SDK fallback are not part of the
 v3 flow.
 
-Application-owned OpenTelemetry logging includes
-`worker.item.enqueued`, `worker.item.completed`, `worker.queue.depth`,
-`worker.queue.pressure`, `worker.processing.latency`, and
-`worker.batch.applied`. The SDK also emits `flaggo.decision.received`, and the
-example emits `flaggo.outcome.observed` for
-`demo.workerBatchSize.processingLatencyMs`. Runtime evaluation itself remains
-stateless.
+Application-owned OpenTelemetry providers export logs, metrics, and traces
+directly to Flaggo OTel Ingestion. `worker.item.enqueued`,
+`worker.item.completed`, and `worker.batch.applied` are structured application
+logs. Queue depth, queue pressure, selected batch size, and processing latency
+are metrics. Each `worker.tick` is a span. The SDK emits
+`flaggo.decision.received`, and the example emits
+`flaggo.outcome.observed` for
+`demo.workerBatchSize.processingLatencyMs`; both records correlate with the
+active worker span. Runtime evaluation itself remains stateless.
 
 ## Automated acceptance
 
@@ -39,8 +42,9 @@ npm run test:adaptive-worker
 
 The smoke test builds the SDK, application, and .NET hosts; deploys the
 contract; exercises default and authored-rule decisions through the real
-Decision Service; verifies application telemetry; checks that an unavailable
-service is surfaced as a failure; and removes its isolated state.
+Decision Service; verifies direct OTLP/HTTP JSON requests for all three signals
+against the real ingestion host; checks that an unavailable service is
+surfaced as a failure; and removes its isolated state.
 
 ## Manual local run
 
@@ -57,18 +61,9 @@ The launcher writes connection details below
 node examples\adaptive-worker\dist\main.js
 ```
 
-Stop the launcher with `Ctrl+C`. It owns and removes only its specific
-`.flaggo/adaptive-worker` directory.
-
-To stream example logs to a local OpenTelemetry Collector, start the Collector
-with `deploy\otel-collector-flaggo-local.yaml` and set:
-
-```powershell
-$env:FLAGGO_OTEL_COLLECTOR_LOGS_URL = "http://localhost:4318/v1/logs"
-node examples\adaptive-worker\dist\main.js
-```
-
-The Collector can forward OTLP logs, metrics, and traces to
-`Flaggo.OtelIngestion` at `/v1/logs`, `/v1/metrics`, and `/v1/traces`. The SDK
-helper emits logs for decision-received and explicit outcome events; ordinary
-app metrics and traces can also be collected as raw candidate evidence.
+The launcher supplies the dynamically assigned Decision Service and OTel
+Ingestion URLs through its connection file. The application owns all three
+OpenTelemetry providers and their shutdown, while
+`@flaggo/sdk/opentelemetry` supplies only the additional Flaggo processors and
+metric reader. Stop the launcher with `Ctrl+C`; it owns and removes only its
+specific `.flaggo/adaptive-worker` directory.

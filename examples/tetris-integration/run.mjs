@@ -146,6 +146,7 @@ async function runIntegration(lifecycle) {
   await hosts.decision.stop();
   await assert.rejects(() => client.decide(contract.name));
   await hosts.contract.stop();
+  await hosts.otelIngestion.stop();
 
   const restartedHosts = await startLocalFlaggoHosts({
     lifecycle,

@@ -14,13 +14,6 @@ export {
   type RuntimeEvaluation,
 } from "./types.js";
 export {
-  createFlaggoOtlpLogger,
-  type FlaggoOtlpEvent,
-  type FlaggoOtlpJsonLogs,
-  type FlaggoOtlpLogger,
-  type FlaggoOtlpLoggerConfiguration,
-} from "./otlp-logs.js";
-export {
   createFlaggoTelemetry,
   recordDecisionReceived,
   recordOutcome,

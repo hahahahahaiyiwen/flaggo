@@ -117,32 +117,60 @@ candidate evidence. Non-SDK apps can send OTLP logs, metrics, or traces
 directly; ingestion stores resource-scoped telemetry as raw candidate evidence,
 and async analysis decides what is contract-relevant.
 
-For examples and development harnesses, the runtime package also provides a
-small OTLP logs setup helper:
+Applications can add Flaggo as a direct OTLP/HTTP JSON destination through the
+optional OpenTelemetry integration entry:
 
 ```ts
+import { LoggerProvider } from "@opentelemetry/sdk-logs";
+import { MeterProvider } from "@opentelemetry/sdk-metrics";
+import { TracerProvider } from "@opentelemetry/sdk-trace";
 import {
-  createDecisionClient,
-  createFlaggoOtlpLogger,
-} from "@flaggo/sdk/runtime";
+  createFlaggoLogRecordProcessor,
+  createFlaggoMetricReader,
+  createFlaggoSpanProcessor,
+} from "@flaggo/sdk/opentelemetry";
 
-const logger = createFlaggoOtlpLogger({
-  serviceName: "worker",
-  collectorLogsUrl: "http://localhost:4318/v1/logs",
+const loggerProvider = new LoggerProvider({
+  resource,
+  processors: [
+    existingVendorLogProcessor,
+    createFlaggoLogRecordProcessor({ baseUrl: "http://flaggo:5090" }),
+  ],
+});
+const meterProvider = new MeterProvider({
+  resource,
+  readers: [
+    existingVendorMetricReader,
+    createFlaggoMetricReader({ baseUrl: "http://flaggo:5090" }),
+  ],
+});
+const tracerProvider = new TracerProvider({
+  resource,
+  spanProcessors: [
+    existingVendorSpanProcessor,
+    createFlaggoSpanProcessor({ baseUrl: "http://flaggo:5090" }),
+  ],
 });
 
 const flaggo = createDecisionClient({
   baseUrl,
   bindings,
   credential: { mode: "local-development" },
-  telemetry: { logger },
+  telemetry: {
+    logger: loggerProvider.getLogger("@flaggo/sdk"),
+  },
 });
 ```
 
-`collectorLogsUrl` points to an OpenTelemetry Collector OTLP HTTP receiver. The
-included Collector config forwards logs to Flaggo OTel Ingestion as OTLP HTTP
-JSON. If `collectorLogsUrl` is omitted, the helper still captures events in
-memory and can project them to OTLP JSON for tests.
+The application retains ownership of its providers, resource, existing vendor
+exporters, force-flush behavior, and shutdown. Flaggo helpers return standard
+batched log/span processors and a periodic metric reader; they do not create
+or register providers. Optional `shouldExport` selectors reduce transport
+volume only. Flaggo ingestion remains authoritative for telemetry admission.
+
+Lower-level `createFlaggoLogExporter`, `createFlaggoMetricExporter`, and
+`createFlaggoTraceExporter` factories are available when an application needs
+to compose different standard processors or readers.
 
 ## Contract management
 

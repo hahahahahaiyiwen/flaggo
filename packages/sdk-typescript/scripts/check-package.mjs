@@ -20,9 +20,33 @@ const entries = [
     path: resolve(packageRoot, metadata.exports["./management"].import),
     factory: "createContractClient",
   },
+  {
+    name: "opentelemetry",
+    path: resolve(packageRoot, metadata.exports["./opentelemetry"].import),
+    factory: "createFlaggoSpanProcessor",
+  },
 ];
 
-assert.deepEqual(metadata.dependencies ?? {}, {});
+assert.deepEqual(
+  Object.keys(metadata.dependencies ?? {}).sort(),
+  [
+    "@opentelemetry/core",
+    "@opentelemetry/exporter-logs-otlp-http",
+    "@opentelemetry/exporter-metrics-otlp-http",
+    "@opentelemetry/exporter-trace-otlp-http",
+    "@opentelemetry/otlp-exporter-base",
+  ],
+);
+assert.deepEqual(
+  Object.keys(metadata.peerDependencies ?? {}).sort(),
+  [
+    "@opentelemetry/api",
+    "@opentelemetry/api-logs",
+    "@opentelemetry/sdk-logs",
+    "@opentelemetry/sdk-metrics",
+    "@opentelemetry/sdk-trace",
+  ],
+);
 assert.equal(metadata.sideEffects, false);
 assert.equal(metadata.license, "MIT");
 assert.equal(metadata.exports["."], undefined);
@@ -34,17 +58,25 @@ for (const entry of entries) {
   assert.equal(exports.SDK_VERSION, metadata.version);
   assert.equal(typeof exports[entry.factory], "function");
 
-  for (const platform of ["browser", "neutral"]) {
+  const platforms = entry.name === "opentelemetry"
+    ? ["browser", "node"]
+    : ["browser", "neutral"];
+  for (const platform of platforms) {
     const result = await build({
       bundle: true,
       entryPoints: [entry.path],
       format: "esm",
+      mainFields: platform === "browser"
+        ? ["browser", "module", "main"]
+        : ["module", "main"],
       platform,
       target: "es2022",
       write: false,
     });
     assert.equal(result.outputFiles.length, 1);
     const output = new TextDecoder().decode(result.outputFiles[0].contents);
-    assert.doesNotMatch(output, /\bfrom\s+["']node:/u);
+    if (platform !== "node") {
+      assert.doesNotMatch(output, /\bfrom\s+["']node:/u);
+    }
   }
 }

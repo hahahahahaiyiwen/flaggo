@@ -7,7 +7,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDecisionClient,
-  createFlaggoOtlpLogger,
   createFlaggoTelemetry,
   InvalidFlaggoInputError,
   type DecisionBindings,
@@ -198,48 +197,6 @@ describe("runtime telemetry", () => {
       "flaggo.correlation.queuePressure": 0.75,
     });
     expectContractEvent(record);
-  });
-
-  it("creates an OTLP logger with Collector-compatible JSON projection", async () => {
-    const logger = createFlaggoOtlpLogger({
-      serviceName: "adaptive-worker",
-    });
-
-    logger.emit({
-      eventName: "flaggo.outcome.observed",
-      attributes: {
-        "flaggo.signal": "outcome.observed",
-        "flaggo.evidence.binding": "worker.latency_ms",
-        "flaggo.evidence.value.json": "125",
-      },
-    });
-    await logger.flush();
-
-    const otlp = logger.toOtlpJson();
-    expect(logger.events).toHaveLength(1);
-    expect(otlp.resourceLogs[0].resource.attributes).toContainEqual({
-      key: "service.name",
-      value: { stringValue: "adaptive-worker" },
-    });
-    expect(otlp.resourceLogs[0].scopeLogs[0].logRecords[0]).toMatchObject({
-      eventName: "flaggo.outcome.observed",
-      attributes: [
-        {
-          key: "flaggo.signal",
-          value: { stringValue: "outcome.observed" },
-        },
-        {
-          key: "flaggo.evidence.binding",
-          value: { stringValue: "worker.latency_ms" },
-        },
-        {
-          key: "flaggo.evidence.value.json",
-          value: { stringValue: "125" },
-        },
-      ],
-    });
-
-    await logger.shutdown();
   });
 
   it("rejects invalid outcome telemetry before emitting", () => {

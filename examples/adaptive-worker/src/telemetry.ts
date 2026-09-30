@@ -1,52 +1,173 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import type { Logger, LogRecord } from "@opentelemetry/api-logs";
 import {
-  createFlaggoOtlpLogger,
-  type FlaggoOtlpLogger,
-} from "@flaggo/sdk/runtime";
+  context,
+  type Meter,
+  type Tracer,
+} from "@opentelemetry/api";
+import type { Logger } from "@opentelemetry/api-logs";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { resourceFromAttributes } from "@opentelemetry/resources";
+import {
+  InMemoryLogRecordExporter,
+  LoggerProvider,
+  SimpleLogRecordProcessor,
+  type ReadableLogRecord,
+} from "@opentelemetry/sdk-logs";
+import {
+  AggregationTemporality,
+  InMemoryMetricExporter,
+  MeterProvider,
+  PeriodicExportingMetricReader,
+  type ResourceMetrics,
+} from "@opentelemetry/sdk-metrics";
+import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+  TracerProvider,
+  type ReadableSpan,
+} from "@opentelemetry/sdk-trace";
+import {
+  createFlaggoLogRecordProcessor,
+  createFlaggoMetricReader,
+  createFlaggoSpanProcessor,
+} from "@flaggo/sdk/opentelemetry";
+import { SDK_VERSION } from "@flaggo/sdk/runtime";
 
-export type ApplicationLogger = Pick<Logger, "emit">;
+export interface ApplicationTelemetry {
+  readonly flaggoLogger: Logger;
+  readonly logger: Logger;
+  readonly meter: Meter;
+  readonly tracer: Tracer;
+}
 
-export class ExampleOtlpLogs implements ApplicationLogger {
-  private readonly logger: FlaggoOtlpLogger;
+export interface AdaptiveWorkerTelemetryOptions {
+  readonly capture?: boolean;
+  readonly environment?: string;
+  readonly flaggoOtlpBaseUrl: string | URL;
+}
 
-  constructor(
-    private readonly filePath?: string,
-    collectorLogsUrl = process.env.FLAGGO_OTEL_COLLECTOR_LOGS_URL,
-  ) {
-    this.logger = createFlaggoOtlpLogger({
-      serviceName: "adaptive-worker",
-      ...(collectorLogsUrl === undefined ? {} : { collectorLogsUrl }),
+export class AdaptiveWorkerTelemetry implements ApplicationTelemetry {
+  readonly flaggoLogger: Logger;
+  readonly logger: Logger;
+  readonly meter: Meter;
+  readonly tracer: Tracer;
+
+  private readonly contextManager: AsyncLocalStorageContextManager | undefined;
+  private readonly logExporter: InMemoryLogRecordExporter | undefined;
+  private readonly loggerProvider: LoggerProvider;
+  private readonly meterProvider: MeterProvider;
+  private readonly metricExporter: InMemoryMetricExporter | undefined;
+  private readonly spanExporter: InMemorySpanExporter | undefined;
+  private readonly tracerProvider: TracerProvider;
+
+  constructor(options: AdaptiveWorkerTelemetryOptions) {
+    const resource = resourceFromAttributes({
+      "service.name": "adaptive-worker",
+      "deployment.environment.name": options.environment ?? "development",
     });
+    this.logExporter = options.capture === true
+      ? new InMemoryLogRecordExporter()
+      : undefined;
+    this.metricExporter = options.capture === true
+      ? new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE)
+      : undefined;
+    this.spanExporter = options.capture === true
+      ? new InMemorySpanExporter()
+      : undefined;
+
+    this.loggerProvider = new LoggerProvider({
+      resource,
+      processors: [
+        createFlaggoLogRecordProcessor({
+          baseUrl: options.flaggoOtlpBaseUrl,
+        }),
+        ...(this.logExporter === undefined
+          ? []
+          : [
+            new SimpleLogRecordProcessor({
+              exporter: this.logExporter,
+            }),
+          ]),
+      ],
+    });
+    this.meterProvider = new MeterProvider({
+      resource,
+      readers: [
+        createFlaggoMetricReader({
+          baseUrl: options.flaggoOtlpBaseUrl,
+          periodic: { exportIntervalMillis: 5_000 },
+        }),
+        ...(this.metricExporter === undefined
+          ? []
+          : [
+            new PeriodicExportingMetricReader({
+              exporter: this.metricExporter,
+              exportIntervalMillis: 60_000,
+            }),
+          ]),
+      ],
+    });
+    this.tracerProvider = new TracerProvider({
+      resource,
+      spanProcessors: [
+        createFlaggoSpanProcessor({
+          baseUrl: options.flaggoOtlpBaseUrl,
+        }),
+        ...(this.spanExporter === undefined
+          ? []
+          : [
+            new SimpleSpanProcessor({
+              exporter: this.spanExporter,
+            }),
+          ]),
+      ],
+    });
+
+    const contextManager = new AsyncLocalStorageContextManager().enable();
+    if (context.setGlobalContextManager(contextManager)) {
+      this.contextManager = contextManager;
+    } else {
+      contextManager.disable();
+      this.contextManager = undefined;
+    }
+
+    this.flaggoLogger = this.loggerProvider.getLogger(
+      "@flaggo/sdk",
+      SDK_VERSION,
+    );
+    this.logger = this.loggerProvider.getLogger("adaptive-worker.app");
+    this.meter = this.meterProvider.getMeter("adaptive-worker.app");
+    this.tracer = this.tracerProvider.getTracer("adaptive-worker.app");
   }
 
-  get events() {
-    return this.logger.events;
+  get events(): readonly ReadableLogRecord[] {
+    return this.logExporter?.getFinishedLogRecords() ?? [];
   }
 
-  get otlpJson() {
-    return this.logger.toOtlpJson();
+  get metrics(): readonly ResourceMetrics[] {
+    return this.metricExporter?.getMetrics() ?? [];
   }
 
-  emit(record: LogRecord): void {
-    this.logger.emit(record);
+  get spans(): readonly ReadableSpan[] {
+    return this.spanExporter?.getFinishedSpans() ?? [];
   }
 
   async flush(): Promise<void> {
-    await this.logger.flush();
-    if (this.filePath !== undefined) {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-      writeFileSync(
-        this.filePath,
-        `${JSON.stringify(this.otlpJson)}\n`,
-        "utf8",
-      );
-    }
+    await Promise.all([
+      this.loggerProvider.forceFlush(),
+      this.meterProvider.forceFlush(),
+      this.tracerProvider.forceFlush(),
+    ]);
   }
 
   async shutdown(): Promise<void> {
-    await this.flush();
-    await this.logger.shutdown();
+    try {
+      await Promise.all([
+        this.loggerProvider.shutdown(),
+        this.meterProvider.shutdown(),
+        this.tracerProvider.shutdown(),
+      ]);
+    } finally {
+      this.contextManager?.disable();
+    }
   }
 }

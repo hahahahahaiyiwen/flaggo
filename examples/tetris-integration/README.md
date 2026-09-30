@@ -14,7 +14,7 @@ npm run tetris
 ```
 
 This build contains only the game engine, terminal UI, and local
-`DropIntervalProvider`. It does not import the Flaggo SDK or require either
+`DropIntervalProvider`. It does not import the Flaggo SDK or require any
 Flaggo service.
 
 ## Play with local Flaggo services
@@ -25,10 +25,10 @@ Install the npm dependencies and .NET 10 SDK, then run:
 npm run tetris:flaggo
 ```
 
-The command builds and starts Contract Service and Decision Service against an
-isolated SQLite database, then deploys the contracts listed in
-`flaggo.deploy.json`. It binds the returned immutable contract digest and
-starts the game. Both services and the temporary database are stopped and
+The command builds and starts Contract Service, Decision Service, and OTel
+Ingestion against an isolated SQLite database, then deploys the contracts
+listed in `flaggo.deploy.json`. It binds the returned immutable contract digest
+and starts the game. All services and the temporary database are stopped and
 removed when the game exits.
 
 The game starts immediately with local gravity while requesting its first
@@ -43,6 +43,15 @@ running with local level-based gravity and displays `Local fallback`. After a
 successful response, a failed refresh retains the last Flaggo interval and
 displays `Flaggo cached`. This is application behavior implemented by the
 terminal and optional provider; the SDK does not synthesize fallback decisions.
+
+The application owns its OpenTelemetry logger, meter, and tracer providers and
+adds the standard Flaggo OTLP processors and metric reader. Every policy
+refresh records the six rolling decision features as metrics, creates a
+`tetris.drop_interval.select` span, and emits a
+`tetris.drop_interval.selected` application log. The SDK's
+`flaggo.decision.received` log is emitted through the same provider and
+correlates with the active span. All three signals export directly to OTel
+Ingestion; no Collector process is required.
 
 ## Controls
 
@@ -79,9 +88,9 @@ Runtime attributes state their temporal meaning explicitly:
 
 The optional adapter uses `createDecisionClient` from `@flaggo/sdk/runtime`.
 The deployment helper uses `createContractClient` from
-`@flaggo/sdk/management` after both local services are ready. Its `deploy`
-operation sends the authoritative `PUT`; it does not call the optional remote
-validation endpoint first.
+`@flaggo/sdk/management` after Contract and Decision Services are ready. Its
+`deploy` operation sends the authoritative `PUT`; it does not call the optional
+remote validation endpoint first.
 
 ## Automated checks
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import { rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,7 +16,7 @@ import {
   AdaptiveWorker,
   DeterministicWorkerClock,
 } from "./dist/adaptive-worker.js";
-import { ExampleOtlpLogs } from "./dist/telemetry.js";
+import { AdaptiveWorkerTelemetry } from "./dist/telemetry.js";
 import { startAdaptiveWorkerService } from "./service.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -32,6 +33,8 @@ async function runSmoke(lifecycle) {
     runDirectory,
     writeConnection: false,
   });
+  const proxy = await startRecordingProxy(service.otelIngestionUrl);
+  lifecycle.trackHost(proxy);
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
@@ -39,14 +42,17 @@ async function runSmoke(lifecycle) {
         ? lifecycle.signal
         : AbortSignal.any([init.signal, lifecycle.signal]),
     });
-  const telemetry = new ExampleOtlpLogs(service.paths.telemetry);
+  const telemetry = new AdaptiveWorkerTelemetry({
+    capture: true,
+    flaggoOtlpBaseUrl: proxy.url,
+  });
   const client = createDecisionClient({
     bindings: service.connection.bindings,
     baseUrl: service.decisionUrl,
     credential: { mode: "local-development" },
     fetch: fetchWithAbort,
     random: () => 0.25,
-    telemetry: { logger: telemetry },
+    telemetry: { logger: telemetry.flaggoLogger },
   });
   try {
     const worker = new AdaptiveWorker(
@@ -88,10 +94,6 @@ async function runSmoke(lifecycle) {
     }
 
     await telemetry.flush();
-    const telemetryFromDisk = JSON.parse(
-      (await readFile(service.paths.telemetry, "utf8")).trim(),
-    );
-    assert.deepEqual(telemetryFromDisk, telemetry.otlpJson);
     assert.deepEqual(
       new Set(telemetry.events.map((event) => event.eventName)),
       new Set([
@@ -99,9 +101,6 @@ async function runSmoke(lifecycle) {
         "flaggo.outcome.observed",
         "worker.item.enqueued",
         "worker.item.completed",
-        "worker.queue.depth",
-        "worker.queue.pressure",
-        "worker.processing.latency",
         "worker.batch.applied",
       ]),
     );
@@ -111,6 +110,17 @@ async function runSmoke(lifecycle) {
       event.eventName === "flaggo.outcome.observed");
     assert.equal(decisionEvents.length, 4);
     assert.equal(outcomeEvents.length, 4);
+    assert.ok(decisionEvents.every((event) =>
+      event.instrumentationScope.name === "@flaggo/sdk"
+    ));
+    assert.ok(outcomeEvents.every((event) =>
+      event.instrumentationScope.name === "@flaggo/sdk"
+    ));
+    assert.ok(telemetry.events
+      .filter((event) => event.eventName?.startsWith("worker.") === true)
+      .every((event) =>
+        event.instrumentationScope.name === "adaptive-worker.app"
+      ));
     assert.equal(
       decisionEvents[0].attributes["flaggo.correlation.workerId"],
       "adaptive-worker-1",
@@ -119,11 +129,44 @@ async function runSmoke(lifecycle) {
       outcomeEvents[0].attributes["flaggo.evidence.binding"],
       "demo.workerBatchSize.processingLatencyMs",
     );
-    assert.equal(
-      telemetryFromDisk.resourceLogs[0].scopeLogs[0].logRecords
-        .filter((record) => record.eventName?.startsWith("flaggo.")).length,
-      8,
+
+    const workerSpans = telemetry.spans.filter((span) =>
+      span.name === "worker.tick"
     );
+    assert.equal(workerSpans.length, 4);
+    const workerTraceIds = new Set(
+      workerSpans.map((span) => span.spanContext().traceId),
+    );
+    assert.ok(decisionEvents.every((event) =>
+      event.spanContext !== undefined
+      && workerTraceIds.has(event.spanContext.traceId)
+    ));
+    assert.ok(outcomeEvents.every((event) =>
+      event.spanContext !== undefined
+      && workerTraceIds.has(event.spanContext.traceId)
+    ));
+
+    const metricNames = new Set(telemetry.metrics.flatMap((resourceMetrics) =>
+      resourceMetrics.scopeMetrics.flatMap((scope) =>
+        scope.metrics.map((metric) => metric.descriptor.name)
+      )
+    ));
+    assert.deepEqual(metricNames, new Set([
+      "worker.batch.size",
+      "worker.processing.latency",
+      "worker.queue.depth",
+      "worker.queue.pressure",
+    ]));
+
+    assert.ok(proxy.requests.length >= 3);
+    assert.deepEqual(
+      new Set(proxy.requests.map((request) => request.path)),
+      new Set(["/v1/logs", "/v1/metrics", "/v1/traces"]),
+    );
+    assert.ok(proxy.requests.every((request) =>
+      request.contentType === "application/json"
+      && request.status === 200
+    ));
 
     await service.decision.stop();
     const unavailable = new AdaptiveWorker(
@@ -141,10 +184,80 @@ async function runSmoke(lifecycle) {
       burstBatchSize: burst.appliedBatchSize,
       recoveryBatchSize: recovery.appliedBatchSize,
       telemetryEvents: telemetry.events.length,
+      telemetryRequests: proxy.requests.length,
     }, null, 2)}\n`);
   } finally {
     await telemetry.shutdown();
   }
+}
+
+async function startRecordingProxy(upstreamBaseUrl) {
+  const requests = [];
+  const server = createServer((request, response) => {
+    void forward(request, response).catch((error) => {
+      response.writeHead(502, { "Content-Type": "text/plain" });
+      response.end(error instanceof Error ? error.message : String(error));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("Telemetry proxy did not bind a TCP port.");
+  }
+
+  async function forward(request, response) {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    const path = request.url ?? "/";
+    const contentType = request.headers["content-type"];
+    const upstream = await fetch(new URL(path, upstreamBaseUrl), {
+      method: request.method,
+      headers: {
+        ...(contentType === undefined ? {} : { "content-type": contentType }),
+        ...(request.headers["content-encoding"] === undefined
+          ? {}
+          : { "content-encoding": request.headers["content-encoding"] }),
+      },
+      body,
+    });
+    const upstreamBody = Buffer.from(await upstream.arrayBuffer());
+    requests.push({
+      path,
+      contentType,
+      status: upstream.status,
+    });
+    response.writeHead(upstream.status, {
+      "Content-Type": upstream.headers.get("content-type")
+        ?? "application/json",
+    });
+    response.end(upstreamBody);
+  }
+
+  let stopPromise;
+  return {
+    name: "adaptive-worker-otel-proxy",
+    requests,
+    url: `http://127.0.0.1:${address.port}`,
+    get exited() {
+      return !server.listening;
+    },
+    get unexpectedExit() {
+      return undefined;
+    },
+    stop() {
+      stopPromise ??= new Promise((resolve, reject) => {
+        server.close((error) => error === undefined ? resolve() : reject(error));
+      });
+      return stopPromise;
+    },
+  };
 }
 
 async function main() {

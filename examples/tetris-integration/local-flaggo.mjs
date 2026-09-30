@@ -18,6 +18,7 @@ export async function startLocalFlaggoHosts({
     database: resolve(runDirectory, "flaggo.db"),
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
+    otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
   };
   const commonConfiguration = {
     ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
@@ -67,10 +68,32 @@ export async function startLocalFlaggoHosts({
         signal,
       ),
   });
+  const otelIngestion = lifecycle.startHost(() => startHost(
+    "tetris-otel-ingestion",
+    resolve(
+      repositoryRoot,
+      "apps/otel-ingestion/src/Flaggo.OtelIngestion/bin/Debug/net10.0/Flaggo.OtelIngestion.dll",
+    ),
+    paths.otelIngestionLog,
+    repositoryRoot,
+    commonConfiguration,
+  ));
+  const otelIngestionUrl = await otelIngestion.waitForListening({
+    signal: lifecycle.signal,
+  });
+  lifecycle.assertHealthy();
+  await waitForReady(
+    (probeSignal) => ready(otelIngestionUrl, fetchWithAbort, probeSignal),
+    otelIngestion,
+    lifecycle.signal,
+  );
+  lifecycle.assertHealthy();
 
   return {
     ...hosts,
     fetch: fetchWithAbort,
+    otelIngestion,
+    otelIngestionUrl,
   };
 }
 
