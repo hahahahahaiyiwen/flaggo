@@ -113,7 +113,7 @@ Contract Store, and Executable Store.
 | Secrets | Environment variables or local development secret store | Provider secret manager |
 | Contract and executable stores | SQLite | Managed SQL or document store |
 | Runtime evaluation | In-process bounded evaluator | Independently scaled Decision Service |
-| Future evidence transport | Application-owned OpenTelemetry pipeline | Managed telemetry or analytics pipeline |
+| Evidence transport | Application-owned OpenTelemetry pipeline | Managed telemetry or analytics pipeline |
 
 Public APIs, DecisionContracts, executable semantics, and durable store schemas
 must remain usable without a cloud account. New providers add adapters behind
@@ -126,9 +126,10 @@ Store, Executable Store, a bounded expression compiler, and a stateless
 evaluator. Contract and Decision Services share a configured SQLite database
 while each store owns its tables and schema version.
 
-OTel Ingestion, Evidence Store, and asynchronous analysis are future components
-that require separately accepted designs. They may generate candidate
-executables, but they do not participate in the synchronous decision path.
+OTel Ingestion and the Evidence Store form the Phase 4 telemetry foundation.
+Asynchronous analysis remains a separately delivered component. These
+capabilities may generate candidate executables, but they do not participate in
+the synchronous decision path.
 
 ### Parallel contract implementation
 

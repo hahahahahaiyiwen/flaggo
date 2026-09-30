@@ -1,0 +1,109 @@
+{
+  "name": "otlp-http-logs-json",
+  "scenarios": [],
+  "invariant": "Flaggo accepts a standard OTLP/HTTP JSON logs export and returns the matching empty OTLP success response.",
+  "otlpProfile": "flaggo.otlp-http",
+  "otlpSignal": "logs",
+  "request": {
+    "method": "POST",
+    "path": "/v1/logs",
+    "headers": {
+      "Content-Type": "application/json",
+      "Content-Encoding": "identity"
+    },
+    "body": {
+      "resourceLogs": [
+        {
+          "resource": {
+            "attributes": [
+              {
+                "key": "service.name",
+                "value": {
+                  "stringValue": "tetris"
+                }
+              },
+              {
+                "key": "deployment.environment.name",
+                "value": {
+                  "stringValue": "test"
+                }
+              }
+            ]
+          },
+          "scopeLogs": [
+            {
+              "scope": {
+                "name": "@flaggo/sdk",
+                "version": "0.2.0"
+              },
+              "schemaUrl": "https://flaggo.dev/schemas/telemetry/1.0.0",
+              "logRecords": [
+                {
+                  "timeUnixNano": "1790802000000000000",
+                  "eventName": "flaggo.decision.received",
+                  "attributes": [
+                    {
+                      "key": "flaggo.signal",
+                      "value": {
+                        "stringValue": "decision.received"
+                      }
+                    },
+                    {
+                      "key": "flaggo.decision.id",
+                      "value": {
+                        "stringValue": "018f5f9e-768f-4f86-8f79-79f83285c95f"
+                      }
+                    },
+                    {
+                      "key": "flaggo.contract.name",
+                      "value": {
+                        "stringValue": "tetris.dropInterval"
+                      }
+                    },
+                    {
+                      "key": "flaggo.contract.digest",
+                      "value": {
+                        "stringValue": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      }
+                    },
+                    {
+                      "key": "flaggo.executable.digest",
+                      "value": {
+                        "stringValue": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                      }
+                    },
+                    {
+                      "key": "flaggo.result.json",
+                      "value": {
+                        "stringValue": "4"
+                      }
+                    },
+                    {
+                      "key": "flaggo.result.hash",
+                      "value": {
+                        "stringValue": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a"
+                      }
+                    },
+                    {
+                      "key": "flaggo.evaluation.source",
+                      "value": {
+                        "stringValue": "default"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {}
+  }
+}

@@ -1,11 +1,10 @@
 # Executable Contracts
 
-This directory is the executable projection of the current service-owned API
-designs: [Contract Service](../docs/design/architecture/CONTRACT_SERVICE.md)
-and [Decision Service](../docs/design/architecture/RUNTIME.md). Evidence
-ingestion remains a future design and has no executable Phase 3 API. The
-OpenAPI documents and JSON Schemas are the authority for current wire behavior.
-Their conformance gate must remain green for every change.
+This directory is the executable projection of the service-owned APIs and
+telemetry contracts. The OpenAPI documents and JSON Schemas are the authority
+for Flaggo-owned wire and event behavior. The OTLP profile selects required
+capabilities from the upstream OpenTelemetry Protocol without redefining its
+payload messages. The conformance gate must remain green for every change.
 
 ## Layout
 
@@ -14,6 +13,7 @@ contracts/
   openapi/       Runtime and management OpenAPI 3.1 documents
   schemas/       Draft 2020-12 JSON Schemas
   fixtures/      Golden HTTP, SDK-local, and schema-negative cases
+  otel/          Flaggo telemetry schema and OTLP/HTTP capability profile
   conformance/   Fixture manifest and offline validation
   mock/          Fixture-backed development server
 ```
@@ -59,8 +59,40 @@ The route never resolves the named resource's current version. Every successful
 response identifies the exact contract and executable digests. The obsolete v2
 definition-bundle contract and its consumers have been removed.
 
-The Phase 3 runtime fixture surface is JSON-only. It covers runtime decisions
-and health; there are no executable Evidence or OTLP routes.
+## Telemetry contracts
+
+[`telemetry-events-v1.schema.json`](schemas/telemetry-events-v1.schema.json)
+defines the strict logical projection of Flaggo-owned OpenTelemetry log events.
+It currently covers `flaggo.decision.received` and the optional
+`flaggo.outcome.observed` helper event. The schema validates event names,
+attributes, evaluation provenance, identities, and value representations
+without duplicating the surrounding OTLP envelope.
+
+The source for the immutable OpenTelemetry Schema File is
+[`flaggo-telemetry-schema-1.0.0.yaml`](otel/flaggo-telemetry-schema-1.0.0.yaml).
+Its reserved publication URL is:
+
+```text
+https://flaggo.dev/schemas/telemetry/1.0.0
+```
+
+The SDK must leave its instrumentation-scope `schemaUrl` unset until that URL
+is published and retrievable. Publishing the file and then enabling SDK
+emission are deployment work, not part of this contract-only change.
+
+[`flaggo-otlp-http-profile-v1.json`](otel/flaggo-otlp-http-profile-v1.json)
+selects the Phase 4 OTLP/HTTP surface: logs, metrics, and traces; Protobuf and
+Protobuf JSON encodings; identity and gzip compression; the 64 MiB decompressed
+request limit; standard OTLP success and failure responses; and no Phase 4
+ingestion authentication. Upstream `opentelemetry-proto` definitions remain
+the payload authority. Flaggo defines no custom OTLP request model or OTLP
+OpenAPI operation.
+
+The fixture surface contains logical event cases plus OTLP/HTTP JSON and
+gzip-compressed Protobuf exchanges. The offline gate validates the profile,
+schema files, fixture/profile agreement, strict event JSON, event hashes, and
+the binary export envelope. Real-host OTLP profile dispatch remains a separate
+implementation conformance check.
 
 ## Validate
 
@@ -71,10 +103,10 @@ python contracts\conformance\validate.py
 
 Validation checks registered schemas, OpenAPI structure and local references,
 fixture-manifest coverage, positive request/response bodies, negative schema
-cases, semantic value contracts, the v3 DecisionContract management surface,
-and the v3 runtime evaluation surface. The Tetris consumer and host harness use
-the v3 management and runtime APIs; the deleted v2 bundle schema is no longer
-part of their validation path.
+cases, semantic value contracts, Flaggo event semantics, the OTLP/HTTP profile,
+the v3 DecisionContract management surface, and the v3 runtime evaluation
+surface. The Tetris consumer and host harness use the v3 management and runtime
+APIs; the deleted v2 bundle schema is no longer part of their validation path.
 It does not start network services or access remote schema registries.
 
 The `Contracts` GitHub Actions workflow runs the local Tetris and Adaptive

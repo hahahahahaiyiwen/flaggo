@@ -1,0 +1,58 @@
+{
+  "name": "otlp-http-traces-json",
+  "scenarios": [],
+  "invariant": "Flaggo accepts a standard OTLP/HTTP JSON traces export and returns the matching empty OTLP success response.",
+  "otlpProfile": "flaggo.otlp-http",
+  "otlpSignal": "traces",
+  "request": {
+    "method": "POST",
+    "path": "/v1/traces",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "resourceSpans": [
+        {
+          "resource": {
+            "attributes": [
+              {
+                "key": "service.name",
+                "value": {
+                  "stringValue": "tetris"
+                }
+              }
+            ]
+          },
+          "scopeSpans": [
+            {
+              "scope": {
+                "name": "tetris.telemetry",
+                "version": "1.0.0"
+              },
+              "spans": [
+                {
+                  "traceId": "5b8aa5a2d2c872e8321cf37308d69df2",
+                  "spanId": "051581bf3cb55c13",
+                  "name": "tetris.tick",
+                  "kind": 1,
+                  "startTimeUnixNano": "1790802000000000000",
+                  "endTimeUnixNano": "1790802000010000000",
+                  "status": {
+                    "code": 1
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {}
+  }
+}

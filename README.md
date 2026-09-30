@@ -76,7 +76,7 @@ Decision Service.
 apps/          Runnable service hosts
 modules/       Internal business capabilities and owned ports
 packages/      Reusable SDK and data-contract packages
-contracts/     OpenAPI, JSON Schema, fixtures, and conformance
+contracts/     OpenAPI, JSON Schema, OTel profiles, fixtures, and conformance
 tests/         Cross-module and end-to-end verification
 examples/      Integrations and showcase links
 deploy/        Fixture-container assets; production service topology is deferred

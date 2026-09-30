@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { LogRecord } from "@opentelemetry/api-logs";
+import addFormatsModule from "ajv-formats";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -16,6 +20,17 @@ const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 const executableDigest =
   "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const repositoryRoot = resolve(import.meta.dirname, "../../..");
+const telemetryEventValidator = addFormatsModule.default(new Ajv2020({
+  allErrors: true,
+  strict: true,
+})).compile(JSON.parse(readFileSync(
+  resolve(
+    repositoryRoot,
+    "contracts/schemas/telemetry-events-v1.schema.json",
+  ),
+  "utf8",
+)) as object);
 
 type Decisions = {
   readonly parallelism: DecisionSpec<{
@@ -61,6 +76,18 @@ function captureLogger(): {
   };
 }
 
+function expectContractEvent(record: LogRecord): void {
+  const valid = telemetryEventValidator({
+    eventName: record.eventName,
+    timeUnixNano: "1790802000000000000",
+    attributes: record.attributes,
+  });
+  expect(
+    valid,
+    JSON.stringify(telemetryEventValidator.errors, null, 2),
+  ).toBe(true);
+}
+
 describe("runtime telemetry", () => {
   it("emits decision-received telemetry after a successful decide response", async () => {
     const telemetry = captureLogger();
@@ -92,6 +119,7 @@ describe("runtime telemetry", () => {
     });
     expect(record.attributes?.["flaggo.decision.id"]).toEqual(expect.any(String));
     expect(record.attributes?.["flaggo.result.hash"]).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expectContractEvent(record);
   });
 
   it("keeps multiple decisions individually identifiable", async () => {
@@ -169,6 +197,7 @@ describe("runtime telemetry", () => {
       "flaggo.correlation.workerId": "worker-1",
       "flaggo.correlation.queuePressure": 0.75,
     });
+    expectContractEvent(record);
   });
 
   it("creates an OTLP logger with Collector-compatible JSON projection", async () => {

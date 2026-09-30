@@ -2,11 +2,14 @@
 
 `validate.py` performs the offline executable-contract gate:
 
-- validates all three Draft 2020-12 schemas;
+- validates all five Draft 2020-12 schemas;
 - parses both OpenAPI 3.1 documents and resolves local references;
 - requires every fixture to be indexed exactly once;
 - checks fixture methods, paths, statuses, and secured-operation coverage;
 - validates positive request/response bodies and rejects negative samples;
+- validates Flaggo event JSON, result hashes, and evaluation provenance;
+- validates the OpenTelemetry Schema File and Flaggo OTLP/HTTP profile;
+- checks OTLP JSON and gzip-compressed Protobuf fixtures against the profile;
 - rejects duplicate object keys, non-finite JSON numbers, and malformed
   RFC 3339 values;
 - verifies RFC 8785 canonicalization vectors;
@@ -24,6 +27,9 @@ python contracts\conformance\validate.py
 generate language-specific models from the OpenAPI documents and schemas, but
 generated output is not committed until an implementation track selects its
 generator.
+
+The OTLP checks validate executable contract artifacts and fixture envelopes.
+They do not yet dispatch every profile fixture through a real ingestion host.
 
 The .NET host suites dispatch the same management and runtime fixtures through
 real Contract Service and Decision Service hosts. The TypeScript SDK additionally

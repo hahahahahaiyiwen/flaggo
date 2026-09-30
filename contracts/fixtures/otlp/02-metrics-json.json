@@ -1,0 +1,59 @@
+{
+  "name": "otlp-http-metrics-json",
+  "scenarios": [],
+  "invariant": "Flaggo accepts a standard OTLP/HTTP JSON metrics export and returns the matching empty OTLP success response.",
+  "otlpProfile": "flaggo.otlp-http",
+  "otlpSignal": "metrics",
+  "request": {
+    "method": "POST",
+    "path": "/v1/metrics",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "resourceMetrics": [
+        {
+          "resource": {
+            "attributes": [
+              {
+                "key": "service.name",
+                "value": {
+                  "stringValue": "tetris"
+                }
+              }
+            ]
+          },
+          "scopeMetrics": [
+            {
+              "scope": {
+                "name": "tetris.telemetry",
+                "version": "1.0.0"
+              },
+              "metrics": [
+                {
+                  "name": "tetris.board_pressure_mean_5s",
+                  "unit": "1",
+                  "gauge": {
+                    "dataPoints": [
+                      {
+                        "timeUnixNano": "1790802000000000000",
+                        "asDouble": 0.72
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {}
+  }
+}

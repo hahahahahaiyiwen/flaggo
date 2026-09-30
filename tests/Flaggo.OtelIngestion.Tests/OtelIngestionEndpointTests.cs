@@ -57,7 +57,7 @@ public sealed class OtelIngestionEndpointTests
             "https://opentelemetry.io/schemas/1.27.0",
             decision.Envelope.GetProperty("resourceSchemaUrl").GetString());
         Assert.Equal(
-            "https://flaggo.dev/schemas/telemetry/v1",
+            "https://flaggo.dev/schemas/telemetry/1.0.0",
             decision.Envelope.GetProperty("scopeSchemaUrl").GetString());
 
         var outcome = Assert.Single(await store.ListTelemetryAsync(
@@ -213,7 +213,7 @@ public sealed class OtelIngestionEndpointTests
                         new
                         {
                             scope = InstrumentationScope(),
-                            schemaUrl = "https://flaggo.dev/schemas/telemetry/v1",
+                            schemaUrl = "https://flaggo.dev/schemas/telemetry/1.0.0",
                             logRecords = records
                         }
                     }
@@ -236,7 +236,7 @@ public sealed class OtelIngestionEndpointTests
                         new
                         {
                             scope = InstrumentationScope(),
-                            schemaUrl = "https://flaggo.dev/schemas/telemetry/v1",
+                            schemaUrl = "https://flaggo.dev/schemas/telemetry/1.0.0",
                             metrics = new[]
                             {
                                 new
@@ -286,7 +286,7 @@ public sealed class OtelIngestionEndpointTests
                         new
                         {
                             scope = InstrumentationScope(),
-                            schemaUrl = "https://flaggo.dev/schemas/telemetry/v1",
+                            schemaUrl = "https://flaggo.dev/schemas/telemetry/1.0.0",
                             spans = new[]
                             {
                                 new

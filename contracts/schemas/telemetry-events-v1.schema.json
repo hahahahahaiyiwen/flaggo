@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/telemetry-events-v1.schema.json",
+  "title": "Flaggo telemetry events v1",
+  "description": "Strict logical projection of Flaggo-owned OpenTelemetry log events. This schema validates event semantics, not the surrounding OTLP envelope.",
+  "$ref": "#/$defs/FlaggoEvent",
+  "$defs": {
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "GeneratedDecisionId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "SDK-generated UUID v4 decision correlation identity."
+    },
+    "DecisionReference": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\r\\n]+$"
+    },
+    "DecisionName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "TimeUnixNano": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "OTLP-compatible Unix epoch timestamp in nanoseconds."
+    },
+    "CorrelationValue": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "DecisionReceivedAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flaggo.signal",
+        "flaggo.decision.id",
+        "flaggo.contract.name",
+        "flaggo.contract.digest",
+        "flaggo.executable.digest",
+        "flaggo.result.json",
+        "flaggo.result.hash",
+        "flaggo.evaluation.source"
+      ],
+      "properties": {
+        "flaggo.signal": {
+          "const": "decision.received"
+        },
+        "flaggo.decision.id": {
+          "$ref": "#/$defs/GeneratedDecisionId"
+        },
+        "flaggo.contract.name": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "flaggo.contract.digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "flaggo.executable.digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "flaggo.result.json": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Strict JSON serialization of the returned decision result."
+        },
+        "flaggo.result.hash": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "SHA-256 digest of the UTF-8 flaggo.result.json bytes."
+        },
+        "flaggo.evaluation.source": {
+          "enum": [
+            "default",
+            "rule"
+          ]
+        },
+        "flaggo.evaluation.rule": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        },
+        "flaggo.request.correlation_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$"
+        }
+      },
+      "patternProperties": {
+        "^flaggo\\.correlation\\.[A-Za-z][A-Za-z0-9_]{0,127}$": {
+          "$ref": "#/$defs/CorrelationValue"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "flaggo.evaluation.source": {
+              "const": "default"
+            }
+          },
+          "not": {
+            "properties": {
+              "flaggo.evaluation.rule": {}
+            },
+            "required": [
+              "flaggo.evaluation.rule"
+            ]
+          }
+        },
+        {
+          "required": [
+            "flaggo.evaluation.rule"
+          ],
+          "properties": {
+            "flaggo.evaluation.source": {
+              "const": "rule"
+            },
+            "flaggo.evaluation.rule": {}
+          }
+        }
+      ]
+    },
+    "OutcomeObservedAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flaggo.signal",
+        "flaggo.evidence.binding",
+        "flaggo.evidence.value.json"
+      ],
+      "properties": {
+        "flaggo.signal": {
+          "const": "outcome.observed"
+        },
+        "flaggo.evidence.binding": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$"
+        },
+        "flaggo.evidence.value.json": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Strict JSON serialization of the observed value."
+        },
+        "flaggo.decision.id": {
+          "$ref": "#/$defs/DecisionReference"
+        },
+        "flaggo.contract.name": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "flaggo.contract.digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "patternProperties": {
+        "^flaggo\\.correlation\\.[A-Za-z][A-Za-z0-9_]{0,127}$": {
+          "$ref": "#/$defs/CorrelationValue"
+        }
+      }
+    },
+    "DecisionReceivedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eventName",
+        "timeUnixNano",
+        "attributes"
+      ],
+      "properties": {
+        "eventName": {
+          "const": "flaggo.decision.received"
+        },
+        "timeUnixNano": {
+          "$ref": "#/$defs/TimeUnixNano"
+        },
+        "attributes": {
+          "$ref": "#/$defs/DecisionReceivedAttributes"
+        }
+      }
+    },
+    "OutcomeObservedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eventName",
+        "timeUnixNano",
+        "attributes"
+      ],
+      "properties": {
+        "eventName": {
+          "const": "flaggo.outcome.observed"
+        },
+        "timeUnixNano": {
+          "$ref": "#/$defs/TimeUnixNano"
+        },
+        "attributes": {
+          "$ref": "#/$defs/OutcomeObservedAttributes"
+        }
+      }
+    },
+    "FlaggoEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DecisionReceivedEvent"
+        },
+        {
+          "$ref": "#/$defs/OutcomeObservedEvent"
+        }
+      ]
+    }
+  }
+}
