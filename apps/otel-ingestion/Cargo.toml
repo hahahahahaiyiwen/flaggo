@@ -8,10 +8,12 @@ rust-version.workspace = true
 
 [dependencies]
 axum.workspace = true
+flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../../modules/raw-otlp-inbox" }
 serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+async-trait = "0.1.89"
 tower.workspace = true
 
 [lints]

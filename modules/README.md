@@ -9,6 +9,7 @@ decision
 contract-store
 executable-store
 evidence-store
+raw-otlp-inbox
 hosting
 ```
 
@@ -26,6 +27,8 @@ not depend on an app composition root or on the legacy
   scoped Candidate, Active, and Inactive lifecycle state.
 - Evidence Store persists selected, query-ready telemetry observations and
   materialization provenance for asynchronous analysis.
+- Raw OTLP Inbox persists complete validated OTLP export requests as a bounded,
+  replayable work log without depending on its SQLx/SQLite adapter contract.
 - Hosting owns reusable strict HTTP, authentication, correlation, Problem
   Details, and health mechanics without domain routes.
 

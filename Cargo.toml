@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/otel-ingestion"]
+members = ["apps/otel-ingestion", "modules/raw-otlp-inbox"]
 resolver = "3"
 
 [workspace.package]

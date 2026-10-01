@@ -1,11 +1,18 @@
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
-use flaggo_otel_ingestion::{configured_listen_address, router};
+use flaggo_otel_ingestion::{
+    configured_database_url, configured_inbox_limits, configured_listen_address, router,
+};
+use flaggo_raw_otlp_inbox::SqliteRawOtlpInbox;
 use serde_json::json;
 use tokio::{net::TcpListener, signal};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let inbox = Arc::new(
+        SqliteRawOtlpInbox::connect(&configured_database_url()?, configured_inbox_limits()?)
+            .await?,
+    );
     let listener = TcpListener::bind(configured_listen_address()?).await?;
     let address = listener.local_addr()?;
     println!(
@@ -16,9 +23,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
     );
 
-    axum::serve(listener, router())
+    let result = axum::serve(listener, router(inbox.clone()))
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    inbox.close().await;
+    result?;
     Ok(())
 }
 
