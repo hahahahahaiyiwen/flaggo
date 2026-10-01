@@ -36,6 +36,9 @@ bin/
 obj/
 TestResults/
 
+# Rust artifacts
+target/
+
 # Build/package artifacts
 *.nupkg
 *.snupkg

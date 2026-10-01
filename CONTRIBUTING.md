@@ -13,6 +13,7 @@ Requirements:
 - Python 3.11 or newer
 - .NET SDK 10
 - Node.js 20 or newer
+- Rust using the repository-pinned toolchain
 - Git
 - Docker with Compose (optional)
 
@@ -33,6 +34,13 @@ npm run test:adaptive-worker
 ```
 
 No cloud account or external service is required.
+
+Build and verify the Rust workspace independently:
+
+```powershell
+npm run build:rust
+npm run check:rust
+```
 
 For fixture-only contract and SDK development, run:
 

@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
+import { resolve } from "node:path";
 
 const dynamicLoopbackUrl = "http://127.0.0.1:0";
 const signalExitCodes = new Map([
@@ -368,9 +369,11 @@ export function parseListeningUrl(line) {
   } catch {
     return undefined;
   }
-  const address = entry?.Category === "Microsoft.Hosting.Lifetime"
-    ? entry?.State?.address
-    : undefined;
+  const address = entry?.event === "server.listening"
+    ? entry?.address
+    : entry?.Category === "Microsoft.Hosting.Lifetime"
+      ? entry?.State?.address
+      : undefined;
   if (typeof address !== "string") return undefined;
 
   let url;
@@ -431,6 +434,44 @@ export function startHost(
     name, "dotnet", [assembly], logPath, repositoryRoot,
     createHostEnvironment(configuration),
   );
+}
+
+export function startRustHost(
+  name,
+  binaryName,
+  logPath,
+  repositoryRoot,
+  configuration,
+  options,
+) {
+  return startManagedProcess(
+    name,
+    rustBinaryPath(repositoryRoot, binaryName, options),
+    [],
+    logPath,
+    repositoryRoot,
+    createRustHostEnvironment(configuration),
+  );
+}
+
+export function rustBinaryPath(
+  repositoryRoot,
+  binaryName,
+  {
+    platform = process.platform,
+    profile = "debug",
+  } = {},
+) {
+  if (!/^[A-Za-z0-9_-]+$/u.test(binaryName)) {
+    throw new TypeError("Rust binary name contains invalid characters.");
+  }
+  if (profile !== "debug" && profile !== "release") {
+    throw new TypeError("Rust build profile must be 'debug' or 'release'.");
+  }
+  const executable = platform === "win32"
+    ? `${binaryName}.exe`
+    : binaryName;
+  return resolve(repositoryRoot, "target", profile, executable);
 }
 
 export function startManagedProcess(
@@ -610,6 +651,17 @@ export function createHostEnvironment(
     ASPNETCORE_URLS: dynamicLoopbackUrl,
     Logging__Console__FormatterName: "json",
     Flaggo__Authentication__LocalDevelopmentBypass: "true",
+  };
+}
+
+export function createRustHostEnvironment(
+  configuration,
+  parentEnvironment = process.env,
+) {
+  return {
+    ...parentEnvironment,
+    ...configuration,
+    FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS: "127.0.0.1:0",
   };
 }
 
