@@ -52,14 +52,19 @@ async function play(lifecycle) {
       contractDigest: deployed.deployment.contractDigest,
       credential: { mode: "local-development" },
       fetch: hosts.fetch,
-      telemetry: telemetry.instrumentation,
+      telemetry: telemetry.policyInstrumentation,
     });
     await runTerminalTetris({
+      instrumentation: telemetry.sessionInstrumentation,
       provider,
       signal: lifecycle.signal,
     });
   } finally {
-    await telemetry.shutdown();
+    try {
+      await telemetry.forceFlush();
+    } finally {
+      await telemetry.shutdown();
+    }
   }
 }
 

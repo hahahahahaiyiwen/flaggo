@@ -46,15 +46,46 @@ displays `Flaggo cached`. This is application behavior implemented by the
 terminal and optional provider; the SDK does not synthesize fallback decisions.
 
 The application owns its OpenTelemetry logger, meter, and tracer providers and
-adds the standard Flaggo OTLP processors and metric reader. Every policy
-refresh records the six rolling decision features as metrics, creates a
-`tetris.drop_interval.select` span, and emits a
-`tetris.drop_interval.selected` application log. The SDK's
-`flaggo.decision.received` log is emitted through the same provider and
-correlates with the active span. All three signals export directly to OTel
-Ingestion; no Collector process is required. An OTLP success response means
-that the complete export request was durably enqueued. Evidence selection and
-materialization continue asynchronously.
+adds the standard Flaggo OTLP processors and metric reader. All three signals
+export directly to OTel Ingestion; no Collector process is required. An OTLP
+success response means that the complete export request was durably enqueued.
+Evidence selection and materialization continue asynchronously.
+
+### Telemetry design
+
+The telemetry boundary keeps game rules independent of OpenTelemetry.
+`TetrisSession` publishes typed lifecycle and command transitions through
+`TetrisSessionInstrumentation`; `session-telemetry.ts` maps them to OTel.
+`otel.ts` remains the composition root that owns resources, providers,
+exporters, explicit force-flush, and shutdown.
+
+| Scope | Responsibility |
+| --- | --- |
+| `tetris.engine` | Session lifecycle, commands, pieces, lines, state, and raw evidence candidates |
+| `tetris.policy` | Decision-window features, policy selection logs, and `tetris.drop_interval.select` spans |
+| `@flaggo/sdk` | Canonical `flaggo.decision.received` events |
+
+Engine logs cover game start/restart, pause/resume, piece spawn/lock, line
+clear, rejected recovery, and game over. Every programmatic command creates a
+`tetris.command` span; lock, line-clear, recovery-failure, and game-over facts
+are span events. Policy selection logs and the SDK decision event correlate
+with the active policy span.
+
+The metric catalog separates future evidence from operational telemetry:
+
+| Metrics | Attributes and purpose |
+| --- | --- |
+| `tetris.placement_time`, `tetris.recovery_failure` | Carry `tetris.session.id`; these names match the decision contract's `tetris.placement_time` and `tetris.recovery_failure` evidence bindings |
+| `tetris.board.pressure`, `tetris.score`, `tetris.level` | Per-session state gauges |
+| `tetris.game.started`, `tetris.game.completed`, `tetris.session.active` | Aggregate lifecycle counts |
+| `tetris.command` | Aggregate command count by bounded command and outcome |
+| `tetris.piece.spawned`, `tetris.piece.locked`, `tetris.lines.cleared`, `tetris.drop.distance` | Aggregate engine operations with only bounded piece or command attributes |
+| `tetris.*_5s` policy metrics | Exact rolling attributes sent to the decision contract |
+
+The engine does not log gravity ticks or export board matrices. Session IDs are
+reserved for logs, spans, evidence candidates, and per-session state; aggregate
+operational counters avoid session-cardinality growth. No instrumentation
+scope schema URL is set until a Tetris schema is published.
 
 ## Headless session API
 
@@ -87,6 +118,11 @@ selection, and decision observation. Multiple sessions can share a provider
 while retaining independent board, policy, cancellation, and lifecycle state.
 Default session IDs are collision-resistant; deterministic callers should
 supply explicit IDs, clocks, and piece sources.
+
+Callers may also pass one shared `TetrisSessionInstrumentation` implementation
+to multiple sessions. The application-owned OTel adapter preserves session
+correlation while the standalone build continues to have no OTel or Flaggo
+runtime dependency.
 
 `runTerminalTetris` is only a driver over this API: terminal keypresses become
 commands, and terminal timers decide when to send gravity and policy-refresh
@@ -145,6 +181,13 @@ Run the real-host integration independently:
 npm run test:tetris-integration
 ```
 
-The real-host harness verifies the `850`, `750`, and `800` paths, SDK-owned
-`_random`, exact digest provenance, retired-field absence, and explicit
-failure after Decision Service stops.
+The real-host harness drives two deterministic headless sessions through a
+line clear and rejected recovery actions, verifies the `850` and `750` paths,
+captures logs, metrics, and traces while forwarding them to the Rust OTLP
+receiver, and checks resource/scope metadata, cross-signal correlation,
+session isolation, future evidence candidates, and deliberately unmatched
+operational telemetry. It also verifies SDK-owned `_random`, exact digest
+provenance, direct REST parity from the captured session attributes,
+retired-field absence, explicit failure after Decision Service stops, and
+restart persistence. Exporters are force-flushed before assertions, so an
+export or receiver failure fails the run.

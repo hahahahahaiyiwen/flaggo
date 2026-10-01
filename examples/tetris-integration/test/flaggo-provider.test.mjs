@@ -131,9 +131,9 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
       fetch: async () => decisionResponse(850),
       telemetry: {
         flaggoLogger: loggerProvider.getLogger("@flaggo/sdk", "0.2.0"),
-        logger: loggerProvider.getLogger("tetris.app"),
-        meter: meterProvider.getMeter("tetris.app"),
-        tracer: tracerProvider.getTracer("tetris.app"),
+        logger: loggerProvider.getLogger("tetris.policy"),
+        meter: meterProvider.getMeter("tetris.policy"),
+        tracer: tracerProvider.getTracer("tetris.policy"),
       },
     });
 
@@ -159,7 +159,7 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
       records.find((record) =>
         record.eventName === "tetris.drop_interval.selected"
       )?.instrumentationScope.name,
-      "tetris.app",
+      "tetris.policy",
     );
     const span = spanExporter.getFinishedSpans()[0];
     assert.ok(span);

@@ -1,9 +1,25 @@
 import { context } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { LoggerProvider } from "@opentelemetry/sdk-logs";
-import { MeterProvider } from "@opentelemetry/sdk-metrics";
-import { TracerProvider } from "@opentelemetry/sdk-trace";
+import {
+  InMemoryLogRecordExporter,
+  LoggerProvider,
+  SimpleLogRecordProcessor,
+  type ReadableLogRecord,
+} from "@opentelemetry/sdk-logs";
+import {
+  AggregationTemporality,
+  InMemoryMetricExporter,
+  MeterProvider,
+  PeriodicExportingMetricReader,
+  type ResourceMetrics,
+} from "@opentelemetry/sdk-metrics";
+import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+  TracerProvider,
+  type ReadableSpan,
+} from "@opentelemetry/sdk-trace";
 import {
   createFlaggoLogRecordProcessor,
   createFlaggoMetricReader,
@@ -11,19 +27,31 @@ import {
 } from "@flaggo/sdk/opentelemetry";
 import { SDK_VERSION } from "@flaggo/sdk/runtime";
 
-import type { TetrisOpenTelemetry } from "./flaggo-provider.js";
+import type { TetrisPolicyOpenTelemetry } from "./flaggo-provider.js";
+import {
+  createTetrisSessionInstrumentation,
+  tetrisEngineInstrumentationScope,
+} from "./session-telemetry.js";
+import type { TetrisSessionInstrumentation } from "./session.js";
 
 export interface TetrisTelemetryOptions {
+  readonly capture?: boolean;
   readonly environment?: string;
   readonly flaggoOtlpBaseUrl: string | URL;
 }
 
+export const tetrisPolicyInstrumentationScope = "tetris.policy";
+
 export class TetrisTelemetryProviders {
-  readonly instrumentation: TetrisOpenTelemetry;
+  readonly policyInstrumentation: TetrisPolicyOpenTelemetry;
+  readonly sessionInstrumentation: TetrisSessionInstrumentation;
 
   private readonly contextManager: AsyncLocalStorageContextManager | undefined;
+  private readonly logExporter: InMemoryLogRecordExporter | undefined;
   private readonly loggerProvider: LoggerProvider;
   private readonly meterProvider: MeterProvider;
+  private readonly metricExporter: InMemoryMetricExporter | undefined;
+  private readonly spanExporter: InMemorySpanExporter | undefined;
   private readonly tracerProvider: TracerProvider;
 
   constructor(options: TetrisTelemetryOptions) {
@@ -31,12 +59,28 @@ export class TetrisTelemetryProviders {
       "service.name": "tetris",
       "deployment.environment.name": options.environment ?? "local",
     });
+    this.logExporter = options.capture === true
+      ? new InMemoryLogRecordExporter()
+      : undefined;
+    this.metricExporter = options.capture === true
+      ? new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE)
+      : undefined;
+    this.spanExporter = options.capture === true
+      ? new InMemorySpanExporter()
+      : undefined;
     this.loggerProvider = new LoggerProvider({
       resource,
       processors: [
         createFlaggoLogRecordProcessor({
           baseUrl: options.flaggoOtlpBaseUrl,
         }),
+        ...(this.logExporter === undefined
+          ? []
+          : [
+            new SimpleLogRecordProcessor({
+              exporter: this.logExporter,
+            }),
+          ]),
       ],
     });
     this.meterProvider = new MeterProvider({
@@ -46,6 +90,14 @@ export class TetrisTelemetryProviders {
           baseUrl: options.flaggoOtlpBaseUrl,
           periodic: { exportIntervalMillis: 5_000 },
         }),
+        ...(this.metricExporter === undefined
+          ? []
+          : [
+            new PeriodicExportingMetricReader({
+              exporter: this.metricExporter,
+              exportIntervalMillis: 60_000,
+            }),
+          ]),
       ],
     });
     this.tracerProvider = new TracerProvider({
@@ -54,6 +106,13 @@ export class TetrisTelemetryProviders {
         createFlaggoSpanProcessor({
           baseUrl: options.flaggoOtlpBaseUrl,
         }),
+        ...(this.spanExporter === undefined
+          ? []
+          : [
+            new SimpleSpanProcessor({
+              exporter: this.spanExporter,
+            }),
+          ]),
       ],
     });
 
@@ -65,12 +124,37 @@ export class TetrisTelemetryProviders {
       this.contextManager = undefined;
     }
 
-    this.instrumentation = {
+    this.policyInstrumentation = {
       flaggoLogger: this.loggerProvider.getLogger("@flaggo/sdk", SDK_VERSION),
-      logger: this.loggerProvider.getLogger("tetris.app"),
-      meter: this.meterProvider.getMeter("tetris.app"),
-      tracer: this.tracerProvider.getTracer("tetris.app"),
+      logger: this.loggerProvider.getLogger(tetrisPolicyInstrumentationScope),
+      meter: this.meterProvider.getMeter(tetrisPolicyInstrumentationScope),
+      tracer: this.tracerProvider.getTracer(tetrisPolicyInstrumentationScope),
     };
+    this.sessionInstrumentation = createTetrisSessionInstrumentation({
+      logger: this.loggerProvider.getLogger(tetrisEngineInstrumentationScope),
+      meter: this.meterProvider.getMeter(tetrisEngineInstrumentationScope),
+      tracer: this.tracerProvider.getTracer(tetrisEngineInstrumentationScope),
+    });
+  }
+
+  get events(): readonly ReadableLogRecord[] {
+    return this.logExporter?.getFinishedLogRecords() ?? [];
+  }
+
+  get metrics(): readonly ResourceMetrics[] {
+    return this.metricExporter?.getMetrics() ?? [];
+  }
+
+  get spans(): readonly ReadableSpan[] {
+    return this.spanExporter?.getFinishedSpans() ?? [];
+  }
+
+  async forceFlush(): Promise<void> {
+    await Promise.all([
+      this.loggerProvider.forceFlush(),
+      this.meterProvider.forceFlush(),
+      this.tracerProvider.forceFlush(),
+    ]);
   }
 
   async shutdown(): Promise<void> {

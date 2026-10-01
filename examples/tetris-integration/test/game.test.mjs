@@ -58,7 +58,12 @@ test("movement respects board boundaries and records recovery context", () => {
   assert.equal(rejected.changed, false);
   assert.equal(rejected.recoveryFailureRecorded, true);
   clock = 650;
-  assert.equal(game.hardDrop().locked, true);
+  const locked = game.hardDrop();
+  assert.equal(locked.locked, true);
+  assert.equal(locked.lockedPiece, "O");
+  assert.equal(locked.spawnedPiece, "O");
+  assert.equal(locked.dropDistance, 18);
+  assert.equal(locked.placementTimeMs, 550);
 
   const snapshot = game.snapshot();
   assert.equal(snapshot.score, 36);
@@ -88,9 +93,11 @@ test("soft and hard drops award distance points", () => {
     pieceSource: new SequencePieceSource(["O"]),
   });
 
-  assert.equal(game.softDrop().changed, true);
+  assert.equal(game.softDrop().dropDistance, 1);
   assert.equal(game.score, 1);
-  assert.equal(game.hardDrop().locked, true);
+  const locked = game.hardDrop();
+  assert.equal(locked.locked, true);
+  assert.equal(locked.dropDistance, 17);
   assert.equal(game.score, 35);
 });
 
@@ -101,6 +108,8 @@ test("locking pieces clears lines and advances levels", () => {
 
   const firstClear = clearTwoLinesWithOPieces(game);
   assert.equal(firstClear.linesCleared, 2);
+  assert.equal(firstClear.lockedPiece, "O");
+  assert.equal(firstClear.spawnedPiece, "O");
   assert.equal(game.lines, 2);
   assert.equal(game.level, 0);
   assert.equal(game.score, 480);

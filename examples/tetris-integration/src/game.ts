@@ -32,9 +32,13 @@ export interface TetrisGameOptions {
 
 export interface GameUpdate {
   readonly changed: boolean;
+  readonly dropDistance: number;
   readonly locked: boolean;
+  readonly lockedPiece?: TetrominoKind;
   readonly linesCleared: number;
+  readonly placementTimeMs?: number;
   readonly recoveryFailureRecorded: boolean;
+  readonly spawnedPiece?: TetrominoKind;
   readonly gameOver: boolean;
 }
 
@@ -243,7 +247,7 @@ export class TetrisGame {
       }
     }
     this.currentRecoveryFailures += 1;
-    return this.update(false, false, 0, true);
+    return this.update(false, { recoveryFailureRecorded: true });
   }
 
   softDrop(now = this.now()): GameUpdate {
@@ -253,7 +257,7 @@ export class TetrisGame {
     if (!this.collides(candidate)) {
       this.active = candidate;
       this.scoreValue += 1;
-      return this.update(true);
+      return this.update(true, { dropDistance: 1 });
     }
     return this.lock(now);
   }
@@ -269,7 +273,7 @@ export class TetrisGame {
       distance += 1;
     }
     this.scoreValue += distance * 2;
-    return this.lock(now);
+    return this.lock(now, distance);
   }
 
   tick(now = this.now()): GameUpdate {
@@ -278,7 +282,7 @@ export class TetrisGame {
     const candidate = { ...this.active, y: this.active.y + 1 };
     if (!this.collides(candidate)) {
       this.active = candidate;
-      return this.update(true);
+      return this.update(true, { dropDistance: 1 });
     }
     return this.lock(now);
   }
@@ -329,24 +333,31 @@ export class TetrisGame {
     };
     if (this.collides(candidate)) {
       this.currentRecoveryFailures += 1;
-      return this.update(false, false, 0, true);
+      return this.update(false, { recoveryFailureRecorded: true });
     }
     this.active = candidate;
     return this.update(true);
   }
 
-  private lock(now: number): GameUpdate {
+  private lock(now: number, dropDistance = 0): GameUpdate {
+    const lockedPiece = this.active.kind;
+    const placementTimeMs = Math.max(0, now - this.spawnedAt);
     for (const cell of cells(this.active)) {
       if (cell.y < 0) {
         this.gameOverValue = true;
-        return this.update(true, true);
+        return this.update(true, {
+          dropDistance,
+          locked: true,
+          lockedPiece,
+          placementTimeMs,
+        });
       }
       this.board[cell.y]![cell.x] = this.active.kind;
     }
 
     const linesCleared = this.clearLines();
     this.scoreValue += lineScores[linesCleared]! * (this.level + 1);
-    this.recentPlacementTimeMs = Math.max(0, now - this.spawnedAt);
+    this.recentPlacementTimeMs = placementTimeMs;
     this.recentRecoveryFailures = Math.min(
       5,
       this.currentRecoveryFailures,
@@ -355,7 +366,14 @@ export class TetrisGame {
     this.active = this.newPiece(this.pieceSource.next());
     this.spawnedAt = now;
     if (this.collides(this.active)) this.gameOverValue = true;
-    return this.update(true, true, linesCleared);
+    return this.update(true, {
+      dropDistance,
+      locked: true,
+      lockedPiece,
+      linesCleared,
+      placementTimeMs,
+      ...(this.gameOverValue ? {} : { spawnedPiece: this.active.kind }),
+    });
   }
 
   private clearLines(): number {
@@ -406,15 +424,23 @@ export class TetrisGame {
 
   private update(
     changed: boolean,
-    locked = false,
-    linesCleared = 0,
-    recoveryFailureRecorded = false,
+    details: Partial<Omit<GameUpdate, "changed" | "gameOver">> = {},
   ): GameUpdate {
     return {
       changed,
-      locked,
-      linesCleared,
-      recoveryFailureRecorded,
+      dropDistance: details.dropDistance ?? 0,
+      locked: details.locked ?? false,
+      ...(details.lockedPiece === undefined
+        ? {}
+        : { lockedPiece: details.lockedPiece }),
+      linesCleared: details.linesCleared ?? 0,
+      ...(details.placementTimeMs === undefined
+        ? {}
+        : { placementTimeMs: details.placementTimeMs }),
+      recoveryFailureRecorded: details.recoveryFailureRecorded ?? false,
+      ...(details.spawnedPiece === undefined
+        ? {}
+        : { spawnedPiece: details.spawnedPiece }),
       gameOver: this.gameOverValue,
     };
   }

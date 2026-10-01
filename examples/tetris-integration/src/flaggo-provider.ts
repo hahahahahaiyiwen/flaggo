@@ -45,11 +45,11 @@ export interface FlaggoDropIntervalConfiguration {
   readonly credential?: CredentialProvider;
   readonly fetch?: FetchLike;
   readonly retry?: RetryPolicy;
-  readonly telemetry?: TetrisOpenTelemetry;
+  readonly telemetry?: TetrisPolicyOpenTelemetry;
   readonly timeoutMs?: number;
 }
 
-export interface TetrisOpenTelemetry {
+export interface TetrisPolicyOpenTelemetry {
   readonly flaggoLogger: Logger;
   readonly logger: Logger;
   readonly meter: Meter;

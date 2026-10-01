@@ -39,6 +39,7 @@ export interface TetrisSessionGameOptions
 export interface TetrisSessionOptions {
   readonly provider?: DropIntervalProvider;
   readonly game?: TetrisSessionGameOptions;
+  readonly instrumentation?: TetrisSessionInstrumentation;
   readonly now?: () => number;
 }
 
@@ -66,6 +67,20 @@ export interface TetrisSessionApi {
   close(): void;
 }
 
+export interface TetrisSessionCommandInstrumentation {
+  completed(transition: TetrisSessionTransition): void;
+  failed(error: unknown): void;
+}
+
+export interface TetrisSessionInstrumentation {
+  sessionStarted(state: TetrisSessionState): void;
+  commandStarted(
+    command: TetrisSessionCommand,
+    state: TetrisSessionState,
+  ): TetrisSessionCommandInstrumentation;
+  sessionClosed(state: TetrisSessionState): void;
+}
+
 interface PolicyRefresh {
   readonly controller: AbortController;
   readonly promise: Promise<TetrisSessionTransition>;
@@ -76,6 +91,7 @@ export class TetrisSession implements TetrisSessionApi {
   private readonly now: () => number;
   private readonly provider: DropIntervalProvider;
   private readonly sessionId: string;
+  private readonly instrumentation: TetrisSessionInstrumentation | undefined;
   private game: TetrisGame;
   private observationWindow: RollingDropIntervalContext;
   private lastObservedAt: number;
@@ -89,6 +105,7 @@ export class TetrisSession implements TetrisSessionApi {
     this.gameOptions = { ...(options.game ?? {}) };
     this.now = options.now ?? Date.now;
     this.provider = options.provider ?? new LocalDropIntervalProvider();
+    this.instrumentation = options.instrumentation;
     this.sessionId = this.gameOptions.sessionId ?? `tetris-${randomUUID()}`;
     this.lastObservedAt = this.currentTime();
     this.game = this.createGame(this.lastObservedAt);
@@ -96,6 +113,7 @@ export class TetrisSession implements TetrisSessionApi {
       this.lastObservedAt,
     );
     this.selection = localSelection(this.game.level);
+    this.instrumentation?.sessionStarted(this.snapshot());
   }
 
   snapshot(): TetrisSessionState {
@@ -111,17 +129,19 @@ export class TetrisSession implements TetrisSessionApi {
 
   dispatch(command: TetrisSessionCommand): TetrisSessionTransition {
     this.assertOpen();
-    const observedAt = this.currentTime();
-    switch (command) {
-      case "pause":
-        return this.setPaused(true, command, observedAt);
-      case "resume":
-        return this.setPaused(false, command, observedAt);
-      case "restart":
-        return this.restart(command, observedAt);
-      default:
-        return this.applyGameCommand(command, observedAt);
+    const operation = this.instrumentation?.commandStarted(
+      command,
+      this.snapshot(),
+    );
+    let transition: TetrisSessionTransition;
+    try {
+      transition = this.dispatchAt(command, this.currentTime());
+    } catch (error) {
+      operation?.failed(error);
+      throw error;
     }
+    operation?.completed(transition);
+    return transition;
   }
 
   async refreshPolicy(
@@ -226,6 +246,23 @@ export class TetrisSession implements TetrisSessionApi {
     this.cancelPolicyRefresh();
     this.closed = true;
     this.revisionValue += 1;
+    this.instrumentation?.sessionClosed(this.snapshot());
+  }
+
+  private dispatchAt(
+    command: TetrisSessionCommand,
+    observedAt: number,
+  ): TetrisSessionTransition {
+    switch (command) {
+      case "pause":
+        return this.setPaused(true, command, observedAt);
+      case "resume":
+        return this.setPaused(false, command, observedAt);
+      case "restart":
+        return this.restart(command, observedAt);
+      default:
+        return this.applyGameCommand(command, observedAt);
+    }
   }
 
   private applyGameCommand(

@@ -10,6 +10,7 @@ import {
   TetrisSession,
   type TetrisSessionCommand,
   type TetrisSessionGameOptions,
+  type TetrisSessionInstrumentation,
   type TetrisSessionState,
   type TetrisSessionTransition,
 } from "./session.js";
@@ -20,6 +21,7 @@ export interface TerminalTetrisOptions {
   readonly input?: NodeJS.ReadStream;
   readonly output?: NodeJS.WriteStream;
   readonly game?: TetrisSessionGameOptions;
+  readonly instrumentation?: TetrisSessionInstrumentation;
   readonly now?: () => number;
   readonly policyRefreshIntervalMs?: number;
 }
@@ -94,6 +96,9 @@ export async function runTerminalTetris(
   const session = new TetrisSession({
     ...(options.provider === undefined ? {} : { provider: options.provider }),
     ...(options.game === undefined ? {} : { game: options.game }),
+    ...(options.instrumentation === undefined
+      ? {}
+      : { instrumentation: options.instrumentation }),
     ...(options.now === undefined ? {} : { now: options.now }),
   });
   let gravityTimer: ReturnType<typeof setTimeout> | undefined;
