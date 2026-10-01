@@ -186,8 +186,11 @@ line clear and rejected recovery actions, verifies the `850` and `750` paths,
 captures logs, metrics, and traces while forwarding them to the Rust OTLP
 receiver, and checks resource/scope metadata, cross-signal correlation,
 session isolation, future evidence candidates, and deliberately unmatched
-operational telemetry. It also verifies SDK-owned `_random`, exact digest
+operational telemetry. The test compares the forwarded request count and
+decompressed byte total with OTel Ingestion's raw-inbox health, then restarts
+the receiver on the same SQLite database and verifies those retained values
+survive reopening. It also verifies SDK-owned `_random`, exact digest
 provenance, direct REST parity from the captured session attributes,
 retired-field absence, explicit failure after Decision Service stops, and
-restart persistence. Exporters are force-flushed before assertions, so an
-export or receiver failure fails the run.
+contract persistence across restart. Exporters are force-flushed before
+assertions, so an export, receiver, or durable-inbox failure fails the run.

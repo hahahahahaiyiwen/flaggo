@@ -27,6 +27,9 @@ async function runIntegration(lifecycle) {
     exampleDirectory,
     runDirectory,
   });
+  const initialInbox = await readRawOtlpInboxHealth(hosts);
+  assert.equal(initialInbox.retainedBatchCount, 0);
+  assert.equal(initialInbox.retainedPayloadBytes, 0);
   const deployed = await deployTetrisContract({
     exampleDirectory,
     contractUrl: hosts.contractUrl,
@@ -139,6 +142,11 @@ async function runIntegration(lifecycle) {
     highSession.close();
     await telemetry.shutdown();
   }
+  const storedInbox = await assertRawOtlpInboxStorage({
+    initial: initialInbox,
+    hosts,
+    requests: proxy.requests,
+  });
 
   assert.equal(capturedDecisions.length, 2);
   const decisionsBySession = new Map(
@@ -215,6 +223,15 @@ async function runIntegration(lifecycle) {
     exampleDirectory,
     runDirectory,
   });
+  const reopenedInbox = await readRawOtlpInboxHealth(restartedHosts);
+  assert.equal(
+    reopenedInbox.retainedBatchCount,
+    storedInbox.retainedBatchCount,
+  );
+  assert.equal(
+    reopenedInbox.retainedPayloadBytes,
+    storedInbox.retainedPayloadBytes,
+  );
   const restartedHigh = await postDecisionRest({
     fetch: restartedHosts.fetch,
     decisionUrl: restartedHosts.decisionUrl,
@@ -235,6 +252,11 @@ async function runIntegration(lifecycle) {
       lowLinesCleared: lowPolicy.state.lines,
     },
     telemetry: telemetrySummary,
+    rawOtlpInbox: {
+      retainedBatches: storedInbox.retainedBatchCount,
+      retainedPayloadBytes: storedInbox.retainedPayloadBytes,
+      survivedRestart: true,
+    },
     restParity: {
       high: restHigh.result,
       low: restLow.result,
@@ -410,6 +432,62 @@ function moveHorizontally(session, offset) {
   }
 }
 
+async function assertRawOtlpInboxStorage({ initial, hosts, requests }) {
+  assert.ok(requests.length >= 3);
+  assert.deepEqual(
+    new Set(requests.map((request) => request.path)),
+    new Set(["/v1/logs", "/v1/metrics", "/v1/traces"]),
+  );
+  assert.ok(requests.every((request) =>
+    request.contentEncoding === undefined
+    && request.contentType === "application/json"
+    && Number.isInteger(request.payloadLength)
+    && request.payloadLength > 0
+    && request.status === 200
+  ));
+  const expectedPayloadBytes = requests.reduce(
+    (total, request) => total + request.payloadLength,
+    0,
+  );
+  const stored = await readRawOtlpInboxHealth(hosts);
+  assert.equal(
+    stored.retainedBatchCount - initial.retainedBatchCount,
+    requests.length,
+  );
+  assert.equal(
+    stored.retainedPayloadBytes - initial.retainedPayloadBytes,
+    expectedPayloadBytes,
+  );
+  assert.equal(stored.expiredBatchCount, 0);
+  assert.equal(stored.expiredPayloadBytes, 0);
+  assert.ok(stored.earliestReplayAt);
+  assert.ok(stored.newestRetainedAt);
+  assert.ok(stored.oldestRetainedAt);
+  return stored;
+}
+
+async function readRawOtlpInboxHealth(hosts) {
+  const response = await hosts.fetch(
+    `${hosts.otelIngestionUrl}/health/ready`,
+  );
+  const body = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(body));
+  assert.equal(body.status, "ready");
+  for (const property of [
+    "expiredBatchCount",
+    "expiredPayloadBytes",
+    "retainedBatchCount",
+    "retainedPayloadBytes",
+  ]) {
+    assert.equal(
+      Number.isSafeInteger(body.inbox[property]),
+      true,
+      `inbox '${property}' must be a safe integer`,
+    );
+  }
+  return body.inbox;
+}
+
 async function postDecisionRest({
   fetch,
   decisionUrl,
@@ -515,20 +593,23 @@ async function startRecordingProxy(upstreamBaseUrl) {
     const body = Buffer.concat(chunks);
     const path = request.url ?? "/";
     const contentType = request.headers["content-type"];
+    const contentEncoding = request.headers["content-encoding"];
     const upstream = await fetch(new URL(path, upstreamBaseUrl), {
       method: request.method,
       headers: {
         ...(contentType === undefined ? {} : { "content-type": contentType }),
-        ...(request.headers["content-encoding"] === undefined
+        ...(contentEncoding === undefined
           ? {}
-          : { "content-encoding": request.headers["content-encoding"] }),
+          : { "content-encoding": contentEncoding }),
       },
       body,
     });
     const upstreamBody = Buffer.from(await upstream.arrayBuffer());
     requests.push({
       path,
+      contentEncoding,
       contentType,
+      payloadLength: body.length,
       status: upstream.status,
     });
     response.writeHead(upstream.status, {
