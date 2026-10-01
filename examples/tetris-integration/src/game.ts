@@ -27,12 +27,14 @@ export interface TetrisGameOptions {
   readonly pieceSource?: PieceSource;
   readonly now?: () => number;
   readonly sessionId?: string;
+  readonly startedAt?: number;
 }
 
 export interface GameUpdate {
   readonly changed: boolean;
   readonly locked: boolean;
   readonly linesCleared: number;
+  readonly recoveryFailureRecorded: boolean;
   readonly gameOver: boolean;
 }
 
@@ -44,6 +46,7 @@ export interface GameSnapshot {
   readonly level: number;
   readonly paused: boolean;
   readonly gameOver: boolean;
+  readonly pendingRecoveryFailures: number;
   readonly dropObservation: DropIntervalObservation;
 }
 
@@ -187,7 +190,8 @@ export class TetrisGame {
     this.now = options.now ?? Date.now;
     this.sessionId = options.sessionId
       ?? `tetris-${Math.floor(this.now()).toString(36)}`;
-    this.spawnedAt = this.now();
+    this.spawnedAt = options.startedAt ?? this.now();
+    assertTimestamp(this.spawnedAt);
     this.active = this.newPiece(this.pieceSource.next());
     if (this.collides(this.active)) this.gameOverValue = true;
   }
@@ -239,11 +243,12 @@ export class TetrisGame {
       }
     }
     this.currentRecoveryFailures += 1;
-    return this.update(false);
+    return this.update(false, false, 0, true);
   }
 
   softDrop(now = this.now()): GameUpdate {
     if (!this.canAct()) return this.update(false);
+    assertTimestamp(now);
     const candidate = { ...this.active, y: this.active.y + 1 };
     if (!this.collides(candidate)) {
       this.active = candidate;
@@ -255,6 +260,7 @@ export class TetrisGame {
 
   hardDrop(now = this.now()): GameUpdate {
     if (!this.canAct()) return this.update(false);
+    assertTimestamp(now);
     let distance = 0;
     while (true) {
       const candidate = { ...this.active, y: this.active.y + 1 };
@@ -268,6 +274,7 @@ export class TetrisGame {
 
   tick(now = this.now()): GameUpdate {
     if (!this.canAct()) return this.update(false);
+    assertTimestamp(now);
     const candidate = { ...this.active, y: this.active.y + 1 };
     if (!this.collides(candidate)) {
       this.active = candidate;
@@ -298,6 +305,7 @@ export class TetrisGame {
       level: this.level,
       paused: this.pausedValue,
       gameOver: this.gameOverValue,
+      pendingRecoveryFailures: this.currentRecoveryFailures,
       dropObservation: {
         boardPressure: this.boardPressure(),
         currentLevel: this.level,
@@ -321,7 +329,7 @@ export class TetrisGame {
     };
     if (this.collides(candidate)) {
       this.currentRecoveryFailures += 1;
-      return this.update(false);
+      return this.update(false, false, 0, true);
     }
     this.active = candidate;
     return this.update(true);
@@ -400,12 +408,20 @@ export class TetrisGame {
     changed: boolean,
     locked = false,
     linesCleared = 0,
+    recoveryFailureRecorded = false,
   ): GameUpdate {
     return {
       changed,
       locked,
       linesCleared,
+      recoveryFailureRecorded,
       gameOver: this.gameOverValue,
     };
+  }
+}
+
+function assertTimestamp(value: number): void {
+  if (!Number.isFinite(value)) {
+    throw new RangeError("Tetris game timestamps must be finite.");
   }
 }

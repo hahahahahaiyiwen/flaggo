@@ -55,6 +55,31 @@ test("headless session exposes deterministic commands and immutable snapshots", 
   assert.throws(() => session.dispatch("move-right"), /session is closed/u);
 });
 
+test("rejected recovery actions advance revision and remain observable", () => {
+  const session = new TetrisSession({
+    game: {
+      pieceSource: new SequencePieceSource(["O"]),
+      sessionId: "recovery-revision",
+    },
+  });
+
+  for (let count = 0; count < 4; count += 1) {
+    session.dispatch("move-left");
+  }
+  const before = session.snapshot();
+  const rejected = session.dispatch("move-left");
+
+  assert.equal(rejected.changed, true);
+  assert.equal(rejected.update?.changed, false);
+  assert.equal(rejected.update?.recoveryFailureRecorded, true);
+  assert.equal(rejected.state.revision, before.revision + 1);
+  assert.equal(rejected.state.pendingRecoveryFailures, 1);
+
+  const locked = session.dispatch("hard-drop");
+  assert.equal(locked.state.pendingRecoveryFailures, 0);
+  assert.equal(locked.state.dropObservation.recoveryFailures, 1);
+});
+
 test("policy refresh derives context from real game observations", async () => {
   let clock = 0;
   const contexts = [];
@@ -126,6 +151,42 @@ test("session enforces one policy request and cancels it on pause", async () => 
   assert.equal(cancelled.state.dropInterval.source, "local");
 });
 
+test("aborted policy refresh completes without provider cooperation", async () => {
+  let clock = 100;
+  let requestCount = 0;
+  const session = new TetrisSession({
+    provider: {
+      select() {
+        requestCount += 1;
+        return new Promise(() => {});
+      },
+    },
+    now: () => clock,
+  });
+
+  const preAborted = new AbortController();
+  preAborted.abort();
+  clock = 200;
+  const skipped = await session.refreshPolicy(preAborted.signal);
+  assert.equal(skipped.reason, "cancelled");
+  assert.equal(requestCount, 0);
+
+  clock = 150;
+  assert.doesNotThrow(() => session.dispatch("move-left"));
+  const pending = session.refreshPolicy();
+  await Promise.resolve();
+  assert.equal(requestCount, 1);
+  assert.equal(session.cancelPolicyRefresh(), true);
+  const cancelled = await pending;
+  assert.equal(cancelled.reason, "cancelled");
+
+  const next = session.refreshPolicy();
+  await Promise.resolve();
+  assert.equal(requestCount, 2);
+  session.cancelPolicyRefresh();
+  assert.equal((await next).reason, "cancelled");
+});
+
 test("session retains the latest Flaggo interval after refresh failure", async () => {
   let requestCount = 0;
   const session = new TetrisSession({
@@ -164,6 +225,40 @@ test("session retains the latest Flaggo interval after refresh failure", async (
     source: "local-fallback",
     status: "provider error: offline",
   });
+});
+
+test("late local fallback uses the current game level", async () => {
+  let resolveRequest;
+  const session = new TetrisSession({
+    provider: {
+      select() {
+        return new Promise((resolve) => {
+          resolveRequest = resolve;
+        });
+      },
+    },
+    game: {
+      pieceSource: new SequencePieceSource(["O"]),
+      sessionId: "current-level-fallback",
+    },
+  });
+
+  const pending = session.refreshPolicy();
+  await Promise.resolve();
+  for (let round = 0; round < 5; round += 1) {
+    clearTwoLinesWithOPieces(session);
+  }
+  assert.equal(session.snapshot().level, 1);
+  assert.equal(session.snapshot().dropInterval.intervalMs, 750);
+
+  resolveRequest({
+    intervalMs: 800,
+    source: "local-fallback",
+    status: "stale level-zero fallback",
+  });
+  const refreshed = await pending;
+  assert.equal(refreshed.state.dropInterval.intervalMs, 750);
+  assert.equal(refreshed.state.dropInterval.source, "local-fallback");
 });
 
 test("multiple sessions isolate board, policy, and lifecycle state", async () => {
@@ -219,6 +314,8 @@ test("concurrently created sessions receive distinct default identities", () => 
   const second = new TetrisSession({ now: () => 1_000 });
 
   assert.notEqual(first.snapshot().sessionId, second.snapshot().sessionId);
+  const firstId = first.snapshot().sessionId;
+  assert.equal(first.dispatch("restart").state.sessionId, firstId);
 });
 
 test("game-over sessions reject gameplay until restart", async () => {
@@ -241,13 +338,6 @@ test("game-over sessions reject gameplay until restart", async () => {
   assert.equal(restarted.state.score, 0);
 });
 
-test("session validates deterministic duration configuration", () => {
-  assert.throws(
-    () => new TetrisSession({ observationWindowMs: 0 }),
-    /observation window must be positive/u,
-  );
-});
-
 test("session rejects nonchronological time before mutating game state", () => {
   let clock = 100;
   const session = new TetrisSession({ now: () => clock });
@@ -260,3 +350,41 @@ test("session rejects nonchronological time before mutating game state", () => {
   );
   assert.deepEqual(session.snapshot(), before);
 });
+
+test("session uses one validated start timestamp", () => {
+  const samples = [Number.NaN, 0];
+  assert.throws(
+    () => new TetrisSession({ now: () => samples.shift() }),
+    /session timestamps must be finite/u,
+  );
+
+  let clock = 100;
+  const session = new TetrisSession({
+    game: {
+      pieceSource: new SequencePieceSource(["O"]),
+      sessionId: "single-start-time",
+    },
+    now: () => clock,
+  });
+  clock = 650;
+  assert.equal(
+    session.dispatch("hard-drop").state.dropObservation.placementTimeMs,
+    550,
+  );
+});
+
+function moveHorizontally(session, offset) {
+  const command = offset < 0 ? "move-left" : "move-right";
+  for (let count = 0; count < Math.abs(offset); count += 1) {
+    assert.equal(session.dispatch(command).update?.changed, true);
+  }
+}
+
+function clearTwoLinesWithOPieces(session) {
+  let finalTransition;
+  for (const offset of [-4, -2, 0, 2, 4]) {
+    moveHorizontally(session, offset);
+    finalTransition = session.dispatch("hard-drop");
+  }
+  assert.equal(finalTransition.update?.linesCleared, 2);
+}

@@ -54,7 +54,9 @@ test("movement respects board boundaries and records recovery context", () => {
   });
 
   moveHorizontally(game, -4);
-  assert.equal(game.moveLeft().changed, false);
+  const rejected = game.moveLeft();
+  assert.equal(rejected.changed, false);
+  assert.equal(rejected.recoveryFailureRecorded, true);
   clock = 650;
   assert.equal(game.hardDrop().locked, true);
 

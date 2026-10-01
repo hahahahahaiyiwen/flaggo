@@ -40,7 +40,6 @@ export interface TetrisSessionOptions {
   readonly provider?: DropIntervalProvider;
   readonly game?: TetrisSessionGameOptions;
   readonly now?: () => number;
-  readonly observationWindowMs?: number;
 }
 
 export interface TetrisSessionState extends GameSnapshot {
@@ -75,8 +74,8 @@ interface PolicyRefresh {
 export class TetrisSession implements TetrisSessionApi {
   private readonly gameOptions: TetrisSessionGameOptions;
   private readonly now: () => number;
-  private readonly observationWindowMs: number;
   private readonly provider: DropIntervalProvider;
+  private readonly sessionId: string;
   private game: TetrisGame;
   private observationWindow: RollingDropIntervalContext;
   private lastObservedAt: number;
@@ -89,14 +88,10 @@ export class TetrisSession implements TetrisSessionApi {
   constructor(options: TetrisSessionOptions = {}) {
     this.gameOptions = { ...(options.game ?? {}) };
     this.now = options.now ?? Date.now;
-    this.observationWindowMs = positiveDuration(
-      options.observationWindowMs,
-      dropIntervalObservationWindowMs,
-      "observation window",
-    );
     this.provider = options.provider ?? new LocalDropIntervalProvider();
-    this.game = this.createGame();
+    this.sessionId = this.gameOptions.sessionId ?? `tetris-${randomUUID()}`;
     this.lastObservedAt = this.currentTime();
+    this.game = this.createGame(this.lastObservedAt);
     this.observationWindow = this.createObservationWindow(
       this.lastObservedAt,
     );
@@ -143,6 +138,11 @@ export class TetrisSession implements TetrisSessionApi {
         reason: "in-flight",
       });
     }
+    if (externalSignal?.aborted === true) {
+      return this.transition("refresh-policy", false, {
+        reason: "cancelled",
+      });
+    }
 
     const observedAt = this.currentTime();
     this.assertChronological(observedAt);
@@ -156,34 +156,55 @@ export class TetrisSession implements TetrisSessionApi {
     const signal = externalSignal === undefined
       ? controller.signal
       : AbortSignal.any([externalSignal, controller.signal]);
-    const selection = Promise.resolve()
-      .then(() => this.provider.select(context, signal))
+    let abortListener: (() => void) | undefined;
+    const cancellation = new Promise<void>((resolve) => {
+      const onAbort = (): void => resolve();
+      abortListener = onAbort;
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }).then(() =>
+      this.transition("refresh-policy", false, {
+        policyContext: context,
+        reason: "cancelled",
+      })
+    );
+    const providerResult = Promise.resolve()
+      .then(() => {
+        if (signal.aborted) return undefined;
+        return this.provider.select(context, signal);
+      })
       .then(
-        (refreshed) => {
-          if (!this.canApplyPolicy(generation, signal)) {
-            return this.transition("refresh-policy", false, {
-              policyContext: context,
-              reason: "cancelled",
-            });
-          }
-          return this.applyPolicySelection(refreshed, context);
-        },
-        (error: unknown) => {
-          if (!this.canApplyPolicy(generation, signal)) {
-            return this.transition("refresh-policy", false, {
-              policyContext: context,
-              reason: "cancelled",
-            });
-          }
-          const message = error instanceof Error ? error.message : String(error);
-          return this.applyPolicySelection({
-            intervalMs: localDropInterval(this.game.level),
-            source: "local-fallback",
-            status: `provider error: ${message}`,
-          }, context);
-        },
+        (refreshed) => ({ kind: "success" as const, refreshed }),
+        (error: unknown) => ({ kind: "error" as const, error }),
       );
-    const tracked = selection.finally(() => {
+    const selection = providerResult.then((result) => {
+      if (!this.canApplyPolicy(generation, signal)) {
+        return this.transition("refresh-policy", false, {
+          policyContext: context,
+          reason: "cancelled",
+        });
+      }
+      if (result.kind === "error") {
+        const error = result.error;
+        const message = error instanceof Error ? error.message : String(error);
+        return this.applyPolicySelection({
+          intervalMs: localDropInterval(this.game.level),
+          source: "local-fallback",
+          status: `provider error: ${message}`,
+        }, context);
+      }
+      if (result.refreshed === undefined) {
+        return this.transition("refresh-policy", false, {
+          policyContext: context,
+          reason: "cancelled",
+        });
+      }
+      return this.applyPolicySelection(result.refreshed, context);
+    });
+    const tracked = Promise.race([selection, cancellation]).finally(() => {
+      if (abortListener !== undefined) {
+        signal.removeEventListener("abort", abortListener);
+      }
       if (this.policyRefresh?.promise === tracked) {
         this.policyRefresh = undefined;
       }
@@ -240,7 +261,9 @@ export class TetrisSession implements TetrisSessionApi {
     }
     if (update.gameOver) this.cancelPolicyRefresh();
 
-    const changed = update.changed || selectionChanged;
+    const changed = update.changed
+      || update.recoveryFailureRecorded
+      || selectionChanged;
     if (changed) this.revisionValue += 1;
     return this.transition(command, changed, { update });
   }
@@ -295,7 +318,7 @@ export class TetrisSession implements TetrisSessionApi {
   ): TetrisSessionTransition {
     this.assertChronological(observedAt);
     this.cancelPolicyRefresh();
-    this.game = this.createGame();
+    this.game = this.createGame(observedAt);
     this.lastObservedAt = observedAt;
     this.observationWindow = this.createObservationWindow(observedAt);
     this.selection = localSelection(this.game.level);
@@ -307,7 +330,11 @@ export class TetrisSession implements TetrisSessionApi {
     refreshed: DropIntervalSelection,
     context: DropIntervalContext,
   ): TetrisSessionTransition {
-    const next = updatedSelection(this.selection, refreshed);
+    const next = updatedSelection(
+      this.selection,
+      refreshed,
+      this.game.level,
+    );
     const changed = !sameSelection(this.selection, next);
     this.selection = next;
     if (changed) this.revisionValue += 1;
@@ -332,10 +359,11 @@ export class TetrisSession implements TetrisSessionApi {
     };
   }
 
-  private createGame(): TetrisGame {
+  private createGame(startedAt: number): TetrisGame {
     return new TetrisGame({
       ...this.gameOptions,
-      sessionId: this.gameOptions.sessionId ?? `tetris-${randomUUID()}`,
+      sessionId: this.sessionId,
+      startedAt,
       now: this.now,
     });
   }
@@ -346,7 +374,7 @@ export class TetrisSession implements TetrisSessionApi {
     return new RollingDropIntervalContext(
       this.game.snapshot().dropObservation,
       observedAt,
-      this.observationWindowMs,
+      dropIntervalObservationWindowMs,
     );
   }
 
@@ -399,6 +427,7 @@ function localSelection(currentLevel: number): DropIntervalSelection {
 function updatedSelection(
   current: DropIntervalSelection,
   refreshed: DropIntervalSelection,
+  currentLevel: number,
 ): DropIntervalSelection {
   if (
     refreshed.source !== "local-fallback"
@@ -407,7 +436,13 @@ function updatedSelection(
       && current.source !== "flaggo-cached"
     )
   ) {
-    return { ...refreshed };
+    return refreshed.source === "local"
+        || refreshed.source === "local-fallback"
+      ? {
+        ...refreshed,
+        intervalMs: localDropInterval(currentLevel),
+      }
+      : { ...refreshed };
   }
   return {
     intervalMs: current.intervalMs,
@@ -423,16 +458,4 @@ function sameSelection(
   return left.intervalMs === right.intervalMs
     && left.source === right.source
     && left.status === right.status;
-}
-
-function positiveDuration(
-  value: number | undefined,
-  defaultValue: number,
-  description: string,
-): number {
-  const duration = value ?? defaultValue;
-  if (!Number.isFinite(duration) || duration <= 0) {
-    throw new RangeError(`The ${description} must be positive.`);
-  }
-  return duration;
 }
