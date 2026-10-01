@@ -56,6 +56,42 @@ Ingestion; no Collector process is required. An OTLP success response means
 that the complete export request was durably enqueued. Evidence selection and
 materialization continue asynchronously.
 
+## Headless session API
+
+`TetrisSession` is the reusable application boundary beneath the terminal. It
+owns one game's board, rolling decision observations, current drop-interval
+selection, fallback/cached-policy behavior, pause/resume, restart, and policy
+request cancellation. It does not read a TTY or create timers; callers decide
+when to send gravity ticks and request policy refreshes.
+
+```javascript
+import { TetrisSession } from "./dist/standalone/session.js";
+
+const session = new TetrisSession({
+  provider,
+  game: { sessionId: "programmatic-game-1" },
+});
+
+session.dispatch("move-left");
+session.dispatch("rotate-clockwise");
+const placement = session.dispatch("hard-drop");
+const policy = await session.refreshPolicy();
+const state = session.snapshot();
+```
+
+Commands are `move-left`, `move-right`, `rotate-clockwise`, `soft-drop`,
+`hard-drop`, `gravity-tick`, `pause`, `resume`, and `restart`. Every transition
+returns a caller-owned state snapshot with the visible board, score, lines,
+level, lifecycle status, session ID, monotonic revision, current policy
+selection, and decision observation. Multiple sessions can share a provider
+while retaining independent board, policy, cancellation, and lifecycle state.
+Default session IDs are collision-resistant; deterministic callers should
+supply explicit IDs, clocks, and piece sources.
+
+`runTerminalTetris` is only a driver over this API: terminal keypresses become
+commands, and terminal timers decide when to send gravity and policy-refresh
+operations.
+
 ## Controls
 
 | Action | Keys |
