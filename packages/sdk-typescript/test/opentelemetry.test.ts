@@ -32,7 +32,7 @@ afterEach(async () => {
 });
 
 describe("OpenTelemetry integration", () => {
-  it("exports selected logs, metrics, and traces through application-owned providers", async () => {
+  it("exports all signals by default and applies optional selectors", async () => {
     const received: ReceivedRequest[] = [];
     const server = createServer((request, response) => {
       const chunks: Buffer[] = [];
@@ -53,7 +53,8 @@ describe("OpenTelemetry integration", () => {
       server.listen(0, "127.0.0.1", resolve)
     );
     const address = server.address() as AddressInfo;
-    const baseUrl = `http://127.0.0.1:${address.port}/flaggo/`;
+    const defaultBaseUrl = `http://127.0.0.1:${address.port}/default`;
+    const selectedBaseUrl = `http://127.0.0.1:${address.port}/selected`;
     const resource = resourceFromAttributes({
       "service.name": "otel-helper-test",
     });
@@ -68,7 +69,11 @@ describe("OpenTelemetry integration", () => {
       resource,
       processors: [
         createFlaggoLogRecordProcessor({
-          baseUrl,
+          baseUrl: defaultBaseUrl,
+          batch: { scheduledDelayMillis: 60_000 },
+        }),
+        createFlaggoLogRecordProcessor({
+          baseUrl: selectedBaseUrl,
           shouldExport: logSelector,
           batch: { scheduledDelayMillis: 60_000 },
         }),
@@ -78,7 +83,11 @@ describe("OpenTelemetry integration", () => {
       resource,
       spanProcessors: [
         createFlaggoSpanProcessor({
-          baseUrl,
+          baseUrl: defaultBaseUrl,
+          batch: { scheduledDelayMillis: 60_000 },
+        }),
+        createFlaggoSpanProcessor({
+          baseUrl: selectedBaseUrl,
           shouldExport: spanSelector,
           batch: { scheduledDelayMillis: 60_000 },
         }),
@@ -88,7 +97,11 @@ describe("OpenTelemetry integration", () => {
       resource,
       readers: [
         createFlaggoMetricReader({
-          baseUrl,
+          baseUrl: defaultBaseUrl,
+          periodic: { exportIntervalMillis: 60_000 },
+        }),
+        createFlaggoMetricReader({
+          baseUrl: selectedBaseUrl,
           shouldExport: metricSelector,
           periodic: { exportIntervalMillis: 60_000 },
         }),
@@ -117,27 +130,40 @@ describe("OpenTelemetry integration", () => {
         meterProvider.forceFlush(),
       ]);
 
-      expect(received).toHaveLength(3);
+      expect(received).toHaveLength(6);
       expect(received.map((request) => request.path).sort()).toEqual([
-        "/flaggo/v1/logs",
-        "/flaggo/v1/metrics",
-        "/flaggo/v1/traces",
+        "/default/v1/logs",
+        "/default/v1/metrics",
+        "/default/v1/traces",
+        "/selected/v1/logs",
+        "/selected/v1/metrics",
+        "/selected/v1/traces",
       ]);
       expect(received.every((request) =>
         request.contentType === "application/json"
       )).toBe(true);
 
-      const logs = requestFor(received, "/flaggo/v1/logs").payload;
+      const logs = requestFor(received, "/selected/v1/logs").payload;
       expect(JSON.stringify(logs)).toContain("keep.log");
       expect(JSON.stringify(logs)).not.toContain("drop.log");
 
-      const traces = requestFor(received, "/flaggo/v1/traces").payload;
+      const traces = requestFor(received, "/selected/v1/traces").payload;
       expect(JSON.stringify(traces)).toContain("keep.span");
       expect(JSON.stringify(traces)).not.toContain("drop.span");
 
-      const metrics = requestFor(received, "/flaggo/v1/metrics").payload;
+      const metrics = requestFor(received, "/selected/v1/metrics").payload;
       expect(JSON.stringify(metrics)).toContain("keep.metric");
       expect(JSON.stringify(metrics)).not.toContain("drop.metric");
+
+      expect(JSON.stringify(
+        requestFor(received, "/default/v1/logs").payload,
+      )).toContain("drop.log");
+      expect(JSON.stringify(
+        requestFor(received, "/default/v1/traces").payload,
+      )).toContain("drop.span");
+      expect(JSON.stringify(
+        requestFor(received, "/default/v1/metrics").payload,
+      )).toContain("drop.metric");
 
       expect(logSelector).toHaveBeenCalledTimes(2);
       expect(spanSelector).toHaveBeenCalledTimes(2);

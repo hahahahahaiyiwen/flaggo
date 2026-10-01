@@ -11,13 +11,15 @@ apps/otel-ingestion
 
 Contract Service owns management routes. Decision Service owns decide and
 health routes. OTel Ingestion owns the `/v1/logs`, `/v1/metrics`, and
-`/v1/traces` telemetry endpoints and writes raw candidate observations to
-Evidence Store. Reusable strict HTTP mechanics live under `modules/hosting`;
-apps do not reference another app project.
+`/v1/traces` telemetry endpoints. It durably appends each complete valid export
+request to the bounded Raw OTLP Inbox before acknowledgement. The asynchronous
+Evidence Materializer writes selected query-ready observations to Evidence
+Store. Reusable strict HTTP mechanics live under `modules/hosting`; apps do not
+reference another app project.
 
-Phase 4 OTel Ingestion derives scope from OTLP resource attributes and does not
-require authentication. Authentication and authorization for telemetry writes
-are deferred to a later phase.
+The Phase 4 Evidence Materializer derives scope from OTLP resource attributes.
+The receiver does not require authentication. Authentication and authorization
+for telemetry writes are deferred to a later phase.
 
 The pre-v3 shared host stack was removed after the v3 consumer cutover.
 Neither service exposes forwarding projects, compatibility routes, or

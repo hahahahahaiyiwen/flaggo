@@ -181,7 +181,7 @@
           "const": "match-request"
         },
         "partialSuccess": {
-          "const": true
+          "const": false
         }
       }
     },

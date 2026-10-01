@@ -22,58 +22,70 @@ would treat a returned-but-unused decision as clean learning evidence.
 ## Evidence flow
 
 ```text
-Decision Service
-  -> RuntimeDecision
-  -> SDK emits decision-received telemetry
-                                      \
-                                       -> OpenTelemetry pipeline / Collector
-                                      /
-application activity
-  -> ordinary OpenTelemetry logs, metrics, and traces
-  -> candidate evidence ingestion and raw observation storage
+Decision Service -> RuntimeDecision -> SDK decision-received event --+
+                                                                    |
+application activity -> ordinary logs, metrics, and traces ---------+
+                                                                    |
+                                                                    v
+  -> application-owned OTel providers
+  -> optional OpenTelemetry Collector
+  -> Flaggo OTLP Receiver
+  -> bounded durable Raw OTLP Inbox
+  -> versioned Evidence Materializer
   -> Evidence Store
   -> asynchronous learning analysis and correlation
   -> CandidateExecutable
   -> Contract Service validation and activation
 ```
 
-The application's OpenTelemetry provider, processor, exporter, and Collector
-pipeline remain the transport boundary. Collector configuration is intentionally
-coarse-grained: it may forward all telemetry to Flaggo ingestion, or forward
-telemetry under configured service/instrumentation namespaces. Collector
-configuration does not need to understand decision contracts, evidence
-bindings, or dynamic contract-aware filters. Flaggo OTel Ingestion accepts
-candidate telemetry, and async analysis owns contract-aware interpretation.
+The application's OpenTelemetry providers, processors, and exporters remain
+the producer boundary. A Collector is optional. When present, its configuration
+is intentionally coarse-grained: it may forward all telemetry to Flaggo or
+route telemetry under configured service or instrumentation namespaces. It does
+not need to understand decision contracts, evidence bindings, or dynamic
+contract selectors.
+
+The receiver validates and durably enqueues complete OTLP export requests. The
+Evidence Materializer owns decomposition, typed decoding, versioned relevance
+selection, deduplication, and the query-ready Evidence Store projection. Async
+analysis owns semantic interpretation and correlation.
 
 The SDK does not make the Decision Service persist a decision session and does
 not require a synchronous exposure-confirmation call.
 
 ## Phase 4 OTLP signals
 
-Phase 4 implements OTLP HTTP JSON endpoints for logs (`/v1/logs`), metrics
-(`/v1/metrics`), and traces (`/v1/traces`). Decision-received observations are
-a clear Flaggo-owned log event because they describe a discrete runtime
-decision. App telemetry such as `board_pressure_mean_5s`,
-`board_pressure_max_5s`, `current_level`, latency, queue depth, and failure
-rate may be represented as metrics, logs, or span attributes depending on how
-the application is instrumented. Flaggo must not require those signals to be
-re-emitted through a Flaggo-specific outcome abstraction before they can become
-candidate evidence.
+Phase 4 implements OTLP/HTTP endpoints for logs (`/v1/logs`), metrics
+(`/v1/metrics`), and traces (`/v1/traces`). Each endpoint accepts standard
+Protobuf JSON (`application/json`) and binary protobuf
+(`application/x-protobuf`) with identity or gzip request compression. A
+successful response means the complete valid request was durably appended to
+the Raw OTLP Inbox. The receiver does not return partial success for item-level
+semantic failures discovered later by the materializer.
+
+Decision-received observations are a clear Flaggo-owned log event because they
+describe a discrete runtime decision. App telemetry such as
+`board_pressure_mean_5s`, `board_pressure_max_5s`, `current_level`, latency,
+queue depth, and failure rate may be represented as metrics, logs, or span
+attributes depending on how the application is instrumented. Flaggo must not
+require those signals to be re-emitted through a Flaggo-specific outcome
+abstraction before they can become candidate evidence.
 
 `flaggo.outcome.observed` remains a convenience log shape for applications
 that want to publish an explicit outcome value, but it is not the only outcome
 model. Outcome is defined by the decision contract's learning/evidence
-declarations and by async analysis over raw candidate telemetry, not by the
-existence of a single SDK helper event.
+declarations and by async analysis over materialized candidate telemetry, not
+by the existence of a single SDK helper event.
 
 An application does not need the Flaggo SDK to send telemetry to Flaggo OTel
 Ingestion. It can emit standard OTLP logs, metrics, or traces directly through
 any OpenTelemetry SDK or Collector. For Phase 4, authentication may be added
 later; ingestion accepts telemetry with application/environment scope from OTLP
 resource attributes such as `service.name`, `flaggo.application`,
-`deployment.environment.name`, or `flaggo.environment`. Ingestion parses only
-enough of the OTLP envelope to find resource scope, candidate records,
-timestamps, stable observation IDs, and indexable signal names.
+`deployment.environment.name`, or `flaggo.environment`. The receiver verifies
+the signal-specific export-request message. Resource scope, candidate records,
+timestamps, observation identities, and indexable signal names are derived
+asynchronously by the Evidence Materializer.
 
 OTLP/HTTP senders may use no compression or standard gzip compression.
 Ingestion supports both and enforces a configurable decompressed request limit,
@@ -142,13 +154,23 @@ The fields mean:
 | --- | --- |
 | `name` | Contract-local identity of one observed value |
 | `attribute` | Contract attribute whose schema defines that value |
-| `binding` | Logical SDK-to-OpenTelemetry binding name |
+| `binding` | Logical binding carried by a `flaggo.outcome.observed` event |
 | `correlateBy` | Additional contract attributes required to associate the surrounding activity |
 
-The contract does not name a vendor table, database column, metric instrument,
-span path, or log field. One application activity may supply several logical
-values, but the contract declares each value separately. Multiple declarations
-may share an underlying activity through their SDK bindings.
+The contract does not name a vendor table or database column. One application
+activity may supply several logical values, but the contract declares each
+value separately. Multiple declarations may share an underlying activity
+through their bindings.
+
+### Native OpenTelemetry selector prerequisite
+
+The current `learning.evidence` shape can select an explicit
+`flaggo.outcome.observed` event through its binding. It cannot yet describe how
+an ordinary OTel metric, log, span, or span event supplies the declared value.
+A versioned native-telemetry selector contract must be accepted before the
+Evidence Materializer implements contract-aware selection for those sources.
+That decision does not block the receiver or Raw OTLP Inbox because enqueue is
+independent of current selectors.
 
 ## Outcome observations
 
@@ -161,25 +183,27 @@ eventName = "flaggo.outcome.observed"
 flaggo.signal = "outcome.observed"
 ```
 
-The ingestion service stores ordinary application logs, metrics, and traces as
-raw candidate evidence when they carry application/resource scope. Explicit
-outcome observations may carry:
+The receiver enqueues export requests containing ordinary application logs,
+metrics, and traces without requiring Flaggo-specific event shapes. The
+materializer always recognizes canonical Flaggo events and may select ordinary
+telemetry under a versioned selector snapshot. Explicit outcome observations
+may carry:
 
 - `flaggo.evidence.binding`;
 - `flaggo.evidence.value.json`;
-- optional `flaggo.observation.id`;
 - optional `flaggo.decision.id`;
 - optional contract name/digest; and
 - correlation attributes under `flaggo.correlation.<name>`.
 
 ## Correlation and analysis
 
-Correlation is no longer an ingestion guarantee in Phase 4. The Evidence Store
-persists accepted raw OTLP logs, metrics, and traces plus indexed metadata such
-as telemetry type, resource-derived scope, signal/name, observation ID, and
-observation time. The Async Analysis Service decides whether a decision
-observation plus app telemetry is sufficient, unambiguous, timely, and
-contract-relevant enough to become usable learning evidence.
+Correlation is not an ingestion guarantee in Phase 4. The Evidence Store
+persists selected materialized observations plus indexed metadata such as
+telemetry type, resource-derived scope, signal/name, observation identity,
+observation time, selector version, and available inbox provenance. The Async
+Analysis Service decides whether a decision observation plus app telemetry is
+sufficient, unambiguous, timely, and contract-relevant enough to become usable
+learning evidence.
 
 Analysis may use:
 
@@ -194,7 +218,7 @@ activity. They are candidate evidence facts; later auth policy can restrict
 who may write them, but Phase 4 ingestion does not make auth the evidence
 scope authority.
 
-Conceptually, analysis reads raw telemetry and interprets it as:
+Conceptually, analysis reads materialized telemetry and interprets it as:
 
 ```text
 OutcomeObservation {
@@ -222,23 +246,33 @@ successful unambiguous evidence.
 
 ## Evidence storage boundary
 
-The Evidence Store contains accepted raw telemetry records needed by
-asynchronous learning and generation provenance. Ingestion does not transform
-OTLP logs, metrics, or traces into decision/outcome tables. It parses only
-enough of the OTLP envelope to derive resource scope, telemetry type,
-signal/name, idempotency key, and observation time for later analysis. Evidence
-remains associated with the contract digest under which the decision occurred
-when that identity is present in the raw telemetry payload.
+The Raw OTLP Inbox and Evidence Store have different durability and query
+contracts.
 
-Each stored record preserves a canonical raw envelope containing:
+One inbox entry stores one complete decompressed export-request payload plus
+signal type, wire encoding, media type, transport compression, profile version,
+receipt time, byte length, and a SHA-256 integrity hash. It is immutable while
+retained and bounded by explicit age and byte policies. It provides durable
+work, crash recovery, and recent replay; it is not the long-lived evidence
+query model.
 
-- the complete OTLP resource and resource schema URL;
-- the complete instrumentation scope and scope schema URL; and
-- the original log record, metric descriptor, or span.
+The versioned materializer produces:
 
-Indexed metadata does not replace this envelope. It only supports bounded
-selection and idempotent writes while later analysis retains access to service
-instance, deployment, instrumentation, and schema context.
+- one candidate per log record;
+- one candidate per span and selectable nested span event; and
+- one candidate per Gauge, Sum, Histogram, Exponential Histogram, or Summary
+  data point.
+
+It recursively decodes `AnyValue`, derives separate logical identities and
+canonical content digests, applies contract selectors, deduplicates, and writes
+query-ready observations. A materialized observation preserves the complete
+resource and instrumentation-scope context, the selected signal payload, the
+versions that produced it, and a reference to its inbox batch while retained.
+
+Evidence Store observations remain durable after eligible inbox payloads are
+compacted. New selector or decoder versions may backfill only within the
+currently retained replay range; analysis never silently scans the inbox as a
+fallback.
 
 The store is not:
 
@@ -248,9 +282,9 @@ The store is not:
 - proof that every returned decision was applied; or
 - authorization data.
 
-Filtering, retention, deduplication, late-arrival handling, aggregation, and
-physical storage are evidence-service concerns. They do not alter Runtime
-Evaluation semantics.
+Receiver request limits, inbox retention, materializer selection,
+deduplication, late-arrival handling, analysis aggregation, and physical
+storage do not alter Runtime Evaluation semantics.
 
 ## Learning loop
 

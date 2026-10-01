@@ -30,7 +30,9 @@ are metrics. Each `worker.tick` is a span. The SDK emits
 `flaggo.decision.received`, and the example emits
 `flaggo.outcome.observed` for
 `demo.workerBatchSize.processingLatencyMs`; both records correlate with the
-active worker span. Runtime evaluation itself remains stateless.
+active worker span. OTLP success acknowledges durable inbox enqueue rather
+than immediate Evidence Store materialization. Runtime evaluation itself
+remains stateless.
 
 ## Automated acceptance
 

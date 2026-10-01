@@ -114,8 +114,9 @@ telemetry.recordOutcome({
 Apps may also emit ordinary OpenTelemetry telemetry without the helper. The
 Phase 4 treats SDK helpers as convenience APIs, not the only valid source of
 candidate evidence. Non-SDK apps can send OTLP logs, metrics, or traces
-directly; ingestion stores resource-scoped telemetry as raw candidate evidence,
-and async analysis decides what is contract-relevant.
+directly. The receiver durably enqueues each complete valid export request, and
+the asynchronous materializer applies versioned selectors before writing
+query-ready evidence.
 
 Applications can add Flaggo as a direct OTLP/HTTP JSON destination through the
 optional OpenTelemetry integration entry:
@@ -166,7 +167,10 @@ The application retains ownership of its providers, resource, existing vendor
 exporters, force-flush behavior, and shutdown. Flaggo helpers return standard
 batched log/span processors and a periodic metric reader; they do not create
 or register providers. Optional `shouldExport` selectors reduce transport
-volume only. Flaggo ingestion remains authoritative for telemetry admission.
+volume only and remove discarded telemetry from Flaggo's replay window. When a
+selector is omitted, the helper exports all telemetry it receives. The
+receiver is authoritative for transport validation and durable enqueue; the
+Evidence Materializer is authoritative for evidence selection.
 
 Lower-level `createFlaggoLogExporter`, `createFlaggoMetricExporter`, and
 `createFlaggoTraceExporter` factories are available when an application needs

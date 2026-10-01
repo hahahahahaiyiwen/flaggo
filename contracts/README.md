@@ -83,10 +83,10 @@ emission are deployment work, not part of this contract-only change.
 [`flaggo-otlp-http-profile-v1.json`](otel/flaggo-otlp-http-profile-v1.json)
 selects the Phase 4 OTLP/HTTP surface: logs, metrics, and traces; Protobuf and
 Protobuf JSON encodings; identity and gzip compression; the 64 MiB decompressed
-request limit; standard OTLP success and failure responses; and no Phase 4
-ingestion authentication. Upstream `opentelemetry-proto` definitions remain
-the payload authority. Flaggo defines no custom OTLP request model or OTLP
-OpenAPI operation.
+request limit; full-request OTLP success after durable inbox enqueue; standard
+OTLP failure responses; and no Phase 4 ingestion authentication. Upstream
+`opentelemetry-proto` definitions remain the payload authority. Flaggo defines
+no custom OTLP request model or OTLP OpenAPI operation.
 
 The fixture surface contains logical event cases plus OTLP/HTTP JSON and
 gzip-compressed Protobuf exchanges. The offline gate validates the profile,

@@ -51,7 +51,9 @@ refresh records the six rolling decision features as metrics, creates a
 `tetris.drop_interval.selected` application log. The SDK's
 `flaggo.decision.received` log is emitted through the same provider and
 correlates with the active span. All three signals export directly to OTel
-Ingestion; no Collector process is required.
+Ingestion; no Collector process is required. An OTLP success response means
+that the complete export request was durably enqueued. Evidence selection and
+materialization continue asynchronously.
 
 ## Controls
 

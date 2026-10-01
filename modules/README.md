@@ -24,8 +24,8 @@ not depend on an app composition root or on the legacy
   projections.
 - Executable Store persists immutable executable artifacts and atomically owns
   scoped Candidate, Active, and Inactive lifecycle state.
-- Evidence Store persists raw decision-received and outcome-observed telemetry
-  observations for asynchronous analysis.
+- Evidence Store persists selected, query-ready telemetry observations and
+  materialization provenance for asynchronous analysis.
 - Hosting owns reusable strict HTTP, authentication, correlation, Problem
   Details, and health mechanics without domain routes.
 

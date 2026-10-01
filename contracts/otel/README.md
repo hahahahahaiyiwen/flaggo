@@ -32,6 +32,13 @@ The profile deliberately has no custom request or response schema for
 `/v1/logs`, `/v1/metrics`, or `/v1/traces`. Standard OpenTelemetry exporters
 must be able to use these endpoints without a Flaggo-specific transport.
 
+Phase 4 requires both standard OTLP/HTTP encodings (`application/json` and
+`application/x-protobuf`) with identity or gzip request compression. A
+successful response acknowledges that the complete valid export request was
+durably appended to the Raw OTLP Inbox. Item-level decoding, selection, and
+materialization happen asynchronously, so the receiver does not return OTLP
+partial-success responses.
+
 The offline conformance gate validates the profile and its golden fixtures.
 Passing that gate establishes artifact consistency; real-host interoperability
 must additionally dispatch the fixtures through OTel Ingestion.

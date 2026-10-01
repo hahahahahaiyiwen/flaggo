@@ -54,7 +54,7 @@
   "success": {
     "status": 200,
     "responseContentType": "match-request",
-    "partialSuccess": true
+    "partialSuccess": false
   },
   "failure": {
     "bodyType": "google.rpc.Status",

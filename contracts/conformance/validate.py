@@ -211,6 +211,10 @@ def validate_otlp_profile(
         == {429, 502, 503, 504},
         f"{context}: retryable statuses must match OTLP/HTTP",
     )
+    rep.check(
+        profile.get("success", {}).get("partialSuccess") is False,
+        f"{context}: durable inbox acknowledgement requires full-request success",
+    )
 
 
 def flaggo_event_semantic_errors(body) -> list[str]:
