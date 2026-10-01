@@ -55,11 +55,11 @@ dotnet restore Flaggo.slnx --configfile NuGet.config
 npm run tetris:flaggo
 ```
 
-The launcher builds all three services, creates an isolated SQLite database,
-deploys the Tetris contract, and removes its local state when the game exits.
-Tetris-owned OpenTelemetry providers export application logs, metrics, and
-traces directly to ingestion. No cloud account or Collector process is
-required.
+The launcher builds the .NET Contract and Decision services and Rust OTel
+Ingestion, creates an isolated SQLite database, deploys the Tetris contract,
+and removes its local state when the game exits. Tetris-owned OpenTelemetry
+providers export application logs, metrics, and traces directly to ingestion.
+No cloud account or Collector process is required.
 
 Validate the executable contracts independently:
 

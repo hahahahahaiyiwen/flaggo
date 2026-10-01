@@ -8,10 +8,6 @@
   <Folder Name="/apps/decision-service/src/">
     <Project Path="apps/decision-service/src/Flaggo.DecisionService/Flaggo.DecisionService.csproj" />
   </Folder>
-  <Folder Name="/apps/otel-ingestion/" />
-  <Folder Name="/apps/otel-ingestion/src/">
-    <Project Path="apps/otel-ingestion/src/Flaggo.OtelIngestion/Flaggo.OtelIngestion.csproj" />
-  </Folder>
   <Folder Name="/modules/" />
   <Folder Name="/modules/contract/" />
   <Folder Name="/modules/contract/src/">
@@ -45,6 +41,5 @@
     <Project Path="tests/Flaggo.ContractService.Tests/Flaggo.ContractService.Tests.csproj" />
     <Project Path="tests/Flaggo.Core.Tests/Flaggo.Core.Tests.csproj" />
     <Project Path="tests/Flaggo.DecisionService.Tests/Flaggo.DecisionService.Tests.csproj" />
-    <Project Path="tests/Flaggo.OtelIngestion.Tests/Flaggo.OtelIngestion.Tests.csproj" />
   </Folder>
 </Solution>

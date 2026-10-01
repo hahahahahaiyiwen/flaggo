@@ -4,6 +4,7 @@ import { createWriteStream } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const dynamicLoopbackUrl = "http://127.0.0.1:0";
 const signalExitCodes = new Map([
@@ -472,6 +473,17 @@ export function rustBinaryPath(
     ? `${binaryName}.exe`
     : binaryName;
   return resolve(repositoryRoot, "target", profile, executable);
+}
+
+export function sqliteDatabaseUrl(databasePath) {
+  const fileUrl = pathToFileURL(resolve(databasePath));
+  if (fileUrl.host !== "") {
+    throw new TypeError("SQLite database path must be local.");
+  }
+  const pathname = process.platform === "win32"
+    ? fileUrl.pathname.replace(/^\/(?=[A-Za-z]:\/)/u, "")
+    : fileUrl.pathname;
+  return `sqlite:${pathname}`;
 }
 
 export function startManagedProcess(

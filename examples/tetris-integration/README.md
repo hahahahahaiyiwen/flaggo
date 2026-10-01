@@ -19,7 +19,8 @@ Flaggo service.
 
 ## Play with local Flaggo services
 
-Install the npm dependencies and .NET 10 SDK, then run:
+Install the npm dependencies, .NET 10 SDK, and repository-pinned Rust
+toolchain, then run:
 
 ```powershell
 npm run tetris:flaggo

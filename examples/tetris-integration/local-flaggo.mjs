@@ -2,8 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
+  sqliteDatabaseUrl,
   startContractAndDecisionHosts,
   startHost,
+  startRustHost,
   waitForReady,
 } from "./host-process.mjs";
 
@@ -68,15 +70,14 @@ export async function startLocalFlaggoHosts({
         signal,
       ),
   });
-  const otelIngestion = lifecycle.startHost(() => startHost(
+  const otelIngestion = lifecycle.startHost(() => startRustHost(
     "tetris-otel-ingestion",
-    resolve(
-      repositoryRoot,
-      "apps/otel-ingestion/src/Flaggo.OtelIngestion/bin/Debug/net10.0/Flaggo.OtelIngestion.dll",
-    ),
+    "flaggo-otel-ingestion",
     paths.otelIngestionLog,
     repositoryRoot,
-    commonConfiguration,
+    {
+      FLAGGO_DATABASE_URL: sqliteDatabaseUrl(paths.database),
+    },
   ));
   const otelIngestionUrl = await otelIngestion.waitForListening({
     signal: lifecycle.signal,

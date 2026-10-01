@@ -42,16 +42,17 @@ From the repository root:
 npm run test:adaptive-worker
 ```
 
-The smoke test builds the SDK, application, and .NET hosts; deploys the
-contract; exercises default and authored-rule decisions through the real
-Decision Service; verifies direct OTLP/HTTP JSON requests for all three signals
-against the real ingestion host; checks that an unavailable service is
-surfaced as a failure; and removes its isolated state.
+The smoke test builds the SDK, application, .NET decision hosts, and Rust
+ingestion host; deploys the contract; exercises default and authored-rule
+decisions through the real Decision Service; verifies direct OTLP/HTTP JSON
+requests for all three signals against the real ingestion host; checks that an
+unavailable service is surfaced as a failure; and removes its isolated state.
 
 ## Manual local run
 
 ```powershell
 npm run build:adaptive-worker
+npm run build:rust
 dotnet build Flaggo.slnx -c Debug --no-restore
 node examples\adaptive-worker\service.mjs
 ```

@@ -2,16 +2,16 @@
 
 This directory is the Rust executable boundary for OTel Ingestion.
 
-The host composes the storage-neutral Raw OTLP Inbox contract with its initial
-SQLx/SQLite adapter. It initializes the inbox-owned schema before listening and
-reports inbox capacity and replay health through `/health/ready`.
+The host composes an OTLP/HTTP Receiver with the storage-neutral Raw OTLP Inbox
+contract and its initial SQLx/SQLite adapter. It initializes the inbox-owned
+schema before listening, accepts logs, metrics, and traces at `/v1/logs`,
+`/v1/metrics`, and `/v1/traces`, and reports inbox capacity and replay health
+through `/health/ready`.
 
-The next issue #53 slice adds the OTLP Receiver routes that validate and append
-complete logs, metrics, and traces requests through this contract.
-
-The existing .NET ingestion project remains only until the Rust receiver
-reaches contract parity. It will then be removed rather than retained as a
-fallback or parallel implementation.
+The receiver supports Protobuf JSON and binary protobuf with identity or gzip
+transport encoding. It validates the signal-specific export request, enforces
+the configured limit after decompression, and acknowledges success only after
+the complete decompressed payload is durably appended to the inbox.
 
 ## Run
 
@@ -29,6 +29,7 @@ of retained decompressed payload bytes and 24 hours of hard retention.
 | Environment variable | Meaning |
 | --- | --- |
 | `FLAGGO_DATABASE_URL` | SQLx SQLite database URL |
+| `FLAGGO_OTLP_MAXIMUM_DECOMPRESSED_REQUEST_BYTES` | Per-request decompressed-byte limit; defaults to 64 MiB |
 | `FLAGGO_OTLP_INBOX_MAX_PAYLOAD_BYTES` | Maximum retained payload-byte total |
 | `FLAGGO_OTLP_INBOX_HARD_RETENTION_SECONDS` | Hard raw-batch retention |
 

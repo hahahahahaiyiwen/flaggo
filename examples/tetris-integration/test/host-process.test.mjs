@@ -6,6 +6,7 @@ import {
   createRustHostEnvironment,
   parseListeningUrl,
   rustBinaryPath,
+  sqliteDatabaseUrl,
 } from "../host-process.mjs";
 
 test("listening observer accepts .NET and Rust host events", () => {
@@ -61,4 +62,12 @@ test("Rust host environment requests an ephemeral loopback port", () => {
     FLAGGO_DATABASE_URL: "sqlite://flaggo.db",
     FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS: "127.0.0.1:0",
   });
+});
+
+test("SQLite URLs preserve absolute local paths", () => {
+  const databasePath = resolve("repository", "run state", "flaggo.db");
+  const databaseUrl = sqliteDatabaseUrl(databasePath);
+
+  assert.match(databaseUrl, /^sqlite:(?:[A-Za-z]:\/|\/)/u);
+  assert.ok(databaseUrl.endsWith("/repository/run%20state/flaggo.db"));
 });

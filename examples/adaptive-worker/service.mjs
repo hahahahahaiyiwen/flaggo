@@ -7,8 +7,10 @@ import {
   createHostLifecycle,
   installSignalHandlers,
   runWithCleanup,
+  sqliteDatabaseUrl,
   startContractAndDecisionHosts,
   startHost,
+  startRustHost,
   waitForReady,
 } from "../tetris-integration/host-process.mjs";
 import { waitForServiceShutdown } from "./service-health.mjs";
@@ -92,15 +94,14 @@ export async function startAdaptiveWorkerService({
     );
   }
   const deployment = deployed.deployment;
-  const otelIngestion = lifecycle.startHost(() => startHost(
+  const otelIngestion = lifecycle.startHost(() => startRustHost(
     "adaptive-worker-otel-ingestion",
-    resolve(
-      repositoryRoot,
-      "apps/otel-ingestion/src/Flaggo.OtelIngestion/bin/Debug/net10.0/Flaggo.OtelIngestion.dll",
-    ),
+    "flaggo-otel-ingestion",
     paths.otelIngestionLog,
     repositoryRoot,
-    commonConfiguration,
+    {
+      FLAGGO_DATABASE_URL: sqliteDatabaseUrl(paths.database),
+    },
   ));
   const otelIngestionUrl = await otelIngestion.waitForListening({
     signal: lifecycle.signal,

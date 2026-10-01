@@ -7,13 +7,21 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-compression = { version = "0.4.32", features = ["tokio", "gzip"] }
 axum.workspace = true
 flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../../modules/raw-otlp-inbox" }
+futures-util = "0.3.31"
+mime = "0.3.17"
+opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace", "with-serde"] }
+prost = "0.14.1"
 serde_json.workspace = true
 tokio.workspace = true
+tokio-util = { version = "0.7.16", features = ["io"] }
 
 [dev-dependencies]
 async-trait = "0.1.89"
+flate2 = "1.1.5"
+tempfile = "3.27.0"
 tower.workspace = true
 
 [lints]
