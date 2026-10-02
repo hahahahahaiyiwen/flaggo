@@ -22,16 +22,16 @@ const deploymentManifestPath = resolve(exampleDirectory, "flaggo.deploy.json");
 export async function startAdaptiveWorkerService({
   lifecycle,
   runDirectory,
-  writeConnection = true,
+  writeRuntimeConfig = true,
 }) {
   await mkdir(runDirectory, { recursive: true });
   lifecycle.signal.throwIfAborted();
   const paths = {
     database: resolve(runDirectory, "flaggo.db"),
-    connection: resolve(runDirectory, "service.json"),
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
     otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
+    runtimeConfig: resolve(runDirectory, "flaggo.runtime.json"),
   };
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
@@ -80,20 +80,6 @@ export async function startAdaptiveWorkerService({
         signal,
       ),
   });
-  const deployedContracts = await deployContracts({
-    manifestPath: deploymentManifestPath,
-    baseUrl: hosts.contractUrl,
-    credential: { mode: "local-development" },
-    fetch: fetchWithAbort,
-    signal: lifecycle.signal,
-  });
-  const deployed = deployedContracts.contracts[0];
-  if (deployed === undefined || deployedContracts.contracts.length !== 1) {
-    throw new Error(
-      "The Adaptive Worker deployment manifest must contain exactly one DecisionContract.",
-    );
-  }
-  const deployment = deployed.deployment;
   const otelIngestion = lifecycle.startHost(() => startRustHost(
     "adaptive-worker-otel-ingestion",
     "flaggo-otel-ingestion",
@@ -113,20 +99,29 @@ export async function startAdaptiveWorkerService({
     lifecycle.signal,
   );
   lifecycle.assertHealthy();
-  const connection = {
-    contractServiceUrl: hosts.contractUrl,
-    decisionServiceUrl: hosts.decisionUrl,
-    otelIngestionUrl,
-    bindings: {
-      [deployment.name]: {
-        contractDigest: deployment.contractDigest,
-      },
+  const deployedContracts = await deployContracts({
+    manifestPath: deploymentManifestPath,
+    services: {
+      contractServiceUrl: hosts.contractUrl,
+      decisionServiceUrl: hosts.decisionUrl,
+      otlpIngestionUrl: otelIngestionUrl,
     },
-  };
-  if (writeConnection) {
+    credential: { mode: "local-development" },
+    fetch: fetchWithAbort,
+    signal: lifecycle.signal,
+  });
+  const deployed = deployedContracts.contracts[0];
+  if (deployed === undefined || deployedContracts.contracts.length !== 1) {
+    throw new Error(
+      "The Adaptive Worker deployment manifest must contain exactly one DecisionContract.",
+    );
+  }
+  const deployment = deployed.deployment;
+  const runtimeConfig = deployedContracts.runtimeConfig;
+  if (writeRuntimeConfig) {
     await writeFile(
-      paths.connection,
-      `${JSON.stringify(connection, null, 2)}\n`,
+      paths.runtimeConfig,
+      `${JSON.stringify(runtimeConfig, null, 2)}\n`,
       "utf8",
     );
   }
@@ -134,7 +129,7 @@ export async function startAdaptiveWorkerService({
     ...hosts,
     otelIngestion,
     otelIngestionUrl,
-    connection,
+    runtimeConfig,
     contract: deployed.contract,
     deployment,
     paths,
@@ -165,7 +160,7 @@ async function runService(lifecycle, runDirectory) {
     decisionServiceUrl: service.decisionUrl,
     otelIngestionUrl: service.otelIngestionUrl,
     contractDigest: service.deployment.contractDigest,
-    connectionPath: service.paths.connection,
+    runtimeConfigPath: service.paths.runtimeConfig,
   }, null, 2)}\n`);
   await waitForServiceShutdown(lifecycle);
 }

@@ -1,8 +1,8 @@
 {
   "$schema-note": "Index of contract conformance fixtures. Generated from contracts/fixtures metadata.",
   "version": "1",
-  "generatedFor": "DecisionContract management v3, stateless runtime evaluation v3, and Phase 4 telemetry contracts",
-  "totalCases": 31,
+  "generatedFor": "DecisionContract management v3, stateless runtime evaluation v3, deployment v2, runtime configuration v1, and Phase 4 telemetry contracts",
+  "totalCases": 33,
   "requiredScenarioCount": 17,
   "coveredScenarios": [
     1,
@@ -24,6 +24,32 @@
     51
   ],
   "cases": [
+    {
+      "name": "deployment-generate-runtime-configuration",
+      "scenarios": [],
+      "group": "deployment",
+      "file": "fixtures/deployment/01-generate-runtime-configuration.json",
+      "method": "GENERATE",
+      "httpPath": "flaggo://deployment",
+      "status": 0,
+      "requestSchema": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "responseSchema": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "sdkLocal": true,
+      "schemaNegative": false,
+      "invariant": "One v2 deployment authority and deployed contract set produce one strict immutable runtime configuration."
+    },
+    {
+      "name": "deployment-configuration-schema-negative-cases",
+      "scenarios": [],
+      "group": "deployment",
+      "file": "fixtures/deployment/02-invalid-configurations.json",
+      "method": "GENERATE",
+      "httpPath": "flaggo://deployment",
+      "status": 0,
+      "sdkLocal": true,
+      "schemaNegative": true,
+      "invariant": "Obsolete manifests, unstable authority, unsafe service URLs, malformed bindings, and unknown members are rejected."
+    },
     {
       "name": "runtime-authentication-required",
       "scenarios": [

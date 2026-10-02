@@ -47,12 +47,17 @@ The file name must preserve the exact embedded `DecisionContract.name`.
 Service URLs, credentials, application identity, and environment identity do
 not belong in the contract file.
 
-When a project deploys multiple contracts, it may use `flaggo.deploy.json` as
-a deployment inventory:
+Projects declare one deployment authority and their contract inventory in
+`flaggo.deploy.json`:
 
 ```json
 {
-  "format": "flaggo.deploy/v1",
+  "format": "flaggo.deploy/v2",
+  "authority": {
+    "tenant": "local",
+    "application": "checkout",
+    "environment": "production"
+  },
   "contracts": [
     "flaggo/contracts/checkout.shippingMethod.decision-contract.json",
     "flaggo/contracts/search.pageSize.decision-contract.json"
@@ -64,6 +69,9 @@ Paths are portable forward-slash relative paths contained within the
 manifest's directory. The manifest does not embed contracts and is not an
 atomic multi-contract API payload. Deployment tooling processes each referenced
 contract independently through the name-keyed `PUT`.
+The authority scopes deployment and telemetry routing; it is not part of
+portable contract semantics and, until authenticated ingress exists, is
+declared rather than security-derived.
 
 ## Client responsibilities
 
@@ -73,15 +81,17 @@ A contract author or CI client:
 - addresses the logical management resource by `contractName`;
 - may use dry-run validation independently when early feedback is useful;
 - submits the complete desired contract rather than an incremental mutation;
-- records the returned `contractDigest` for exact runtime configuration;
+- records each returned `contractDigest` in generated runtime configuration;
 - uses exact-version reads for audit or reconstruction; and
 - treats the name-level current version as management discovery, never as a
   runtime selection mechanism.
 
-The mechanism that distributes `{ contractName, contractDigest }` into an
-application artifact or deployment is outside the initial Management API.
-Whatever mechanism is used must preserve the exact digest rather than defer
-version selection to runtime.
+After all contracts are accepted, deployment tooling generates one immutable
+`flaggo.runtime-config/v1` document containing the manifest authority, Contract
+Service, Decision Service, and OTel Ingestion URLs, and exact
+`{ contractName, contractDigest }` bindings. Decision and telemetry SDK
+composition consume that same artifact; runtime never resolves a moving
+name-level version.
 
 Build and deployment are separate:
 
@@ -96,7 +106,7 @@ Deploy
   -> validate its wire shape locally
   -> PUT it to Contract Service
   -> receive contractDigest and activeExecutableDigest
-  -> distribute the exact runtime binding
+  -> generate and distribute the immutable runtime configuration
 ```
 
 The SDK validates the wire shape before sending `PUT`. Contract Service then

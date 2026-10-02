@@ -1,0 +1,43 @@
+{
+  "name": "deployment-generate-runtime-configuration",
+  "invariant": "One v2 deployment authority and deployed contract set produce one strict immutable runtime configuration.",
+  "scenarios": [],
+  "sdkLocal": true,
+  "requestSchema": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+  "responseSchema": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+  "request": {
+    "method": "GENERATE",
+    "path": "flaggo://deployment",
+    "body": {
+      "format": "flaggo.deploy/v2",
+      "authority": {
+        "tenant": "local",
+        "application": "tetris",
+        "environment": "integration"
+      },
+      "contracts": [
+        "flaggo/contracts/tetris.dropInterval.decision-contract.json"
+      ]
+    }
+  },
+  "expected": {
+    "body": {
+      "format": "flaggo.runtime-config/v1",
+      "authority": {
+        "tenant": "local",
+        "application": "tetris",
+        "environment": "integration"
+      },
+      "services": {
+        "contractServiceUrl": "http://127.0.0.1:5101",
+        "decisionServiceUrl": "http://127.0.0.1:5102",
+        "otlpIngestionUrl": "http://127.0.0.1:5103"
+      },
+      "bindings": {
+        "tetris.dropInterval": {
+          "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f"
+        }
+      }
+    }
+  }
+}

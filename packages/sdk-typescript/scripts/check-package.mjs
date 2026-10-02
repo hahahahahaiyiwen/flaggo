@@ -11,19 +11,27 @@ const metadata = JSON.parse(
 );
 const entries = [
   {
+    name: "configuration",
+    path: resolve(packageRoot, metadata.exports["./configuration"].import),
+    factories: [
+      "parseFlaggoRuntimeConfiguration",
+      "parseFlaggoServiceEndpoints",
+    ],
+  },
+  {
     name: "runtime",
     path: resolve(packageRoot, metadata.exports["./runtime"].import),
-    factory: "createDecisionClient",
+    factories: ["createDecisionClient"],
   },
   {
     name: "management",
     path: resolve(packageRoot, metadata.exports["./management"].import),
-    factory: "createContractClient",
+    factories: ["createContractClient"],
   },
   {
     name: "opentelemetry",
     path: resolve(packageRoot, metadata.exports["./opentelemetry"].import),
-    factory: "createFlaggoSpanProcessor",
+    factories: ["createFlaggoSpanProcessor"],
   },
 ];
 
@@ -42,6 +50,7 @@ assert.deepEqual(
   [
     "@opentelemetry/api",
     "@opentelemetry/api-logs",
+    "@opentelemetry/resources",
     "@opentelemetry/sdk-logs",
     "@opentelemetry/sdk-metrics",
     "@opentelemetry/sdk-trace",
@@ -56,7 +65,9 @@ for (const entry of entries) {
   await access(entry.path);
   const exports = await import(pathToFileURL(entry.path));
   assert.equal(exports.SDK_VERSION, metadata.version);
-  assert.equal(typeof exports[entry.factory], "function");
+  for (const factory of entry.factories) {
+    assert.equal(typeof exports[factory], "function");
+  }
 
   const platforms = entry.name === "opentelemetry"
     ? ["browser", "node"]

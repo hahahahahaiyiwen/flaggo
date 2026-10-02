@@ -21,10 +21,14 @@ import {
   type ReadableSpan,
 } from "@opentelemetry/sdk-trace";
 import {
+  createFlaggoResource,
   createFlaggoLogRecordProcessor,
   createFlaggoMetricReader,
   createFlaggoSpanProcessor,
 } from "@flaggo/sdk/opentelemetry";
+import type {
+  FlaggoRuntimeConfiguration,
+} from "@flaggo/sdk/configuration";
 import { SDK_VERSION } from "@flaggo/sdk/runtime";
 
 import type { TetrisPolicyOpenTelemetry } from "./flaggo-provider.js";
@@ -36,8 +40,7 @@ import type { TetrisSessionInstrumentation } from "./session.js";
 
 export interface TetrisTelemetryOptions {
   readonly capture?: boolean;
-  readonly environment?: string;
-  readonly flaggoOtlpBaseUrl: string | URL;
+  readonly runtimeConfig: FlaggoRuntimeConfiguration;
 }
 
 export const tetrisPolicyInstrumentationScope = "tetris.policy";
@@ -55,9 +58,13 @@ export class TetrisTelemetryProviders {
   private readonly tracerProvider: TracerProvider;
 
   constructor(options: TetrisTelemetryOptions) {
-    const resource = resourceFromAttributes({
-      "service.name": "tetris",
-      "deployment.environment.name": options.environment ?? "local",
+    const resource = createFlaggoResource({
+      baseResource: resourceFromAttributes({
+        "service.name": "tetris",
+        "deployment.environment.name":
+          options.runtimeConfig.authority.environment,
+      }),
+      runtimeConfig: options.runtimeConfig,
     });
     this.logExporter = options.capture === true
       ? new InMemoryLogRecordExporter()
@@ -72,7 +79,7 @@ export class TetrisTelemetryProviders {
       resource,
       processors: [
         createFlaggoLogRecordProcessor({
-          baseUrl: options.flaggoOtlpBaseUrl,
+          runtimeConfig: options.runtimeConfig,
         }),
         ...(this.logExporter === undefined
           ? []
@@ -87,7 +94,7 @@ export class TetrisTelemetryProviders {
       resource,
       readers: [
         createFlaggoMetricReader({
-          baseUrl: options.flaggoOtlpBaseUrl,
+          runtimeConfig: options.runtimeConfig,
           periodic: { exportIntervalMillis: 5_000 },
         }),
         ...(this.metricExporter === undefined
@@ -104,7 +111,7 @@ export class TetrisTelemetryProviders {
       resource,
       spanProcessors: [
         createFlaggoSpanProcessor({
-          baseUrl: options.flaggoOtlpBaseUrl,
+          runtimeConfig: options.runtimeConfig,
         }),
         ...(this.spanExporter === undefined
           ? []

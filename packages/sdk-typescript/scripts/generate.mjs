@@ -25,6 +25,10 @@ const schemas = {
     source: resolve(schemaRoot, "management-models-v3.schema.json"),
     output: resolve(generatedRoot, "management-models.generated.ts"),
   },
+  deployment: {
+    source: resolve(schemaRoot, "deployment-models-v2.schema.json"),
+    output: resolve(generatedRoot, "deployment-models.generated.ts"),
+  },
   problem: {
     source: resolve(schemaRoot, "problem-details-v3.schema.json"),
     output: resolve(generatedRoot, "problem-details.generated.ts"),
@@ -32,7 +36,7 @@ const schemas = {
 };
 
 const banner = `/*
- * Generated from Flaggo v3 JSON Schemas. Do not edit by hand.
+ * Generated from Flaggo JSON Schemas. Do not edit by hand.
  * Run \`npm run generate --workspace @flaggo/sdk\` after schema changes.
  */
 `;
@@ -109,7 +113,12 @@ ${names.map((name) =>
 `);
 }
 
-const [runtimeSchema, managementSchema, problemSchema] = await Promise.all(
+const [
+  runtimeSchema,
+  managementSchema,
+  deploymentSchema,
+  problemSchema,
+] = await Promise.all(
   Object.values(schemas).map(async ({ source }) =>
     JSON.parse(await readFile(source, "utf8"))),
 );
@@ -129,6 +138,14 @@ const managementValidators = {
   validateDecisionContractVersionList:
     `${managementSchema.$id}#/$defs/DecisionContractVersionList`,
 };
+const deploymentValidators = {
+  validateDeploymentManifest:
+    `${deploymentSchema.$id}#/$defs/DeploymentManifest`,
+  validateServiceEndpoints:
+    `${deploymentSchema.$id}#/$defs/ServiceEndpoints`,
+  validateRuntimeConfiguration:
+    `${deploymentSchema.$id}#/$defs/RuntimeConfiguration`,
+};
 const problemValidators = {
   validateProblemDetails: problemSchema.$id,
 };
@@ -136,6 +153,7 @@ const problemValidators = {
 const outputs = new Map([
   [schemas.runtime.output, await generatedTypes(schemas.runtime.source)],
   [schemas.management.output, await generatedTypes(schemas.management.source)],
+  [schemas.deployment.output, await generatedTypes(schemas.deployment.source)],
   [schemas.problem.output, await generatedTypes(schemas.problem.source)],
   [
     resolve(generatedRoot, "runtime-validators.generated.mjs"),
@@ -152,6 +170,14 @@ const outputs = new Map([
   [
     resolve(generatedRoot, "management-validators.generated.d.mts"),
     validatorDeclarations(Object.keys(managementValidators)),
+  ],
+  [
+    resolve(generatedRoot, "deployment-validators.generated.mjs"),
+    generatedValidators(deploymentSchema, deploymentValidators),
+  ],
+  [
+    resolve(generatedRoot, "deployment-validators.generated.d.mts"),
+    validatorDeclarations(Object.keys(deploymentValidators)),
   ],
   [
     resolve(generatedRoot, "problem-validator.generated.mjs"),

@@ -11,6 +11,7 @@ import type {
   Sha256Digest,
   TransportConfiguration,
 } from "../shared/types.js";
+import type { FlaggoRuntimeConfiguration } from "../configuration/types.js";
 import type { FlaggoTelemetryConfiguration } from "./telemetry.js";
 
 export interface DecisionSpec<
@@ -35,6 +36,10 @@ export interface DecisionBinding {
 export type DecisionBindings<TCatalog extends DecisionCatalog> = Readonly<{
   [TName in keyof TCatalog]: DecisionBinding;
 }>;
+
+export type DecisionRuntimeConfiguration<
+  TCatalog extends DecisionCatalog,
+> = FlaggoRuntimeConfiguration<DecisionBindings<TCatalog>>;
 
 export type CurrentExposure = DeepReadonly<GeneratedCurrentExposure>;
 export type RuntimeEvaluation =
@@ -68,8 +73,8 @@ export interface DecisionRequest<
 }
 
 export interface DecisionClientConfiguration<TCatalog extends DecisionCatalog>
-  extends TransportConfiguration {
-  readonly bindings: DecisionBindings<TCatalog>;
+  extends Omit<TransportConfiguration, "baseUrl"> {
+  readonly runtimeConfig: DecisionRuntimeConfiguration<TCatalog>;
   readonly random?: () => number;
   readonly telemetry?: FlaggoTelemetryConfiguration;
 }
@@ -80,10 +85,4 @@ export interface DecisionClient<TCatalog extends DecisionCatalog> {
     request?: DecisionRequest<TCatalog[TName]>,
     options?: RequestOptions,
   ): Promise<FlaggoResponse<RuntimeDecision<ResultOf<TCatalog[TName]>>>>;
-}
-
-export function defineDecisionBindings<TCatalog extends DecisionCatalog>(
-  bindings: DecisionBindings<TCatalog>,
-): DecisionBindings<TCatalog> {
-  return bindings;
 }

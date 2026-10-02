@@ -29,8 +29,11 @@ npm run tetris:flaggo
 The command builds and starts Contract Service, Decision Service, and OTel
 Ingestion against an isolated SQLite database, then deploys the contracts
 listed in `flaggo.deploy.json`. It binds the returned immutable contract digest
-and starts the game. All services and the temporary database are stopped and
-removed when the game exits.
+into a generated `flaggo.runtime-config/v1` document and gives that one
+configuration to the decision client and all three telemetry providers before
+starting the game. The manifest authority is
+`local / tetris / integration`. All services and the temporary database are
+stopped and removed when the game exits.
 
 The game starts immediately with local gravity while requesting its first
 Flaggo interval in the background. It summarizes a trailing five-second
@@ -51,6 +54,10 @@ export directly to OTel Ingestion; no Collector process is required. An OTLP
 success response means that the complete export request was durably enqueued.
 Evidence selection and materialization continue asynchronously.
 
+`createFlaggoResource` attaches `flaggo.tenant`, `flaggo.application`, and
+`flaggo.environment` from the generated runtime configuration to the one
+Resource shared by every provider.
+
 ### Telemetry design
 
 The telemetry boundary keeps game rules independent of OpenTelemetry.
@@ -70,6 +77,9 @@ clear, rejected recovery, and game over. Every programmatic command creates a
 `tetris.command` span; lock, line-clear, recovery-failure, and game-over facts
 are span events. Policy selection logs and the SDK decision event correlate
 with the active policy span.
+Application-owned logs and spans do not carry a contract name or digest. The
+SDK-owned `flaggo.decision.received` event is the exact decision-provenance
+record; application evidence candidates are reusable domain observations.
 
 The metric catalog separates future evidence from operational telemetry:
 
@@ -165,7 +175,8 @@ The optional adapter uses `createDecisionClient` from `@flaggo/sdk/runtime`.
 The deployment helper uses `createContractClient` from
 `@flaggo/sdk/management` after Contract and Decision Services are ready. Its
 `deploy` operation sends the authoritative `PUT`; it does not call the optional
-remote validation endpoint first.
+remote validation endpoint first. The helper parses `flaggo.deploy/v2` and
+produces the immutable runtime configuration from the accepted deployment.
 
 ## Automated checks
 

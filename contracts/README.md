@@ -11,7 +11,7 @@ payload messages. The conformance gate must remain green for every change.
 ```text
 contracts/
   openapi/       Runtime and management OpenAPI 3.1 documents
-  schemas/       Draft 2020-12 JSON Schemas
+  schemas/       Draft 2020-12 API, deployment, and runtime-config schemas
   fixtures/      Golden HTTP, SDK-local, and schema-negative cases
   otel/          Flaggo telemetry schema and OTLP/HTTP capability profile
   conformance/   Fixture manifest and offline validation
@@ -20,6 +20,34 @@ contracts/
 
 The fixture manifest indexes the current conformance scenarios. SDK and service
 implementations use these artifacts as the shared wire authority.
+
+## Deployment and runtime configuration
+
+[`deployment-models-v2.schema.json`](schemas/deployment-models-v2.schema.json)
+defines the authored `flaggo.deploy/v2` manifest and generated
+`flaggo.runtime-config/v1` application configuration.
+
+One deployment manifest declares:
+
+- exactly one `AuthorityScope` containing `tenant`, `application`, and
+  `environment`;
+- one or more portable ASCII, forward-slash relative DecisionContract paths;
+  and
+- no per-contract authority overrides.
+
+Deployment tooling combines that manifest with successful immutable contract
+deployments and the Contract Service, Decision Service, and OTLP Ingestion base
+URLs. The resulting runtime configuration contains the same authority, those
+service URLs, and a contract-name-to-digest binding map. Applications and SDK
+OpenTelemetry integrations consume this generated configuration rather than
+maintaining duplicate authority, endpoint, or binding settings.
+Service URLs are bounded absolute HTTP(S) base URLs with an optional usable
+port and no credentials, query, or fragment. Deployment tooling validates all
+three endpoints before sending the first contract mutation.
+
+Changing manifest authority creates a different scoped deployment; it does not
+change DecisionContract semantics or `contractDigest`. The declared authority
+is a Phase 4 routing boundary, not authenticated security authority.
 
 The current management contract is
 [`flaggo-management-v3.yaml`](openapi/flaggo-management-v3.yaml). A decision

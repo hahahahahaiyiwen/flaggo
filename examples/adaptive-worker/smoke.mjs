@@ -8,6 +8,9 @@ import {
   createDecisionClient,
 } from "../../packages/sdk-typescript/dist/runtime/index.js";
 import {
+  parseFlaggoRuntimeConfiguration,
+} from "../../packages/sdk-typescript/dist/configuration/index.js";
+import {
   createHostLifecycle,
   installSignalHandlers,
   runWithCleanup,
@@ -31,10 +34,17 @@ async function runSmoke(lifecycle) {
   const service = await startAdaptiveWorkerService({
     lifecycle,
     runDirectory,
-    writeConnection: false,
+    writeRuntimeConfig: false,
   });
   const proxy = await startRecordingProxy(service.otelIngestionUrl);
   lifecycle.trackHost(proxy);
+  const runtimeConfig = parseFlaggoRuntimeConfiguration({
+    ...service.runtimeConfig,
+    services: {
+      ...service.runtimeConfig.services,
+      otlpIngestionUrl: proxy.url,
+    },
+  });
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
@@ -44,11 +54,10 @@ async function runSmoke(lifecycle) {
     });
   const telemetry = new AdaptiveWorkerTelemetry({
     capture: true,
-    flaggoOtlpBaseUrl: proxy.url,
+    runtimeConfig,
   });
   const client = createDecisionClient({
-    bindings: service.connection.bindings,
-    baseUrl: service.decisionUrl,
+    runtimeConfig,
     credential: { mode: "local-development" },
     fetch: fetchWithAbort,
     random: () => 0.25,
@@ -129,6 +138,18 @@ async function runSmoke(lifecycle) {
     assert.ok(processingLatencyEvents.every((event) =>
       typeof event.body === "number"
     ));
+    assert.ok(telemetry.events.every((event) => {
+      assertAuthority(event.resource.attributes);
+      return true;
+    }));
+    assert.ok(
+      telemetry.events
+        .filter((event) => event.eventName?.startsWith("worker.") === true)
+        .every((event) =>
+          !Object.hasOwn(event.attributes, "flaggo.contract.digest")
+          && !Object.hasOwn(event.attributes, "flaggo.contract.name")
+        ),
+    );
 
     const workerSpans = telemetry.spans.filter((span) =>
       span.name === "worker.tick"
@@ -145,12 +166,17 @@ async function runSmoke(lifecycle) {
       event.spanContext !== undefined
       && workerTraceIds.has(event.spanContext.traceId)
     ));
+    assert.ok(workerSpans.every((span) => {
+      assertAuthority(span.resource.attributes);
+      return !Object.hasOwn(span.attributes, "flaggo.contract.digest");
+    }));
 
-    const metricNames = new Set(telemetry.metrics.flatMap((resourceMetrics) =>
-      resourceMetrics.scopeMetrics.flatMap((scope) =>
+    const metricNames = new Set(telemetry.metrics.flatMap((resourceMetrics) => {
+      assertAuthority(resourceMetrics.resource.attributes);
+      return resourceMetrics.scopeMetrics.flatMap((scope) =>
         scope.metrics.map((metric) => metric.descriptor.name)
-      )
-    ));
+      );
+    }));
     assert.deepEqual(metricNames, new Set([
       "worker.batch.size",
       "worker.processing.latency",
@@ -189,6 +215,12 @@ async function runSmoke(lifecycle) {
   } finally {
     await telemetry.shutdown();
   }
+}
+
+function assertAuthority(attributes) {
+  assert.equal(attributes["flaggo.tenant"], "local");
+  assert.equal(attributes["flaggo.application"], "adaptive-worker");
+  assert.equal(attributes["flaggo.environment"], "development");
 }
 
 async function startRecordingProxy(upstreamBaseUrl) {

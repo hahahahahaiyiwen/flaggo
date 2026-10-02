@@ -30,14 +30,18 @@ async function runIntegration(lifecycle) {
   const initialInbox = await readRawOtlpInboxHealth(hosts);
   assert.equal(initialInbox.retainedBatchCount, 0);
   assert.equal(initialInbox.retainedPayloadBytes, 0);
+  const proxy = await startRecordingProxy(hosts.otelIngestionUrl);
+  lifecycle.trackHost(proxy);
   const deployed = await deployTetrisContract({
     exampleDirectory,
-    contractUrl: hosts.contractUrl,
+    services: {
+      contractServiceUrl: hosts.contractUrl,
+      decisionServiceUrl: hosts.decisionUrl,
+      otlpIngestionUrl: proxy.url,
+    },
     fetch: hosts.fetch,
     signal: lifecycle.signal,
   });
-  const proxy = await startRecordingProxy(hosts.otelIngestionUrl);
-  lifecycle.trackHost(proxy);
   const capturedDecisions = [];
   const forwardingFetch = async (input, init) => {
     const isDecision = String(input).includes("/decisions");
@@ -67,12 +71,10 @@ async function runIntegration(lifecycle) {
   ]);
   const telemetry = new TetrisTelemetryProviders({
     capture: true,
-    environment: "integration",
-    flaggoOtlpBaseUrl: proxy.url,
+    runtimeConfig: deployed.runtimeConfig,
   });
   const provider = createFlaggoDropIntervalProvider({
-    baseUrl: hosts.decisionUrl,
-    contractDigest: deployed.deployment.contractDigest,
+    runtimeConfig: deployed.runtimeConfig,
     credential: { mode: "local-development" },
     fetch: forwardingFetch,
     telemetry: telemetry.policyInstrumentation,
@@ -289,7 +291,18 @@ function assertTelemetry({ telemetry, proxy, expectedSessionIds }) {
   assert.ok(events.every((event) =>
     event.resource.attributes["service.name"] === "tetris"
     && event.resource.attributes["deployment.environment.name"] === "integration"
+    && event.resource.attributes["flaggo.tenant"] === "local"
+    && event.resource.attributes["flaggo.application"] === "tetris"
+    && event.resource.attributes["flaggo.environment"] === "integration"
   ));
+  assert.ok(
+    events
+      .filter((event) => event.eventName === "tetris.drop_interval.selected")
+      .every((event) =>
+        !Object.hasOwn(event.attributes, "flaggo.contract.name")
+        && !Object.hasOwn(event.attributes, "flaggo.contract.digest")
+      ),
+  );
   assert.ok(
     events
       .filter((event) => event.eventName?.startsWith("tetris.game.") === true

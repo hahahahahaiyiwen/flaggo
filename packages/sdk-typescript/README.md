@@ -1,14 +1,22 @@
 # `@flaggo/sdk`
 
 The TypeScript SDK provides separate clients for runtime decisions and contract
-management:
+management plus strict parsers for generated application configuration:
 
 ```ts
+import {
+  parseFlaggoDeploymentManifest,
+  parseFlaggoRuntimeConfiguration,
+  parseFlaggoServiceEndpoints,
+} from "@flaggo/sdk/configuration";
 import { createDecisionClient } from "@flaggo/sdk/runtime";
 import { createContractClient } from "@flaggo/sdk/management";
 ```
 
 The package is ESM-only and targets Node.js 20+ with the standard Fetch API.
+Deployment tooling can call `parseFlaggoServiceEndpoints` before performing
+any service mutation. The same bounded HTTP(S) endpoint validation is applied
+when runtime configuration is parsed and when SDK transports are created.
 
 ## Runtime decisions
 
@@ -20,9 +28,12 @@ call.
 ```ts
 import {
   createDecisionClient,
-  defineDecisionBindings,
+  type DecisionBindings,
   type DecisionSpec,
 } from "@flaggo/sdk/runtime";
+import {
+  parseFlaggoRuntimeConfiguration,
+} from "@flaggo/sdk/configuration";
 
 type Decisions = {
   readonly "worker.batch-size": DecisionSpec<{
@@ -31,16 +42,12 @@ type Decisions = {
   }, number>;
 };
 
-const bindings = defineDecisionBindings<Decisions>({
-  "worker.batch-size": {
-    contractDigest:
-      "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  },
-});
+const runtimeConfig = parseFlaggoRuntimeConfiguration<
+  DecisionBindings<Decisions>
+>(generatedRuntimeConfiguration);
 
 const flaggo = createDecisionClient<Decisions>({
-  baseUrl: "https://decisions.example.com",
-  bindings,
+  runtimeConfig,
   credential: {
     mode: "bearer",
     getToken: async () => obtainAccessToken(),
@@ -92,12 +99,16 @@ configured, the API behaves as a no-op.
 
 Applications emit potentially relevant outcomes through their normal
 OpenTelemetry logs, metrics, spans, and span events. Each learning evidence
-declaration selects exactly one application signal. The receiver durably
-enqueues complete valid export requests, and the asynchronous materializer
-applies the current DecisionContract selectors before writing query-ready
-evidence. `flaggo.decision.received` remains a built-in protocol observation
-that the materializer always recognizes; SDK diagnostic logs are not selected
-implicitly.
+declaration identifies exactly one application signal source. The receiver
+durably enqueues complete valid export requests without extracting authority or
+routing metadata. The asynchronous materializer derives
+`AuthorityScope + SourceKey`, checks active route reference counts, and stores
+each shared observation once. Exact contract association, predicates, and
+correlation mappings are evaluated during analysis.
+
+`flaggo.decision.received` remains a built-in protocol observation that the
+materializer always recognizes. Its digest identifies the decision that
+occurred; ordinary application evidence carries no contract digest.
 
 Applications can add Flaggo as a direct OTLP/HTTP JSON destination through the
 optional OpenTelemetry integration entry:
@@ -106,37 +117,44 @@ optional OpenTelemetry integration entry:
 import { LoggerProvider } from "@opentelemetry/sdk-logs";
 import { MeterProvider } from "@opentelemetry/sdk-metrics";
 import { TracerProvider } from "@opentelemetry/sdk-trace";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
+  createFlaggoResource,
   createFlaggoLogRecordProcessor,
   createFlaggoMetricReader,
   createFlaggoSpanProcessor,
 } from "@flaggo/sdk/opentelemetry";
 
+const resource = createFlaggoResource({
+  baseResource: resourceFromAttributes({
+    "service.name": "adaptive-worker",
+  }),
+  runtimeConfig,
+});
 const loggerProvider = new LoggerProvider({
   resource,
   processors: [
     existingVendorLogProcessor,
-    createFlaggoLogRecordProcessor({ baseUrl: "http://flaggo:5090" }),
+    createFlaggoLogRecordProcessor({ runtimeConfig }),
   ],
 });
 const meterProvider = new MeterProvider({
   resource,
   readers: [
     existingVendorMetricReader,
-    createFlaggoMetricReader({ baseUrl: "http://flaggo:5090" }),
+    createFlaggoMetricReader({ runtimeConfig }),
   ],
 });
 const tracerProvider = new TracerProvider({
   resource,
   spanProcessors: [
     existingVendorSpanProcessor,
-    createFlaggoSpanProcessor({ baseUrl: "http://flaggo:5090" }),
+    createFlaggoSpanProcessor({ runtimeConfig }),
   ],
 });
 
 const flaggo = createDecisionClient({
-  baseUrl,
-  bindings,
+  runtimeConfig,
   credential: { mode: "local-development" },
   telemetry: {
     logger: loggerProvider.getLogger("@flaggo/sdk"),
@@ -144,14 +162,18 @@ const flaggo = createDecisionClient({
 });
 ```
 
-The application retains ownership of its providers, resource, existing vendor
-exporters, force-flush behavior, and shutdown. Flaggo helpers return standard
-batched log/span processors and a periodic metric reader; they do not create
-or register providers. Optional `shouldExport` selectors reduce transport
-volume only and remove discarded telemetry from Flaggo's replay window. When a
-selector is omitted, the helper exports all telemetry it receives. The
-receiver is authoritative for transport validation and durable enqueue; the
-Evidence Materializer is authoritative for evidence selection.
+The application retains ownership of its providers, base resource, existing
+vendor exporters, force-flush behavior, and shutdown. `createFlaggoResource`
+adds `flaggo.tenant`, `flaggo.application`, and `flaggo.environment` from the
+generated configuration and rejects conflicting values already present on the
+base Resource. Export helpers reject records whose Resource does not match that
+same authority instead of silently rewriting them.
+
+Flaggo helpers return standard batched log/span processors and a periodic
+metric reader; they do not create or register providers. Optional
+`shouldExport` selectors reduce transport volume only and remove discarded
+telemetry from Flaggo's replay window. When a selector is omitted, the helper
+exports all telemetry it receives.
 
 Lower-level `createFlaggoLogExporter`, `createFlaggoMetricExporter`, and
 `createFlaggoTraceExporter` factories are available when an application needs
@@ -219,9 +241,12 @@ Failures while reading a response stream are reported as
 
 ## Contract authority
 
-Wire models and standalone validators are generated from the v3 JSON Schemas.
-Client orchestration, retries, exact-version binding, and semantic identity
-checks remain hand-written.
+Wire models and standalone validators are generated from the API schemas plus
+`deployment-models-v2.schema.json`. `flaggo.deploy/v2` is the authored source
+for one authority and a contract set. Deployment tooling produces the strict
+`flaggo.runtime-config/v1` value consumed by runtime and OpenTelemetry helpers;
+the parser returns a deeply frozen copy. Client orchestration, retries,
+exact-version binding, and semantic identity checks remain hand-written.
 
 ```powershell
 npm run check:generated --workspace @flaggo/sdk

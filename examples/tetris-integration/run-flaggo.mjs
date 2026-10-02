@@ -29,7 +29,11 @@ async function play(lifecycle) {
   lifecycle.assertHealthy();
   const deployed = await deployTetrisContract({
     exampleDirectory,
-    contractUrl: hosts.contractUrl,
+    services: {
+      contractServiceUrl: hosts.contractUrl,
+      decisionServiceUrl: hosts.decisionUrl,
+      otlpIngestionUrl: hosts.otelIngestionUrl,
+    },
     fetch: hosts.fetch,
     signal: lifecycle.signal,
   });
@@ -44,13 +48,11 @@ async function play(lifecycle) {
     import("./dist/flaggo/terminal.js"),
   ]);
   const telemetry = new TetrisTelemetryProviders({
-    environment: "integration",
-    flaggoOtlpBaseUrl: hosts.otelIngestionUrl,
+    runtimeConfig: deployed.runtimeConfig,
   });
   try {
     const provider = createFlaggoDropIntervalProvider({
-      baseUrl: hosts.decisionUrl,
-      contractDigest: deployed.deployment.contractDigest,
+      runtimeConfig: deployed.runtimeConfig,
       credential: { mode: "local-development" },
       fetch: hosts.fetch,
       telemetry: telemetry.policyInstrumentation,

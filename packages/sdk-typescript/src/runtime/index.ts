@@ -1,7 +1,6 @@
 export { createDecisionClient } from "./client.js";
 export { SDK_VERSION } from "../generated/package-version.generated.js";
 export {
-  defineDecisionBindings,
   type CurrentExposure,
   type DecisionBinding,
   type DecisionBindings,
@@ -9,6 +8,7 @@ export {
   type DecisionClient,
   type DecisionClientConfiguration,
   type DecisionRequest,
+  type DecisionRuntimeConfiguration,
   type DecisionSpec,
   type RuntimeDecision,
   type RuntimeEvaluation,

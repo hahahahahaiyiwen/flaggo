@@ -13,6 +13,7 @@ import {
   type DecisionSpec,
   type FetchLike,
 } from "../src/runtime/index.js";
+import { runtimeConfiguration } from "./runtime-configuration.js";
 
 const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -32,6 +33,7 @@ type Decisions = {
 const bindings: DecisionBindings<Decisions> = {
   parallelism: { contractDigest },
 };
+const runtimeConfig = runtimeConfiguration(bindings);
 
 function decision(
   result: unknown = 4,
@@ -69,8 +71,7 @@ describe("v3 runtime client", () => {
       { "X-Flaggo-Correlation-Id": "server-correlation" },
     ));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test/",
-      bindings,
+      runtimeConfig,
       fetch,
       random: () => 0.25,
     });
@@ -123,8 +124,7 @@ describe("v3 runtime client", () => {
       }, 503, { "Retry-After": "0" }))
       .mockResolvedValueOnce(jsonResponse(decision(6, { source: "default" })));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       credential: { mode: "bearer", getToken },
       retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
       fetch,
@@ -151,8 +151,7 @@ describe("v3 runtime client", () => {
       .mockRejectedValueOnce(unavailable)
       .mockRejectedValueOnce(unavailable);
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
       fetch,
     });
@@ -177,8 +176,7 @@ describe("v3 runtime client", () => {
       { "X-Flaggo-Correlation-Id": "correlation-server" },
     ));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       retry: { maxAttempts: 3 },
       fetch,
     });
@@ -203,8 +201,7 @@ describe("v3 runtime client", () => {
     };
     const fetch = vi.fn<FetchLike>(async () => jsonResponse(problem, 503));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch,
     });
 
@@ -232,8 +229,7 @@ describe("v3 runtime client", () => {
       },
     ));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch,
     });
 
@@ -253,8 +249,7 @@ describe("v3 runtime client", () => {
     path,
   ) => {
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch: vi.fn(),
     });
 
@@ -270,8 +265,7 @@ describe("v3 runtime client", () => {
   it("rejects sparse arrays and invalid random sources before transport", async () => {
     const fetch = vi.fn<FetchLike>();
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch,
       random: () => 1,
     });
@@ -281,8 +275,7 @@ describe("v3 runtime client", () => {
     const sparse: string[] = [];
     sparse.length = 1;
     const validRandomClient = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch,
       random: () => 0.5,
     });
@@ -301,8 +294,7 @@ describe("v3 runtime client", () => {
       { "Content-Length": "262145" },
     ));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch,
     });
 
@@ -327,13 +319,17 @@ describe("v3 runtime client", () => {
       contractDigest: executableDigest,
     }));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch,
     });
 
     await expect(client.decide("missing" as "parallelism"))
       .rejects.toBeInstanceOf(MissingDecisionBindingError);
+    await expect(client.decide("toString" as "parallelism"))
+      .rejects.toBeInstanceOf(MissingDecisionBindingError);
+    await expect(client.decide("constructor" as "parallelism"))
+      .rejects.toBeInstanceOf(MissingDecisionBindingError);
+    expect(fetch).not.toHaveBeenCalled();
     await expect(client.decide("parallelism"))
       .rejects.toBeInstanceOf(InvalidServerResponseError);
   });
@@ -341,8 +337,7 @@ describe("v3 runtime client", () => {
   it("supports caller cancellation and operation timeouts", async () => {
     const fetch = vi.fn<FetchLike>(() => new Promise(() => {}));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test",
-      bindings,
+      runtimeConfig,
       fetch,
     });
 

@@ -4,13 +4,13 @@ import { deployContracts } from "../contract-deployment.mjs";
 
 export async function deployTetrisContract({
   exampleDirectory,
-  contractUrl,
+  services,
   fetch,
   signal,
 }) {
   const result = await deployContracts({
     manifestPath: resolve(exampleDirectory, "flaggo.deploy.json"),
-    baseUrl: contractUrl,
+    services,
     credential: { mode: "local-development" },
     fetch,
     signal,
@@ -21,5 +21,8 @@ export async function deployTetrisContract({
       "The Tetris deployment manifest must contain exactly one DecisionContract.",
     );
   }
-  return deployed;
+  return {
+    ...deployed,
+    runtimeConfig: result.runtimeConfig,
+  };
 }

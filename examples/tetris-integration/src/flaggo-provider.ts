@@ -10,10 +10,10 @@ import type { Logger } from "@opentelemetry/api-logs";
 import {
   createDecisionClient,
   type CredentialProvider,
+  type DecisionRuntimeConfiguration,
   type DecisionSpec,
   type FetchLike,
   type RetryPolicy,
-  type Sha256Digest,
 } from "@flaggo/sdk/runtime";
 
 import {
@@ -40,11 +40,10 @@ type TetrisDropIntervalAttributes =
   TetrisDecisions["tetris.dropInterval"]["attributes"];
 
 export interface FlaggoDropIntervalConfiguration {
-  readonly baseUrl: string | URL;
-  readonly contractDigest: Sha256Digest;
   readonly credential?: CredentialProvider;
   readonly fetch?: FetchLike;
   readonly retry?: RetryPolicy;
+  readonly runtimeConfig: DecisionRuntimeConfiguration<TetrisDecisions>;
   readonly telemetry?: TetrisPolicyOpenTelemetry;
   readonly timeoutMs?: number;
 }
@@ -79,12 +78,7 @@ export function createFlaggoDropIntervalProvider(
     ? undefined
     : createPolicyMetrics(configuration.telemetry.meter);
   const client = createDecisionClient<TetrisDecisions>({
-    baseUrl: configuration.baseUrl,
-    bindings: {
-      "tetris.dropInterval": {
-        contractDigest: configuration.contractDigest,
-      },
-    },
+    runtimeConfig: configuration.runtimeConfig,
     ...(configuration.credential === undefined
       ? {}
       : { credential: configuration.credential }),
@@ -128,8 +122,6 @@ export function createFlaggoDropIntervalProvider(
           : "contract default",
       };
       span?.setAttributes({
-        "flaggo.contract.name": "tetris.dropInterval",
-        "flaggo.contract.digest": response.value.contractDigest,
         "tetris.drop_interval.ms": selection.intervalMs,
         "tetris.drop_interval.source": selection.source,
       });
@@ -139,8 +131,6 @@ export function createFlaggoDropIntervalProvider(
           ...policyAttributes(attributes),
           "tetris.drop_interval.ms": selection.intervalMs,
           "tetris.drop_interval.source": selection.source,
-          "flaggo.contract.name": "tetris.dropInterval",
-          "flaggo.contract.digest": response.value.contractDigest,
           "flaggo.evaluation.source": evaluation.source,
           ...(evaluation.source === "rule"
             ? { "flaggo.evaluation.rule": evaluation.rule }

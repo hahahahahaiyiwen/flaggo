@@ -30,6 +30,7 @@ import {
   serializeJson,
   utf8Length,
 } from "./serialization.js";
+import { normalizeServiceBaseUrl } from "./service-url.js";
 import {
   assertResponseSchema,
 } from "./validators.js";
@@ -54,28 +55,6 @@ export interface TransportRequest<T> {
 
 export interface Transport {
   request<T>(request: TransportRequest<T>): Promise<FlaggoResponse<T>>;
-}
-
-function normalizeBaseUrl(value: string | URL): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return inputError("/baseUrl", "The service base URL must be absolute.");
-  }
-  if (
-    (url.protocol !== "https:" && url.protocol !== "http:")
-    || url.username !== ""
-    || url.password !== ""
-    || url.search !== ""
-    || url.hash !== ""
-  ) {
-    return inputError(
-      "/baseUrl",
-      "The service base URL must use HTTP(S) and cannot contain credentials, a query, or a fragment.",
-    );
-  }
-  return url.toString().replace(/\/+$/u, "");
 }
 
 function assertRetryPolicy(
@@ -498,7 +477,7 @@ export function createTransport(
   validateCredential(configuration.credential);
   assertTimeout(configuration.timeoutMs, "/timeoutMs");
   const defaultPolicy = assertRetryPolicy(configuration.retry, "/retry");
-  const baseUrl = normalizeBaseUrl(configuration.baseUrl);
+  const baseUrl = normalizeServiceBaseUrl(configuration.baseUrl, "/baseUrl");
   const fetchImplementation = configuration.fetch
     ?? globalThis.fetch?.bind(globalThis);
   if (typeof fetchImplementation !== "function") {

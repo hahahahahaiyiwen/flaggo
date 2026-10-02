@@ -16,4 +16,6 @@ export interface StandaloneValidator {
   errors: readonly SchemaValidationError[] | null;
 }
 
-export const validateProblemDetails: StandaloneValidator;
+export const validateDeploymentManifest: StandaloneValidator;
+export const validateServiceEndpoints: StandaloneValidator;
+export const validateRuntimeConfiguration: StandaloneValidator;

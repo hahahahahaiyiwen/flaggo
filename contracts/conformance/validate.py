@@ -36,6 +36,7 @@ SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 SCHEMA_FILES = [
     "runtime-models-v3.schema.json",
     "management-models-v3.schema.json",
+    "deployment-models-v2.schema.json",
     "problem-details-v3.schema.json",
     "telemetry-events-v1.schema.json",
     "otlp-http-profile-v1.schema.json",

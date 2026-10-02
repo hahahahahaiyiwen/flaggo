@@ -206,7 +206,6 @@ export class AdaptiveWorker {
         "worker.queue.depth.after": this.queue.length,
         "worker.batch.size": decision.result,
         "worker.batch.processed_count": processedItemIds.length,
-        "flaggo.contract.digest": decision.contractDigest,
       });
       return {
         profile,

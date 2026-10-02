@@ -29,6 +29,22 @@ const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 const executableDigest =
   "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const runtimeConfig = {
+  format: "flaggo.runtime-config/v1",
+  authority: {
+    tenant: "local",
+    application: "tetris",
+    environment: "test",
+  },
+  services: {
+    contractServiceUrl: "https://contracts.test",
+    decisionServiceUrl: "https://decisions.test",
+    otlpIngestionUrl: "https://telemetry.test",
+  },
+  bindings: {
+    "tetris.dropInterval": { contractDigest },
+  },
+};
 
 const context = {
   boardPressureMean5s: 0.8,
@@ -55,8 +71,7 @@ function decisionResponse(result, evaluation = { source: "rule", rule: "high-pre
 test("Flaggo provider maps game context and returns decision provenance", async () => {
   let request;
   const provider = createFlaggoDropIntervalProvider({
-    baseUrl: "https://decisions.test",
-    contractDigest,
+    runtimeConfig,
     retry: { maxAttempts: 1 },
     fetch: async (input, init) => {
       request = { input, init };
@@ -125,8 +140,7 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
 
   try {
     const provider = createFlaggoDropIntervalProvider({
-      baseUrl: "https://decisions.test",
-      contractDigest,
+      runtimeConfig,
       retry: { maxAttempts: 1 },
       fetch: async () => decisionResponse(850),
       telemetry: {
@@ -161,10 +175,31 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
       )?.instrumentationScope.name,
       "tetris.policy",
     );
+    const decisionRecord = records.find((record) =>
+      record.eventName === "flaggo.decision.received"
+    );
+    const applicationRecord = records.find((record) =>
+      record.eventName === "tetris.drop_interval.selected"
+    );
+    assert.equal(
+      decisionRecord?.attributes["flaggo.contract.digest"],
+      contractDigest,
+    );
+    assert.equal(
+      Object.hasOwn(
+        applicationRecord?.attributes ?? {},
+        "flaggo.contract.digest",
+      ),
+      false,
+    );
     const span = spanExporter.getFinishedSpans()[0];
     assert.ok(span);
     assert.equal(span.name, "tetris.drop_interval.select");
     assert.equal(span.attributes["tetris.drop_interval.ms"], 850);
+    assert.equal(
+      Object.hasOwn(span.attributes, "flaggo.contract.digest"),
+      false,
+    );
     assert.equal(
       records[0].spanContext?.traceId,
       span.spanContext().traceId,
@@ -200,8 +235,7 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
 
 test("Flaggo provider visibly falls back to the local application policy", async () => {
   const provider = createFlaggoDropIntervalProvider({
-    baseUrl: "https://decisions.test",
-    contractDigest,
+    runtimeConfig,
     retry: { maxAttempts: 1 },
     fetch: async () => {
       throw new TypeError("connection refused");
@@ -217,8 +251,7 @@ test("Flaggo provider visibly falls back to the local application policy", async
 
 test("Flaggo provider rejects unusable results through local fallback", async () => {
   const provider = createFlaggoDropIntervalProvider({
-    baseUrl: "https://decisions.test",
-    contractDigest,
+    runtimeConfig,
     retry: { maxAttempts: 1 },
     fetch: async () => decisionResponse(825, { source: "default" }),
   });

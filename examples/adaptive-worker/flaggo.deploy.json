@@ -1,5 +1,10 @@
 {
-  "format": "flaggo.deploy/v1",
+  "format": "flaggo.deploy/v2",
+  "authority": {
+    "tenant": "local",
+    "application": "adaptive-worker",
+    "environment": "development"
+  },
   "contracts": [
     "flaggo/contracts/demo.workerBatchSize.decision-contract.json"
   ]

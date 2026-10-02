@@ -4,6 +4,10 @@
   "description": "TypeScript clients and OpenTelemetry integration for Flaggo.",
   "type": "module",
   "exports": {
+    "./configuration": {
+      "types": "./dist/configuration/index.d.ts",
+      "import": "./dist/configuration/index.js"
+    },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "import": "./dist/runtime/index.js"
@@ -32,6 +36,7 @@
   "peerDependencies": {
     "@opentelemetry/api": ">=1.9.0 <1.10.0",
     "@opentelemetry/api-logs": ">=0.222.0 <0.223.0",
+    "@opentelemetry/resources": ">=2.11.0 <2.12.0",
     "@opentelemetry/sdk-logs": ">=0.222.0 <0.223.0",
     "@opentelemetry/sdk-metrics": ">=2.11.0 <2.12.0",
     "@opentelemetry/sdk-trace": ">=2.11.0 <2.12.0"

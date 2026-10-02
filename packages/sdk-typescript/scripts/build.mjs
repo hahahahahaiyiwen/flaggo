@@ -26,6 +26,7 @@ await build({
   bundle: true,
   entryNames: "[dir]/[name]",
   entryPoints: [
+    "src/configuration/index.ts",
     "src/runtime/index.ts",
     "src/management/index.ts",
     "src/opentelemetry/index.ts",
@@ -38,6 +39,7 @@ await build({
     "@opentelemetry/exporter-metrics-otlp-http",
     "@opentelemetry/exporter-trace-otlp-http",
     "@opentelemetry/otlp-exporter-base",
+    "@opentelemetry/resources",
     "@opentelemetry/sdk-logs",
     "@opentelemetry/sdk-metrics",
     "@opentelemetry/sdk-trace",

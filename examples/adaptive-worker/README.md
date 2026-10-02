@@ -9,11 +9,14 @@ local environment:
 
 1. starts Contract Service and Decision Service against one isolated SQLite
    database;
-2. deploys the contract through
+2. starts Flaggo OTel Ingestion against the same database;
+3. deploys the contract through
    `PUT /v3/decision-contracts/demo.workerBatchSize`;
-3. starts Flaggo OTel Ingestion against the same database;
-4. records the returned exact `contractDigest`; and
-5. configures the worker to call the exact-version Runtime API.
+4. generates one immutable `flaggo.runtime-config/v1` document containing the
+   manifest authority, all three service URLs, and the returned exact
+   `contractDigest`; and
+5. gives that configuration to both the decision client and telemetry
+   providers.
 
 The authored executable returns `6` when `queuePressure >= 0.7`; otherwise the
 contract default is `3`. The worker supplies `workerId`, `cohort`, and
@@ -33,7 +36,11 @@ selected batch size, and processing latency are also metrics. Each
 `flaggo.decision.received` observation. All logs correlate with the active
 worker span. OTLP success acknowledges durable inbox enqueue rather than
 immediate Evidence Store materialization. Runtime evaluation itself remains
-stateless.
+stateless. The generated authority (`local / adaptive-worker / development`)
+is attached to the shared OTel Resource as `flaggo.tenant`,
+`flaggo.application`, and `flaggo.environment`. Ordinary application logs,
+metrics, and spans remain contract-agnostic; exact contract provenance belongs
+to the SDK-owned decision observation.
 
 ## Automated acceptance
 
@@ -58,16 +65,16 @@ dotnet build Flaggo.slnx -c Debug --no-restore
 node examples\adaptive-worker\service.mjs
 ```
 
-The launcher writes connection details below
-`.flaggo/adaptive-worker/service.json`. In another terminal:
+The launcher writes the generated immutable runtime configuration to
+`.flaggo/adaptive-worker/flaggo.runtime.json`. In another terminal:
 
 ```powershell
 node examples\adaptive-worker\dist\main.js
 ```
 
-The launcher supplies the dynamically assigned Decision Service and OTel
-Ingestion URLs through its connection file. The application owns all three
-OpenTelemetry providers and their shutdown, while
+The launcher supplies the dynamically assigned service URLs, deployment
+authority, and immutable contract binding through that configuration. The
+application owns all three OpenTelemetry providers and their shutdown, while
 `@flaggo/sdk/opentelemetry` supplies only the additional Flaggo processors and
 metric reader. Stop the launcher with `Ctrl+C`; it owns and removes only its
 specific `.flaggo/adaptive-worker` directory.

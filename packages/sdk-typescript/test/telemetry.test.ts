@@ -12,6 +12,7 @@ import {
   type FetchLike,
   type FlaggoTelemetryLogger,
 } from "../src/runtime/index.js";
+import { runtimeConfiguration } from "./runtime-configuration.js";
 
 const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -38,6 +39,7 @@ type Decisions = {
 const bindings: DecisionBindings<Decisions> = {
   parallelism: { contractDigest },
 };
+const runtimeConfig = runtimeConfiguration(bindings);
 
 function decision(result = 4): object {
   return {
@@ -90,8 +92,7 @@ describe("runtime telemetry", () => {
     const telemetry = captureLogger();
     const fetch = vi.fn<FetchLike>(async () => jsonResponse(decision()));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test/",
-      bindings,
+      runtimeConfig,
       fetch,
       random: () => 0.25,
       telemetry: { logger: telemetry.logger },
@@ -125,8 +126,7 @@ describe("runtime telemetry", () => {
       .mockResolvedValueOnce(jsonResponse(decision(4)))
       .mockResolvedValueOnce(jsonResponse(decision(8)));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test/",
-      bindings,
+      runtimeConfig,
       fetch,
       telemetry: { logger: telemetry.logger },
     });
@@ -155,8 +155,7 @@ describe("runtime telemetry", () => {
       },
     ));
     const client = createDecisionClient<Decisions>({
-      baseUrl: "https://decisions.test/",
-      bindings,
+      runtimeConfig,
       fetch,
       telemetry: { logger: telemetry.logger },
     });

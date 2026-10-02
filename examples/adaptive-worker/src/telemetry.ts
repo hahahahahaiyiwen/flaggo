@@ -26,10 +26,14 @@ import {
   type ReadableSpan,
 } from "@opentelemetry/sdk-trace";
 import {
+  createFlaggoResource,
   createFlaggoLogRecordProcessor,
   createFlaggoMetricReader,
   createFlaggoSpanProcessor,
 } from "@flaggo/sdk/opentelemetry";
+import type {
+  FlaggoRuntimeConfiguration,
+} from "@flaggo/sdk/configuration";
 import { SDK_VERSION } from "@flaggo/sdk/runtime";
 
 export interface ApplicationTelemetry {
@@ -41,8 +45,7 @@ export interface ApplicationTelemetry {
 
 export interface AdaptiveWorkerTelemetryOptions {
   readonly capture?: boolean;
-  readonly environment?: string;
-  readonly flaggoOtlpBaseUrl: string | URL;
+  readonly runtimeConfig: FlaggoRuntimeConfiguration;
 }
 
 export class AdaptiveWorkerTelemetry implements ApplicationTelemetry {
@@ -60,9 +63,13 @@ export class AdaptiveWorkerTelemetry implements ApplicationTelemetry {
   private readonly tracerProvider: TracerProvider;
 
   constructor(options: AdaptiveWorkerTelemetryOptions) {
-    const resource = resourceFromAttributes({
-      "service.name": "adaptive-worker",
-      "deployment.environment.name": options.environment ?? "development",
+    const resource = createFlaggoResource({
+      baseResource: resourceFromAttributes({
+        "service.name": "adaptive-worker",
+        "deployment.environment.name":
+          options.runtimeConfig.authority.environment,
+      }),
+      runtimeConfig: options.runtimeConfig,
     });
     this.logExporter = options.capture === true
       ? new InMemoryLogRecordExporter()
@@ -78,7 +85,7 @@ export class AdaptiveWorkerTelemetry implements ApplicationTelemetry {
       resource,
       processors: [
         createFlaggoLogRecordProcessor({
-          baseUrl: options.flaggoOtlpBaseUrl,
+          runtimeConfig: options.runtimeConfig,
         }),
         ...(this.logExporter === undefined
           ? []
@@ -93,7 +100,7 @@ export class AdaptiveWorkerTelemetry implements ApplicationTelemetry {
       resource,
       readers: [
         createFlaggoMetricReader({
-          baseUrl: options.flaggoOtlpBaseUrl,
+          runtimeConfig: options.runtimeConfig,
           periodic: { exportIntervalMillis: 5_000 },
         }),
         ...(this.metricExporter === undefined
@@ -110,7 +117,7 @@ export class AdaptiveWorkerTelemetry implements ApplicationTelemetry {
       resource,
       spanProcessors: [
         createFlaggoSpanProcessor({
-          baseUrl: options.flaggoOtlpBaseUrl,
+          runtimeConfig: options.runtimeConfig,
         }),
         ...(this.spanExporter === undefined
           ? []

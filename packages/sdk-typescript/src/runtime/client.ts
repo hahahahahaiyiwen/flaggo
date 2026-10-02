@@ -2,14 +2,13 @@ import {
   InvalidServerResponseError,
   MissingDecisionBindingError,
 } from "../errors.js";
+import { parseFlaggoRuntimeConfiguration } from "../configuration/configuration.js";
 import type { RuntimeDecision as GeneratedRuntimeDecision } from "../generated/runtime-models.generated.js";
 import {
   validateRuntimeDecision,
   validateRuntimeInput,
 } from "../generated/runtime-validators.generated.mjs";
 import {
-  assertDecisionName,
-  assertSha256Digest,
   hasOnlyKeys,
   inputError,
   record,
@@ -45,15 +44,17 @@ type ResultOf<TSpec> =
 
 function validateConfiguration<TCatalog extends DecisionCatalog>(
   configuration: DecisionClientConfiguration<TCatalog>,
-): Readonly<Record<string, DecisionBinding>> {
+): {
+  readonly baseUrl: string;
+  readonly bindings: Readonly<Record<string, DecisionBinding>>;
+} {
   const raw = record(configuration);
   if (
     raw === undefined
     || !hasOnlyKeys(
       raw,
       new Set([
-        "baseUrl",
-        "bindings",
+        "runtimeConfig",
         "credential",
         "fetch",
         "timeoutMs",
@@ -69,32 +70,13 @@ function validateConfiguration<TCatalog extends DecisionCatalog>(
     inputError("/random", "Random must be a function.");
   }
 
-  const bindings = record(configuration.bindings);
-  if (bindings === undefined || Object.keys(bindings).length === 0) {
-    inputError("/bindings", "At least one decision binding is required.");
-  }
-  const clone: Record<string, DecisionBinding> = Object.create(null);
-  for (const [contractName, rawBinding] of Object.entries(bindings)) {
-    assertDecisionName(contractName, `/bindings/${contractName}`);
-    const binding = record(rawBinding);
-    if (
-      binding === undefined
-      || !hasOnlyKeys(binding, new Set(["contractDigest"]))
-    ) {
-      inputError(
-        `/bindings/${contractName}`,
-        "Each decision binding must contain only contractDigest.",
-      );
-    }
-    assertSha256Digest(
-      binding.contractDigest,
-      `/bindings/${contractName}/contractDigest`,
-    );
-    clone[contractName] = {
-      contractDigest: binding.contractDigest,
-    };
-  }
-  return clone;
+  const runtimeConfig = parseFlaggoRuntimeConfiguration<
+    Readonly<Record<string, DecisionBinding>>
+  >(configuration.runtimeConfig);
+  return {
+    baseUrl: runtimeConfig.services.decisionServiceUrl,
+    bindings: runtimeConfig.bindings,
+  };
 }
 
 function completeInput<TSpec extends DecisionSpec<
@@ -185,9 +167,23 @@ function decisionOrThrow<TResult extends JsonValue>(
 export function createDecisionClient<TCatalog extends DecisionCatalog>(
   configuration: DecisionClientConfiguration<TCatalog>,
 ): DecisionClient<TCatalog> {
-  const bindings = validateConfiguration(configuration);
+  const validated = validateConfiguration(configuration);
   const random = configuration.random ?? Math.random;
-  const transport = createTransport(configuration);
+  const transport = createTransport({
+    baseUrl: validated.baseUrl,
+    ...(configuration.credential === undefined
+      ? {}
+      : { credential: configuration.credential }),
+    ...(configuration.fetch === undefined
+      ? {}
+      : { fetch: configuration.fetch }),
+    ...(configuration.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: configuration.timeoutMs }),
+    ...(configuration.retry === undefined
+      ? {}
+      : { retry: configuration.retry }),
+  });
   const telemetry = createFlaggoTelemetry(configuration.telemetry);
 
   return {
@@ -196,10 +192,10 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
       request: DecisionRequest<TCatalog[TName]> = {},
       options: RequestOptions = {},
     ) {
-      const binding = bindings[contractName];
-      if (binding === undefined) {
+      if (!Object.hasOwn(validated.bindings, contractName)) {
         throw new MissingDecisionBindingError(contractName);
       }
+      const binding = validated.bindings[contractName]!;
       const input = completeInput(request, random);
       const encodedName = encodeURIComponent(contractName);
       const encodedDigest = encodeURIComponent(binding.contractDigest);

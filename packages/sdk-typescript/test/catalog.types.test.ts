@@ -2,11 +2,12 @@ import { expectTypeOf, it } from "vitest";
 
 import {
   createDecisionClient,
-  defineDecisionBindings,
+  type DecisionBindings,
   type DecisionSpec,
   type FlaggoResponse,
   type RuntimeDecision,
 } from "../src/runtime/index.js";
+import { runtimeConfiguration } from "./runtime-configuration.js";
 
 const digest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -21,15 +22,14 @@ type Decisions = {
   }, boolean>;
 };
 
-const bindings = defineDecisionBindings<Decisions>({
+const runtimeConfig = runtimeConfiguration<DecisionBindings<Decisions>>({
   parallelism: { contractDigest: digest },
   enabled: { contractDigest: digest },
 });
 
 it("binds decision names, attributes, and results once at client creation", () => {
   const client = createDecisionClient<Decisions>({
-    bindings,
-    baseUrl: "https://decisions.test",
+    runtimeConfig,
   });
 
   expectTypeOf(client.decide).toBeFunction();
@@ -67,7 +67,7 @@ it("binds decision names, attributes, and results once at client creation", () =
 it("requires one exact-version binding for every catalog member", () => {
   if (false) {
     // @ts-expect-error enabled is required by the Decisions catalog
-    defineDecisionBindings<Decisions>({
+    runtimeConfiguration<DecisionBindings<Decisions>>({
       parallelism: { contractDigest: digest },
     });
   }
