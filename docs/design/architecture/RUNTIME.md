@@ -25,14 +25,14 @@ application
        -> Executable Store active lookup
        -> bounded evaluator
   -> RuntimeDecision
+  -> SDK emits flaggo.decision.received through OpenTelemetry
   -> application applies result
-  -> SDK emits exposure evidence through OpenTelemetry
 ```
 
 The SDK and Decision Service form one runtime integration boundary, but they
-have different responsibilities. The SDK constructs complete input and
-observes application use. The service resolves authority and evaluates one
-immutable executable.
+have different responsibilities. The SDK constructs complete input and records
+that a decision response was received. The service resolves authority and
+evaluates one immutable executable.
 
 ## Application and SDK responsibilities
 
@@ -188,18 +188,21 @@ Runtime never scans candidate generation history or chooses the latest
 `createdAt`. Automatic activation remains a Contract Service operation that
 updates the single authoritative mapping.
 
-## Decision and exposure boundary
+## Decision observation boundary
 
 A `RuntimeDecision` proves that one active executable produced a contract-valid
 result. It does not prove that the application used the result.
 
 ```text
 RuntimeDecision
-  -> application applies or renders result
-  -> SDK creates or updates exposure context
-  -> SDK emits Flaggo exposure evidence
-  -> later outcome evidence may correlate to that exposure
+  -> SDK emits flaggo.decision.received through OpenTelemetry
+  -> application may apply or render result
+  -> selected application telemetry may correlate to that decision
 ```
+
+The built-in observation records receipt, not application. It carries the
+decision, contract, executable, result, and evaluation identities needed by
+later analysis, but it does not prove that the application used the result.
 
 The optional current-exposure input describes a previous applied decision in
 the SDK's current activity context. It does not select the new executable and

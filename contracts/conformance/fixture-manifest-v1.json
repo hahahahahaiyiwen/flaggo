@@ -2,7 +2,7 @@
   "$schema-note": "Index of contract conformance fixtures. Generated from contracts/fixtures metadata.",
   "version": "1",
   "generatedFor": "DecisionContract management v3, stateless runtime evaluation v3, and Phase 4 telemetry contracts",
-  "totalCases": 31,
+  "totalCases": 30,
   "requiredScenarioCount": 17,
   "coveredScenarios": [
     1,
@@ -409,19 +409,6 @@
       "sdkLocal": true,
       "schemaNegative": false,
       "invariant": "A successful runtime evaluation emits one independently meaningful Flaggo decision event through the OpenTelemetry Logs signal."
-    },
-    {
-      "name": "telemetry-outcome-observed",
-      "scenarios": [],
-      "group": "telemetry",
-      "file": "fixtures/telemetry/02-outcome-observed.json",
-      "method": "EMIT",
-      "httpPath": "otel://logs/flaggo.outcome.observed",
-      "status": 0,
-      "requestSchema": "telemetry-events-v1.schema.json#/$defs/OutcomeObservedEvent",
-      "sdkLocal": true,
-      "schemaNegative": false,
-      "invariant": "The optional outcome helper emits one independently meaningful Flaggo outcome event through the OpenTelemetry Logs signal."
     },
     {
       "name": "telemetry-event-schema-negative-cases",

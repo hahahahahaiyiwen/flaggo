@@ -258,26 +258,24 @@ Whether to expose evaluation time or a decision/exposure correlation identity
 in a future version remains open. The stateless runtime does not require those
 fields to evaluate a request.
 
-## SDK exposure flow
+## SDK decision observation flow
 
 A returned `RuntimeDecision` proves only that Flaggo evaluated a result. It does
 not prove that the application used it.
 
 ```text
 RuntimeDecision
-  -> application applies or renders result
-  -> SDK creates or updates exposure context
-  -> SDK emits Flaggo exposure evidence through OpenTelemetry
-  -> next RuntimeInput may carry that exposure as currentExposure
+  -> SDK emits flaggo.decision.received through OpenTelemetry
+  -> application may apply or render result
+  -> next RuntimeInput may carry a previous applied exposure as currentExposure
 ```
 
-The SDK owns the transition from returned decision to applied exposure. The
-runtime server does not maintain an exposure session. Receiving
-`currentExposure` lets a request carry the previous applied-decision context
-without requiring affinity to an earlier server instance.
+The built-in observation records receipt, not application. The runtime server
+does not maintain an exposure session. Receiving `currentExposure` lets a
+request carry previous applied-decision context without requiring affinity to
+an earlier server instance.
 
-The exact exposure identity, current-exposure fields, OpenTelemetry
-representation, and retry behavior remain deferred.
+The exact current-exposure fields and retry behavior remain deferred.
 
 ## Retry behavior
 

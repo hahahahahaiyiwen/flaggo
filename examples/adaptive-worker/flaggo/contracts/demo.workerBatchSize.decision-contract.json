@@ -66,12 +66,30 @@
       {
         "name": "processing_latency",
         "attribute": "processingLatencyMs",
-        "binding": "demo.workerBatchSize.processingLatencyMs",
         "correlateBy": [
           "workerId",
           "cohort",
           "queuePressure"
-        ]
+        ],
+        "source": {
+          "kind": "log",
+          "scope": "adaptive-worker.app",
+          "name": "worker.processing_latency",
+          "correlation": {
+            "workerId": {
+              "location": "signal",
+              "attribute": "worker.id"
+            },
+            "cohort": {
+              "location": "signal",
+              "attribute": "worker.cohort"
+            },
+            "queuePressure": {
+              "location": "signal",
+              "attribute": "worker.queue.pressure"
+            }
+          }
+        }
       }
     ],
     "objective": {

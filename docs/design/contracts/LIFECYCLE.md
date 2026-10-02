@@ -85,19 +85,19 @@ already exists:
 
 ```text
 RuntimeActivation[scope, D1] = E1
-LearningHead[scope, name] = D1
+ManagementCurrent[scope, name] = D1
 
 accept D2
 
 RuntimeActivation[scope, D1] = E1
 RuntimeActivation[scope, D2] = DefaultExecutable(D2)
-LearningHead[scope, name] = D2
+ManagementCurrent[scope, name] = D2
 ```
 
 Acceptance of `D2` preserves the `D1` activation for applications still using
-`D1`. When evidence-based learning is enabled, it moves the decision's learning
-head to `D2`, supersedes ongoing `D1` analysis, and permits `D2` analysis to
-start.
+`D1`. It moves the decision's current pointer to `D2`, supersedes ongoing `D1`
+analysis, and permits `D2` analysis to start when evidence-based learning is
+enabled.
 
 Stopping old-digest analysis does not delete its evidence, deactivate its
 executable, or prevent old application versions from requesting decisions.
@@ -155,10 +155,10 @@ Evidence-based generation may be long-running, agentic, or nondeterministic.
 It remains outside the request path. Its output is an immutable candidate that
 must satisfy the same contract as an authored candidate.
 
-Evidence-based analysis is scoped to the current learning head. If the head
-moves before a run completes, the result may be retained for reconstruction,
-but it is superseded and cannot activate. This check fences late analysis
-results from restoring obsolete authority.
+Evidence-based analysis is scoped to the current contract. If the current
+pointer moves before a run completes, the result may be retained for
+reconstruction, but it is superseded and cannot activate. This check fences
+late analysis results from restoring obsolete authority.
 
 Only one analysis run may be active for a contract digest. The first run
 becomes eligible one `learning.policy.evaluate.interval` after accepted
@@ -213,7 +213,7 @@ mode = auto-activation
 
 After candidate validation, this policy tells the Contract Service to attempt
 activation immediately. It does not allow the analysis pipeline to write
-runtime authority directly or bypass contract conformance, learning-head, or
+runtime authority directly or bypass contract conformance, current-contract, or
 activation conflict checks.
 
 `auto-activation` does not mean that runtime discovers the latest generated
@@ -291,7 +291,8 @@ ActiveExecutable -> Runtime Evaluation -> exposure -> evidence
 Runtime and learning progress independently:
 
 - Runtime Evaluation continuously serves the current `ActiveExecutable`.
-- Exposure and outcome evidence accumulate without blocking runtime requests.
+- Decision observations and selected application telemetry accumulate without
+  blocking runtime requests.
 - When `learning.policy.evaluate.interval` elapses, one asynchronous analysis
   run becomes eligible.
 - A valid candidate under `auto-activation` immediately attempts atomic
@@ -302,13 +303,13 @@ Runtime and learning progress independently:
   current executable active and begins the next waiting interval.
 
 The loop begins with the automatically activated default executable, so a
-learning-only contract can produce decisions and exposure-linked evidence
-before its first learned candidate exists.
+learning-only contract can produce decisions and correlated application
+evidence before its first learned candidate exists.
 
-If a newer contract digest becomes the learning head, the old loop is
-superseded. An in-flight old-digest run may finish for reconstruction but
-cannot activate afterward. Runtime traffic carrying the old digest continues
-using its existing active executable.
+If a newer contract digest becomes current, the old loop is superseded. An
+in-flight old-digest run may finish for reconstruction but cannot activate
+afterward. Runtime traffic carrying the old digest continues using its existing
+active executable.
 
 ## Lifecycle state summary
 
@@ -320,7 +321,7 @@ using its existing active executable.
 | Analyzing evidence | Eligible interval with no other run active | Produce no candidate, fail, or produce one candidate |
 | Candidate executable | Successful Executable Generation | Fail validation, become superseded, fail activation, or activate when eligible |
 | Active executable | Successful activation | Evaluate runtime requests or replace with another eligible candidate for the same digest |
-| Superseded analysis | Learning head moved before completion | Retain for reconstruction; never activate |
+| Superseded analysis | Current contract changed before completion | Retain for reconstruction; never activate |
 
 Rejection, failure, cancellation, and supersession are completed outcomes, not
 successful progression to the next stage.
@@ -328,14 +329,14 @@ successful progression to the next stage.
 ## Cross-digest behavior
 
 The lifecycle is isolated by contract digest except for the user-directed
-learning-head transition:
+current-contract transition:
 
 ```text
 D1: accepted contract -> RuntimeActivation[scope, D1] = E1 -> runtime continues
 D2: accepted contract -> RuntimeActivation[scope, D2] = DefaultExecutable(D2)
                     \-> authored or learned candidate -> replacement activation
 
-LearningHead[scope, name]: D1 -> D2
+ManagementCurrent[scope, name]: D1 -> D2
 ```
 
 Flaggo does not infer executable or evidence compatibility between `D1` and
@@ -356,14 +357,14 @@ pipeline and must be recorded in candidate provenance.
 7. Runtime resolves only the active executable for the authenticated scope and
    requested digest.
 8. A new digest preserves older digest activations.
-9. Moving the learning head supersedes old-digest analysis but not old-digest
-   runtime execution.
+9. Moving the current contract supersedes old-digest analysis but not
+   old-digest runtime execution.
 10. Runtime evaluation is deterministic and never invokes executable
     generation.
 11. Learning runs are single-flight per contract digest and start no more
     frequently than the configured evaluation interval.
 12. Automatic activation never bypasses candidate validation, atomic
-    replacement, or learning-head checks.
+    replacement, or current-contract checks.
 
 ## Related documents
 

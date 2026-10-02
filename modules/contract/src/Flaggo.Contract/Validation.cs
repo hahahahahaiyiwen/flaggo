@@ -419,6 +419,7 @@ public static partial class ContractValidator
         }
 
         var evidenceNames = new HashSet<string>(StringComparer.Ordinal);
+        var evidenceSources = new HashSet<EvidenceSourceIdentity>();
         for (var index = 0; index < contract.Learning.Evidence.Count; index++)
         {
             var evidence = contract.Learning.Evidence[index];
@@ -443,8 +444,6 @@ public static partial class ContractValidator
                 Error(issues, "unknown-evidence-attribute", $"{path}/attribute",
                     $"Evidence attribute '{evidence.Attribute}' is not declared.");
             }
-
-            ValidateEvidenceBinding(evidence.Binding, $"{path}/binding", issues);
 
             var correlations = new HashSet<string>(StringComparer.Ordinal);
             for (var correlationIndex = 0; correlationIndex < evidence.CorrelateBy.Count; correlationIndex++)
@@ -472,6 +471,13 @@ public static partial class ContractValidator
                         $"Correlation attribute '{correlation}' is not declared.");
                 }
             }
+
+            ValidateEvidenceSource(
+                evidence.Source,
+                correlations,
+                $"{path}/source",
+                evidenceSources,
+                issues);
         }
 
         if (!evidenceNames.Contains(contract.Learning.Objective.Primary.Evidence))
@@ -601,17 +607,168 @@ public static partial class ContractValidator
         }
     }
 
-    private static void ValidateEvidenceBinding(
-        string? value,
+    private static void ValidateEvidenceSource(
+        EvidenceSource? source,
+        IReadOnlySet<string> correlations,
         string path,
+        ISet<EvidenceSourceIdentity> evidenceSources,
         ICollection<ValidationIssue> issues)
     {
-        if (value is null
-            || value.Length is < 1 or > 256
-            || !DecisionNamePattern().IsMatch(value))
+        if (source is null)
         {
-            Error(issues, "invalid-evidence-binding", path,
-                "Evidence binding must match ^[A-Za-z][A-Za-z0-9._-]*$ and contain at most 256 characters.");
+            Error(issues, "missing-evidence-source", path,
+                "Evidence requires exactly one OpenTelemetry source.");
+            return;
+        }
+
+        ValidateOtelName(source.Scope, $"{path}/scope", "instrumentation scope", issues);
+        ValidateOtelName(source.Name, $"{path}/name", "signal", issues);
+
+        switch (source)
+        {
+            case MetricEvidenceSource metric:
+                if (metric.MetricKind is not (
+                    "gauge"
+                    or "sum"
+                    or "histogram"
+                    or "exponentialHistogram"
+                    or "summary"))
+                {
+                    Error(issues, "invalid-metric-kind", $"{path}/metricKind",
+                        "Metric source kind must be gauge, sum, histogram, exponentialHistogram, or summary.");
+                }
+
+                if (metric.Unit is null || metric.Unit.Length > 128)
+                {
+                    Error(issues, "invalid-metric-unit", $"{path}/unit",
+                        "Metric source unit must contain at most 128 characters.");
+                }
+
+                break;
+            case SpanEventEvidenceSource spanEvent:
+                ValidateOtelName(
+                    spanEvent.SpanName,
+                    $"{path}/spanName",
+                    "parent span",
+                    issues);
+                break;
+            case LogEvidenceSource:
+            case SpanEvidenceSource:
+                break;
+            default:
+                Error(issues, "unsupported-evidence-source", path,
+                    "Evidence source kind is not supported.");
+                return;
+        }
+
+        if (source.Correlation is null)
+        {
+            Error(issues, "missing-evidence-correlation-map", $"{path}/correlation",
+                "Evidence source correlation must map every correlateBy attribute.");
+        }
+        else
+        {
+            foreach (var correlation in correlations)
+            {
+                if (!source.Correlation.ContainsKey(correlation))
+                {
+                    Error(
+                        issues,
+                        "missing-evidence-correlation",
+                        $"{path}/correlation",
+                        $"Evidence source does not map correlation attribute '{correlation}'.");
+                }
+            }
+
+            foreach (var (correlation, attribute) in source.Correlation)
+            {
+                var correlationPath = $"{path}/correlation/{EscapePointer(correlation)}";
+                if (!correlations.Contains(correlation))
+                {
+                    Error(
+                        issues,
+                        "unexpected-evidence-correlation",
+                        correlationPath,
+                        $"Evidence source maps undeclared correlation attribute '{correlation}'.");
+                }
+
+                if (attribute is null)
+                {
+                    Error(issues, "null-evidence-correlation", correlationPath,
+                        "Evidence correlation mappings must not be null.");
+                    continue;
+                }
+
+                if (attribute.Location is not ("resource" or "scope" or "signal" or "parentSpan"))
+                {
+                    Error(
+                        issues,
+                        "invalid-evidence-correlation-location",
+                        $"{correlationPath}/location",
+                        "Evidence correlation location must be resource, scope, signal, or parentSpan.");
+                }
+                else if (attribute.Location == "parentSpan"
+                    && source is not SpanEventEvidenceSource)
+                {
+                    Error(
+                        issues,
+                        "invalid-evidence-correlation-location",
+                        $"{correlationPath}/location",
+                        "parentSpan correlation is valid only for a spanEvent source.");
+                }
+
+                ValidateOtelName(
+                    attribute.Attribute,
+                    $"{correlationPath}/attribute",
+                    "correlation attribute",
+                    issues);
+            }
+        }
+
+        var sourceIdentity = source switch
+        {
+            MetricEvidenceSource metric =>
+                new EvidenceSourceIdentity(
+                    "metric",
+                    metric.Scope,
+                    null,
+                    metric.Name,
+                    metric.MetricKind,
+                    metric.Unit),
+            LogEvidenceSource log =>
+                new EvidenceSourceIdentity("log", log.Scope, null, log.Name, null, null),
+            SpanEvidenceSource span =>
+                new EvidenceSourceIdentity("span", span.Scope, null, span.Name, null, null),
+            SpanEventEvidenceSource spanEvent =>
+                new EvidenceSourceIdentity(
+                    "spanEvent",
+                    spanEvent.Scope,
+                    spanEvent.SpanName,
+                    spanEvent.Name,
+                    null,
+                    null),
+            _ => null
+        };
+        if (sourceIdentity is not null && !evidenceSources.Add(sourceIdentity))
+        {
+            Error(issues, "duplicate-evidence-source", path,
+                "Each evidence entry in a contract must select a distinct OpenTelemetry source.");
+        }
+    }
+
+    private static void ValidateOtelName(
+        string? value,
+        string path,
+        string subject,
+        ICollection<ValidationIssue> issues)
+    {
+        if (value is null || value.Length is < 1 or > 256)
+        {
+            Error(
+                issues,
+                "invalid-otel-name",
+                path,
+                $"OpenTelemetry {subject} name must contain between 1 and 256 characters.");
         }
     }
 
@@ -633,6 +790,14 @@ public static partial class ContractValidator
             .Replace("/", "~1", StringComparison.Ordinal);
 
     private static readonly ValueSchema BooleanSchema = new() { Type = "boolean" };
+
+    private sealed record EvidenceSourceIdentity(
+        string Kind,
+        string Scope,
+        string? SpanName,
+        string Name,
+        string? MetricKind,
+        string? Unit);
 
     [GeneratedRegex("^[A-Za-z][A-Za-z0-9._-]*$", RegexOptions.CultureInvariant)]
     private static partial Regex DecisionNamePattern();

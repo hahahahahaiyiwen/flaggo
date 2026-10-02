@@ -104,9 +104,12 @@ Flaggo SDK
           v
 RuntimeDecision
     |
-    | application applies result
+    +------------------------------------> SDK emits
+                                          flaggo.decision.received
+                                          through OpenTelemetry
+    |
     v
-SDK exposure evidence ------------------> OpenTelemetry pipeline
+application applies result
 ```
 
 An implementation may co-locate services or stores. The logical ownership and
@@ -129,8 +132,8 @@ The SDK:
   evaluation;
 - may carry the previous applied exposure as `currentExposure`;
 - sends the exact-version runtime request; and
-- emits exposure evidence through the application's OpenTelemetry pipeline
-  only after the application applies the returned result.
+- emits `flaggo.decision.received` through the application's OpenTelemetry
+  pipeline after a successful response.
 
 Contract attributes, including user or principal identifiers, are decision
 data. They never establish authentication, authorization, application scope,
@@ -173,7 +176,7 @@ directly. The Contract Service validates the candidate and applies its
 activation policy.
 
 The initial evidence-based policy is `mode: auto-activation`. For a valid
-candidate from the current learning head, the Contract Service attempts an
+candidate from the current contract, the Contract Service attempts an
 atomic activation immediately. This policy does not make runtime search for
 the latest generated artifact; runtime still reads only the activation index.
 
@@ -203,29 +206,26 @@ It does not:
 
 ### Evidence path
 
-Runtime traffic and evidence traffic are separate. The SDK emits Flaggo
-exposure evidence after application, while user-declared logical evidence
-bindings map application outcomes into OpenTelemetry. Evidence ingestion
-correlates the two using both exposure identity and declared activity
-attributes.
+Runtime traffic and evidence traffic are separate. The SDK emits the built-in
+`flaggo.decision.received` observation, while applications emit ordinary
+OpenTelemetry metrics, logs, spans, and span events. Each current contract's
+required evidence sources select relevant application telemetry and map
+declared correlation attributes.
 
 The Evidence Store supports later analysis and provenance. It is not a
-synchronous operand store for Decision Service requests. Exact OpenTelemetry
-signals, scopes, selectors, projections, and multi-match behavior remain a
-deferred protocol design.
+synchronous operand store for Decision Service requests.
 
 ## Data ownership
 
 | Data | Owner | Mutability | Runtime role |
 | --- | --- | --- | --- |
 | Accepted `DecisionContract` version | Contract Service / Contract Store | Immutable by `contractDigest` | Validates input and result for the requested digest |
-| Management current-version pointer | Contract Service | Mutable by name | None; runtime never resolves it |
+| Management current-version pointer | Contract Service | Mutable by name | Selects the version for management reads and new evidence analysis; runtime never resolves it |
 | `DecisionExecutable` and provenance | Contract Service / Executable Store | Immutable by `executableDigest` | Supplies bounded behavior |
 | Executable lifecycle state | Contract Service / Executable Store | Atomic Candidate/Active/Inactive transition per scope and `contractDigest` | Selects the only executable with runtime authority |
 | Runtime input | Application and SDK | Per logical evaluation | Complete explicit evaluator input |
 | Runtime decision | Decision Service | Response value; not retained by the semantic runtime contract | Returned to the caller |
-| Exposure and outcome evidence | SDK, application, and evidence pipeline | Append-oriented observations | Asynchronous learning only |
-| Learning head | Contract Service | Mutable by decision name | Selects the digest eligible for new analysis, never runtime evaluation |
+| Decision observations and selected application telemetry | SDK, application, and evidence pipeline | Append-oriented observations | Asynchronous learning only |
 
 ## Online and asynchronous dependency boundaries
 
@@ -255,7 +255,6 @@ D1 -> RuntimeActivation[scope, D1] = E1
 D2 -> RuntimeActivation[scope, D2] = DefaultExecutable(D2)
 
 ManagementCurrent[scope, name] = D2
-LearningHead[scope, name] = D2
 ```
 
 Applications carrying `D1` continue to evaluate `E1`. Applications carrying

@@ -242,17 +242,6 @@ def flaggo_event_semantic_errors(body) -> list[str]:
             errors.append(
                 "flaggo.result.hash does not match flaggo.result.json"
             )
-    elif body.get("eventName") == "flaggo.outcome.observed":
-        value_json = attributes.get("flaggo.evidence.value.json")
-        if not isinstance(value_json, str):
-            return errors
-        try:
-            strict_json_loads(value_json)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(
-                "flaggo.evidence.value.json is not strict JSON: "
-                f"{exc}"
-            )
     return errors
 
 

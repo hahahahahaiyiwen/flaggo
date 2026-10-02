@@ -98,22 +98,19 @@ async function runSmoke(lifecycle) {
       new Set(telemetry.events.map((event) => event.eventName)),
       new Set([
         "flaggo.decision.received",
-        "flaggo.outcome.observed",
         "worker.item.enqueued",
         "worker.item.completed",
         "worker.batch.applied",
+        "worker.processing_latency",
       ]),
     );
     const decisionEvents = telemetry.events.filter((event) =>
       event.eventName === "flaggo.decision.received");
-    const outcomeEvents = telemetry.events.filter((event) =>
-      event.eventName === "flaggo.outcome.observed");
+    const processingLatencyEvents = telemetry.events.filter((event) =>
+      event.eventName === "worker.processing_latency");
     assert.equal(decisionEvents.length, 4);
-    assert.equal(outcomeEvents.length, 4);
+    assert.equal(processingLatencyEvents.length, 4);
     assert.ok(decisionEvents.every((event) =>
-      event.instrumentationScope.name === "@flaggo/sdk"
-    ));
-    assert.ok(outcomeEvents.every((event) =>
       event.instrumentationScope.name === "@flaggo/sdk"
     ));
     assert.ok(telemetry.events
@@ -126,9 +123,12 @@ async function runSmoke(lifecycle) {
       "adaptive-worker-1",
     );
     assert.equal(
-      outcomeEvents[0].attributes["flaggo.evidence.binding"],
-      "demo.workerBatchSize.processingLatencyMs",
+      processingLatencyEvents[0].attributes["worker.id"],
+      "adaptive-worker-1",
     );
+    assert.ok(processingLatencyEvents.every((event) =>
+      typeof event.body === "number"
+    ));
 
     const workerSpans = telemetry.spans.filter((span) =>
       span.name === "worker.tick"
@@ -141,7 +141,7 @@ async function runSmoke(lifecycle) {
       event.spanContext !== undefined
       && workerTraceIds.has(event.spanContext.traceId)
     ));
-    assert.ok(outcomeEvents.every((event) =>
+    assert.ok(processingLatencyEvents.every((event) =>
       event.spanContext !== undefined
       && workerTraceIds.has(event.spanContext.traceId)
     ));

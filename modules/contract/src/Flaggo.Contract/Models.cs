@@ -208,11 +208,62 @@ public sealed record EvidenceDefinition
     [JsonPropertyName("attribute")]
     public required string Attribute { get; init; }
 
-    [JsonPropertyName("binding")]
-    public required string Binding { get; init; }
-
     [JsonPropertyName("correlateBy")]
     public required IReadOnlyList<string> CorrelateBy { get; init; }
+
+    [JsonPropertyName("source")]
+    public required EvidenceSource Source { get; init; }
+}
+
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(MetricEvidenceSource), "metric")]
+[JsonDerivedType(typeof(LogEvidenceSource), "log")]
+[JsonDerivedType(typeof(SpanEvidenceSource), "span")]
+[JsonDerivedType(typeof(SpanEventEvidenceSource), "spanEvent")]
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public abstract record EvidenceSource
+{
+    [JsonPropertyName("scope")]
+    public required string Scope { get; init; }
+
+    [JsonPropertyName("name")]
+    public required string Name { get; init; }
+
+    [JsonPropertyName("correlation")]
+    public required IReadOnlyDictionary<string, EvidenceCorrelationAttribute> Correlation { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record MetricEvidenceSource : EvidenceSource
+{
+    [JsonPropertyName("metricKind")]
+    public required string MetricKind { get; init; }
+
+    [JsonPropertyName("unit")]
+    public required string Unit { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record LogEvidenceSource : EvidenceSource;
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SpanEvidenceSource : EvidenceSource;
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SpanEventEvidenceSource : EvidenceSource
+{
+    [JsonPropertyName("spanName")]
+    public required string SpanName { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record EvidenceCorrelationAttribute
+{
+    [JsonPropertyName("location")]
+    public required string Location { get; init; }
+
+    [JsonPropertyName("attribute")]
+    public required string Attribute { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

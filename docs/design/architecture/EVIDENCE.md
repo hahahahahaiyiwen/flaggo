@@ -42,7 +42,7 @@ The application's OpenTelemetry providers, processors, and exporters remain
 the producer boundary. A Collector is optional. When present, its configuration
 is intentionally coarse-grained: it may forward all telemetry to Flaggo or
 route telemetry under configured service or instrumentation namespaces. It does
-not need to understand decision contracts, evidence bindings, or dynamic
+not need to understand decision contracts, evidence sources, or dynamic
 contract selectors.
 
 The receiver validates and durably enqueues complete OTLP export requests. The
@@ -70,12 +70,6 @@ queue depth, and failure rate may be represented as metrics, logs, or span
 attributes depending on how the application is instrumented. Flaggo must not
 require those signals to be re-emitted through a Flaggo-specific outcome
 abstraction before they can become candidate evidence.
-
-`flaggo.outcome.observed` remains a convenience log shape for applications
-that want to publish an explicit outcome value, but it is not the only outcome
-model. Outcome is defined by the decision contract's learning/evidence
-declarations and by async analysis over materialized candidate telemetry, not
-by the existence of a single SDK helper event.
 
 An application does not need the Flaggo SDK to send telemetry to Flaggo OTel
 Ingestion. It can emit standard OTLP logs, metrics, or traces directly through
@@ -133,7 +127,7 @@ The next logical evaluation may carry the prior applied exposure as
 It is not proof that the newly returned decision will be exposed and it does
 not select runtime authority.
 
-## Outcome evidence declarations
+## Evidence source declarations
 
 Each entry in `DecisionContract.learning.evidence` declares one logical
 observed value:
@@ -143,9 +137,18 @@ evidence:
   - name: recovery_failure
     description: Recovery failures observed after a runtime decision.
     attribute: recovery_failures_5s
-    binding: tetris.recovery_failure
     correlateBy:
       - session_id
+    source:
+      kind: metric
+      scope: tetris.engine
+      name: tetris.recovery_failure
+      metricKind: sum
+      unit: "{failure}"
+      correlation:
+        session_id:
+          location: signal
+          attribute: tetris.session.id
 ```
 
 The fields mean:
@@ -154,46 +157,21 @@ The fields mean:
 | --- | --- |
 | `name` | Contract-local identity of one observed value |
 | `attribute` | Contract attribute whose schema defines that value |
-| `binding` | Logical binding carried by a `flaggo.outcome.observed` event |
 | `correlateBy` | Additional contract attributes required to associate the surrounding activity |
+| `source` | The one exact application-owned OTel metric, log, span, or span event selected for this evidence |
 
-The contract does not name a vendor table or database column. One application
-activity may supply several logical values, but the contract declares each
-value separately. Multiple declarations may share an underlying activity
-through their bindings.
+Every source matches an exact, case-sensitive instrumentation-scope and signal
+name. Metric sources also match metric kind and unit. Span-event sources match
+their parent span name. Each source's `correlation` map must contain exactly the
+contract attributes listed by `correlateBy`; each mapping identifies a
+`resource`, `scope`, `signal`, or span-event `parentSpan` attribute.
 
-### Native OpenTelemetry selector prerequisite
-
-The current `learning.evidence` shape can select an explicit
-`flaggo.outcome.observed` event through its binding. It cannot yet describe how
-an ordinary OTel metric, log, span, or span event supplies the declared value.
-A versioned native-telemetry selector contract must be accepted before the
-Evidence Materializer implements contract-aware selection for those sources.
-That decision does not block the receiver or Raw OTLP Inbox because enqueue is
-independent of current selectors.
-
-## Outcome observations
-
-Applications may emit telemetry that is not Flaggo-specific, as they would
-without the Flaggo SDK. The SDK also provides convenience helpers that emit the
-Flaggo OTLP logs mapping's explicit outcome log event:
-
-```text
-eventName = "flaggo.outcome.observed"
-flaggo.signal = "outcome.observed"
-```
-
-The receiver enqueues export requests containing ordinary application logs,
-metrics, and traces without requiring Flaggo-specific event shapes. The
-materializer always recognizes canonical Flaggo events and may select ordinary
-telemetry under a versioned selector snapshot. Explicit outcome observations
-may carry:
-
-- `flaggo.evidence.binding`;
-- `flaggo.evidence.value.json`;
-- optional `flaggo.decision.id`;
-- optional contract name/digest; and
-- correlation attributes under `flaggo.correlation.<name>`.
+The contract does not name a vendor table or database column. The receiver
+enqueues all valid application telemetry before selection. The materializer
+always recognizes built-in Flaggo protocol observations and separately applies
+the current contract's evidence sources to ordinary application telemetry.
+One candidate may be associated with different current contracts, but duplicate
+source selectors within one contract are invalid.
 
 ## Correlation and analysis
 
@@ -209,7 +187,7 @@ Analysis may use:
 
 1. a direct `flaggo.decision.id` when the app provides it;
 2. every contract attribute named by `correlateBy`;
-3. contract name/digest and evidence binding; and
+3. contract name/digest and evidence source identity; and
 4. analysis-owned time windows or other documented heuristics.
 
 Direct decision identity, metric names, span attributes, resource attributes,
@@ -221,10 +199,10 @@ scope authority.
 Conceptually, analysis reads materialized telemetry and interprets it as:
 
 ```text
-OutcomeObservation {
+ApplicationObservation {
   decisionId?,
-  binding,
-  value,
+  sourceIdentity,
+  completeSignalPayload,
   correlationAttributes
 }
 
@@ -236,7 +214,7 @@ DecisionObservation {
   correlationAttributes
 }
 
-analyze(decision observations, outcome observations, required attributes)
+analyze(decision observations, application observations, required attributes)
   -> Evidence scoped to exact contractDigest
 ```
 
@@ -293,7 +271,7 @@ For a contract with `learning`:
 ```text
 accepted-ready contract digest
   -> wait learning.policy.evaluate.interval
-  -> read correlated evidence for current LearningHead
+  -> read correlated evidence for current contract
   -> run one bounded asynchronous analysis
   -> produce no candidate, failure, or CandidateExecutable
   -> validate candidate against exact contractDigest
@@ -315,22 +293,20 @@ objective aggregation, and analysis method. It records those choices and the
 evidence references in generation provenance rather than adding them to the
 initial contract syntax.
 
-When a newer digest becomes `LearningHead`, an older run may finish for
-reconstruction but cannot activate. Evidence observed for the older digest
-remains attached to it; Flaggo does not silently reinterpret it as evidence
-for the newer contract.
+When a newer digest becomes current, an older run may finish for reconstruction
+but cannot activate. Evidence observed for the older digest remains attached to
+it; Flaggo does not silently reinterpret it as evidence for the newer contract.
 
 ## Phase 4 Flaggo OTLP logs mapping
 
 Phase 4 defines a Flaggo-specific OTLP logs mapping for ingestion. It is not a
 portable OpenTelemetry semantic convention.
 
-Supported signal names:
+Supported built-in signal names:
 
 | Event name | `flaggo.signal` | Meaning |
 | --- | --- | --- |
 | `flaggo.decision.received` | `decision.received` | SDK received a runtime decision |
-| `flaggo.outcome.observed` | `outcome.observed` | App/SDK reported a potentially relevant outcome |
 
 Required decision attributes:
 
@@ -343,15 +319,6 @@ Required decision attributes:
 - `flaggo.evaluation.source`
 - optional `flaggo.evaluation.rule`
 
-Required outcome attributes:
-
-- `flaggo.evidence.binding`
-- `flaggo.evidence.value.json`
-- optional `flaggo.observation.id`
-- optional `flaggo.decision.id`
-- optional `flaggo.contract.name`
-- optional `flaggo.contract.digest`
-
 Correlation attributes use `flaggo.correlation.<name>`.
 
 ## Invariants
@@ -360,10 +327,10 @@ Correlation attributes use `flaggo.correlation.<name>`.
 2. `decide()` emits decision-received telemetry, not clean learning evidence.
 3. The SDK emits telemetry through OpenTelemetry rather than requiring
    server-side runtime session state or confirmation RPCs.
-4. Outcome evidence is declared as one logical observed value per contract
-   entry.
-5. Async analysis, not ingestion, decides whether decision and outcome
-   observations are usable evidence.
+4. Evidence is declared as one logical observed value and one required OTel
+   source per contract entry.
+5. Async analysis, not ingestion, decides whether decision observations and
+   selected application telemetry are usable evidence.
 6. Evidence remains scoped to the exact contract digest under which it was
    observed when that identity is known.
 7. Learning produces an immutable candidate and cannot activate it directly.

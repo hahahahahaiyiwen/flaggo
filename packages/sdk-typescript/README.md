@@ -90,33 +90,14 @@ is a raw decision observation, not proof that the app applied the result and
 not clean learning evidence by itself. If no OpenTelemetry logger provider is
 configured, the API behaves as a no-op.
 
-Applications can report potentially relevant outcomes with SDK helpers when
-convenient:
-
-```ts
-import { createFlaggoTelemetry } from "@flaggo/sdk/runtime";
-
-const telemetry = createFlaggoTelemetry();
-
-telemetry.recordOutcome({
-  binding: "worker.latency_ms",
-  value: 125,
-  decisionId: "optional-decision-id",
-  contractName: "worker.batch-size",
-  contractDigest:
-    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  correlation: {
-    workerId: "worker-17",
-  },
-});
-```
-
-Apps may also emit ordinary OpenTelemetry telemetry without the helper. The
-Phase 4 treats SDK helpers as convenience APIs, not the only valid source of
-candidate evidence. Non-SDK apps can send OTLP logs, metrics, or traces
-directly. The receiver durably enqueues each complete valid export request, and
-the asynchronous materializer applies versioned selectors before writing
-query-ready evidence.
+Applications emit potentially relevant outcomes through their normal
+OpenTelemetry logs, metrics, spans, and span events. Each learning evidence
+declaration selects exactly one application signal. The receiver durably
+enqueues complete valid export requests, and the asynchronous materializer
+applies the current DecisionContract selectors before writing query-ready
+evidence. `flaggo.decision.received` remains a built-in protocol observation
+that the materializer always recognizes; SDK diagnostic logs are not selected
+implicitly.
 
 Applications can add Flaggo as a direct OTLP/HTTP JSON destination through the
 optional OpenTelemetry integration entry:

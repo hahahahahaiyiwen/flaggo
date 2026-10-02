@@ -68,36 +68,6 @@
           "flaggo.evaluation.source": "rule"
         }
       }
-    },
-    {
-      "why": "unknown Flaggo event attributes are rejected",
-      "schemaRef": "telemetry-events-v1.schema.json#/$defs/OutcomeObservedEvent",
-      "body": {
-        "eventName": "flaggo.outcome.observed",
-        "timeUnixNano": "1790802001000000000",
-        "attributes": {
-          "flaggo.signal": "outcome.observed",
-          "flaggo.evidence.binding": "tetris.survival_ms",
-          "flaggo.evidence.value.json": "125",
-          "flaggo.unknown": true
-        }
-      }
-    },
-    {
-      "why": "correlation attributes are scalar",
-      "schemaRef": "telemetry-events-v1.schema.json#/$defs/OutcomeObservedEvent",
-      "body": {
-        "eventName": "flaggo.outcome.observed",
-        "timeUnixNano": "1790802001000000000",
-        "attributes": {
-          "flaggo.signal": "outcome.observed",
-          "flaggo.evidence.binding": "tetris.survival_ms",
-          "flaggo.evidence.value.json": "125",
-          "flaggo.correlation.gameIds": [
-            "game-1"
-          ]
-        }
-      }
     }
   ],
   "semanticRejectedSamples": [
@@ -134,19 +104,6 @@
           "flaggo.result.json": "4",
           "flaggo.result.hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
           "flaggo.evaluation.source": "default"
-        }
-      }
-    },
-    {
-      "why": "outcome values must be strict JSON",
-      "schemaRef": "telemetry-events-v1.schema.json#/$defs/OutcomeObservedEvent",
-      "body": {
-        "eventName": "flaggo.outcome.observed",
-        "timeUnixNano": "1790802001000000000",
-        "attributes": {
-          "flaggo.signal": "outcome.observed",
-          "flaggo.evidence.binding": "tetris.survival_ms",
-          "flaggo.evidence.value.json": "{\"invalid\":Infinity}"
         }
       }
     }

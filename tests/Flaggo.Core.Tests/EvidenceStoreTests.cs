@@ -63,17 +63,17 @@ public sealed class EvidenceStoreTests
 
         var write = await store.PutTelemetryBatchAsync([
             TelemetryRecord("decision-1", "decision.received"),
-            TelemetryRecord("outcome-1", "outcome.observed")
+            TelemetryRecord("latency-1", "worker.processing_latency")
         ]);
 
         Assert.Equal(new EvidenceTelemetryWriteResult(Created: 2, Existing: 0), write);
         Assert.Equal(2, (await store.ListTelemetryAsync(Scope, 10)).Count);
-        var outcomes = await store.ListTelemetryAsync(
+        var latencyRecords = await store.ListTelemetryAsync(
             Scope,
             10,
-            signal: "outcome.observed");
-        var outcome = Assert.Single(outcomes);
-        Assert.Equal("outcome-1", outcome.ObservationId);
+            signal: "worker.processing_latency");
+        var latency = Assert.Single(latencyRecords);
+        Assert.Equal("latency-1", latency.ObservationId);
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public sealed class EvidenceStoreTests
     {
         var eventName = signal == "decision.received"
             ? "flaggo.decision.received"
-            : "flaggo.outcome.observed";
+        : signal;
         return JsonSerializer.SerializeToElement(new
         {
             resource = new

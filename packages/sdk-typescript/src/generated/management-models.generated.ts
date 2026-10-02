@@ -70,6 +70,14 @@ export type AuthoredWhen = NaturalLanguageWhen | ExpressionWhen;
  */
 export type RuleReturn = LiteralReturn | ExpressionReturn;
 /**
+ * The one application-owned OpenTelemetry signal selected for this evidence declaration.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "EvidenceSource".
+ */
+export type EvidenceSource =
+  MetricEvidenceSource | LogEvidenceSource | SpanEvidenceSource | SpanEventEvidenceSource;
+/**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
  * via the `definition` "WarningIssue".
  */
@@ -270,10 +278,106 @@ export interface LearningEvaluationPolicy {
  */
 export interface LearningPolicy {
   /**
-   * Automatically attempt atomic activation after an evidence-generated candidate passes validation and current-learning-head checks.
+   * Automatically attempt atomic activation after an evidence-generated candidate passes validation and a current-contract check.
    */
   mode: "auto-activation";
   evaluate: LearningEvaluationPolicy;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "EvidenceCorrelationAttribute".
+ */
+export interface EvidenceCorrelationAttribute {
+  /**
+   * The OTLP envelope level containing the correlation attribute. parentSpan is valid only for spanEvent sources.
+   */
+  location: "resource" | "scope" | "signal" | "parentSpan";
+  /**
+   * Exact case-sensitive OpenTelemetry attribute key.
+   */
+  attribute: string;
+}
+/**
+ * Maps every correlateBy contract attribute to one exact OpenTelemetry attribute location and key.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "EvidenceCorrelationMap".
+ */
+export interface EvidenceCorrelationMap {
+  [k: string]: EvidenceCorrelationAttribute;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "MetricEvidenceSource".
+ */
+export interface MetricEvidenceSource {
+  kind: "metric";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive metric name.
+   */
+  name: string;
+  metricKind: "gauge" | "sum" | "histogram" | "exponentialHistogram" | "summary";
+  /**
+   * Exact case-sensitive metric unit. Use an empty string for a metric with no unit.
+   */
+  unit: string;
+  correlation: EvidenceCorrelationMap;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "LogEvidenceSource".
+ */
+export interface LogEvidenceSource {
+  kind: "log";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive LogRecord event name.
+   */
+  name: string;
+  correlation: EvidenceCorrelationMap;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "SpanEvidenceSource".
+ */
+export interface SpanEvidenceSource {
+  kind: "span";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive span name.
+   */
+  name: string;
+  correlation: EvidenceCorrelationMap;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "SpanEventEvidenceSource".
+ */
+export interface SpanEventEvidenceSource {
+  kind: "spanEvent";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive parent span name.
+   */
+  spanName: string;
+  /**
+   * Exact case-sensitive span-event name.
+   */
+  name: string;
+  correlation: EvidenceCorrelationMap;
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
@@ -287,13 +391,12 @@ export interface Evidence {
    */
   attribute: string;
   /**
-   * Logical SDK-to-OpenTelemetry evidence binding.
-   */
-  binding: string;
-  /**
-   * Unordered set of additional contract attributes used with the implicit exposure ID to correlate evidence.
+   * Unordered set of contract attributes whose OpenTelemetry locations are declared by source.correlation.
+   *
+   * @maxItems 128
    */
   correlateBy: AttributeName[];
+  source: EvidenceSource;
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema

@@ -36,15 +36,6 @@ export interface DecisionTelemetryContext {
   readonly correlation?: CorrelationAttributes;
 }
 
-export interface OutcomeTelemetryInput {
-  readonly binding: string;
-  readonly value: JsonValue;
-  readonly decisionId?: string;
-  readonly contractName?: string;
-  readonly contractDigest?: Sha256Digest;
-  readonly correlation?: CorrelationAttributes;
-}
-
 export interface DecisionReceivedTelemetryInput<TResult extends JsonValue = JsonValue> {
   readonly contractName: string;
   readonly decision: RuntimeDecision<TResult>;
@@ -57,12 +48,10 @@ export interface FlaggoTelemetry {
   recordDecisionReceived<TResult extends JsonValue>(
     input: DecisionReceivedTelemetryInput<TResult>,
   ): DecisionTelemetryContext;
-  recordOutcome(input: OutcomeTelemetryInput): void;
 }
 
 const defaultLogger = logs.getLogger("@flaggo/sdk", SDK_VERSION);
 const correlationNamePattern = /^[A-Za-z][A-Za-z0-9_]{0,127}$/u;
-const evidenceBindingPattern = /^[A-Za-z][A-Za-z0-9_.:-]{0,255}$/u;
 type TelemetryAttributes = NonNullable<LogRecord["attributes"]>;
 
 export function createFlaggoTelemetry(
@@ -74,21 +63,7 @@ export function createFlaggoTelemetry(
     recordDecisionReceived(input) {
       return recordDecisionReceived(logger, input);
     },
-    recordOutcome(input) {
-      recordOutcome(logger, input);
-    },
   };
-}
-
-export function recordOutcome(
-  logger: FlaggoTelemetryLogger,
-  input: OutcomeTelemetryInput,
-): void {
-  const attributes = outcomeAttributes(input);
-  logger.emit({
-    eventName: "flaggo.outcome.observed",
-    attributes,
-  });
 }
 
 export function recordDecisionReceived<TResult extends JsonValue>(
@@ -156,57 +131,6 @@ function validateTelemetryConfiguration(
     inputError("/telemetry/logger", "Telemetry logger must implement emit().");
   }
   return configuration.logger ?? defaultLogger;
-}
-
-function outcomeAttributes(input: OutcomeTelemetryInput): TelemetryAttributes {
-  const raw = record(input);
-  if (
-    raw === undefined
-    || !hasOnlyKeys(
-      raw,
-      new Set([
-        "binding",
-        "value",
-        "decisionId",
-        "contractName",
-        "contractDigest",
-        "correlation",
-      ]),
-    )
-  ) {
-    inputError("/", "Outcome telemetry contains unknown members.");
-  }
-  if (
-    typeof input.binding !== "string"
-    || !evidenceBindingPattern.test(input.binding)
-  ) {
-    inputError(
-      "/binding",
-      "Evidence binding must begin with a letter and contain only letters, digits, dots, colons, hyphens, and underscores.",
-    );
-  }
-  if (
-    input.decisionId !== undefined
-    && (input.decisionId.length === 0 || /[\r\n]/u.test(input.decisionId))
-  ) {
-    inputError("/decisionId", "Decision ID must be a non-empty single-line string.");
-  }
-  const valueJson = serializeJson(input.value).body;
-  return {
-    "flaggo.signal": "outcome.observed",
-    "flaggo.evidence.binding": input.binding,
-    "flaggo.evidence.value.json": valueJson,
-    ...(input.decisionId === undefined
-      ? {}
-      : { "flaggo.decision.id": input.decisionId }),
-    ...(input.contractName === undefined
-      ? {}
-      : { "flaggo.contract.name": input.contractName }),
-    ...(input.contractDigest === undefined
-      ? {}
-      : { "flaggo.contract.digest": input.contractDigest }),
-    ...correlationAttributes(input.correlation),
-  };
 }
 
 function evaluationAttributes(

@@ -159,7 +159,6 @@ authenticate and authorize acceptance
   -> persist immutable executable
   -> atomically activate default through IExecutableStore
   -> move ManagementCurrent[scope, contractName]
-  -> move LearningHead when learning is present
   -> return ready DecisionContractVersion
 ```
 
@@ -198,7 +197,7 @@ The Contract Service owns:
 - default and authored executable generation orchestration;
 - candidate validation and immutable executable persistence;
 - atomic activation;
-- management current-version and learning-head transitions;
+- management current-version transitions;
 - triggering or scheduling evidence-based generation; and
 - management response and Problem Details mapping.
 
@@ -212,8 +211,7 @@ across digests.
 | --- | --- |
 | Contract Store | Persist and read immutable accepted versions by scope, name, and digest |
 | Executable Store | Persist immutable generated executables and provenance; atomically manage scoped Candidate, Active, and Inactive lifecycle state |
-| Management current pointer | Select the version returned by the name-level management read |
-| Learning head | Select the digest eligible for new evidence-based analysis |
+| Management current pointer | Select the version returned by the name-level management read and eligible for new evidence-based analysis |
 | Generation capability | Produce default, authored, or evidence-based candidates without granting runtime authority |
 
 The physical database layout is an implementation choice. These records have
@@ -240,12 +238,12 @@ same candidate-validation and activation boundary.
 
 ### Evidence-generated executable
 
-The learning scheduler uses the accepted contract's interval and current
-learning head. A learning worker may return an immutable candidate and
-provenance, but it cannot write runtime authority.
+The learning scheduler uses the current accepted contract and its interval. A
+learning worker may return an immutable candidate and provenance, but it cannot
+write runtime authority.
 
 The initial policy is `mode: auto-activation`. After validating a candidate
-and confirming that its learning head is still current, the Contract Service
+and confirming that its contract is still current, the Contract Service
 immediately attempts atomic activation. Failure or supersession preserves the
 existing executable.
 
@@ -267,10 +265,9 @@ The Contract Service must preserve these ordering guarantees:
 - accepted contract and executable content are immutable by digest;
 - deployment of identical semantic content converges on one version;
 - a ready response is impossible before default activation succeeds;
-- current-version and learning-head movement occurs only after the new digest
-  is ready;
+- current-version movement occurs only after the new digest is ready;
 - accepting a new digest does not change older digest activations;
-- a superseded learning run cannot activate after its learning head moves;
+- a superseded learning run cannot activate after the current contract changes;
 - only one complete executable digest occupies an activation slot;
 - duplicate activation of the same executable is idempotent; and
 - a failed replacement leaves the prior activation intact.
@@ -304,8 +301,8 @@ executable from another contract digest.
    authority.
 7. `auto-activation` performs a checked atomic activation rather than
    deploying by generation recency.
-8. Management current-version and learning-head pointers never select a
-   runtime contract version.
+8. The management current-version pointer never selects a runtime contract
+   version.
 9. Older digest activations survive acceptance of a newer version.
 10. Runtime evaluation and exposure reporting remain outside Contract Service.
 

@@ -24,15 +24,16 @@ v3 flow.
 
 Application-owned OpenTelemetry providers export logs, metrics, and traces
 directly to Flaggo OTel Ingestion. `worker.item.enqueued`,
-`worker.item.completed`, and `worker.batch.applied` are structured application
-logs. Queue depth, queue pressure, selected batch size, and processing latency
-are metrics. Each `worker.tick` is a span. The SDK emits
-`flaggo.decision.received`, and the example emits
-`flaggo.outcome.observed` for
-`demo.workerBatchSize.processingLatencyMs`; both records correlate with the
-active worker span. OTLP success acknowledges durable inbox enqueue rather
-than immediate Evidence Store materialization. Runtime evaluation itself
-remains stateless.
+`worker.item.completed`, `worker.batch.applied`, and
+`worker.processing_latency` are structured application logs. The processing
+latency log body is the exact measured value, and its attributes carry the
+contract-declared worker correlation values. Queue depth, queue pressure,
+selected batch size, and processing latency are also metrics. Each
+`worker.tick` is a span. The SDK emits the built-in
+`flaggo.decision.received` observation. All logs correlate with the active
+worker span. OTLP success acknowledges durable inbox enqueue rather than
+immediate Evidence Store materialization. Runtime evaluation itself remains
+stateless.
 
 ## Automated acceptance
 

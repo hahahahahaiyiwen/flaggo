@@ -5,7 +5,6 @@ import {
   type Span,
 } from "@opentelemetry/api";
 import {
-  createFlaggoTelemetry,
   type DecisionClient,
   type DecisionSpec,
   type RuntimeDecision,
@@ -78,10 +77,8 @@ const profileDefinitions: Record<WorkloadProfile, ProfileDefinition> = {
   "slow-downstream": { count: 3, processingMs: 40 },
   recovery: { count: 1, processingMs: 10 },
 };
-
 export class AdaptiveWorker {
   private readonly queue: QueuedWorkItem[] = [];
-  private readonly flaggoTelemetry;
   private readonly queueDepthMetric: Gauge;
   private readonly queuePressureMetric: Gauge;
   private readonly processingLatencyMetric: Histogram;
@@ -97,9 +94,6 @@ export class AdaptiveWorker {
     private readonly workerId = "adaptive-worker-1",
     private readonly claimedCohort = "worker-canary",
   ) {
-    this.flaggoTelemetry = createFlaggoTelemetry({
-      logger: telemetry.flaggoLogger,
-    });
     this.queueDepthMetric = telemetry.meter.createGauge("worker.queue.depth", {
       description: "Current queued work items.",
       unit: "{item}",
@@ -193,15 +187,14 @@ export class AdaptiveWorker {
         "worker.id": this.workerId,
         "worker.profile": profile,
       });
-      this.flaggoTelemetry.recordOutcome({
-        binding: "demo.workerBatchSize.processingLatencyMs",
-        value: processed.processingLatencyMs,
-        contractName: "demo.workerBatchSize",
-        contractDigest: decision.contractDigest,
-        correlation: {
-          workerId: this.workerId,
-          cohort: this.claimedCohort,
-          queuePressure,
+      this.telemetry.logger.emit({
+        eventName: "worker.processing_latency",
+        body: processed.processingLatencyMs,
+        attributes: {
+          "worker.id": this.workerId,
+          "worker.cohort": this.claimedCohort,
+          "worker.queue.pressure": queuePressure,
+          "worker.profile": profile,
         },
       });
 

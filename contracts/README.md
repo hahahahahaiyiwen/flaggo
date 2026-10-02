@@ -63,10 +63,11 @@ definition-bundle contract and its consumers have been removed.
 
 [`telemetry-events-v1.schema.json`](schemas/telemetry-events-v1.schema.json)
 defines the strict logical projection of Flaggo-owned OpenTelemetry log events.
-It currently covers `flaggo.decision.received` and the optional
-`flaggo.outcome.observed` helper event. The schema validates event names,
-attributes, evaluation provenance, identities, and value representations
-without duplicating the surrounding OTLP envelope.
+It currently covers the built-in `flaggo.decision.received` observation. The
+schema validates its event name, attributes, evaluation provenance, identities,
+and result representation without duplicating the surrounding OTLP envelope.
+Application evidence remains normal OpenTelemetry telemetry selected by each
+DecisionContract's required singular evidence source.
 
 The source for the immutable OpenTelemetry Schema File is
 [`flaggo-telemetry-schema-1.0.0.yaml`](otel/flaggo-telemetry-schema-1.0.0.yaml).

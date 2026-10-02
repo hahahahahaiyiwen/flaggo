@@ -7,8 +7,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDecisionClient,
-  createFlaggoTelemetry,
-  InvalidFlaggoInputError,
   type DecisionBindings,
   type DecisionSpec,
   type FetchLike,
@@ -165,48 +163,6 @@ describe("runtime telemetry", () => {
 
     await expect(client.decide("parallelism")).rejects.toThrow();
 
-    expect(telemetry.records).toEqual([]);
-  });
-
-  it("emits outcome telemetry through helper APIs", () => {
-    const telemetry = captureLogger();
-    const clientTelemetry = createFlaggoTelemetry({ logger: telemetry.logger });
-
-    clientTelemetry.recordOutcome({
-      binding: "worker.latency_ms",
-      value: 125,
-      decisionId: "decision-1",
-      contractName: "parallelism",
-      contractDigest,
-      correlation: {
-        workerId: "worker-1",
-        queuePressure: 0.75,
-      },
-    });
-
-    const record = expectSingle(telemetry.records);
-    expect(record.eventName).toBe("flaggo.outcome.observed");
-    expect(record.attributes).toEqual({
-      "flaggo.signal": "outcome.observed",
-      "flaggo.evidence.binding": "worker.latency_ms",
-      "flaggo.evidence.value.json": "125",
-      "flaggo.decision.id": "decision-1",
-      "flaggo.contract.name": "parallelism",
-      "flaggo.contract.digest": contractDigest,
-      "flaggo.correlation.workerId": "worker-1",
-      "flaggo.correlation.queuePressure": 0.75,
-    });
-    expectContractEvent(record);
-  });
-
-  it("rejects invalid outcome telemetry before emitting", () => {
-    const telemetry = captureLogger();
-    const clientTelemetry = createFlaggoTelemetry({ logger: telemetry.logger });
-
-    expect(() => clientTelemetry.recordOutcome({
-      binding: "invalid binding",
-      value: true,
-    })).toThrow(InvalidFlaggoInputError);
     expect(telemetry.records).toEqual([]);
   });
 });

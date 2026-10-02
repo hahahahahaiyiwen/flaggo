@@ -15,11 +15,6 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
       "description": "SDK-generated UUID v4 decision correlation identity."
     },
-    "DecisionReference": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^[^\\r\\n]+$"
-    },
     "DecisionName": {
       "type": "string",
       "minLength": 1,
@@ -134,45 +129,6 @@
         }
       ]
     },
-    "OutcomeObservedAttributes": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "flaggo.signal",
-        "flaggo.evidence.binding",
-        "flaggo.evidence.value.json"
-      ],
-      "properties": {
-        "flaggo.signal": {
-          "const": "outcome.observed"
-        },
-        "flaggo.evidence.binding": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256,
-          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$"
-        },
-        "flaggo.evidence.value.json": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Strict JSON serialization of the observed value."
-        },
-        "flaggo.decision.id": {
-          "$ref": "#/$defs/DecisionReference"
-        },
-        "flaggo.contract.name": {
-          "$ref": "#/$defs/DecisionName"
-        },
-        "flaggo.contract.digest": {
-          "$ref": "#/$defs/Sha256Digest"
-        }
-      },
-      "patternProperties": {
-        "^flaggo\\.correlation\\.[A-Za-z][A-Za-z0-9_]{0,127}$": {
-          "$ref": "#/$defs/CorrelationValue"
-        }
-      }
-    },
     "DecisionReceivedEvent": {
       "type": "object",
       "additionalProperties": false,
@@ -193,35 +149,8 @@
         }
       }
     },
-    "OutcomeObservedEvent": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "eventName",
-        "timeUnixNano",
-        "attributes"
-      ],
-      "properties": {
-        "eventName": {
-          "const": "flaggo.outcome.observed"
-        },
-        "timeUnixNano": {
-          "$ref": "#/$defs/TimeUnixNano"
-        },
-        "attributes": {
-          "$ref": "#/$defs/OutcomeObservedAttributes"
-        }
-      }
-    },
     "FlaggoEvent": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/DecisionReceivedEvent"
-        },
-        {
-          "$ref": "#/$defs/OutcomeObservedEvent"
-        }
-      ]
+      "$ref": "#/$defs/DecisionReceivedEvent"
     }
   }
 }

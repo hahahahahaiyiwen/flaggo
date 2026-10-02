@@ -70,7 +70,7 @@ DecisionContract + correlated evidence
 ```
 
 The initial learning policy uses `mode: auto-activation`: a valid candidate
-from the current learning head immediately attempts atomic activation. Runtime
+from the current contract immediately attempts atomic activation. Runtime
 still reads only the activation mapping; it never discovers the latest
 generated artifact.
 

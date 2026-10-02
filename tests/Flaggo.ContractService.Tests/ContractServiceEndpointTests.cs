@@ -110,7 +110,7 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("valid", result.GetProperty("status").GetString());
         Assert.Equal(
-            "sha256:76837952bcc85c474be3f721cb6236a7e610ecdc38672e0149fc4c347816a7ae",
+            "sha256:3c93eda4a9f8ab8b602a08644db59d19ab1219406b26b32aff8ef2c52c4c2040",
             result.GetProperty("contractDigest").GetString());
         Assert.Empty(result.GetProperty("issues").EnumerateArray());
         Assert.Equal(
@@ -383,8 +383,13 @@ public sealed class ContractServiceEndpointTests
                   {
                     "name": "outcome",
                     "attribute": "outcome",
-                    "binding": "not a valid binding",
-                    "correlateBy": []
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
                   }
                 ],
                 "objective": {

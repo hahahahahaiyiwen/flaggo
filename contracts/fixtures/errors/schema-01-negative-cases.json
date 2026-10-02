@@ -158,6 +158,43 @@
       }
     },
     {
+      "why": "every evidence declaration requires exactly one OpenTelemetry source",
+      "schemaRef": "management-models-v3.schema.json#/$defs/Evidence",
+      "body": {
+        "name": "processing_latency",
+        "attribute": "processingLatencyMs",
+        "correlateBy": []
+      }
+    },
+    {
+      "why": "the retired evidence binding is not a source",
+      "schemaRef": "management-models-v3.schema.json#/$defs/Evidence",
+      "body": {
+        "name": "processing_latency",
+        "attribute": "processingLatencyMs",
+        "binding": "worker.processing_latency",
+        "correlateBy": [],
+        "source": {
+          "kind": "log",
+          "scope": "adaptive-worker.app",
+          "name": "worker.processing_latency",
+          "correlation": {}
+        }
+      }
+    },
+    {
+      "why": "source variants cannot mix fields from different OpenTelemetry signal kinds",
+      "schemaRef": "management-models-v3.schema.json#/$defs/EvidenceSource",
+      "body": {
+        "kind": "log",
+        "scope": "adaptive-worker.app",
+        "name": "worker.processing_latency",
+        "metricKind": "gauge",
+        "unit": "ms",
+        "correlation": {}
+      }
+    },
+    {
       "why": "a valid contract validation result requires the computed contract digest",
       "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
       "body": {
