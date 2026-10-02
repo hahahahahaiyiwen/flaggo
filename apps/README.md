@@ -6,16 +6,30 @@ composition roots are:
 ```text
 apps/contract-service
 apps/decision-service
+apps/evidence-materializer
 apps/otel-ingestion
 ```
 
 Contract Service owns management routes. Decision Service owns decide and
 health routes. OTel Ingestion owns the `/v1/logs`, `/v1/metrics`, and
 `/v1/traces` telemetry endpoints. It durably appends each complete valid export
-request to the bounded Raw OTLP Inbox before acknowledgement. The asynchronous
-Evidence Materializer writes selected query-ready observations to Evidence
+request to the bounded Raw OTLP Inbox before acknowledgement. Evidence
+Materializer is a standalone Rust worker that replays the inbox through
+versioned checkpoints and transactionally writes selected query-ready
+observations, provenance, associations, conflicts, and diagnostics to Evidence
 Store. Reusable strict HTTP mechanics live under `modules/hosting`; apps do not
 reference another app project.
+
+Evidence Materializer and OTel Ingestion share `FLAGGO_DATABASE_URL` (default
+`sqlite://flaggo.db`). The materializer selector scope defaults to
+`FLAGGO_APPLICATION=local-application` and
+`FLAGGO_ENVIRONMENT=development`. Set `FLAGGO_CONTRACT_SNAPSHOT_URL` to the Contract Service
+`/v3/decision-contract-snapshots/current` endpoint to enable
+application evidence selectors; an optional
+`FLAGGO_CONTRACT_SNAPSHOT_BEARER_TOKEN` supplies non-development
+authentication. Without that endpoint, the worker keeps materializing strictly
+valid built-in Flaggo protocol observations using its last durable snapshot or
+a built-in-only snapshot.
 
 The Phase 4 Evidence Materializer derives scope from OTLP resource attributes.
 The receiver does not require authentication. Authentication and authorization

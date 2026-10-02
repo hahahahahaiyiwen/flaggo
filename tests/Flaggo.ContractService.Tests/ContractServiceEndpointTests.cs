@@ -176,6 +176,60 @@ public sealed class ContractServiceEndpointTests
     }
 
     [Fact]
+    public async Task CurrentSnapshotReturnsOnlyLearningContractsAndSupportsConditionalPolling()
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        using var fixture = await ReadFixtureDocumentAsync("01-validate-valid.json");
+        var learningContract = fixture.RootElement
+            .GetProperty("request")
+            .GetProperty("body")
+            .GetRawText();
+        using (var learningRequest = AuthorizedRequest(
+            HttpMethod.Put,
+            "/v3/decision-contracts/tetris.dropInterval",
+            learningContract))
+        using (var learningResponse = await client.SendAsync(learningRequest))
+        {
+            learningResponse.EnsureSuccessStatusCode();
+        }
+        await PutDefaultAsync(client, 3);
+
+        using var request = AuthorizedRequest(
+            HttpMethod.Get,
+            "/v3/decision-contract-snapshots/current");
+        using var response = await client.SendAsync(request);
+        var snapshot = await response.Content.ReadFromJsonAsync<ContractSelectorSnapshot>(
+            StrictJson.Options);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(snapshot);
+        Assert.Equal(
+            "sha256:20c9091541fd31f60b2bcf0d76435f64d2848a0d47182fbc5152e55b9d626e7f",
+            snapshot.SnapshotDigest);
+        var contract = Assert.Single(snapshot.Contracts);
+        Assert.Equal("tetris.dropInterval", contract.Name);
+        Assert.Equal(contract.Name, contract.Contract.Name);
+        Assert.Equal(
+            $"\"{snapshot.SnapshotDigest}\"",
+            response.Headers.ETag?.Tag);
+
+        using var conditional = AuthorizedRequest(
+            HttpMethod.Get,
+            "/v3/decision-contract-snapshots/current");
+        conditional.Headers.TryAddWithoutValidation(
+            "If-None-Match",
+            $"\"{snapshot.SnapshotDigest}\"");
+        using var unchanged = await client.SendAsync(conditional);
+
+        Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+        Assert.Equal(0, unchanged.Content.Headers.ContentLength);
+        Assert.Equal(
+            $"\"{snapshot.SnapshotDigest}\"",
+            unchanged.Headers.ETag?.Tag);
+    }
+
+    [Fact]
     public async Task AuthoredExpressionsReplaceDefaultAuthority()
     {
         using var factory = new ContractServiceFactory();

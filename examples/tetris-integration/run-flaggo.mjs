@@ -44,6 +44,7 @@ async function play(lifecycle) {
     import("./dist/flaggo/terminal.js"),
   ]);
   const telemetry = new TetrisTelemetryProviders({
+    environment: "integration",
     flaggoOtlpBaseUrl: hosts.otelIngestionUrl,
   });
   try {

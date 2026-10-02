@@ -1026,6 +1026,48 @@
         }
       }
     },
+    "ContractSelectorSnapshotEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "contractDigest",
+        "contract"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "contract": {
+          "$ref": "#/$defs/DecisionContract",
+          "description": "The complete immutable current contract. Its name must equal the enclosing snapshot entry name."
+        }
+      }
+    },
+    "ContractSelectorSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshotDigest",
+        "contracts"
+      ],
+      "properties": {
+        "snapshotDigest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Deterministic digest of the ordered current learning-contract names and contract digests."
+        },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractSelectorSnapshotEntry"
+          },
+          "description": "Current contracts with learning evidence, ordered by name and then contractDigest."
+        }
+      }
+    },
     "DecisionContractVersionList": {
       "type": "object",
       "additionalProperties": false,

@@ -21,6 +21,10 @@ public interface IContractVersionStore
         string contractName,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<AcceptedContractVersion>> ListCurrentAsync(
+        DecisionScope scope,
+        CancellationToken cancellationToken = default);
+
     Task<ContractVersionPage> ListAsync(
         DecisionScope scope,
         string contractName,

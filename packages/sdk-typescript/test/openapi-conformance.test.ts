@@ -119,6 +119,7 @@ describe("OpenAPI shared-contract alignment", () => {
   it("exposes named DecisionContracts with immutable digest versions", () => {
     expect(management.openapi).toBe("3.1.0");
     expect(Object.keys(management.paths)).toEqual([
+      "/v3/decision-contract-snapshots/current",
       "/v3/decision-contracts/{contractName}",
       "/v3/decision-contracts/{contractName}/validate",
       "/v3/decision-contracts/{contractName}/versions",
@@ -126,6 +127,22 @@ describe("OpenAPI shared-contract alignment", () => {
       "/health/live",
       "/health/ready",
     ]);
+
+    const snapshot = operation(
+      management,
+      "/v3/decision-contract-snapshots/current",
+      "get",
+    );
+    expect(snapshot.operationId).toBe("getCurrentContractSelectorSnapshot");
+    expectSecurity(snapshot, "flaggo.contracts:read");
+    expectParameters(snapshot, [
+      "#/components/parameters/IfNoneMatchHeader",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(snapshot.responses["200"]?.$ref).toBe(
+      "#/components/responses/ContractSelectorSnapshot",
+    );
+    expect(snapshot.responses["304"]).toBeDefined();
 
     const validate = operation(
       management,

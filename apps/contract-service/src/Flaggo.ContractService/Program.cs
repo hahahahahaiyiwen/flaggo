@@ -127,6 +127,24 @@ app.MapGet(
     .RequireAuthorization(readPolicy);
 
 app.MapGet(
+        "/v3/decision-contract-snapshots/current",
+        async (
+            HttpContext context,
+            IContractLifecycle lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var snapshot = await lifecycle.GetCurrentSnapshotAsync(
+                AuthorityScope(context),
+                cancellationToken);
+            var etag = $"\"{snapshot.SnapshotDigest}\"";
+            context.Response.Headers.ETag = etag;
+            return MatchesEtag(context.Request.Headers.IfNoneMatch, etag)
+                ? Results.StatusCode(StatusCodes.Status304NotModified)
+                : Results.Json(snapshot, StrictJson.Options);
+        })
+    .RequireAuthorization(readPolicy);
+
+app.MapGet(
         "/v3/decision-contracts/{contractName}/versions",
         async (
             string contractName,
@@ -253,6 +271,14 @@ static IResult NotFound(HttpContext context) =>
         ProblemTypes.ContractVersionNotFound,
         "Decision contract not found",
         "The requested DecisionContract resource does not exist in this scope.");
+
+static bool MatchesEtag(
+    Microsoft.Extensions.Primitives.StringValues values,
+    string expected) =>
+    values
+        .SelectMany(value => value?.Split(',') ?? [])
+        .Select(value => value.Trim())
+        .Any(value => value is "*" || string.Equals(value, expected, StringComparison.Ordinal));
 
 static async Task InitializeStoresAsync(IServiceProvider services)
 {

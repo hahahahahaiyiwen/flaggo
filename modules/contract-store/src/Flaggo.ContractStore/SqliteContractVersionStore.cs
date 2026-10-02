@@ -187,6 +187,45 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             : null;
     }
 
+    public async Task<IReadOnlyList<AcceptedContractVersion>> ListCurrentAsync(
+        DecisionScope scope,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateScope(scope);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT versions.contract_name,
+                   versions.contract_digest,
+                   versions.accepted_at,
+                   versions.contract_json
+            FROM decision_contract_current AS current
+            JOIN decision_contract_versions AS versions
+              ON versions.application = current.application
+             AND versions.environment = current.environment
+             AND versions.contract_name = current.contract_name
+             AND versions.contract_digest = current.contract_digest
+            WHERE current.application = $application
+              AND current.environment = $environment
+            ORDER BY versions.contract_name ASC, versions.contract_digest ASC;
+            """;
+        AddScope(command, scope);
+        var versions = new List<AcceptedContractVersion>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            versions.Add(ReadVersion(
+                reader,
+                scope,
+                reader.GetString(0),
+                reader.GetString(1),
+                digestColumnOffset: 2));
+        }
+
+        return versions;
+    }
+
     public async Task<ContractVersionPage> ListAsync(
         DecisionScope scope,
         string contractName,

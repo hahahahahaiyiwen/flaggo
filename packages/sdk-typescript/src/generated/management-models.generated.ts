@@ -557,6 +557,45 @@ export interface DecisionContract1 {
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "ContractSelectorSnapshotEntry".
+ */
+export interface ContractSelectorSnapshotEntry {
+  name: DecisionName;
+  contractDigest: Sha256Digest;
+  contract: DecisionContract2;
+}
+/**
+ * The complete immutable current contract. Its name must equal the enclosing snapshot entry name.
+ */
+export interface DecisionContract2 {
+  name: DecisionName;
+  expression_syntax: "flaggo.cel/v1";
+  /**
+   * User-declared runtime attributes. Attribute names must be unique; order is non-semantic.
+   *
+   * @maxItems 128
+   */
+  attributes: Attribute[];
+  result: Result;
+  authoredExecutable?: AuthoredExecutable;
+  learning?: Learning;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "ContractSelectorSnapshot".
+ */
+export interface ContractSelectorSnapshot {
+  /**
+   * Deterministic digest of the ordered current learning-contract names and contract digests.
+   */
+  snapshotDigest: string;
+  /**
+   * Current contracts with learning evidence, ordered by name and then contractDigest.
+   */
+  contracts: ContractSelectorSnapshotEntry[];
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
  * via the `definition` "DecisionContractVersionList".
  */
 export interface DecisionContractVersionList {

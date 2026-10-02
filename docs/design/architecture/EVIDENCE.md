@@ -173,6 +173,21 @@ the current contract's evidence sources to ordinary application telemetry.
 One candidate may be associated with different current contracts, but duplicate
 source selectors within one contract are invalid.
 
+Contract Service exposes the authenticated scope's current contracts with
+learning evidence at `/v3/decision-contract-snapshots/current`. Entries are
+ordered by contract name and digest. A deterministic `snapshotDigest` is also
+returned as the response `ETag`, so Evidence Materializer can poll
+conditionally. The worker durably caches the last valid full snapshot; an
+unavailable or invalid refresh is diagnosed and never replaces that snapshot.
+If no service snapshot has ever been accepted, a built-in-only snapshot keeps
+`flaggo.decision.received` acquisition independent of selector availability.
+
+A snapshot, decoder, identity, projection, or selector-protocol version change
+defines a new checkpoint namespace and replays the currently retained inbox
+range. Existing observations and associations remain immutable. Every
+association, provenance row, diagnostic, and checkpoint records the snapshot
+boundary that produced it.
+
 ## Correlation and analysis
 
 Correlation is not an ingestion guarantee in Phase 4. The Evidence Store

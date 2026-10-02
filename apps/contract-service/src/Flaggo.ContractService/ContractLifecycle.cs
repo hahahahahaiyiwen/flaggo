@@ -23,6 +23,10 @@ public interface IContractLifecycle
         string contractName,
         CancellationToken cancellationToken = default);
 
+    Task<ContractSelectorSnapshot> GetCurrentSnapshotAsync(
+        DecisionScope scope,
+        CancellationToken cancellationToken = default);
+
     Task<DecisionContractVersion?> GetAsync(
         DecisionScope scope,
         string contractName,
@@ -119,6 +123,27 @@ public sealed class ContractLifecycle(
         return accepted is null
             ? null
             : await ProjectReadyAsync(scope, accepted, cancellationToken);
+    }
+
+    public async Task<ContractSelectorSnapshot> GetCurrentSnapshotAsync(
+        DecisionScope scope,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await contractStore.ListCurrentAsync(scope, cancellationToken);
+        foreach (var version in current.Where(
+            version => version.Contract.Learning?.Evidence.Count > 0))
+        {
+            if (await executableStore.GetActiveAsync(
+                scope,
+                version.ContractDigest,
+                cancellationToken) is null)
+            {
+                throw new InvalidDataException(
+                    $"Current contract '{version.ContractDigest}' has no active executable.");
+            }
+        }
+
+        return ContractSelectorSnapshots.Project(current);
     }
 
     public async Task<DecisionContractVersion?> GetAsync(

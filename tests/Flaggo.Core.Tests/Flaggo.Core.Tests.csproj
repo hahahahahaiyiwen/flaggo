@@ -24,7 +24,6 @@
     <ProjectReference Include="..\..\modules\contract-store\src\Flaggo.ContractStore\Flaggo.ContractStore.csproj" />
     <ProjectReference Include="..\..\modules\decision\src\Flaggo.Decision\Flaggo.Decision.csproj" />
     <ProjectReference Include="..\..\modules\executable-store\src\Flaggo.ExecutableStore\Flaggo.ExecutableStore.csproj" />
-    <ProjectReference Include="..\..\modules\evidence-store\src\Flaggo.EvidenceStore\Flaggo.EvidenceStore.csproj" />
     <ProjectReference Include="..\..\modules\expression\src\Flaggo.Expressions\Flaggo.Expressions.csproj" />
     <ProjectReference Include="..\..\modules\hosting\src\Flaggo.ServiceHosting\Flaggo.ServiceHosting.csproj" />
   </ItemGroup>

@@ -34,6 +34,56 @@
     }
   ],
   "paths": {
+    "/v3/decision-contract-snapshots/current": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "getCurrentContractSelectorSnapshot",
+        "summary": "Get the current learning-contract selector snapshot.",
+        "description": "Returns all current contracts that declare learning evidence in deterministic name/digest order. The snapshot digest and ETag identify the exact selector acquisition boundary consumed by Evidence Materializer; a changed snapshot starts a retained-inbox backfill.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.contracts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfNoneMatchHeader"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ContractSelectorSnapshot"
+          },
+          "304": {
+            "description": "The current selector snapshot matches If-None-Match.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/SelectorSnapshotEtag"
+              },
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/v3/decision-contracts/{contractName}": {
       "put": {
         "tags": [
@@ -415,6 +465,15 @@
         "schema": {
           "type": "string"
         }
+      },
+      "IfNoneMatchHeader": {
+        "name": "If-None-Match",
+        "in": "header",
+        "required": false,
+        "description": "Previously observed quoted selector snapshot digest.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "headers": {
@@ -429,6 +488,12 @@
         "schema": {
           "type": "string",
           "format": "uri-reference"
+        }
+      },
+      "SelectorSnapshotEtag": {
+        "description": "Quoted selector snapshot digest.",
+        "schema": {
+          "type": "string"
         }
       }
     },
@@ -489,6 +554,24 @@
           "application/json": {
             "schema": {
               "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionContractVersionList"
+            }
+          }
+        }
+      },
+      "ContractSelectorSnapshot": {
+        "description": "Deterministic current learning-contract selector snapshot.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/SelectorSnapshotEtag"
+          },
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/ContractSelectorSnapshot"
             }
           }
         }

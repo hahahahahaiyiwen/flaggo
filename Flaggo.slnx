@@ -25,10 +25,6 @@
   <Folder Name="/modules/executable-store/src/">
     <Project Path="modules/executable-store/src/Flaggo.ExecutableStore/Flaggo.ExecutableStore.csproj" />
   </Folder>
-  <Folder Name="/modules/evidence-store/" />
-  <Folder Name="/modules/evidence-store/src/">
-    <Project Path="modules/evidence-store/src/Flaggo.EvidenceStore/Flaggo.EvidenceStore.csproj" />
-  </Folder>
   <Folder Name="/modules/expression/" />
   <Folder Name="/modules/expression/src/">
     <Project Path="modules/expression/src/Flaggo.Expressions/Flaggo.Expressions.csproj" />
