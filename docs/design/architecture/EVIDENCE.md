@@ -286,6 +286,16 @@ query-ready observations. A materialized observation preserves its complete
 authority and source key, resource and instrumentation-scope context, selected
 signal payload, producing versions, and inbox provenance.
 
+Exactly one Evidence Materializer is active per database. Its forward
+checkpoint and catalog state are single-writer coordination; active-active
+materializers and partitioned work claims are deferred scale-out concerns.
+The first accepted candidate owns an observation and its origin provenance.
+Later candidates with the same logical identity and content digest are ignored.
+Within one decoder, identity, and projection version, different content for
+that identity is an invariant violation: the accepted observation remains
+unchanged and usable, while the incoming candidate is rejected and recorded as
+a conflict diagnostic.
+
 Evidence Store observations remain durable after raw inbox payloads expire.
 OTel Ingestion periodically invokes the inbox-owned, receipt-age retention
 operation; receiver appends and materializer reads do not perform cleanup.
