@@ -69,6 +69,42 @@ async fn decodes_every_signal_shape_from_both_wire_encodings() {
 }
 
 #[tokio::test]
+async fn decodes_original_protobuf_field_names_for_every_signal() {
+    let fixture = Fixture::new().await;
+    fixture
+        .append_raw(
+            OtlpSignal::Logs,
+            br#"{"resource_logs":[{"scope_logs":[{"log_records":[{"time_unix_nano":"1","body":{"string_value":"hello"}}]}]}]}"#,
+        )
+        .await;
+    fixture
+        .append_raw(
+            OtlpSignal::Metrics,
+            br#"{"resource_metrics":[{"scope_metrics":[{"metrics":[{"name":"load","gauge":{"data_points":[{"time_unix_nano":"1","as_int":"2"}]}}]}]}]}"#,
+        )
+        .await;
+    fixture
+        .append_raw(
+            OtlpSignal::Traces,
+            br#"{"resource_spans":[{"scope_spans":[{"spans":[{"name":"work","start_time_unix_nano":"1","end_time_unix_nano":"2"}]}]}]}"#,
+        )
+        .await;
+
+    let batches = fixture
+        .inbox
+        .read_after(None, NonZeroU16::new(10).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(batches.len(), 3);
+    assert!(
+        batches
+            .iter()
+            .all(|batch| decode_batch(batch).candidate_count() == 1)
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn timestamp_less_duplicate_deliveries_are_idempotent_during_forward_processing() {
     verify_timestamp_less_duplicate_deliveries(true).await;
 }
@@ -524,6 +560,19 @@ impl Fixture {
                 OtlpTransportCompression::Identity,
                 OtlpProfileVersion::from_str(DEFAULT_OTLP_PROFILE_VERSION).unwrap(),
                 payload,
+            ))
+            .await
+            .unwrap();
+    }
+
+    async fn append_raw(&self, signal: OtlpSignal, payload: &[u8]) {
+        self.inbox
+            .append(NewRawOtlpBatch::new(
+                signal,
+                OtlpWireEncoding::ProtobufJson,
+                OtlpTransportCompression::Identity,
+                OtlpProfileVersion::from_str(DEFAULT_OTLP_PROFILE_VERSION).unwrap(),
+                payload.to_vec(),
             ))
             .await
             .unwrap();

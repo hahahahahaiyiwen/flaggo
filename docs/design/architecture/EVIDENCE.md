@@ -65,6 +65,12 @@ successful response means the complete valid request was durably appended to
 the Raw OTLP Inbox. The receiver does not return partial success for item-level
 semantic failures discovered later by the materializer.
 
+Receiver validation and materializer decoding use the same OTLP codec.
+Protobuf JSON accepts both lower-camel JSON field names and original protobuf
+field names at every nesting level. Exact duplicate fields, duplicate aliases,
+and ambiguous oneof members fail before acknowledgement; accepted requests
+retain their exact decompressed bytes in the inbox.
+
 Decision-received observations are a clear Flaggo-owned log event because they
 describe a discrete runtime decision. App telemetry such as
 `board_pressure_mean_5s`, `board_pressure_max_5s`, `current_level`, latency,

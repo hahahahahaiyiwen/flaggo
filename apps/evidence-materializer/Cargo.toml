@@ -10,6 +10,7 @@ rust-version.workspace = true
 async-trait = "0.1.89"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 flaggo-evidence-store = { version = "0.1.0", path = "../../modules/evidence-store" }
+flaggo-otlp-codec = { version = "0.1.0", path = "../../modules/otlp-codec" }
 flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../../modules/raw-otlp-inbox" }
 opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace", "with-serde"] }
 prost = "0.14.1"

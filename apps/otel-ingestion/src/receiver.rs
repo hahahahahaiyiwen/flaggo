@@ -12,18 +12,15 @@ use axum::{
     response::Response,
     routing::post,
 };
+use flaggo_otlp_codec::decode_export_request;
 use flaggo_raw_otlp_inbox::{
     DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression,
     OtlpWireEncoding, RawOtlpInboxError,
 };
 use futures_util::TryStreamExt;
 use mime::Mime;
-use opentelemetry_proto::tonic::collector::{
-    logs::v1::ExportLogsServiceRequest, metrics::v1::ExportMetricsServiceRequest,
-    trace::v1::ExportTraceServiceRequest,
-};
 use prost::Message;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::io::StreamReader;
 
@@ -228,36 +225,7 @@ fn validate_export_request_shape(
     wire_encoding: OtlpWireEncoding,
     payload: &[u8],
 ) -> bool {
-    match wire_encoding {
-        OtlpWireEncoding::Protobuf => match signal {
-            OtlpSignal::Logs => ExportLogsServiceRequest::decode(payload).is_ok(),
-            OtlpSignal::Metrics => ExportMetricsServiceRequest::decode(payload).is_ok(),
-            OtlpSignal::Traces => ExportTraceServiceRequest::decode(payload).is_ok(),
-        },
-        OtlpWireEncoding::ProtobufJson => validate_json_export_request(signal, payload),
-    }
-}
-
-fn validate_json_export_request(signal: OtlpSignal, payload: &[u8]) -> bool {
-    let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-        return false;
-    };
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    let expected_root = match signal {
-        OtlpSignal::Logs => "resourceLogs",
-        OtlpSignal::Metrics => "resourceMetrics",
-        OtlpSignal::Traces => "resourceSpans",
-    };
-    if object.keys().any(|key| key != expected_root) {
-        return false;
-    }
-    match signal {
-        OtlpSignal::Logs => serde_json::from_value::<ExportLogsServiceRequest>(value).is_ok(),
-        OtlpSignal::Metrics => serde_json::from_value::<ExportMetricsServiceRequest>(value).is_ok(),
-        OtlpSignal::Traces => serde_json::from_value::<ExportTraceServiceRequest>(value).is_ok(),
-    }
+    decode_export_request(signal, wire_encoding, payload).is_ok()
 }
 
 fn success_response(encoding: OtlpWireEncoding) -> Response {
@@ -612,6 +580,92 @@ mod tests {
             assert_success(response, OtlpWireEncoding::Protobuf).await;
         }
         assert_eq!(inbox.batches().len(), 6);
+    }
+
+    #[tokio::test]
+    async fn accepts_original_protobuf_field_names_for_every_signal() {
+        let inbox = TestInbox::new(AppendBehavior::Success);
+        let cases = [
+            (
+                "/v1/logs",
+                OtlpSignal::Logs,
+                br#"{"resource_logs":[{"scope_logs":[{"log_records":[{"time_unix_nano":"1","body":{"string_value":"hello"}}]}]}]}"#
+                    .as_slice(),
+            ),
+            (
+                "/v1/metrics",
+                OtlpSignal::Metrics,
+                br#"{"resource_metrics":[{"scope_metrics":[{"metrics":[{"name":"load","gauge":{"data_points":[{"time_unix_nano":"1","as_int":"2"}]}}]}]}]}"#
+                    .as_slice(),
+            ),
+            (
+                "/v1/traces",
+                OtlpSignal::Traces,
+                br#"{"resource_spans":[{"scope_spans":[{"spans":[{"name":"work","start_time_unix_nano":"1","end_time_unix_nano":"2"}]}]}]}"#
+                    .as_slice(),
+            ),
+        ];
+
+        for (path, signal, payload) in cases {
+            let response = send(
+                inbox.clone(),
+                OtlpReceiverConfig::default(),
+                path,
+                Some("application/json"),
+                None,
+                payload.to_vec(),
+            )
+            .await;
+            assert_success(response, OtlpWireEncoding::ProtobufJson).await;
+            let recorded = inbox.batches().pop().expect("recorded JSON batch");
+            assert_batch(
+                &recorded,
+                signal,
+                OtlpWireEncoding::ProtobufJson,
+                OtlpTransportCompression::Identity,
+                payload,
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_ambiguous_protobuf_json_before_acknowledgement() {
+        let inbox = TestInbox::new(AppendBehavior::Success);
+        let cases = [
+            (
+                "/v1/logs",
+                br#"{"resourceLogs":[],"resourceLogs":[]}"#.as_slice(),
+            ),
+            (
+                "/v1/logs",
+                br#"{"resourceLogs":[{"scopeLogs":[],"scope_logs":[]}]}"#.as_slice(),
+            ),
+            (
+                "/v1/metrics",
+                br#"{"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"load","gauge":{"dataPoints":[{"asInt":"1","asDouble":2.0}]}}]}]}]}"#
+                    .as_slice(),
+            ),
+        ];
+
+        for (path, payload) in cases {
+            let response = send(
+                inbox.clone(),
+                OtlpReceiverConfig::default(),
+                path,
+                Some("application/json"),
+                None,
+                payload.to_vec(),
+            )
+            .await;
+            assert_otlp_status(
+                response,
+                StatusCode::BAD_REQUEST,
+                3,
+                OtlpWireEncoding::ProtobufJson,
+            )
+            .await;
+        }
+        assert!(inbox.batches().is_empty());
     }
 
     #[tokio::test]

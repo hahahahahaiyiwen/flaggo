@@ -3,6 +3,7 @@ members = [
     "apps/evidence-materializer",
     "apps/otel-ingestion",
     "modules/evidence-store",
+    "modules/otlp-codec",
     "modules/raw-otlp-inbox",
 ]
 resolver = "3"

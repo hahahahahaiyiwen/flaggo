@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 async-compression = { version = "0.4.32", features = ["tokio", "gzip"] }
 axum.workspace = true
+flaggo-otlp-codec = { version = "0.1.0", path = "../../modules/otlp-codec" }
 flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../../modules/raw-otlp-inbox" }
 futures-util = "0.3.31"
 mime = "0.3.17"

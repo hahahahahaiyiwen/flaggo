@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use flaggo_evidence_store::EvidenceSignal;
-use flaggo_raw_otlp_inbox::{OtlpSignal, OtlpWireEncoding, RawOtlpInboxBatch};
+use flaggo_otlp_codec::{OtlpExportRequest, decode_export_request};
+use flaggo_raw_otlp_inbox::RawOtlpInboxBatch;
 use opentelemetry_proto::tonic::{
     collector::{
         logs::v1::ExportLogsServiceRequest, metrics::v1::ExportMetricsServiceRequest,
@@ -15,8 +16,6 @@ use opentelemetry_proto::tonic::{
     resource::v1::Resource,
     trace::v1::{Span, span},
 };
-use prost::Message;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::candidate::{Candidate, any_value_json, attributes_json, encode_hex, lookup_attribute};
@@ -44,35 +43,13 @@ impl DecodedBatch {
 }
 
 pub fn decode_batch(batch: &RawOtlpInboxBatch) -> DecodedBatch {
-    match batch.signal {
-        OtlpSignal::Logs => {
-            decode_message::<ExportLogsServiceRequest>(&batch.payload, batch.wire_encoding)
-                .map(|request| decompose_logs(request, batch.received_at))
-                .unwrap_or_else(decode_failure)
-        }
-        OtlpSignal::Metrics => {
-            decode_message::<ExportMetricsServiceRequest>(&batch.payload, batch.wire_encoding)
-                .map(|request| decompose_metrics(request, batch.received_at))
-                .unwrap_or_else(decode_failure)
-        }
-        OtlpSignal::Traces => {
-            decode_message::<ExportTraceServiceRequest>(&batch.payload, batch.wire_encoding)
-                .map(|request| decompose_traces(request, batch.received_at))
-                .unwrap_or_else(decode_failure)
-        }
-    }
-}
-
-fn decode_message<T>(payload: &[u8], encoding: OtlpWireEncoding) -> Result<T, String>
-where
-    T: Default + DeserializeOwned + Message,
-{
-    match encoding {
-        OtlpWireEncoding::ProtobufJson => {
-            serde_json::from_slice(payload).map_err(|error| error.to_string())
-        }
-        OtlpWireEncoding::Protobuf => T::decode(payload).map_err(|error| error.to_string()),
-    }
+    decode_export_request(batch.signal, batch.wire_encoding, &batch.payload)
+        .map(|request| match request {
+            OtlpExportRequest::Logs(request) => decompose_logs(request, batch.received_at),
+            OtlpExportRequest::Metrics(request) => decompose_metrics(request, batch.received_at),
+            OtlpExportRequest::Traces(request) => decompose_traces(request, batch.received_at),
+        })
+        .unwrap_or_else(|error| decode_failure(error.to_string()))
 }
 
 fn decode_failure(error: String) -> DecodedBatch {

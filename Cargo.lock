@@ -448,6 +448,7 @@ dependencies = [
  "axum",
  "chrono",
  "flaggo-evidence-store",
+ "flaggo-otlp-codec",
  "flaggo-raw-otlp-inbox",
  "opentelemetry-proto",
  "prost",
@@ -481,6 +482,7 @@ dependencies = [
  "async-compression",
  "async-trait",
  "axum",
+ "flaggo-otlp-codec",
  "flaggo-raw-otlp-inbox",
  "flate2",
  "futures-util",
@@ -492,6 +494,17 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+]
+
+[[package]]
+name = "flaggo-otlp-codec"
+version = "0.1.0"
+dependencies = [
+ "flaggo-raw-otlp-inbox",
+ "opentelemetry-proto",
+ "prost",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
