@@ -15,6 +15,33 @@
       "maxLength": 128,
       "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
     },
+    "AuthorityIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "AuthorityScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant",
+        "application",
+        "environment"
+      ],
+      "properties": {
+        "tenant": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        },
+        "application": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        },
+        "environment": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        }
+      },
+      "description": "Declared tenant, application, and environment scope bound into an immutable deployed DecisionContract."
+    },
     "AttributeName": {
       "type": "string",
       "minLength": 1,
@@ -774,12 +801,16 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "authority",
         "name",
         "expression_syntax",
         "attributes",
         "result"
       ],
       "properties": {
+        "authority": {
+          "$ref": "#/$defs/AuthorityScope"
+        },
         "name": {
           "$ref": "#/$defs/DecisionName"
         },
@@ -1026,47 +1057,39 @@
         }
       }
     },
-    "ContractSelectorSnapshotEntry": {
+    "CurrentContractCatalogEntry": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "name",
         "contractDigest",
         "contract"
       ],
       "properties": {
-        "name": {
-          "$ref": "#/$defs/DecisionName"
-        },
         "contractDigest": {
           "$ref": "#/$defs/Sha256Digest"
         },
         "contract": {
           "$ref": "#/$defs/DecisionContract",
-          "description": "The complete immutable current contract. Its name must equal the enclosing snapshot entry name."
+          "description": "The complete immutable current deployed contract whose authority and semantic content are covered by contractDigest."
         }
       }
     },
-    "ContractSelectorSnapshot": {
+    "CurrentContractCatalog": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "snapshotDigest",
         "contracts"
       ],
       "properties": {
-        "snapshotDigest": {
-          "$ref": "#/$defs/Sha256Digest",
-          "description": "Deterministic digest of the ordered current learning-contract names and contract digests."
-        },
         "contracts": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ContractSelectorSnapshotEntry"
+            "$ref": "#/$defs/CurrentContractCatalogEntry"
           },
-          "description": "Current contracts with learning evidence, ordered by name and then contractDigest."
+          "description": "Current deployed contracts ordered by authority tenant, application, environment, contract name, and contractDigest."
         }
-      }
+      },
+      "description": "Cross-authority materializer catalog. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity."
     },
     "DecisionContractVersionList": {
       "type": "object",

@@ -1,6 +1,7 @@
 export { createContractClient } from "./client.js";
 export { SDK_VERSION } from "../generated/package-version.generated.js";
 export {
+  bindDecisionContract,
   defineDecisionContract,
   type AuthoredExecutable,
   type AuthoredRule,
@@ -9,6 +10,7 @@ export {
   type ContractClientConfiguration,
   type ContractResult,
   type DecisionContract,
+  type DecisionContractDefinition,
   type DecisionContractValidationResult,
   type DecisionContractVersion,
   type DecisionContractVersionList,

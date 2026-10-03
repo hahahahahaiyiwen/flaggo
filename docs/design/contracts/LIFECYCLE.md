@@ -259,7 +259,7 @@ than read from ambient state.
 
 The surrounding Decision Service:
 
-1. authenticates application and environment scope;
+1. authenticates tenant, application, and environment scope;
 2. validates the contract digest and SDK-constructed complete runtime input;
 3. resolves the exact active executable;
 4. evaluates it without invoking executable generation;

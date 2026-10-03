@@ -12,6 +12,11 @@
       "Content-Type": "application/json"
     },
     "body": {
+      "authority": {
+        "tenant": "local",
+        "application": "tetris",
+        "environment": "integration"
+      },
       "name": "tetris.dropInterval",
       "expression_syntax": "flaggo.cel/v1",
       "attributes": [],
@@ -29,16 +34,21 @@
     "status": 201,
     "headers": {
       "Content-Type": "application/json",
-      "Location": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:5ac7477d55d7dfb1b4993e87118182b55a848fdc36fa5617196f27f1400e2ab1",
+      "Location": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aa59121ed2dfcf519654df1d3f9c60fa141aa4ddb199c207bd9d12b3a515714a",
       "X-Flaggo-Correlation-Id": "srv-contract-put-ready"
     },
     "body": {
       "name": "tetris.dropInterval",
-      "contractDigest": "sha256:5ac7477d55d7dfb1b4993e87118182b55a848fdc36fa5617196f27f1400e2ab1",
+      "contractDigest": "sha256:aa59121ed2dfcf519654df1d3f9c60fa141aa4ddb199c207bd9d12b3a515714a",
       "status": "ready",
       "acceptedAt": "2026-08-01T12:00:00Z",
-      "activeExecutableDigest": "sha256:bf693713abb032d7257141839c38f8b3943d463d464f1b4dc2dba356e3902398",
+      "activeExecutableDigest": "sha256:cb0a6cfab31c66e0c34b7d321e3c94dc4004a793a2ad2642a72d8001d12380b4",
       "contract": {
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
         "name": "tetris.dropInterval",
         "expression_syntax": "flaggo.cel/v1",
         "attributes": [],

@@ -27,8 +27,10 @@ npm run tetris:flaggo
 ```
 
 The command builds and starts Contract Service, Decision Service, and OTel
-Ingestion against an isolated SQLite database, then deploys the contracts
-listed in `flaggo.deploy.json`. It binds the returned immutable contract digest
+Ingestion against an isolated SQLite database, then reads the authority-free
+contract definitions listed in `flaggo.deploy.json`. Deployment injects the
+manifest authority into each complete contract before the Contract Service
+computes its immutable digest. It binds the returned authority-bound digest
 into a generated `flaggo.runtime-config/v1` document and gives that one
 configuration to the decision client and all three telemetry providers before
 starting the game. The manifest authority is
@@ -172,11 +174,12 @@ Runtime attributes state their temporal meaning explicitly:
 `pieces_locked_5s`, `current_level`, and `session_id`.
 
 The optional adapter uses `createDecisionClient` from `@flaggo/sdk/runtime`.
-The deployment helper uses `createContractClient` from
-`@flaggo/sdk/management` after Contract and Decision Services are ready. Its
-`deploy` operation sends the authoritative `PUT`; it does not call the optional
-remote validation endpoint first. The helper parses `flaggo.deploy/v2` and
-produces the immutable runtime configuration from the accepted deployment.
+The deployment helper uses `bindDecisionContract` and `createContractClient`
+from `@flaggo/sdk/management` after Contract and Decision Services are ready.
+It injects the one manifest authority before its `deploy` operation sends the
+authoritative `PUT`; it does not call the optional remote validation endpoint
+first. The helper parses `flaggo.deploy/v2` and produces the immutable runtime
+configuration from the accepted deployment.
 
 ## Automated checks
 

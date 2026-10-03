@@ -119,7 +119,7 @@ describe("OpenAPI shared-contract alignment", () => {
   it("exposes named DecisionContracts with immutable digest versions", () => {
     expect(management.openapi).toBe("3.1.0");
     expect(Object.keys(management.paths)).toEqual([
-      "/v3/decision-contract-snapshots/current",
+      "/v3/decision-contract-catalog/current",
       "/v3/decision-contracts/{contractName}",
       "/v3/decision-contracts/{contractName}/validate",
       "/v3/decision-contracts/{contractName}/versions",
@@ -128,21 +128,21 @@ describe("OpenAPI shared-contract alignment", () => {
       "/health/ready",
     ]);
 
-    const snapshot = operation(
+    const catalog = operation(
       management,
-      "/v3/decision-contract-snapshots/current",
+      "/v3/decision-contract-catalog/current",
       "get",
     );
-    expect(snapshot.operationId).toBe("getCurrentContractSelectorSnapshot");
-    expectSecurity(snapshot, "flaggo.contracts:read");
-    expectParameters(snapshot, [
+    expect(catalog.operationId).toBe("getCurrentContractCatalog");
+    expectSecurity(catalog, "flaggo.contracts:materialize");
+    expectParameters(catalog, [
       "#/components/parameters/IfNoneMatchHeader",
       "#/components/parameters/CorrelationIdHeader",
     ]);
-    expect(snapshot.responses["200"]?.$ref).toBe(
-      "#/components/responses/ContractSelectorSnapshot",
+    expect(catalog.responses["200"]?.$ref).toBe(
+      "#/components/responses/CurrentContractCatalog",
     );
-    expect(snapshot.responses["304"]).toBeDefined();
+    expect(catalog.responses["304"]).toBeDefined();
 
     const validate = operation(
       management,
@@ -247,6 +247,7 @@ describe("OpenAPI shared-contract alignment", () => {
     }
 
     expectRequired(managementModels.$defs!.DecisionContract!, [
+      "authority",
       "name",
       "expression_syntax",
       "attributes",
@@ -265,6 +266,9 @@ describe("OpenAPI shared-contract alignment", () => {
       "currentContractDigest",
       "versions",
       "nextCursor",
+    ]);
+    expectRequired(managementModels.$defs!.CurrentContractCatalog!, [
+      "contracts",
     ]);
   });
 

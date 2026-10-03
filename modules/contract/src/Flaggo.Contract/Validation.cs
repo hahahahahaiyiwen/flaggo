@@ -45,6 +45,18 @@ public static partial class ContractValidator
         ArgumentNullException.ThrowIfNull(contract);
 
         var issues = new List<ValidationIssue>();
+        ValidateAuthorityIdentifier(
+            contract.Authority.Tenant,
+            "/authority/tenant",
+            issues);
+        ValidateAuthorityIdentifier(
+            contract.Authority.Application,
+            "/authority/application",
+            issues);
+        ValidateAuthorityIdentifier(
+            contract.Authority.Environment,
+            "/authority/environment",
+            issues);
         ValidateDecisionName(contract.Name, "/name", issues);
         if (!string.Equals(contract.ExpressionSyntax, "flaggo.cel/v1", StringComparison.Ordinal))
         {
@@ -576,6 +588,20 @@ public static partial class ContractValidator
         {
             Error(issues, "invalid-decision-name", path,
                 "Decision name must match ^[A-Za-z][A-Za-z0-9._-]*$.");
+        }
+    }
+
+    private static void ValidateAuthorityIdentifier(
+        string? value,
+        string path,
+        ICollection<ValidationIssue> issues)
+    {
+        if (value is null
+            || value.Length is < 1 or > 128
+            || !DecisionNamePattern().IsMatch(value))
+        {
+            Error(issues, "invalid-authority-identifier", path,
+                "Authority identifiers must match ^[A-Za-z][A-Za-z0-9._-]*$.");
         }
     }
 

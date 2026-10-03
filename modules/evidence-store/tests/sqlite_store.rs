@@ -2,64 +2,89 @@ use std::{num::NonZeroU16, path::Path};
 
 use chrono::{DateTime, Utc};
 use flaggo_evidence_store::{
-    DecisionScope, EvidenceAssociation, EvidenceMaterializationCommit, EvidenceObservation,
-    EvidenceObservationWrite, EvidenceSignal, EvidenceStore, MaterializationKey,
-    MaterializerVersions, SqliteEvidenceStore, StoredSelectorSnapshot,
+    AuthorityScope, EvidenceMaterializationCommit, EvidenceMaterializationMode,
+    EvidenceObservation, EvidenceObservationWrite, EvidenceSignal, EvidenceStore,
+    EvidenceStoreError, ForwardMaterializationKey, MaterializerVersions, SourceKey,
+    SqliteEvidenceStore, StoredContractCatalog,
 };
 use sha2::{Digest, Sha256};
+use sqlx::{Connection, SqliteConnection};
 
 #[tokio::test]
-async fn commits_observations_provenance_associations_conflicts_and_checkpoint_atomically() {
+async fn commits_global_forward_progress_and_idempotent_replay() {
     let directory = tempfile::tempdir().expect("temporary evidence directory");
     let database_url = sqlite_url(&directory.path().join("evidence.db"));
     let store = SqliteEvidenceStore::connect(&database_url)
         .await
         .expect("SQLite evidence store");
-    let snapshot_digest = digest(b"snapshot");
     store
-        .activate_snapshot(StoredSelectorSnapshot {
-            snapshot_digest: snapshot_digest.clone(),
-            payload: serde_json::to_vec(&serde_json::json!({
-                "contracts": [],
-                "snapshotDigest": snapshot_digest
-            }))
-            .expect("snapshot JSON"),
+        .save_catalog(StoredContractCatalog {
+            etag: "\"catalog:opaque\"".to_owned(),
+            payload: br#"{"contracts":[]}"#.to_vec(),
             fetched_at: fixed_time(),
         })
         .await
-        .expect("activate snapshot");
-    let key = key(&snapshot_digest);
+        .expect("save catalog");
+    let key = key();
     let first = observation("first", "logical", br#"{"value":1}"#);
 
     let created = store
-        .commit(commit(1, &key, first.clone()))
+        .commit(commit(
+            1,
+            &key,
+            EvidenceMaterializationMode::Forward,
+            first.clone(),
+        ))
         .await
         .expect("first commit");
-
     assert_eq!(created.observations_created, 1);
     assert_eq!(created.provenance_created, 1);
-    assert_eq!(created.associations_created, 1);
-    assert_eq!(store.checkpoint(&key).await.expect("checkpoint"), Some(1));
+    assert_eq!(
+        store.forward_checkpoint(&key).await.expect("checkpoint"),
+        Some(1)
+    );
 
     let already_checkpointed = store
-        .commit(commit(1, &key, first.clone()))
+        .commit(commit(
+            1,
+            &key,
+            EvidenceMaterializationMode::Forward,
+            first.clone(),
+        ))
         .await
         .expect("idempotent checkpoint");
     assert!(already_checkpointed.already_checkpointed);
 
-    let duplicate = store
-        .commit(commit(2, &key, first))
+    let replay = store
+        .commit(commit(
+            1,
+            &key,
+            EvidenceMaterializationMode::Replay,
+            first.clone(),
+        ))
         .await
-        .expect("duplicate provenance");
+        .expect("idempotent replay");
+    assert!(!replay.already_checkpointed);
+    assert_eq!(replay.duplicate_observations, 1);
+    assert_eq!(replay.provenance_created, 0);
+    assert_eq!(
+        store.forward_checkpoint(&key).await.expect("checkpoint"),
+        Some(1)
+    );
+
+    let duplicate = store
+        .commit(commit(2, &key, EvidenceMaterializationMode::Forward, first))
+        .await
+        .expect("duplicate observation");
     assert_eq!(duplicate.observations_created, 0);
     assert_eq!(duplicate.duplicate_observations, 1);
     assert_eq!(duplicate.provenance_created, 1);
-    assert_eq!(duplicate.associations_created, 0);
 
     let conflict = store
         .commit(commit(
             3,
             &key,
+            EvidenceMaterializationMode::Forward,
             observation("second", "logical", br#"{"value":2}"#),
         ))
         .await
@@ -68,30 +93,50 @@ async fn commits_observations_provenance_associations_conflicts_and_checkpoint_a
     assert_eq!(conflict.conflicts_created, 1);
     assert_eq!(conflict.diagnostics_created, 1);
 
+    let mut routing_key = key.clone();
+    routing_key.versions.routing = "2".to_owned();
+    let mut routing_changed = observation("first", "logical", br#"{"value":1}"#);
+    routing_changed.versions.routing = "2".to_owned();
+    let rerouted = store
+        .commit(commit(
+            4,
+            &routing_key,
+            EvidenceMaterializationMode::Forward,
+            routing_changed,
+        ))
+        .await
+        .expect("routing-only version change");
+    assert_eq!(rerouted.duplicate_observations, 1);
+    assert_eq!(rerouted.provenance_created, 1);
+
     let health = store.inspect().await.expect("evidence health");
-    assert_eq!(health.active_snapshot_digest, Some(snapshot_digest.clone()));
+    assert!(health.has_cached_catalog);
     assert_eq!(health.observation_count, 2);
-    assert_eq!(health.provenance_count, 3);
-    assert_eq!(health.association_count, 2);
+    assert_eq!(health.provenance_count, 4);
     assert_eq!(health.conflict_count, 1);
     assert_eq!(health.diagnostic_count, 1);
-    assert_eq!(store.checkpoint(&key).await.expect("checkpoint"), Some(3));
+    assert_eq!(
+        store.forward_checkpoint(&key).await.expect("checkpoint"),
+        Some(3)
+    );
+    assert_eq!(
+        store
+            .forward_checkpoint(&routing_key)
+            .await
+            .expect("routing checkpoint"),
+        Some(4)
+    );
 
-    let scope = scope();
     let observations = store
-        .list_observations(&scope, NonZeroU16::new(10).expect("nonzero limit"))
+        .list_observations(&authority(), NonZeroU16::new(10).expect("nonzero limit"))
         .await
         .expect("observations");
     assert_eq!(observations.len(), 2);
-    let associations = store
-        .list_associations(
-            &scope,
-            &digest(b"contract"),
-            NonZeroU16::new(10).expect("nonzero limit"),
-        )
-        .await
-        .expect("associations");
-    assert_eq!(associations.len(), 2);
+    assert_eq!(observations[0].observation.authority.tenant, "local");
+    assert_eq!(
+        observations[0].observation.source.instrumentation_scope,
+        "worker"
+    );
 
     store.close().await;
     let reopened = SqliteEvidenceStore::connect(&database_url)
@@ -99,38 +144,64 @@ async fn commits_observations_provenance_associations_conflicts_and_checkpoint_a
         .expect("reopened evidence store");
     assert_eq!(
         reopened
-            .load_active_snapshot()
+            .load_catalog()
             .await
-            .expect("active snapshot")
-            .expect("stored snapshot")
-            .snapshot_digest,
-        snapshot_digest
+            .expect("cached catalog")
+            .expect("stored catalog")
+            .etag,
+        "\"catalog:opaque\""
     );
     assert_eq!(
-        reopened.checkpoint(&key).await.expect("checkpoint"),
+        reopened.forward_checkpoint(&key).await.expect("checkpoint"),
         Some(3)
     );
     reopened.close().await;
 }
 
+#[tokio::test]
+async fn rejects_version_one_schema_without_migration() {
+    let directory = tempfile::tempdir().expect("temporary evidence directory");
+    let database_url = sqlite_url(&directory.path().join("evidence.db"));
+    let store = SqliteEvidenceStore::connect(&database_url)
+        .await
+        .expect("SQLite evidence store");
+    store.close().await;
+
+    let mut connection = SqliteConnection::connect(&database_url)
+        .await
+        .expect("SQLite connection");
+    sqlx::query(
+        "UPDATE flaggo_schema_versions
+         SET version = 1
+         WHERE component = 'evidence-store'",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("downgrade schema marker");
+    connection.close().await.expect("close SQLite connection");
+
+    assert!(matches!(
+        SqliteEvidenceStore::connect(&database_url).await,
+        Err(EvidenceStoreError::UnsupportedSchemaVersion {
+            component: "evidence-store",
+            found: 1,
+            expected: 2
+        })
+    ));
+}
+
 fn commit(
     inbox_batch_id: u64,
-    key: &MaterializationKey,
+    key: &ForwardMaterializationKey,
+    mode: EvidenceMaterializationMode,
     observation: EvidenceObservation,
 ) -> EvidenceMaterializationCommit {
     EvidenceMaterializationCommit {
         key: key.clone(),
+        mode,
         inbox_batch_id,
         observations: vec![EvidenceObservationWrite {
             candidate_ordinal: 0,
-            associations: vec![EvidenceAssociation {
-                snapshot_digest: key.snapshot_digest.clone(),
-                contract_digest: digest(b"contract"),
-                evidence_name: "latency".to_owned(),
-                contract_attribute: "latency_ms".to_owned(),
-                correlation_json: br#"{"worker_id":{"type":"string","value":"worker-1"}}"#.to_vec(),
-                source_json: br#"{"kind":"log","name":"worker.latency","scope":"worker"}"#.to_vec(),
-            }],
             observation,
         }],
         diagnostics: Vec::new(),
@@ -142,12 +213,15 @@ fn observation(content_key: &str, logical_key: &str, payload: &[u8]) -> Evidence
         observation_id: digest(format!("observation:{content_key}").as_bytes()),
         logical_source_id: digest(format!("logical:{logical_key}").as_bytes()),
         content_digest: digest(payload),
-        scope: scope(),
-        signal: EvidenceSignal::Log,
-        instrumentation_scope: "worker".to_owned(),
-        signal_name: "worker.latency".to_owned(),
-        metric_kind: None,
-        metric_unit: None,
+        authority: authority(),
+        source: SourceKey {
+            signal: EvidenceSignal::Log,
+            instrumentation_scope: "worker".to_owned(),
+            signal_name: "worker.latency".to_owned(),
+            metric_kind: None,
+            metric_unit: None,
+            parent_span_name: None,
+        },
         observed_at_unix_nano: 1_799_999_999_000_000_000,
         observed_time_source: "timeUnixNano".to_owned(),
         protocol_kind: None,
@@ -158,25 +232,25 @@ fn observation(content_key: &str, logical_key: &str, payload: &[u8]) -> Evidence
     }
 }
 
-fn key(snapshot_digest: &str) -> MaterializationKey {
-    MaterializationKey {
-        snapshot_digest: snapshot_digest.to_owned(),
+fn key() -> ForwardMaterializationKey {
+    ForwardMaterializationKey {
         versions: versions(),
     }
 }
 
 fn versions() -> MaterializerVersions {
     MaterializerVersions {
-        materializer: "1".to_owned(),
+        materializer: "2".to_owned(),
         decoder: "1".to_owned(),
-        identity: "1".to_owned(),
-        projection: "1".to_owned(),
-        selector_protocol: "1".to_owned(),
+        identity: "2".to_owned(),
+        projection: "2".to_owned(),
+        routing: "1".to_owned(),
     }
 }
 
-fn scope() -> DecisionScope {
-    DecisionScope::new("worker".to_owned(), "test".to_owned()).expect("valid scope")
+fn authority() -> AuthorityScope {
+    AuthorityScope::new("local".to_owned(), "worker".to_owned(), "test".to_owned())
+        .expect("valid authority")
 }
 
 fn fixed_time() -> DateTime<Utc> {

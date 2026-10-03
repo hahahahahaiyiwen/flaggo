@@ -80,7 +80,7 @@ POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 
 The route identifies the logical decision and one exact immutable contract
 version. The body carries only the complete `RuntimeInput`; authenticated
-credentials establish application and environment scope.
+credentials establish tenant, application, and environment scope.
 
 Contract attributes, user identifiers, and exposure context are decision data.
 They cannot authenticate a caller, authorize another scope, or select a
@@ -227,7 +227,7 @@ SDK-local outage fallback remains a separate deferred concern.
 
 1. Application deployment supplies an exact contract name and digest.
 2. The SDK constructs and retries one complete logical input.
-3. Authentication establishes application/environment scope.
+3. Authentication establishes tenant/application/environment scope.
 4. The service resolves exactly one active immutable executable per request.
 5. Management current-version and candidate-generation order never select
    runtime authority.

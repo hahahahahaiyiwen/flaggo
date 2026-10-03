@@ -54,7 +54,7 @@
           "$ref": "#/$defs/AuthorityIdentifier"
         }
       },
-      "description": "Declared routing authority inherited by every contract and telemetry signal in one deployment."
+      "description": "Declared routing authority injected into every deployed DecisionContract and application telemetry signal in one deployment."
     },
     "DecisionContractPath": {
       "type": "string",
@@ -86,7 +86,7 @@
           "minItems": 1,
           "maxItems": 128,
           "uniqueItems": true,
-          "description": "DecisionContracts that all inherit the manifest authority."
+          "description": "Authority-free authored DecisionContracts that deployment binds to the manifest authority before validation, digesting, and persistence."
         }
       }
     },
@@ -153,7 +153,7 @@
           "maxProperties": 128
         }
       },
-      "description": "Generated immutable application configuration consumed by Flaggo SDK integrations."
+      "description": "Generated immutable application configuration containing the same authority bound into every deployed DecisionContract."
     }
   }
 }

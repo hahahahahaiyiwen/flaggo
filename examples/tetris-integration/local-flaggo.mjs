@@ -24,6 +24,7 @@ export async function startLocalFlaggoHosts({
   };
   const commonConfiguration = {
     ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
+    Flaggo__Authentication__Tenant: "local",
     Flaggo__Authentication__Application: "tetris",
     Flaggo__Authentication__Environment: "integration",
   };

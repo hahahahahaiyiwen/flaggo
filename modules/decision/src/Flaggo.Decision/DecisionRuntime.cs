@@ -9,7 +9,7 @@ namespace Flaggo.Decision;
 public interface IDecisionRuntime
 {
     Task<RuntimeDecision> DecideAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         RuntimeInput input,
@@ -33,7 +33,7 @@ public sealed class DecisionRuntime(
         _compiledExecutableOrder = new();
 
     public async Task<RuntimeDecision> DecideAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         RuntimeInput input,
@@ -170,7 +170,7 @@ public sealed class DecisionRuntime(
         string CheckedRepresentation);
 
     private static void ValidateIdentity(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest)
     {
@@ -193,7 +193,7 @@ public sealed class DecisionRuntime(
 }
 
 public sealed class DecisionContractVersionNotFoundException(
-    DecisionScope scope,
+    AuthorityScope scope,
     string contractName,
     string contractDigest)
     : Exception(
@@ -208,7 +208,7 @@ public sealed class RuntimeInputValidationException(
 }
 
 public sealed class ActiveExecutableNotFoundException(
-    DecisionScope scope,
+    AuthorityScope scope,
     string contractDigest)
     : Exception(
         $"No executable is active for contract '{contractDigest}' in scope '{scope}'.");

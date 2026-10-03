@@ -113,9 +113,29 @@
       }
     },
     {
+      "why": "a deployed DecisionContract must declare the authority covered by its digest",
+      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContract",
+      "body": {
+        "name": "example.decision",
+        "expression_syntax": "flaggo.cel/v1",
+        "attributes": [],
+        "result": {
+          "schema": {
+            "type": "boolean"
+          },
+          "default": false
+        }
+      }
+    },
+    {
       "why": "user-declared attribute names cannot use the reserved internal prefix",
       "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContract",
       "body": {
+        "authority": {
+          "tenant": "local",
+          "application": "example",
+          "environment": "integration"
+        },
         "name": "example.decision",
         "expression_syntax": "flaggo.cel/v1",
         "attributes": [

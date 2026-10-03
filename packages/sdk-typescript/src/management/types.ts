@@ -18,6 +18,7 @@ import type {
   ValidationIssue as GeneratedValidationIssue,
   ValueSchema as GeneratedValueSchema,
 } from "../generated/management-models.generated.js";
+import type { AuthorityScope } from "../configuration/types.js";
 import type {
   DeepReadonly,
   FlaggoResponse,
@@ -60,11 +61,15 @@ export type ContractResult<TResult extends JsonValue = JsonValue> =
 export type DecisionContract<TResult extends JsonValue = JsonValue> =
   Omit<
     DeepReadonly<GeneratedDecisionContract>,
-    "result" | "authoredExecutable"
+    "authority" | "result" | "authoredExecutable"
   > & {
+    readonly authority: AuthorityScope;
     readonly result: ContractResult<TResult>;
     readonly authoredExecutable?: AuthoredExecutable<TResult>;
   };
+
+export type DecisionContractDefinition<TResult extends JsonValue = JsonValue> =
+  Omit<DecisionContract<TResult>, "authority">;
 
 export type ValidationIssue = DeepReadonly<GeneratedValidationIssue>;
 
@@ -144,7 +149,17 @@ export interface ContractClient {
 }
 
 export function defineDecisionContract<TResult extends JsonValue>(
-  contract: DecisionContract<TResult>,
-): DecisionContract<TResult> {
+  contract: DecisionContractDefinition<TResult>,
+): DecisionContractDefinition<TResult> {
   return contract;
+}
+
+export function bindDecisionContract<TResult extends JsonValue>(
+  contract: DecisionContractDefinition<TResult>,
+  authority: AuthorityScope,
+): DecisionContract<TResult> {
+  return {
+    ...contract,
+    authority: { ...authority },
+  };
 }

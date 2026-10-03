@@ -8,20 +8,32 @@ mod sqlite;
 
 pub use sqlite::SqliteEvidenceStore;
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct DecisionScope {
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AuthorityScope {
+    pub tenant: String,
     pub application: String,
     pub environment: String,
 }
 
-impl DecisionScope {
-    pub fn new(application: String, environment: String) -> Result<Self, EvidenceStoreError> {
-        if application.is_empty() || environment.is_empty() {
-            return Err(EvidenceStoreError::InvalidWrite(
-                "application and environment must not be empty".to_owned(),
-            ));
+impl AuthorityScope {
+    pub fn new(
+        tenant: String,
+        application: String,
+        environment: String,
+    ) -> Result<Self, EvidenceStoreError> {
+        for (name, value) in [
+            ("tenant", &tenant),
+            ("application", &application),
+            ("environment", &environment),
+        ] {
+            if !is_authority_identifier(value) {
+                return Err(EvidenceStoreError::InvalidWrite(format!(
+                    "{name} must match ^[A-Za-z][A-Za-z0-9._-]{{0,127}}$"
+                )));
+            }
         }
         Ok(Self {
+            tenant,
             application,
             environment,
         })
@@ -59,23 +71,32 @@ impl EvidenceSignal {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SourceKey {
+    pub signal: EvidenceSignal,
+    pub instrumentation_scope: String,
+    pub signal_name: String,
+    pub metric_kind: Option<String>,
+    pub metric_unit: Option<String>,
+    pub parent_span_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct MaterializerVersions {
     pub materializer: String,
     pub decoder: String,
     pub identity: String,
     pub projection: String,
-    pub selector_protocol: String,
+    pub routing: String,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct MaterializationKey {
-    pub snapshot_digest: String,
+pub struct ForwardMaterializationKey {
     pub versions: MaterializerVersions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoredSelectorSnapshot {
-    pub snapshot_digest: String,
+pub struct StoredContractCatalog {
+    pub etag: String,
     pub payload: Vec<u8>,
     pub fetched_at: DateTime<Utc>,
 }
@@ -85,12 +106,8 @@ pub struct EvidenceObservation {
     pub observation_id: String,
     pub logical_source_id: String,
     pub content_digest: String,
-    pub scope: DecisionScope,
-    pub signal: EvidenceSignal,
-    pub instrumentation_scope: String,
-    pub signal_name: String,
-    pub metric_kind: Option<String>,
-    pub metric_unit: Option<String>,
+    pub authority: AuthorityScope,
+    pub source: SourceKey,
     pub observed_at_unix_nano: u64,
     pub observed_time_source: String,
     pub protocol_kind: Option<String>,
@@ -101,26 +118,14 @@ pub struct EvidenceObservation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EvidenceAssociation {
-    pub snapshot_digest: String,
-    pub contract_digest: String,
-    pub evidence_name: String,
-    pub contract_attribute: String,
-    pub correlation_json: Vec<u8>,
-    pub source_json: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EvidenceObservationWrite {
     pub observation: EvidenceObservation,
     pub candidate_ordinal: u32,
-    pub associations: Vec<EvidenceAssociation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EvidenceDiagnostic {
     pub diagnostic_id: String,
-    pub snapshot_digest: String,
     pub inbox_batch_id: u64,
     pub candidate_ordinal: Option<u32>,
     pub code: String,
@@ -128,9 +133,16 @@ pub struct EvidenceDiagnostic {
     pub detail_json: Option<Vec<u8>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EvidenceMaterializationMode {
+    Forward,
+    Replay,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EvidenceMaterializationCommit {
-    pub key: MaterializationKey,
+    pub key: ForwardMaterializationKey,
+    pub mode: EvidenceMaterializationMode,
     pub inbox_batch_id: u64,
     pub observations: Vec<EvidenceObservationWrite>,
     pub diagnostics: Vec<EvidenceDiagnostic>,
@@ -142,16 +154,14 @@ pub struct EvidenceStoreCommitResult {
     pub observations_created: u64,
     pub duplicate_observations: u64,
     pub provenance_created: u64,
-    pub associations_created: u64,
     pub diagnostics_created: u64,
     pub conflicts_created: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EvidenceStoreHealth {
-    pub active_snapshot_digest: Option<String>,
+    pub has_cached_catalog: bool,
     pub observation_count: u64,
-    pub association_count: u64,
     pub provenance_count: u64,
     pub diagnostic_count: u64,
     pub conflict_count: u64,
@@ -162,18 +172,6 @@ pub struct EvidenceStoreHealth {
 pub struct StoredEvidenceObservation {
     pub observation: EvidenceObservation,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoredEvidenceAssociation {
-    pub observation_id: String,
-    pub scope: DecisionScope,
-    pub snapshot_digest: String,
-    pub contract_digest: String,
-    pub evidence_name: String,
-    pub contract_attribute: String,
-    pub correlation_json: Vec<u8>,
-    pub source_json: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -205,17 +203,14 @@ impl EvidenceStoreError {
 
 #[async_trait]
 pub trait EvidenceStore: Send + Sync {
-    async fn activate_snapshot(
-        &self,
-        snapshot: StoredSelectorSnapshot,
-    ) -> Result<(), EvidenceStoreError>;
+    async fn save_catalog(&self, catalog: StoredContractCatalog) -> Result<(), EvidenceStoreError>;
 
-    async fn load_active_snapshot(
-        &self,
-    ) -> Result<Option<StoredSelectorSnapshot>, EvidenceStoreError>;
+    async fn load_catalog(&self) -> Result<Option<StoredContractCatalog>, EvidenceStoreError>;
 
-    async fn checkpoint(&self, key: &MaterializationKey)
-    -> Result<Option<u64>, EvidenceStoreError>;
+    async fn forward_checkpoint(
+        &self,
+        key: &ForwardMaterializationKey,
+    ) -> Result<Option<u64>, EvidenceStoreError>;
 
     async fn commit(
         &self,
@@ -226,14 +221,16 @@ pub trait EvidenceStore: Send + Sync {
 
     async fn list_observations(
         &self,
-        scope: &DecisionScope,
+        authority: &AuthorityScope,
         limit: NonZeroU16,
     ) -> Result<Vec<StoredEvidenceObservation>, EvidenceStoreError>;
+}
 
-    async fn list_associations(
-        &self,
-        scope: &DecisionScope,
-        contract_digest: &str,
-        limit: NonZeroU16,
-    ) -> Result<Vec<StoredEvidenceAssociation>, EvidenceStoreError>;
+fn is_authority_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.as_bytes()[0].is_ascii_alphabetic()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }

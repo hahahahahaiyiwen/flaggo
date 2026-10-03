@@ -21,6 +21,9 @@ namespace Flaggo.DecisionService.Tests;
 
 public sealed class DecisionServiceEndpointTests
 {
+    private static readonly AuthorityScope Scope =
+        new("local", "test-application", "test-environment");
+
     [Fact]
     public async Task CreatesExactVersionDecisionAndPreservesCorrelationId()
     {
@@ -149,6 +152,7 @@ public sealed class DecisionServiceEndpointTests
             .GetRequiredService<FlaggoExpressionCompiler>();
         var contract = new DecisionContract
         {
+            Authority = Scope,
             Name = "checkout.failure",
             ExpressionSyntax = "flaggo.cel/v1",
             Attributes =
@@ -217,6 +221,7 @@ public sealed class DecisionServiceEndpointTests
             .GetRequiredService<FlaggoExpressionCompiler>();
         var contract = new DecisionContract
         {
+            Authority = Scope,
             Name = "checkout.integrity",
             ExpressionSyntax = "flaggo.cel/v1",
             Attributes = [],
@@ -363,6 +368,7 @@ public sealed class DecisionServiceEndpointTests
         var expectedResult = expected.GetProperty("result").GetInt32();
         var contract = new DecisionContract
         {
+            Authority = Scope,
             Name = "tetris.dropInterval",
             ExpressionSyntax = "flaggo.cel/v1",
             Attributes =
@@ -453,6 +459,7 @@ public sealed class DecisionServiceEndpointTests
         var expressionCompiler = factory.Services.GetRequiredService<FlaggoExpressionCompiler>();
         var contract = new DecisionContract
         {
+            Authority = Scope,
             Name = "checkout.delay",
             ExpressionSyntax = "flaggo.cel/v1",
             Attributes =
@@ -498,7 +505,7 @@ public sealed class DecisionServiceEndpointTests
     {
         var contractStore = factory.Services.GetRequiredService<IContractVersionStore>();
         var executableStore = factory.Services.GetRequiredService<IExecutableStore>();
-        var scope = new DecisionScope("test-application", "test-environment");
+        var scope = Scope;
         var contractDigest = compilation.Executable.ContractDigest;
         await contractStore.PutAsync(new AcceptedContractVersion(
             scope,
@@ -616,6 +623,7 @@ public sealed class TestAuthenticationHandler(
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, "test"),
+            new(FlaggoClaimTypes.Tenant, "local"),
             new(FlaggoClaimTypes.Application, "test-application"),
             new(FlaggoClaimTypes.Environment, "test-environment")
         };

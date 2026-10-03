@@ -186,8 +186,9 @@ current-version lookup, paginated history, and exact-version lookup.
 
 ```ts
 import {
+  bindDecisionContract,
   createContractClient,
-  type DecisionContract,
+  defineDecisionContract,
 } from "@flaggo/sdk/management";
 
 const contracts = createContractClient({
@@ -198,7 +199,7 @@ const contracts = createContractClient({
   },
 });
 
-const contract = {
+const definition = defineDecisionContract({
   name: "worker.batch-size",
   expression_syntax: "flaggo.cel/v1",
   attributes: [],
@@ -206,7 +207,12 @@ const contract = {
     schema: { type: "integer", minimum: 1 },
     default: 3,
   },
-} as const satisfies DecisionContract<number>;
+});
+const contract = bindDecisionContract(definition, {
+  tenant: "acme",
+  application: "worker",
+  environment: "production",
+});
 
 const deployed = await contracts.deploy(contract);
 const exact = await contracts.getVersion(
@@ -216,13 +222,16 @@ const exact = await contracts.getVersion(
 console.log(exact.value.contract);
 ```
 
-`deploy` performs local wire-shape validation before sending the authoritative
-`PUT`. Use `validate` separately when an authoring or CI workflow needs
-server-side semantic diagnostics without mutation; it is not a prerequisite
-for deployment.
+`bindDecisionContract` represents the deployment boundary: deployment tooling
+uses the manifest authority to produce the complete scoped contract before
+validation or deployment. `deploy` performs local wire-shape validation before
+sending the authoritative `PUT`. Use `validate` separately when an authoring or
+CI workflow needs server-side semantic diagnostics without mutation; it is not
+a prerequisite for deployment.
 
-The server computes contract and executable digests. `getCurrent` is a
-management projection only; runtime clients always use an exact digest.
+The server computes the contract digest over authority and semantic content,
+then computes the executable digest. `getCurrent` is a management projection
+only; runtime clients always use an exact digest.
 
 ## Errors and response metadata
 

@@ -9,7 +9,7 @@ namespace Flaggo.Core.Tests;
 
 public sealed class DecisionTests
 {
-    private static readonly DecisionScope Scope = new("checkout", "production");
+    private static readonly AuthorityScope Scope = new("local", "checkout", "production");
 
     [Fact]
     public async Task SkipsRulesMissingPredicateOrReturnAttributes()
@@ -346,6 +346,7 @@ public sealed class DecisionTests
         object defaultValue) =>
         new()
         {
+            Authority = Scope,
             Name = "checkout.delay",
             ExpressionSyntax = "flaggo.cel/v1",
             Attributes = attributes,

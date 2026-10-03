@@ -13,6 +13,23 @@ transport encoding. It validates the signal-specific export request, enforces
 the configured limit after decompression, and acknowledges success only after
 the complete decompressed payload is durably appended to the inbox.
 
+## Receiver boundary
+
+Accepted export requests are opaque durable work items after transport and
+signal-specific message-shape validation. One request may contain several OTel
+Resources with different declared tenant, application, and environment values.
+The receiver stores that request once and does not:
+
+- extract or validate application-declared authority;
+- derive a signal `SourceKey` or `MaterializationRoute`;
+- split one request by Resource or signal item; or
+- decide whether telemetry is relevant to a current contract.
+
+The Evidence Materializer owns Resource and signal decomposition, declared
+authority extraction, route construction, and active-route admission. A future
+authenticated ingress may attach trusted credential-derived authority as
+receipt metadata, but that extension is outside the current receiver contract.
+
 ## Run
 
 ```powershell

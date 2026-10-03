@@ -2,7 +2,7 @@
   "$schema-note": "Index of contract conformance fixtures. Generated from contracts/fixtures metadata.",
   "version": "1",
   "generatedFor": "DecisionContract management v3, stateless runtime evaluation v3, deployment v2, runtime configuration v1, and Phase 4 telemetry contracts",
-  "totalCases": 33,
+  "totalCases": 34,
   "requiredScenarioCount": 17,
   "coveredScenarios": [
     1,
@@ -130,19 +130,19 @@
       "invariant": "Current contract lookup without flaggo.contracts:read returns 403 insufficient-scope."
     },
     {
-      "name": "get-selector-snapshot-insufficient-scope",
+      "name": "get-contract-catalog-insufficient-scope",
       "scenarios": [
         49
       ],
       "group": "errors",
-      "file": "fixtures/errors/auth-13-get-selector-snapshot-insufficient-scope.json",
+      "file": "fixtures/errors/auth-13-get-contract-catalog-insufficient-scope.json",
       "method": "GET",
-      "httpPath": "/v3/decision-contract-snapshots/current",
+      "httpPath": "/v3/decision-contract-catalog/current",
       "status": 403,
       "responseSchema": "problem-details-v3.schema.json",
       "sdkLocal": false,
       "schemaNegative": false,
-      "invariant": "Current selector snapshot lookup without flaggo.contracts:read returns 403 insufficient-scope."
+      "invariant": "Cross-authority contract catalog lookup without flaggo.contracts:materialize returns 403 insufficient-scope."
     },
     {
       "name": "list-contract-versions-insufficient-scope",
@@ -167,7 +167,7 @@
       "group": "errors",
       "file": "fixtures/errors/auth-12-get-contract-version-insufficient-scope.json",
       "method": "GET",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f",
+      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
       "status": 403,
       "responseSchema": "problem-details-v3.schema.json",
       "sdkLocal": false,
@@ -312,6 +312,19 @@
       "sdkLocal": false,
       "schemaNegative": false,
       "invariant": "An immutable historical version is addressable by its digest within the named contract resource."
+    },
+    {
+      "name": "get-current-contract-catalog",
+      "scenarios": [],
+      "group": "management/decision-contract",
+      "file": "fixtures/management/decision-contract/08-get-current-catalog.json",
+      "method": "GET",
+      "httpPath": "/v3/decision-contract-catalog/current",
+      "status": 200,
+      "responseSchema": "management-models-v3.schema.json#/$defs/CurrentContractCatalog",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "The materializer catalog returns every current authority-bound contract without creating a snapshot identity."
     },
     {
       "name": "runtime-rule-result",

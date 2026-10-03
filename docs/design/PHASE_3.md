@@ -23,7 +23,7 @@ DecisionContract
   -> optionally compile and activate deterministic authored expressions
 
 exact contract name + contractDigest + complete RuntimeInput
-  -> resolve ActiveExecutable in authenticated application/environment scope
+  -> resolve ActiveExecutable in authenticated tenant/application/environment scope
   -> bounded deterministic evaluation
   -> validate and return RuntimeDecision
 ```

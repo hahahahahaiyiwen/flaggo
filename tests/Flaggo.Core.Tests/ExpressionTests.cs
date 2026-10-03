@@ -69,6 +69,11 @@ public sealed class ExpressionTests
         var contract = StrictJson.Deserialize<DecisionContract>(
             """
             {
+              "authority": {
+                "tenant": "local",
+                "application": "test",
+                "environment": "test"
+              },
               "name": "demo.choice",
               "expression_syntax": "flaggo.cel/v1",
               "attributes": [

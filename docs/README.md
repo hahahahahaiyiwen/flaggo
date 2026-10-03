@@ -38,7 +38,7 @@ The v3 management and runtime contracts are implemented by Contract Service,
 Decision Service, their shared modules, and the TypeScript SDK. Management
 addresses a logical decision by name and immutable versions by
 `contractDigest`. Runtime requests one exact name/digest pair and resolves the
-executable active for that digest in the authenticated application/environment
+executable active for that digest in the authenticated tenant/application/environment
 scope.
 
 The pre-v3 implementation has been removed. Evidence ingestion and

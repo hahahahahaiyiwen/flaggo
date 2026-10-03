@@ -18,7 +18,8 @@ API v3 OpenAPI document is the wire-level authority.
 
 ```text
 contract author
-  -> source-controlled DecisionContract
+  -> source-controlled DecisionContract definition
+  -> deployment authority binding
   -> management client or CI
   -> Management API v3
   -> Contract Service
@@ -28,24 +29,25 @@ contract author
        -> learning scheduler
 ```
 
-The management client supplies desired contract content. The Contract Service
-establishes accepted identity and runtime readiness. During deployment, a
-client does not assert a `contractDigest`, `executableDigest`, or activation
-record as trusted authority; it may use server-returned digests for later exact
-reads and application configuration.
+The management client supplies the complete authority-bound deployed contract.
+The Contract Service establishes accepted identity and runtime readiness.
+During deployment, a client does not assert a `contractDigest`,
+`executableDigest`, or activation record as trusted authority; it may use
+server-returned digests for later exact reads and application configuration.
 
 ## Contract source and deployment files
 
-A `DecisionContract` is contract-as-code rather than environment
-configuration. Keep one independently versioned contract per file using:
+An authored `DecisionContract` definition is contract-as-code rather than
+environment configuration. Keep one independently versioned definition per
+file using:
 
 ```text
 flaggo/contracts/<decision-name>.decision-contract.json
 ```
 
-The file name must preserve the exact embedded `DecisionContract.name`.
-Service URLs, credentials, application identity, and environment identity do
-not belong in the contract file.
+The file name must preserve the exact embedded contract `name`. Service URLs,
+credentials, and deployment authority do not belong in the authored contract
+file.
 
 Projects declare one deployment authority and their contract inventory in
 `flaggo.deploy.json`:
@@ -68,16 +70,18 @@ Projects declare one deployment authority and their contract inventory in
 Paths are portable forward-slash relative paths contained within the
 manifest's directory. The manifest does not embed contracts and is not an
 atomic multi-contract API payload. Deployment tooling processes each referenced
-contract independently through the name-keyed `PUT`.
-The authority scopes deployment and telemetry routing; it is not part of
-portable contract semantics and, until authenticated ingress exists, is
+contract independently. It injects the manifest authority before validation,
+digest calculation, and the name-keyed `PUT`. Authority is therefore part of
+the complete deployed contract and `contractDigest`, while the authored
+definition remains portable. Until authenticated ingress exists, authority is
 declared rather than security-derived.
 
 ## Client responsibilities
 
 A contract author or CI client:
 
-- maintains the complete `DecisionContract` as source-controlled input;
+- maintains an authority-free contract definition as source-controlled input;
+- binds manifest authority into the complete deployed `DecisionContract`;
 - addresses the logical management resource by `contractName`;
 - may use dry-run validation independently when early feedback is useful;
 - submits the complete desired contract rather than an incremental mutation;
@@ -102,7 +106,8 @@ Build
   -> perform no service mutation
 
 Deploy
-  -> load one DecisionContract artifact
+  -> load one authored DecisionContract definition
+  -> bind manifest AuthorityScope
   -> validate its wire shape locally
   -> PUT it to Contract Service
   -> receive contractDigest and activeExecutableDigest
@@ -129,6 +134,7 @@ PUT  /v3/decision-contracts/{contractName}
 GET  /v3/decision-contracts/{contractName}
 GET  /v3/decision-contracts/{contractName}/versions
 GET  /v3/decision-contracts/{contractName}/versions/{contractDigest}
+GET  /v3/decision-contract-catalog/current
 ```
 
 ### Dry-run validation
@@ -161,6 +167,7 @@ runtime-ready:
 
 ```text
 authenticate and authorize acceptance
+  -> read AuthorityScope from the complete contract
   -> verify route name equals payload name
   -> validate and canonicalize DecisionContract
   -> compute contractDigest
@@ -194,6 +201,10 @@ authenticated scope.
 Neither `ManagementCurrent` nor version-list ordering grants runtime
 authority. The Decision Service accepts an exact digest and reads
 `RuntimeActivation` instead.
+
+The cross-authority current-contract catalog returns every complete current
+deployed contract for Evidence Materializer route compilation. Its ETag is
+opaque conditional-fetch state, not contract or evidence identity.
 
 ## Contract Service responsibilities
 

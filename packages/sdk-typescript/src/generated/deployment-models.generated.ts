@@ -22,7 +22,7 @@ export interface DeploymentManifest {
   format: "flaggo.deploy/v2";
   authority: AuthorityScope;
   /**
-   * DecisionContracts that all inherit the manifest authority.
+   * Authority-free authored DecisionContracts that deployment binds to the manifest authority before validation, digesting, and persistence.
    *
    * @minItems 1
    * @maxItems 128
@@ -30,7 +30,7 @@ export interface DeploymentManifest {
   contracts: DecisionContractPath[];
 }
 /**
- * Declared routing authority inherited by every contract and telemetry signal in one deployment.
+ * Declared routing authority injected into every deployed DecisionContract and application telemetry signal in one deployment.
  */
 export interface AuthorityScope {
   tenant: AuthorityIdentifier;
@@ -38,7 +38,7 @@ export interface AuthorityScope {
   environment: AuthorityIdentifier;
 }
 /**
- * Generated immutable application configuration consumed by Flaggo SDK integrations.
+ * Generated immutable application configuration containing the same authority bound into every deployed DecisionContract.
  */
 export interface RuntimeConfiguration {
   format: "flaggo.runtime-config/v1";

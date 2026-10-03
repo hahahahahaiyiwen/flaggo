@@ -16,24 +16,24 @@ health routes. OTel Ingestion owns the `/v1/logs`, `/v1/metrics`, and
 request to the bounded Raw OTLP Inbox before acknowledgement. Evidence
 Materializer is a standalone Rust worker that replays the inbox through
 versioned checkpoints and transactionally writes selected query-ready
-observations, provenance, associations, conflicts, and diagnostics to Evidence
-Store. Reusable strict HTTP mechanics live under `modules/hosting`; apps do not
-reference another app project.
+observations, provenance, conflicts, and diagnostics to Evidence Store.
+Contract-specific association is deferred to analysis. Reusable strict HTTP
+mechanics live under `modules/hosting`; apps do not reference another app
+project.
 
 Evidence Materializer and OTel Ingestion share `FLAGGO_DATABASE_URL` (default
-`sqlite://flaggo.db`). The materializer selector scope defaults to
-`FLAGGO_APPLICATION=local-application` and
-`FLAGGO_ENVIRONMENT=development`. Set `FLAGGO_CONTRACT_SNAPSHOT_URL` to the Contract Service
-`/v3/decision-contract-snapshots/current` endpoint to enable
-application evidence selectors; an optional
-`FLAGGO_CONTRACT_SNAPSHOT_BEARER_TOKEN` supplies non-development
+`sqlite://flaggo.db`). Set `FLAGGO_CONTRACT_CATALOG_URL` to the Contract Service
+`/v3/decision-contract-catalog/current` endpoint to enable ordinary application
+evidence routes across all authorities; an optional
+`FLAGGO_CONTRACT_CATALOG_BEARER_TOKEN` supplies non-development
 authentication. Without that endpoint, the worker keeps materializing strictly
-valid built-in Flaggo protocol observations using its last durable snapshot or
-a built-in-only snapshot.
+valid built-in Flaggo protocol observations using its last durable catalog or
+an empty route catalog.
 
-The Phase 4 Evidence Materializer derives scope from OTLP resource attributes.
-The receiver does not require authentication. Authentication and authorization
-for telemetry writes are deferred to a later phase.
+The Phase 4 Evidence Materializer strictly derives tenant, application, and
+environment from `flaggo.*` OTLP Resource attributes. The receiver does not
+require authentication. Authentication and authorization for telemetry writes
+are deferred to a later phase.
 
 The pre-v3 shared host stack was removed after the v3 consumer cutover.
 Neither service exposes forwarding projects, compatibility routes, or

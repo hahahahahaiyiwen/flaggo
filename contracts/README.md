@@ -35,30 +35,37 @@ One deployment manifest declares:
   and
 - no per-contract authority overrides.
 
-Deployment tooling combines that manifest with successful immutable contract
-deployments and the Contract Service, Decision Service, and OTLP Ingestion base
-URLs. The resulting runtime configuration contains the same authority, those
-service URLs, and a contract-name-to-digest binding map. Applications and SDK
-OpenTelemetry integrations consume this generated configuration rather than
-maintaining duplicate authority, endpoint, or binding settings.
+Deployment tooling injects the manifest authority into every authored
+DecisionContract before validation and deployment. The complete scoped
+DecisionContract is canonicalized, digested, and persisted as one immutable
+version. The resulting runtime configuration contains that same authority, the
+Contract Service, Decision Service, and OTLP Ingestion base URLs, and a
+contract-name-to-digest binding map. Applications and SDK OpenTelemetry
+integrations consume this generated configuration rather than maintaining
+duplicate authority, endpoint, or binding settings.
 Service URLs are bounded absolute HTTP(S) base URLs with an optional usable
 port and no credentials, query, or fragment. Deployment tooling validates all
 three endpoints before sending the first contract mutation.
 
-Changing manifest authority creates a different scoped deployment; it does not
-change DecisionContract semantics or `contractDigest`. The declared authority
-is a Phase 4 routing boundary, not authenticated security authority.
+Changing manifest authority creates a different scoped deployment and a
+different `contractDigest`, even when the authored decision logic is identical.
+One digest therefore resolves to exactly one authority and one immutable
+DecisionContract. The declared authority is a Phase 4 routing boundary, not
+authenticated security authority.
 
 The current management contract is
 [`flaggo-management-v3.yaml`](openapi/flaggo-management-v3.yaml). A decision
 name identifies a versioned `DecisionContract` resource, while
 `contractDigest` identifies one immutable accepted version. The API exposes
 dry-run validation, idempotent create-or-update by name, current-version lookup,
-and cursor-paginated historical-version lookup. A newly created version is
-returned only after its generated default executable is active. The API has no
-bundle, numeric server revision, compatibility classification, or manual
-bundle-approval resource. Unauthenticated liveness and readiness probes use the
-shared health models from `runtime-models-v3.schema.json`.
+cursor-paginated historical-version lookup, and a cross-authority current
+contract catalog for Evidence Materializer. The catalog ETag is change
+detection metadata only; it is not persisted in evidence identity, provenance,
+or checkpoints. A newly created version is returned only after its generated
+default executable is active. The API has no bundle, numeric server revision,
+compatibility classification, or manual bundle-approval resource.
+Unauthenticated liveness and readiness probes use the shared health models from
+`runtime-models-v3.schema.json`.
 
 [`management-models-v3.schema.json`](schemas/management-models-v3.schema.json)
 contains the strict `DecisionContract`, `DecisionExecutable`, validation-result,

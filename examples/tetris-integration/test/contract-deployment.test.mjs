@@ -37,6 +37,10 @@ const contract = {
     default: 800,
   },
 };
+const deployedContract = {
+  ...contract,
+  authority,
+};
 
 async function fixture(fileName = "demo.interval.decision-contract.json") {
   const directory = await mkdtemp(join(tmpdir(), "flaggo-deploy-"));
@@ -75,7 +79,7 @@ test("deployment manifest deploys each contract with one PUT", async () => {
           status: "ready",
           acceptedAt: "2026-09-27T12:00:00Z",
           activeExecutableDigest: executableDigest,
-          contract,
+          contract: deployedContract,
         }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
@@ -89,7 +93,11 @@ test("deployment manifest deploys each contract with one PUT", async () => {
       String(requests[0].input),
       "https://contracts.test/v3/decision-contracts/demo.interval",
     );
-    assert.deepEqual(JSON.parse(String(requests[0].init.body)), contract);
+    assert.deepEqual(
+      JSON.parse(String(requests[0].init.body)),
+      deployedContract,
+    );
+    assert.deepEqual(result.contracts[0].contract, deployedContract);
     assert.equal(result.contracts[0].deployment.contractDigest, contractDigest);
     assert.deepEqual(JSON.parse(JSON.stringify(result.runtimeConfig)), {
       format: "flaggo.runtime-config/v1",

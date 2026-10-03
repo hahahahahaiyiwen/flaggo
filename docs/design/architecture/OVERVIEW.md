@@ -151,7 +151,7 @@ The Contract Service owns the management resource and executable lifecycle:
 - coordinate authored and evidence-based executable generation;
 - validate immutable candidates against their exact contract;
 - atomically activate one executable for a contract digest in an authenticated
-  application/environment scope.
+  tenant/application/environment scope.
 
 The management resource may expose a current version by name. That pointer is
 for authoring and discovery only; the Decision Service never follows it.
@@ -188,7 +188,7 @@ The Decision Service owns one stateless runtime operation:
 POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
-For each request it authenticates application/environment scope, verifies the
+For each request it authenticates tenant/application/environment scope, verifies the
 name and digest, validates the SDK-constructed input, resolves the active
 immutable executable, evaluates it, validates the result, and returns a
 `RuntimeDecision`.
@@ -273,7 +273,7 @@ authority across digests.
    input and retains no semantic request state.
 6. Evidence-based generation never runs in the decision request path.
 7. A newer digest does not deactivate or reinterpret an older digest.
-8. Authentication establishes application/environment scope; contract
+8. Authentication establishes tenant/application/environment scope; contract
    attributes never do.
 9. A returned decision becomes an exposure only when the application applies
    it and the SDK reports that exposure.

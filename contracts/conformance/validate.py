@@ -1057,6 +1057,41 @@ def validate_v3_identities(fixtures: list[dict], rep: Report) -> None:
                 f"{context}: active executable digest is not canonical",
             )
 
+        if fixture.get("responseSchema", "").endswith(
+            "#/$defs/CurrentContractCatalog"
+        ):
+            entries = response_body.get("contracts", [])
+            ordering = []
+            digests = set()
+            for entry in entries:
+                contract = entry["contract"]
+                authority = contract["authority"]
+                digest = entry["contractDigest"]
+                rep.check(
+                    digest == contract_digest(contract),
+                    f"{context}: catalog digest does not identify its "
+                    "canonical authority-bound DecisionContract",
+                )
+                rep.check(
+                    digest not in digests,
+                    f"{context}: catalog repeats contract digest '{digest}'",
+                )
+                digests.add(digest)
+                ordering.append(
+                    (
+                        authority["tenant"],
+                        authority["application"],
+                        authority["environment"],
+                        contract["name"],
+                        digest,
+                    )
+                )
+            rep.check(
+                ordering == sorted(ordering),
+                f"{context}: catalog entries are not in deterministic "
+                "authority/name/digest order",
+            )
+
         runtime_match = RUNTIME_PATH_PATTERN.fullmatch(
             request.get("path", "")
         )

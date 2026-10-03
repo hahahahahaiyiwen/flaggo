@@ -13,24 +13,24 @@ public interface IExecutableStore
         CancellationToken cancellationToken = default);
 
     Task<StoredExecutable?> GetAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string executableDigest,
         CancellationToken cancellationToken = default);
 
     Task<StoredExecutable?> GetActiveAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         CancellationToken cancellationToken = default);
 
     Task<ActivationResult> ActivateAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         string executableDigest,
         string? expectedActiveExecutableDigest = null,
         CancellationToken cancellationToken = default);
 
     Task<ActivationResult> ActivateIfNoneAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         string executableDigest,
         CancellationToken cancellationToken = default);
@@ -39,7 +39,7 @@ public interface IExecutableStore
 }
 
 public sealed record StoredExecutable(
-    DecisionScope Scope,
+    AuthorityScope Scope,
     string ExecutableDigest,
     DecisionExecutable Executable,
     CheckedDecisionExecutable CheckedExecutable,
@@ -69,7 +69,7 @@ public sealed record ActivationResult(
     bool Changed);
 
 public sealed class ExecutableNotFoundException(
-    DecisionScope scope,
+    AuthorityScope scope,
     string executableDigest)
     : Exception($"Executable '{executableDigest}' does not exist in scope '{scope}'.");
 

@@ -117,6 +117,8 @@ public sealed class FlaggoAuthorizationResultHandler : IAuthorizationMiddlewareR
 
 public sealed class LocalDevelopmentIdentityOptions
 {
+    public string Tenant { get; set; } = "local";
+
     public string Application { get; set; } = "local-application";
 
     public string Environment { get; set; } = "development";
@@ -135,16 +137,18 @@ internal sealed class LocalDevelopmentAuthenticationHandler(
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var identity = identityOptions.Value;
-        if (string.IsNullOrWhiteSpace(identity.Application)
+        if (string.IsNullOrWhiteSpace(identity.Tenant)
+            || string.IsNullOrWhiteSpace(identity.Application)
             || string.IsNullOrWhiteSpace(identity.Environment))
         {
             return Task.FromResult(AuthenticateResult.Fail(
-                "Local-development identity requires non-empty Application and Environment."));
+                "Local-development identity requires non-empty Tenant, Application, and Environment."));
         }
 
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, "local-development"),
+            new(FlaggoClaimTypes.Tenant, identity.Tenant),
             new(FlaggoClaimTypes.Application, identity.Application),
             new(FlaggoClaimTypes.Environment, identity.Environment)
         };

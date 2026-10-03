@@ -12,6 +12,11 @@
       "Content-Type": "application/json"
     },
     "body": {
+      "authority": {
+        "tenant": "local",
+        "application": "tetris",
+        "environment": "integration"
+      },
       "name": "tetris.dropInterval",
       "expression_syntax": "flaggo.cel/v1",
       "attributes": [],

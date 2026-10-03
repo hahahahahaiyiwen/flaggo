@@ -4,9 +4,9 @@
  */
 "use strict";
 export const validateDeploymentManifest = validate32;
-const schema32 = {"type":"object","additionalProperties":false,"required":["format","authority","contracts"],"properties":{"format":{"const":"flaggo.deploy/v2"},"authority":{"$ref":"#/$defs/AuthorityScope"},"contracts":{"type":"array","items":{"$ref":"#/$defs/DecisionContractPath"},"minItems":1,"maxItems":128,"uniqueItems":true,"description":"DecisionContracts that all inherit the manifest authority."}}};
+const schema32 = {"type":"object","additionalProperties":false,"required":["format","authority","contracts"],"properties":{"format":{"const":"flaggo.deploy/v2"},"authority":{"$ref":"#/$defs/AuthorityScope"},"contracts":{"type":"array","items":{"$ref":"#/$defs/DecisionContractPath"},"minItems":1,"maxItems":128,"uniqueItems":true,"description":"Authority-free authored DecisionContracts that deployment binds to the manifest authority before validation, digesting, and persistence."}}};
 const schema37 = {"type":"string","minLength":1,"maxLength":1024,"pattern":"^(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?:(?:[A-Za-z0-9_-]|[A-Za-z0-9._-]*[A-Za-z0-9_-])/)*[A-Za-z][A-Za-z0-9._-]*\\.decision-contract\\.json$","description":"Portable ASCII forward-slash relative path contained by the deployment manifest directory."};
-const schema33 = {"type":"object","additionalProperties":false,"required":["tenant","application","environment"],"properties":{"tenant":{"$ref":"#/$defs/AuthorityIdentifier"},"application":{"$ref":"#/$defs/AuthorityIdentifier"},"environment":{"$ref":"#/$defs/AuthorityIdentifier"}},"description":"Declared routing authority inherited by every contract and telemetry signal in one deployment."};
+const schema33 = {"type":"object","additionalProperties":false,"required":["tenant","application","environment"],"properties":{"tenant":{"$ref":"#/$defs/AuthorityIdentifier"},"application":{"$ref":"#/$defs/AuthorityIdentifier"},"environment":{"$ref":"#/$defs/AuthorityIdentifier"}},"description":"Declared routing authority injected into every deployed DecisionContract and application telemetry signal in one deployment."};
 const schema34 = {"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z][A-Za-z0-9._-]*$"};
 const func1 = require("ajv/dist/runtime/ucs2length").default;
 const pattern4 = new RegExp("^[A-Za-z][A-Za-z0-9._-]*$", "u");
@@ -617,7 +617,7 @@ return errors === 0;
 validate34.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const validateRuntimeConfiguration = validate35;
-const schema38 = {"type":"object","additionalProperties":false,"required":["format","authority","services","bindings"],"properties":{"format":{"const":"flaggo.runtime-config/v1"},"authority":{"$ref":"#/$defs/AuthorityScope"},"services":{"$ref":"#/$defs/ServiceEndpoints"},"bindings":{"type":"object","propertyNames":{"$ref":"#/$defs/DecisionName"},"additionalProperties":{"$ref":"#/$defs/ContractBinding"},"minProperties":1,"maxProperties":128}},"description":"Generated immutable application configuration consumed by Flaggo SDK integrations."};
+const schema38 = {"type":"object","additionalProperties":false,"required":["format","authority","services","bindings"],"properties":{"format":{"const":"flaggo.runtime-config/v1"},"authority":{"$ref":"#/$defs/AuthorityScope"},"services":{"$ref":"#/$defs/ServiceEndpoints"},"bindings":{"type":"object","propertyNames":{"$ref":"#/$defs/DecisionName"},"additionalProperties":{"$ref":"#/$defs/ContractBinding"},"minProperties":1,"maxProperties":128}},"description":"Generated immutable application configuration containing the same authority bound into every deployed DecisionContract."};
 const schema43 = {"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z][A-Za-z0-9._-]*$"};
 
 function validate27(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){

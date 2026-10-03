@@ -12,24 +12,39 @@ combined:
 
 Only the third question selects runtime behavior.
 
-## Authenticated scope
+## Authority scope
 
-All management and runtime authority is interpreted within the authenticated
-application/environment scope. That scope comes from credentials and server
-authorization policy, not from contract attributes, route names, exposure
-context, or user-provided identifiers.
+Every deployed `DecisionContract` contains one immutable authority:
 
-Bearer tokens represent that scope with two required claims:
+```text
+AuthorityScope {
+  tenant
+  application
+  environment
+}
+```
+
+Deployment tooling injects the `flaggo.deploy/v2` manifest authority into each
+authored contract before validation and digest calculation. The resulting
+`contractDigest` therefore identifies one authority-bound contract. Changing
+any authority member creates a different digest even when authored decision
+logic is unchanged.
+
+Management reads and runtime evaluation recover that same scope from three
+required claims:
 
 | Claim | Meaning |
 | --- | --- |
+| `flaggo_tenant` | Stable tenant identifier |
 | `flaggo_application` | Stable application identifier |
 | `flaggo_environment` | Stable deployment-environment identifier |
 
-Both claims must be non-empty strings. Authorization scopes are read from the
-standard space-delimited `scope` claim or the `scp` claim. If both are present,
-their values are combined. A token missing either Flaggo scope claim is not a
-valid management or runtime authority identity.
+All three claims must be non-empty strings. Authorization scopes are read from
+the standard space-delimited `scope` claim or the `scp` claim. If both are
+present, their values are combined. A token missing any Flaggo authority claim
+is not a valid management-read or runtime identity. The initial deployment API
+accepts declared authority; future credential-derived authority may constrain
+that declaration.
 
 The conceptual authority records are:
 
@@ -63,8 +78,8 @@ contract version.
 Contract Acceptance validates, canonicalizes, hashes, and durably stores one
 exact `DecisionContract`. Acceptance establishes:
 
-- the named contract version exists in the authenticated scope;
-- its semantic content is immutable under `contractDigest`;
+- the named contract version exists in its declared authority scope;
+- its authority and semantic content are immutable under `contractDigest`;
 - generated executables must conform to that exact content; and
 - its required `result.default` may be used to generate the default
   executable.

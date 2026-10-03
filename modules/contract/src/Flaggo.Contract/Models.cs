@@ -3,14 +3,20 @@ using System.Text.Json.Serialization;
 
 namespace Flaggo.Contract;
 
-public readonly record struct DecisionScope(string Application, string Environment)
+public readonly record struct AuthorityScope(
+    string Tenant,
+    string Application,
+    string Environment)
 {
-    public override string ToString() => $"{Application}/{Environment}";
+    public override string ToString() => $"{Tenant}/{Application}/{Environment}";
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DecisionContract
 {
+    [JsonPropertyName("authority")]
+    public required AuthorityScope Authority { get; init; }
+
     [JsonPropertyName("name")]
     public required string Name { get; init; }
 

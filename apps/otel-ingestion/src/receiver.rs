@@ -88,7 +88,7 @@ async fn ingest(signal: OtlpSignal, state: AppState, headers: HeaderMap, body: B
             .into_response();
         }
     };
-    if !validate_export_request(signal, wire_encoding, &payload) {
+    if !validate_export_request_shape(signal, wire_encoding, &payload) {
         return OtlpHttpError::new(
             StatusCode::BAD_REQUEST,
             INVALID_ARGUMENT,
@@ -223,7 +223,7 @@ async fn read_limited(
     Ok(payload)
 }
 
-fn validate_export_request(
+fn validate_export_request_shape(
     signal: OtlpSignal,
     wire_encoding: OtlpWireEncoding,
     payload: &[u8],
@@ -641,6 +641,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stores_mixed_authority_resources_as_one_opaque_batch() {
+        let inbox = TestInbox::new(AppendBehavior::Success);
+        let payload = mixed_authority_logs_json();
+
+        let response = send(
+            inbox.clone(),
+            OtlpReceiverConfig::default(),
+            "/v1/logs",
+            Some("application/json"),
+            None,
+            payload.to_vec(),
+        )
+        .await;
+
+        assert_success(response, OtlpWireEncoding::ProtobufJson).await;
+        let batches = inbox.batches();
+        assert_eq!(batches.len(), 1);
+        assert_batch(
+            &batches[0],
+            OtlpSignal::Logs,
+            OtlpWireEncoding::ProtobufJson,
+            OtlpTransportCompression::Identity,
+            payload,
+        );
+    }
+
+    #[tokio::test]
     async fn persists_accepted_request_through_sqlite_inbox_contract() {
         let directory = tempfile::tempdir().expect("temporary inbox directory");
         let database_url = sqlite_url(&directory.path().join("inbox.db"));
@@ -962,6 +989,10 @@ mod tests {
 
     fn logs_json() -> &'static [u8] {
         br#"{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"1770000000000000000","body":{"stringValue":"hello"},"attributes":[{"key":"bytes","value":{"bytesValue":"AQID"}}]}]}]}]}"#
+    }
+
+    fn mixed_authority_logs_json() -> &'static [u8] {
+        br#"{"resourceLogs":[{"resource":{"attributes":[{"key":"flaggo.tenant","value":{"stringValue":"tenant-a"}},{"key":"flaggo.application","value":{"stringValue":"worker-a"}},{"key":"flaggo.environment","value":{"stringValue":"production"}}]},"scopeLogs":[{"scope":{"name":"worker-a.app"},"logRecords":[{"body":{"stringValue":"observation-a"}}]}]},{"resource":{"attributes":[{"key":"flaggo.tenant","value":{"stringValue":"tenant-b"}},{"key":"flaggo.application","value":{"stringValue":"worker-b"}},{"key":"flaggo.environment","value":{"stringValue":"staging"}}]},"scopeLogs":[{"scope":{"name":"worker-b.app"},"logRecords":[{"body":{"stringValue":"observation-b"}}]}]}]}"#
     }
 
     fn metrics_json() -> &'static [u8] {

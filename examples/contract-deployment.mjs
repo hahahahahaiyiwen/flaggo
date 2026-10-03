@@ -13,7 +13,10 @@ import {
   parseFlaggoRuntimeConfiguration,
   parseFlaggoServiceEndpoints,
 } from "@flaggo/sdk/configuration";
-import { createContractClient } from "@flaggo/sdk/management";
+import {
+  bindDecisionContract,
+  createContractClient,
+} from "@flaggo/sdk/management";
 
 export async function deployContracts({
   manifestPath,
@@ -73,12 +76,17 @@ export async function deployContracts({
   });
   const contracts = [];
   for (const source of sources) {
-    const response = await client.deploy(
+    const contract = bindDecisionContract(
       source.contract,
+      manifest.authority,
+    );
+    const response = await client.deploy(
+      contract,
       signal === undefined ? {} : { signal },
     );
     contracts.push({
       ...source,
+      contract,
       deployment: response.value,
     });
   }

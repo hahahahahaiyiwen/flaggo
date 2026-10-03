@@ -124,7 +124,6 @@ fn decompose_logs(request: ExportLogsServiceRequest, received_at: DateTime<Utc>)
                     scope_schema_url: scope_logs.schema_url.clone(),
                     signal_attributes: record.attributes.clone(),
                     parent_span_name: None,
-                    parent_span_attributes: Vec::new(),
                     payload: log_record_json(&record),
                     identity: explicit_identity.as_ref().map_or(
                         Value::Null,
@@ -194,7 +193,6 @@ fn decompose_traces(
                     scope_schema_url: scope_spans.schema_url.clone(),
                     signal_attributes: span.attributes.clone(),
                     parent_span_name: None,
-                    parent_span_attributes: Vec::new(),
                     payload: span_json(&span),
                     identity: span_identity.clone(),
                     identity_is_content_derived: false,
@@ -224,7 +222,6 @@ fn decompose_traces(
                         scope_schema_url: scope_spans.schema_url.clone(),
                         signal_attributes: event.attributes.clone(),
                         parent_span_name: Some(span.name.clone()),
-                        parent_span_attributes: span.attributes.clone(),
                         payload: json!({
                             "event": span_event_json(event),
                             "eventIndex": event_index.to_string(),
@@ -392,7 +389,6 @@ fn push_metric_point(
         scope_schema_url: context.scope_schema_url.clone(),
         signal_attributes: attributes.clone(),
         parent_span_name: None,
-        parent_span_attributes: Vec::new(),
         payload: json!({
             "aggregation": aggregation,
             "dataPoint": data_point,

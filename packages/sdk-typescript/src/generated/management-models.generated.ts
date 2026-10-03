@@ -14,6 +14,11 @@ export type Sha256Digest = string;
  */
 export type DecisionName = string;
 /**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "AuthorityIdentifier".
+ */
+export type AuthorityIdentifier = string;
+/**
  * A user-declared attribute name. Names beginning with '_' are reserved for Flaggo internal attributes.
  *
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
@@ -101,6 +106,17 @@ export type DecisionContractValidationResult = ValidDecisionContract | InvalidDe
  * DecisionContract acceptance and status models for the Flaggo Management API v3.
  */
 export interface FlaggoManagementModelsV3 {}
+/**
+ * Declared tenant, application, and environment scope bound into an immutable deployed DecisionContract.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "AuthorityScope".
+ */
+export interface AuthorityScope {
+  tenant: AuthorityIdentifier;
+  application: AuthorityIdentifier;
+  environment: AuthorityIdentifier;
+}
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
  * via the `definition` "NullValueSchema".
@@ -445,6 +461,7 @@ export interface Learning {
  * via the `definition` "DecisionContract".
  */
 export interface DecisionContract {
+  authority: AuthorityScope;
   name: DecisionName;
   expression_syntax: "flaggo.cel/v1";
   /**
@@ -543,6 +560,7 @@ export interface DecisionContractVersion {
  * The immutable accepted contract document. Its name must equal the enclosing resource name.
  */
 export interface DecisionContract1 {
+  authority: AuthorityScope;
   name: DecisionName;
   expression_syntax: "flaggo.cel/v1";
   /**
@@ -557,17 +575,17 @@ export interface DecisionContract1 {
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
- * via the `definition` "ContractSelectorSnapshotEntry".
+ * via the `definition` "CurrentContractCatalogEntry".
  */
-export interface ContractSelectorSnapshotEntry {
-  name: DecisionName;
+export interface CurrentContractCatalogEntry {
   contractDigest: Sha256Digest;
   contract: DecisionContract2;
 }
 /**
- * The complete immutable current contract. Its name must equal the enclosing snapshot entry name.
+ * The complete immutable current deployed contract whose authority and semantic content are covered by contractDigest.
  */
 export interface DecisionContract2 {
+  authority: AuthorityScope;
   name: DecisionName;
   expression_syntax: "flaggo.cel/v1";
   /**
@@ -581,18 +599,16 @@ export interface DecisionContract2 {
   learning?: Learning;
 }
 /**
+ * Cross-authority materializer catalog. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity.
+ *
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
- * via the `definition` "ContractSelectorSnapshot".
+ * via the `definition` "CurrentContractCatalog".
  */
-export interface ContractSelectorSnapshot {
+export interface CurrentContractCatalog {
   /**
-   * Deterministic digest of the ordered current learning-contract names and contract digests.
+   * Current deployed contracts ordered by authority tenant, application, environment, contract name, and contractDigest.
    */
-  snapshotDigest: string;
-  /**
-   * Current contracts with learning evidence, ordered by name and then contractDigest.
-   */
-  contracts: ContractSelectorSnapshotEntry[];
+  contracts: CurrentContractCatalogEntry[];
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema

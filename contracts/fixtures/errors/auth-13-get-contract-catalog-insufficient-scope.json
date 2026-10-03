@@ -1,11 +1,11 @@
 {
-  "name": "get-selector-snapshot-insufficient-scope",
+  "name": "get-contract-catalog-insufficient-scope",
   "scenario": 49,
-  "invariant": "Current selector snapshot lookup without flaggo.contracts:read returns 403 insufficient-scope.",
+  "invariant": "Cross-authority contract catalog lookup without flaggo.contracts:materialize returns 403 insufficient-scope.",
   "responseSchema": "problem-details-v3.schema.json",
   "request": {
     "method": "GET",
-    "path": "/v3/decision-contract-snapshots/current",
+    "path": "/v3/decision-contract-catalog/current",
     "headers": {
       "Authorization": "******"
     }
@@ -14,14 +14,14 @@
     "status": 403,
     "headers": {
       "Content-Type": "application/problem+json",
-      "X-Flaggo-Correlation-Id": "srv-contract-selector-snapshot-scope"
+      "X-Flaggo-Correlation-Id": "srv-contract-catalog-scope"
     },
     "body": {
       "type": "https://flaggo.dev/problems/insufficient-scope",
       "title": "Insufficient scope",
       "status": 403,
-      "instance": "/v3/decision-contract-snapshots/current",
-      "detail": "Token lacks flaggo.contracts:read."
+      "instance": "/v3/decision-contract-catalog/current",
+      "detail": "Token lacks flaggo.contracts:materialize."
     }
   }
 }

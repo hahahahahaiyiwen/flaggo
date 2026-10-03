@@ -5,7 +5,7 @@ use opentelemetry_proto::tonic::{
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use flaggo_evidence_store::EvidenceSignal;
+use flaggo_evidence_store::{EvidenceSignal, SourceKey};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Candidate {
@@ -23,7 +23,6 @@ pub(crate) struct Candidate {
     pub scope_schema_url: String,
     pub signal_attributes: Vec<KeyValue>,
     pub parent_span_name: Option<String>,
-    pub parent_span_attributes: Vec<KeyValue>,
     pub payload: Value,
     pub identity: Value,
     pub identity_is_content_derived: bool,
@@ -68,19 +67,16 @@ impl Candidate {
             .map_or(&[], |resource| resource.attributes.as_slice())
     }
 
-    pub fn scope_attributes(&self) -> &[KeyValue] {
-        self.scope
-            .as_ref()
-            .map_or(&[], |scope| scope.attributes.as_slice())
+    pub fn source_key(&self) -> SourceKey {
+        SourceKey {
+            signal: self.signal,
+            instrumentation_scope: self.instrumentation_scope.clone(),
+            signal_name: self.signal_name.clone(),
+            metric_kind: self.metric_kind.clone(),
+            metric_unit: self.metric_unit.clone(),
+            parent_span_name: self.parent_span_name.clone(),
+        }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AttributeLocation {
-    Resource,
-    Scope,
-    Signal,
-    ParentSpan,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]

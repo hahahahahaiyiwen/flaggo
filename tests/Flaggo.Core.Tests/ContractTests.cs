@@ -20,7 +20,7 @@ public sealed class ContractTests
         Assert.Equal("valid", validation.Status);
         Assert.Empty(validation.Issues);
         Assert.Equal(
-            "sha256:3c93eda4a9f8ab8b602a08644db59d19ab1219406b26b32aff8ef2c52c4c2040",
+            "sha256:7394e6ec3d9eee8d559c4e5b44b15fb5ab7827e5307d5877f369ba0c9ded8098",
             validation.ContractDigest);
     }
 
@@ -1083,6 +1083,21 @@ public sealed class ContractTests
         Assert.Contains(undeclaredIssues, issue => issue.Code == "undeclared-attribute");
     }
 
-    private static DecisionContract ParseContract(string json) =>
-        StrictJson.Deserialize<DecisionContract>(Encoding.UTF8.GetBytes(json));
+    private static DecisionContract ParseContract(string json)
+    {
+        var objectStart = json.IndexOf('{', StringComparison.Ordinal);
+        Assert.True(objectStart >= 0);
+        var scopedJson = json.Insert(
+            objectStart + 1,
+            """
+
+              "authority": {
+                "tenant": "local",
+                "application": "test",
+                "environment": "test"
+              },
+            """);
+        return StrictJson.Deserialize<DecisionContract>(
+            Encoding.UTF8.GetBytes(scopedJson));
+    }
 }

@@ -9,14 +9,14 @@ use sqlx::{
 };
 
 use crate::{
-    DecisionScope, EvidenceAssociation, EvidenceDiagnostic, EvidenceMaterializationCommit,
+    AuthorityScope, EvidenceDiagnostic, EvidenceMaterializationCommit, EvidenceMaterializationMode,
     EvidenceObservation, EvidenceSignal, EvidenceStore, EvidenceStoreCommitResult,
-    EvidenceStoreError, EvidenceStoreHealth, MaterializationKey, MaterializerVersions,
-    StoredEvidenceAssociation, StoredEvidenceObservation, StoredSelectorSnapshot,
+    EvidenceStoreError, EvidenceStoreHealth, ForwardMaterializationKey, MaterializerVersions,
+    SourceKey, StoredContractCatalog, StoredEvidenceObservation,
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const CREATE_SCHEMA_VERSIONS: &str = "
@@ -25,41 +25,30 @@ const CREATE_SCHEMA_VERSIONS: &str = "
         version INTEGER NOT NULL
     )
 ";
-const CREATE_SELECTOR_SNAPSHOTS: &str = "
-    CREATE TABLE IF NOT EXISTS evidence_selector_snapshots (
-        snapshot_digest TEXT PRIMARY KEY,
-        snapshot_json BLOB NOT NULL,
-        fetched_at_unix_ms INTEGER NOT NULL
-    )
-";
-const CREATE_STATE: &str = "
-    CREATE TABLE IF NOT EXISTS evidence_store_state (
+const CREATE_CATALOG_STATE: &str = "
+    CREATE TABLE IF NOT EXISTS evidence_contract_catalog (
         singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-        active_snapshot_digest TEXT NULL,
-        FOREIGN KEY(active_snapshot_digest)
-            REFERENCES evidence_selector_snapshots(snapshot_digest)
+        etag TEXT NOT NULL,
+        catalog_json BLOB NOT NULL,
+        fetched_at_unix_ms INTEGER NOT NULL
     )
 ";
 const CREATE_CHECKPOINTS: &str = "
     CREATE TABLE IF NOT EXISTS evidence_materializer_checkpoints (
-        snapshot_digest TEXT NOT NULL,
         materializer_version TEXT NOT NULL,
         decoder_version TEXT NOT NULL,
         identity_version TEXT NOT NULL,
         projection_version TEXT NOT NULL,
-        selector_protocol_version TEXT NOT NULL,
+        routing_version TEXT NOT NULL,
         last_inbox_batch_id INTEGER NOT NULL CHECK(last_inbox_batch_id > 0),
         updated_at_unix_ms INTEGER NOT NULL,
         PRIMARY KEY(
-            snapshot_digest,
             materializer_version,
             decoder_version,
             identity_version,
             projection_version,
-            selector_protocol_version
-        ),
-        FOREIGN KEY(snapshot_digest)
-            REFERENCES evidence_selector_snapshots(snapshot_digest)
+            routing_version
+        )
     )
 ";
 const CREATE_OBSERVATIONS: &str = "
@@ -67,6 +56,7 @@ const CREATE_OBSERVATIONS: &str = "
         observation_id TEXT PRIMARY KEY,
         logical_source_id TEXT NOT NULL,
         content_digest TEXT NOT NULL,
+        tenant TEXT NOT NULL,
         application TEXT NOT NULL,
         environment TEXT NOT NULL,
         signal_type TEXT NOT NULL
@@ -75,6 +65,7 @@ const CREATE_OBSERVATIONS: &str = "
         signal_name TEXT NOT NULL,
         metric_kind TEXT NULL,
         metric_unit TEXT NULL,
+        parent_span_name TEXT NULL,
         observed_at_unix_nano TEXT NOT NULL,
         observed_time_source TEXT NOT NULL,
         protocol_kind TEXT NULL,
@@ -85,17 +76,31 @@ const CREATE_OBSERVATIONS: &str = "
         decoder_version TEXT NOT NULL,
         identity_version TEXT NOT NULL,
         projection_version TEXT NOT NULL,
-        selector_protocol_version TEXT NOT NULL,
+        routing_version TEXT NOT NULL,
         created_at_unix_ms INTEGER NOT NULL
     )
 ";
 const CREATE_OBSERVATION_INDEXES: &str = "
-    CREATE INDEX IF NOT EXISTS ix_evidence_observations_scope_time
+    CREATE INDEX IF NOT EXISTS ix_evidence_observations_authority_time
     ON evidence_observations(
+        tenant,
         application,
         environment,
         observed_at_unix_nano,
         observation_id
+    );
+
+    CREATE INDEX IF NOT EXISTS ix_evidence_observations_route
+    ON evidence_observations(
+        tenant,
+        application,
+        environment,
+        signal_type,
+        instrumentation_scope,
+        signal_name,
+        metric_kind,
+        metric_unit,
+        parent_span_name
     );
 
     CREATE INDEX IF NOT EXISTS ix_evidence_observations_logical_source
@@ -106,62 +111,21 @@ const CREATE_PROVENANCE: &str = "
         observation_id TEXT NOT NULL,
         inbox_batch_id INTEGER NOT NULL CHECK(inbox_batch_id > 0),
         candidate_ordinal INTEGER NOT NULL CHECK(candidate_ordinal >= 0),
-        snapshot_digest TEXT NOT NULL,
         recorded_at_unix_ms INTEGER NOT NULL,
-        PRIMARY KEY(
-            observation_id,
-            inbox_batch_id,
-            candidate_ordinal,
-            snapshot_digest
-        ),
+        PRIMARY KEY(observation_id, inbox_batch_id, candidate_ordinal),
         FOREIGN KEY(observation_id)
-            REFERENCES evidence_observations(observation_id),
-        FOREIGN KEY(snapshot_digest)
-            REFERENCES evidence_selector_snapshots(snapshot_digest)
-    )
-";
-const CREATE_ASSOCIATIONS: &str = "
-    CREATE TABLE IF NOT EXISTS evidence_observation_associations (
-        observation_id TEXT NOT NULL,
-        snapshot_digest TEXT NOT NULL,
-        contract_digest TEXT NOT NULL,
-        evidence_name TEXT NOT NULL,
-        contract_attribute TEXT NOT NULL,
-        correlation_json BLOB NOT NULL,
-        source_json BLOB NOT NULL,
-        associated_at_unix_ms INTEGER NOT NULL,
-        PRIMARY KEY(
-            observation_id,
-            snapshot_digest,
-            contract_digest,
-            evidence_name
-        ),
-        FOREIGN KEY(observation_id)
-            REFERENCES evidence_observations(observation_id),
-        FOREIGN KEY(snapshot_digest)
-            REFERENCES evidence_selector_snapshots(snapshot_digest)
-    )
-";
-const CREATE_ASSOCIATION_INDEX: &str = "
-    CREATE INDEX IF NOT EXISTS ix_evidence_associations_contract
-    ON evidence_observation_associations(
-        contract_digest,
-        evidence_name,
-        observation_id
+            REFERENCES evidence_observations(observation_id)
     )
 ";
 const CREATE_DIAGNOSTICS: &str = "
     CREATE TABLE IF NOT EXISTS evidence_materializer_diagnostics (
         diagnostic_id TEXT PRIMARY KEY,
-        snapshot_digest TEXT NOT NULL,
         inbox_batch_id INTEGER NOT NULL CHECK(inbox_batch_id > 0),
         candidate_ordinal INTEGER NULL CHECK(candidate_ordinal >= 0),
         code TEXT NOT NULL,
         message TEXT NOT NULL,
         detail_json BLOB NULL,
-        created_at_unix_ms INTEGER NOT NULL,
-        FOREIGN KEY(snapshot_digest)
-            REFERENCES evidence_selector_snapshots(snapshot_digest)
+        created_at_unix_ms INTEGER NOT NULL
     )
 ";
 const CREATE_DIAGNOSTIC_INDEX: &str = "
@@ -254,14 +218,11 @@ impl SqliteEvidenceStore {
         }
 
         for statement in [
-            CREATE_SELECTOR_SNAPSHOTS,
-            CREATE_STATE,
+            CREATE_CATALOG_STATE,
             CREATE_CHECKPOINTS,
             CREATE_OBSERVATIONS,
             CREATE_OBSERVATION_INDEXES,
             CREATE_PROVENANCE,
-            CREATE_ASSOCIATIONS,
-            CREATE_ASSOCIATION_INDEX,
             CREATE_DIAGNOSTICS,
             CREATE_DIAGNOSTIC_INDEX,
             CREATE_CONFLICTS,
@@ -271,14 +232,6 @@ impl SqliteEvidenceStore {
                 .await
                 .map_err(EvidenceStoreError::unavailable)?;
         }
-        sqlx::query(
-            "INSERT INTO evidence_store_state(singleton, active_snapshot_digest)
-             VALUES (1, NULL)
-             ON CONFLICT(singleton) DO NOTHING",
-        )
-        .execute(&mut *transaction)
-        .await
-        .map_err(EvidenceStoreError::unavailable)?;
         transaction
             .commit()
             .await
@@ -287,24 +240,22 @@ impl SqliteEvidenceStore {
 
     async fn stored_checkpoint(
         transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        key: &MaterializationKey,
+        key: &ForwardMaterializationKey,
     ) -> Result<Option<u64>, EvidenceStoreError> {
         let value: Option<i64> = sqlx::query_scalar(
             "SELECT last_inbox_batch_id
              FROM evidence_materializer_checkpoints
-             WHERE snapshot_digest = ?
-               AND materializer_version = ?
+             WHERE materializer_version = ?
                AND decoder_version = ?
                AND identity_version = ?
                AND projection_version = ?
-               AND selector_protocol_version = ?",
+               AND routing_version = ?",
         )
-        .bind(&key.snapshot_digest)
         .bind(&key.versions.materializer)
         .bind(&key.versions.decoder)
         .bind(&key.versions.identity)
         .bind(&key.versions.projection)
-        .bind(&key.versions.selector_protocol)
+        .bind(&key.versions.routing)
         .fetch_optional(&mut **transaction)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
@@ -319,11 +270,9 @@ impl SqliteEvidenceStore {
         created_at_unix_ms: i64,
     ) -> Result<u64, EvidenceStoreError> {
         validate_diagnostic(diagnostic)?;
-        let candidate_ordinal = diagnostic.candidate_ordinal.map(i64::from);
-        let rows = sqlx::query(
+        sqlx::query(
             "INSERT INTO evidence_materializer_diagnostics(
                 diagnostic_id,
-                snapshot_digest,
                 inbox_batch_id,
                 candidate_ordinal,
                 code,
@@ -331,28 +280,25 @@ impl SqliteEvidenceStore {
                 detail_json,
                 created_at_unix_ms
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(diagnostic_id) DO NOTHING",
         )
         .bind(&diagnostic.diagnostic_id)
-        .bind(&diagnostic.snapshot_digest)
         .bind(to_i64("inbox batch ID", diagnostic.inbox_batch_id)?)
-        .bind(candidate_ordinal)
+        .bind(diagnostic.candidate_ordinal.map(i64::from))
         .bind(&diagnostic.code)
         .bind(&diagnostic.message)
         .bind(&diagnostic.detail_json)
         .bind(created_at_unix_ms)
         .execute(&mut **transaction)
         .await
-        .map_err(EvidenceStoreError::unavailable)?
-        .rows_affected();
-        Ok(rows)
+        .map_err(EvidenceStoreError::unavailable)
+        .map(|result| result.rows_affected())
     }
 
     async fn insert_conflicts(
         transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         observation: &EvidenceObservation,
-        snapshot_digest: &str,
         inbox_batch_id: u64,
         candidate_ordinal: u32,
         created_at_unix_ms: i64,
@@ -379,31 +325,27 @@ impl SqliteEvidenceStore {
             let existing_digest: String = row
                 .try_get("content_digest")
                 .map_err(EvidenceStoreError::unavailable)?;
-            let (
-                first_observation_id,
-                second_observation_id,
-                first_content_digest,
-                second_content_digest,
-            ) = if existing_id <= observation.observation_id {
-                (
-                    existing_id,
-                    observation.observation_id.clone(),
-                    existing_digest,
-                    observation.content_digest.clone(),
-                )
-            } else {
-                (
-                    observation.observation_id.clone(),
-                    existing_id,
-                    observation.content_digest.clone(),
-                    existing_digest,
-                )
-            };
+            let (first_id, second_id, first_digest, second_digest) =
+                if existing_id <= observation.observation_id {
+                    (
+                        existing_id,
+                        observation.observation_id.clone(),
+                        existing_digest,
+                        observation.content_digest.clone(),
+                    )
+                } else {
+                    (
+                        observation.observation_id.clone(),
+                        existing_id,
+                        observation.content_digest.clone(),
+                        existing_digest,
+                    )
+                };
             let conflict_id = digest_parts(&[
                 "evidence-conflict/v1",
                 &observation.logical_source_id,
-                &first_observation_id,
-                &second_observation_id,
+                &first_id,
+                &second_id,
             ]);
             let inserted = sqlx::query(
                 "INSERT INTO evidence_observation_conflicts(
@@ -420,10 +362,10 @@ impl SqliteEvidenceStore {
             )
             .bind(&conflict_id)
             .bind(&observation.logical_source_id)
-            .bind(&first_observation_id)
-            .bind(&second_observation_id)
-            .bind(&first_content_digest)
-            .bind(&second_content_digest)
+            .bind(&first_id)
+            .bind(&second_id)
+            .bind(&first_digest)
+            .bind(&second_digest)
             .bind(created_at_unix_ms)
             .execute(&mut **transaction)
             .await
@@ -435,7 +377,6 @@ impl SqliteEvidenceStore {
                     transaction,
                     &EvidenceDiagnostic {
                         diagnostic_id: conflict_id,
-                        snapshot_digest: snapshot_digest.to_owned(),
                         inbox_batch_id,
                         candidate_ordinal: Some(candidate_ordinal),
                         code: "logical-source-conflict".to_owned(),
@@ -443,11 +384,11 @@ impl SqliteEvidenceStore {
                             .to_owned(),
                         detail_json: Some(
                             serde_json::to_vec(&serde_json::json!({
-                                "firstContentDigest": first_content_digest,
-                                "firstObservationId": first_observation_id,
+                                "firstContentDigest": first_digest,
+                                "firstObservationId": first_id,
                                 "logicalSourceId": observation.logical_source_id,
-                                "secondContentDigest": second_content_digest,
-                                "secondObservationId": second_observation_id
+                                "secondContentDigest": second_digest,
+                                "secondObservationId": second_id
                             }))
                             .expect("conflict detail JSON must serialize"),
                         ),
@@ -463,116 +404,78 @@ impl SqliteEvidenceStore {
 
 #[async_trait]
 impl EvidenceStore for SqliteEvidenceStore {
-    async fn activate_snapshot(
-        &self,
-        snapshot: StoredSelectorSnapshot,
-    ) -> Result<(), EvidenceStoreError> {
-        validate_digest("snapshot digest", &snapshot.snapshot_digest)?;
-        validate_json("selector snapshot", &snapshot.payload)?;
-        let mut transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(EvidenceStoreError::unavailable)?;
+    async fn save_catalog(&self, catalog: StoredContractCatalog) -> Result<(), EvidenceStoreError> {
+        validate_catalog(&catalog)?;
         sqlx::query(
-            "INSERT INTO evidence_selector_snapshots(
-                snapshot_digest,
-                snapshot_json,
+            "INSERT INTO evidence_contract_catalog(
+                singleton,
+                etag,
+                catalog_json,
                 fetched_at_unix_ms
              )
-             VALUES (?, ?, ?)
-             ON CONFLICT(snapshot_digest) DO NOTHING",
+             VALUES (1, ?, ?, ?)
+             ON CONFLICT(singleton) DO UPDATE SET
+                etag = excluded.etag,
+                catalog_json = excluded.catalog_json,
+                fetched_at_unix_ms = excluded.fetched_at_unix_ms",
         )
-        .bind(&snapshot.snapshot_digest)
-        .bind(&snapshot.payload)
-        .bind(snapshot.fetched_at.timestamp_millis())
-        .execute(&mut *transaction)
+        .bind(&catalog.etag)
+        .bind(&catalog.payload)
+        .bind(catalog.fetched_at.timestamp_millis())
+        .execute(&self.pool)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
-        let stored_payload: Vec<u8> = sqlx::query_scalar(
-            "SELECT snapshot_json
-             FROM evidence_selector_snapshots
-             WHERE snapshot_digest = ?",
-        )
-        .bind(&snapshot.snapshot_digest)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(EvidenceStoreError::unavailable)?;
-        if stored_payload != snapshot.payload {
-            return Err(EvidenceStoreError::CorruptData(format!(
-                "selector snapshot {} has inconsistent content",
-                snapshot.snapshot_digest
-            )));
-        }
-        sqlx::query(
-            "UPDATE evidence_store_state
-             SET active_snapshot_digest = ?
-             WHERE singleton = 1",
-        )
-        .bind(&snapshot.snapshot_digest)
-        .execute(&mut *transaction)
-        .await
-        .map_err(EvidenceStoreError::unavailable)?;
-        transaction
-            .commit()
-            .await
-            .map_err(EvidenceStoreError::unavailable)
+        Ok(())
     }
 
-    async fn load_active_snapshot(
-        &self,
-    ) -> Result<Option<StoredSelectorSnapshot>, EvidenceStoreError> {
+    async fn load_catalog(&self) -> Result<Option<StoredContractCatalog>, EvidenceStoreError> {
         let row = sqlx::query(
-            "SELECT snapshots.snapshot_digest,
-                    snapshots.snapshot_json,
-                    snapshots.fetched_at_unix_ms
-             FROM evidence_store_state AS state
-             JOIN evidence_selector_snapshots AS snapshots
-               ON snapshots.snapshot_digest = state.active_snapshot_digest
-             WHERE state.singleton = 1",
+            "SELECT etag, catalog_json, fetched_at_unix_ms
+             FROM evidence_contract_catalog
+             WHERE singleton = 1",
         )
         .fetch_optional(&self.pool)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
         row.map(|row| {
-            Ok(StoredSelectorSnapshot {
-                snapshot_digest: row
-                    .try_get("snapshot_digest")
+            let catalog = StoredContractCatalog {
+                etag: row
+                    .try_get("etag")
                     .map_err(EvidenceStoreError::unavailable)?,
                 payload: row
-                    .try_get("snapshot_json")
+                    .try_get("catalog_json")
                     .map_err(EvidenceStoreError::unavailable)?,
                 fetched_at: datetime_from_millis(
-                    "snapshot fetched time",
+                    "catalog fetched time",
                     row.try_get("fetched_at_unix_ms")
                         .map_err(EvidenceStoreError::unavailable)?,
                 )?,
-            })
+            };
+            validate_catalog(&catalog)?;
+            Ok(catalog)
         })
         .transpose()
     }
 
-    async fn checkpoint(
+    async fn forward_checkpoint(
         &self,
-        key: &MaterializationKey,
+        key: &ForwardMaterializationKey,
     ) -> Result<Option<u64>, EvidenceStoreError> {
         validate_key(key)?;
         let value: Option<i64> = sqlx::query_scalar(
             "SELECT last_inbox_batch_id
              FROM evidence_materializer_checkpoints
-             WHERE snapshot_digest = ?
-               AND materializer_version = ?
+             WHERE materializer_version = ?
                AND decoder_version = ?
                AND identity_version = ?
                AND projection_version = ?
-               AND selector_protocol_version = ?",
+               AND routing_version = ?",
         )
-        .bind(&key.snapshot_digest)
         .bind(&key.versions.materializer)
         .bind(&key.versions.decoder)
         .bind(&key.versions.identity)
         .bind(&key.versions.projection)
-        .bind(&key.versions.selector_protocol)
+        .bind(&key.versions.routing)
         .fetch_optional(&self.pool)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
@@ -591,9 +494,10 @@ impl EvidenceStore for SqliteEvidenceStore {
             .begin()
             .await
             .map_err(EvidenceStoreError::unavailable)?;
-        if Self::stored_checkpoint(&mut transaction, &commit.key)
-            .await?
-            .is_some_and(|value| value >= commit.inbox_batch_id)
+        if commit.mode == EvidenceMaterializationMode::Forward
+            && Self::stored_checkpoint(&mut transaction, &commit.key)
+                .await?
+                .is_some_and(|value| value >= commit.inbox_batch_id)
         {
             transaction
                 .rollback()
@@ -614,6 +518,7 @@ impl EvidenceStore for SqliteEvidenceStore {
                     observation_id,
                     logical_source_id,
                     content_digest,
+                    tenant,
                     application,
                     environment,
                     signal_type,
@@ -621,6 +526,7 @@ impl EvidenceStore for SqliteEvidenceStore {
                     signal_name,
                     metric_kind,
                     metric_unit,
+                    parent_span_name,
                     observed_at_unix_nano,
                     observed_time_source,
                     protocol_kind,
@@ -631,22 +537,24 @@ impl EvidenceStore for SqliteEvidenceStore {
                     decoder_version,
                     identity_version,
                     projection_version,
-                    selector_protocol_version,
+                    routing_version,
                     created_at_unix_ms
                  )
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(observation_id) DO NOTHING",
             )
             .bind(&observation.observation_id)
             .bind(&observation.logical_source_id)
             .bind(&observation.content_digest)
-            .bind(&observation.scope.application)
-            .bind(&observation.scope.environment)
-            .bind(observation.signal.as_str())
-            .bind(&observation.instrumentation_scope)
-            .bind(&observation.signal_name)
-            .bind(&observation.metric_kind)
-            .bind(&observation.metric_unit)
+            .bind(&observation.authority.tenant)
+            .bind(&observation.authority.application)
+            .bind(&observation.authority.environment)
+            .bind(observation.source.signal.as_str())
+            .bind(&observation.source.instrumentation_scope)
+            .bind(&observation.source.signal_name)
+            .bind(&observation.source.metric_kind)
+            .bind(&observation.source.metric_unit)
+            .bind(&observation.source.parent_span_name)
             .bind(observation.observed_at_unix_nano.to_string())
             .bind(&observation.observed_time_source)
             .bind(&observation.protocol_kind)
@@ -657,7 +565,7 @@ impl EvidenceStore for SqliteEvidenceStore {
             .bind(&observation.versions.decoder)
             .bind(&observation.versions.identity)
             .bind(&observation.versions.projection)
-            .bind(&observation.versions.selector_protocol)
+            .bind(&observation.versions.routing)
             .bind(created_at_unix_ms)
             .execute(&mut *transaction)
             .await
@@ -673,7 +581,6 @@ impl EvidenceStore for SqliteEvidenceStore {
             let (conflicts, conflict_diagnostics) = Self::insert_conflicts(
                 &mut transaction,
                 observation,
-                &commit.key.snapshot_digest,
                 commit.inbox_batch_id,
                 write.candidate_ordinal,
                 created_at_unix_ms,
@@ -687,31 +594,19 @@ impl EvidenceStore for SqliteEvidenceStore {
                     observation_id,
                     inbox_batch_id,
                     candidate_ordinal,
-                    snapshot_digest,
                     recorded_at_unix_ms
                  )
-                 VALUES (?, ?, ?, ?, ?)
+                 VALUES (?, ?, ?, ?)
                  ON CONFLICT DO NOTHING",
             )
             .bind(&observation.observation_id)
             .bind(to_i64("inbox batch ID", commit.inbox_batch_id)?)
             .bind(i64::from(write.candidate_ordinal))
-            .bind(&commit.key.snapshot_digest)
             .bind(created_at_unix_ms)
             .execute(&mut *transaction)
             .await
             .map_err(EvidenceStoreError::unavailable)?
             .rows_affected();
-
-            for association in &write.associations {
-                result.associations_created += insert_association(
-                    &mut transaction,
-                    observation,
-                    association,
-                    created_at_unix_ms,
-                )
-                .await?;
-            }
         }
 
         for diagnostic in &commit.diagnostics {
@@ -719,43 +614,42 @@ impl EvidenceStore for SqliteEvidenceStore {
                 Self::insert_diagnostic(&mut transaction, diagnostic, created_at_unix_ms).await?;
         }
 
-        sqlx::query(
-            "INSERT INTO evidence_materializer_checkpoints(
-                snapshot_digest,
-                materializer_version,
-                decoder_version,
-                identity_version,
-                projection_version,
-                selector_protocol_version,
-                last_inbox_batch_id,
-                updated_at_unix_ms
-             )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(
-                snapshot_digest,
-                materializer_version,
-                decoder_version,
-                identity_version,
-                projection_version,
-                selector_protocol_version
-             )
-             DO UPDATE SET
-                last_inbox_batch_id = excluded.last_inbox_batch_id,
-                updated_at_unix_ms = excluded.updated_at_unix_ms
-             WHERE evidence_materializer_checkpoints.last_inbox_batch_id
-                   < excluded.last_inbox_batch_id",
-        )
-        .bind(&commit.key.snapshot_digest)
-        .bind(&commit.key.versions.materializer)
-        .bind(&commit.key.versions.decoder)
-        .bind(&commit.key.versions.identity)
-        .bind(&commit.key.versions.projection)
-        .bind(&commit.key.versions.selector_protocol)
-        .bind(to_i64("inbox batch ID", commit.inbox_batch_id)?)
-        .bind(created_at_unix_ms)
-        .execute(&mut *transaction)
-        .await
-        .map_err(EvidenceStoreError::unavailable)?;
+        if commit.mode == EvidenceMaterializationMode::Forward {
+            sqlx::query(
+                "INSERT INTO evidence_materializer_checkpoints(
+                    materializer_version,
+                    decoder_version,
+                    identity_version,
+                    projection_version,
+                    routing_version,
+                    last_inbox_batch_id,
+                    updated_at_unix_ms
+                 )
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(
+                    materializer_version,
+                    decoder_version,
+                    identity_version,
+                    projection_version,
+                    routing_version
+                 )
+                 DO UPDATE SET
+                    last_inbox_batch_id = excluded.last_inbox_batch_id,
+                    updated_at_unix_ms = excluded.updated_at_unix_ms
+                 WHERE evidence_materializer_checkpoints.last_inbox_batch_id
+                       < excluded.last_inbox_batch_id",
+            )
+            .bind(&commit.key.versions.materializer)
+            .bind(&commit.key.versions.decoder)
+            .bind(&commit.key.versions.identity)
+            .bind(&commit.key.versions.projection)
+            .bind(&commit.key.versions.routing)
+            .bind(to_i64("inbox batch ID", commit.inbox_batch_id)?)
+            .bind(created_at_unix_ms)
+            .execute(&mut *transaction)
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+        }
         transaction
             .commit()
             .await
@@ -764,21 +658,10 @@ impl EvidenceStore for SqliteEvidenceStore {
     }
 
     async fn inspect(&self) -> Result<EvidenceStoreHealth, EvidenceStoreError> {
-        let active_snapshot_digest: Option<String> = sqlx::query_scalar(
-            "SELECT active_snapshot_digest
-             FROM evidence_store_state
-             WHERE singleton = 1",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(EvidenceStoreError::unavailable)?;
+        let has_cached_catalog =
+            count(&self.pool, "SELECT COUNT(*) FROM evidence_contract_catalog").await? == 1;
         let observation_count =
             count(&self.pool, "SELECT COUNT(*) FROM evidence_observations").await?;
-        let association_count = count(
-            &self.pool,
-            "SELECT COUNT(*) FROM evidence_observation_associations",
-        )
-        .await?;
         let provenance_count = count(
             &self.pool,
             "SELECT COUNT(*) FROM evidence_observation_provenance",
@@ -804,29 +687,28 @@ impl EvidenceStore for SqliteEvidenceStore {
         .fetch_optional(&self.pool)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
-        let newest_observed_at_unix_nano = newest
-            .map(|value| parse_u64("observation time", &value))
-            .transpose()?;
         Ok(EvidenceStoreHealth {
-            active_snapshot_digest,
+            has_cached_catalog,
             observation_count,
-            association_count,
             provenance_count,
             diagnostic_count,
             conflict_count,
-            newest_observed_at_unix_nano,
+            newest_observed_at_unix_nano: newest
+                .map(|value| parse_u64("observation time", &value))
+                .transpose()?,
         })
     }
 
     async fn list_observations(
         &self,
-        scope: &DecisionScope,
+        authority: &AuthorityScope,
         limit: NonZeroU16,
     ) -> Result<Vec<StoredEvidenceObservation>, EvidenceStoreError> {
         let rows = sqlx::query(
             "SELECT observation_id,
                     logical_source_id,
                     content_digest,
+                    tenant,
                     application,
                     environment,
                     signal_type,
@@ -834,6 +716,7 @@ impl EvidenceStore for SqliteEvidenceStore {
                     signal_name,
                     metric_kind,
                     metric_unit,
+                    parent_span_name,
                     observed_at_unix_nano,
                     observed_time_source,
                     protocol_kind,
@@ -844,97 +727,26 @@ impl EvidenceStore for SqliteEvidenceStore {
                     decoder_version,
                     identity_version,
                     projection_version,
-                    selector_protocol_version,
+                    routing_version,
                     created_at_unix_ms
              FROM evidence_observations
-             WHERE application = ?
+             WHERE tenant = ?
+               AND application = ?
                AND environment = ?
              ORDER BY length(observed_at_unix_nano) DESC,
                       observed_at_unix_nano DESC,
                       observation_id
              LIMIT ?",
         )
-        .bind(&scope.application)
-        .bind(&scope.environment)
+        .bind(&authority.tenant)
+        .bind(&authority.application)
+        .bind(&authority.environment)
         .bind(i64::from(limit.get()))
         .fetch_all(&self.pool)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
         rows.iter().map(decode_observation).collect()
     }
-
-    async fn list_associations(
-        &self,
-        scope: &DecisionScope,
-        contract_digest: &str,
-        limit: NonZeroU16,
-    ) -> Result<Vec<StoredEvidenceAssociation>, EvidenceStoreError> {
-        validate_digest("contract digest", contract_digest)?;
-        let rows = sqlx::query(
-            "SELECT associations.observation_id,
-                    observations.application,
-                    observations.environment,
-                    associations.snapshot_digest,
-                    associations.contract_digest,
-                    associations.evidence_name,
-                    associations.contract_attribute,
-                    associations.correlation_json,
-                    associations.source_json
-             FROM evidence_observation_associations AS associations
-             JOIN evidence_observations AS observations
-               ON observations.observation_id = associations.observation_id
-             WHERE observations.application = ?
-               AND observations.environment = ?
-               AND associations.contract_digest = ?
-             ORDER BY associations.evidence_name,
-                      associations.observation_id
-             LIMIT ?",
-        )
-        .bind(&scope.application)
-        .bind(&scope.environment)
-        .bind(contract_digest)
-        .bind(i64::from(limit.get()))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(EvidenceStoreError::unavailable)?;
-        rows.iter().map(decode_association).collect()
-    }
-}
-
-async fn insert_association(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    observation: &EvidenceObservation,
-    association: &EvidenceAssociation,
-    associated_at_unix_ms: i64,
-) -> Result<u64, EvidenceStoreError> {
-    validate_association(association)?;
-    let rows = sqlx::query(
-        "INSERT INTO evidence_observation_associations(
-            observation_id,
-            snapshot_digest,
-            contract_digest,
-            evidence_name,
-            contract_attribute,
-            correlation_json,
-            source_json,
-            associated_at_unix_ms
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(&observation.observation_id)
-    .bind(&association.snapshot_digest)
-    .bind(&association.contract_digest)
-    .bind(&association.evidence_name)
-    .bind(&association.contract_attribute)
-    .bind(&association.correlation_json)
-    .bind(&association.source_json)
-    .bind(associated_at_unix_ms)
-    .execute(&mut **transaction)
-    .await
-    .map_err(EvidenceStoreError::unavailable)?
-    .rows_affected();
-    Ok(rows)
 }
 
 async fn verify_existing_observation(
@@ -942,7 +754,30 @@ async fn verify_existing_observation(
     observation: &EvidenceObservation,
 ) -> Result<(), EvidenceStoreError> {
     let row = sqlx::query(
-        "SELECT logical_source_id, content_digest, payload_json
+        "SELECT observation_id,
+                logical_source_id,
+                content_digest,
+                tenant,
+                application,
+                environment,
+                signal_type,
+                instrumentation_scope,
+                signal_name,
+                metric_kind,
+                metric_unit,
+                parent_span_name,
+                observed_at_unix_nano,
+                observed_time_source,
+                protocol_kind,
+                decision_id,
+                contract_digest,
+                payload_json,
+                materializer_version,
+                decoder_version,
+                identity_version,
+                projection_version,
+                routing_version,
+                created_at_unix_ms
          FROM evidence_observations
          WHERE observation_id = ?",
     )
@@ -950,25 +785,24 @@ async fn verify_existing_observation(
     .fetch_one(&mut **transaction)
     .await
     .map_err(EvidenceStoreError::unavailable)?;
-    let logical_source_id: String = row
-        .try_get("logical_source_id")
-        .map_err(EvidenceStoreError::unavailable)?;
-    let content_digest: String = row
-        .try_get("content_digest")
-        .map_err(EvidenceStoreError::unavailable)?;
-    let payload_json: Vec<u8> = row
-        .try_get("payload_json")
-        .map_err(EvidenceStoreError::unavailable)?;
-    if logical_source_id != observation.logical_source_id
-        || content_digest != observation.content_digest
-        || payload_json != observation.payload_json
-    {
+    let mut existing = decode_observation(&row)?.observation;
+    existing.versions.routing = observation.versions.routing.clone();
+    if existing != *observation {
         return Err(EvidenceStoreError::CorruptData(format!(
             "observation {} has inconsistent content",
             observation.observation_id
         )));
     }
     Ok(())
+}
+
+fn validate_catalog(catalog: &StoredContractCatalog) -> Result<(), EvidenceStoreError> {
+    if catalog.etag.is_empty() || catalog.etag.chars().any(char::is_control) {
+        return Err(EvidenceStoreError::InvalidWrite(
+            "catalog ETag must be non-empty and contain no control characters".to_owned(),
+        ));
+    }
+    validate_json("contract catalog", &catalog.payload)
 }
 
 fn validate_commit(commit: &EvidenceMaterializationCommit) -> Result<(), EvidenceStoreError> {
@@ -980,31 +814,19 @@ fn validate_commit(commit: &EvidenceMaterializationCommit) -> Result<(), Evidenc
     }
     for write in &commit.observations {
         validate_observation(&write.observation)?;
-        for association in &write.associations {
-            validate_association(association)?;
-            if association.snapshot_digest != commit.key.snapshot_digest {
-                return Err(EvidenceStoreError::InvalidWrite(
-                    "association snapshot digest must equal the checkpoint snapshot digest"
-                        .to_owned(),
-                ));
-            }
-        }
     }
     for diagnostic in &commit.diagnostics {
         validate_diagnostic(diagnostic)?;
-        if diagnostic.snapshot_digest != commit.key.snapshot_digest
-            || diagnostic.inbox_batch_id != commit.inbox_batch_id
-        {
+        if diagnostic.inbox_batch_id != commit.inbox_batch_id {
             return Err(EvidenceStoreError::InvalidWrite(
-                "diagnostic provenance must equal the committed batch and snapshot".to_owned(),
+                "diagnostic batch must equal the committed batch".to_owned(),
             ));
         }
     }
     Ok(())
 }
 
-fn validate_key(key: &MaterializationKey) -> Result<(), EvidenceStoreError> {
-    validate_digest("snapshot digest", &key.snapshot_digest)?;
+fn validate_key(key: &ForwardMaterializationKey) -> Result<(), EvidenceStoreError> {
     validate_versions(&key.versions)
 }
 
@@ -1014,7 +836,7 @@ fn validate_versions(versions: &MaterializerVersions) -> Result<(), EvidenceStor
         ("decoder version", &versions.decoder),
         ("identity version", &versions.identity),
         ("projection version", &versions.projection),
-        ("selector protocol version", &versions.selector_protocol),
+        ("routing version", &versions.routing),
     ] {
         if value.is_empty() || value.len() > 64 || value.chars().any(char::is_control) {
             return Err(EvidenceStoreError::InvalidWrite(format!(
@@ -1036,35 +858,60 @@ fn validate_observation(observation: &EvidenceObservation) -> Result<(), Evidenc
     if let Some(contract_digest) = &observation.contract_digest {
         validate_digest("observation contract digest", contract_digest)?;
     }
-    if observation.scope.application.is_empty()
-        || observation.scope.environment.is_empty()
-        || observation.instrumentation_scope.is_empty()
-        || observation.signal_name.is_empty()
-        || observation.observed_time_source.is_empty()
-    {
+    AuthorityScope::new(
+        observation.authority.tenant.clone(),
+        observation.authority.application.clone(),
+        observation.authority.environment.clone(),
+    )?;
+    validate_source(&observation.source)?;
+    if observation.observed_time_source.is_empty() {
         return Err(EvidenceStoreError::InvalidWrite(
-            "observation scope, signal, and time source must not be empty".to_owned(),
+            "observation time source must not be empty".to_owned(),
         ));
     }
     validate_json("observation payload", &observation.payload_json)?;
     validate_versions(&observation.versions)
 }
 
-fn validate_association(association: &EvidenceAssociation) -> Result<(), EvidenceStoreError> {
-    validate_digest("association snapshot digest", &association.snapshot_digest)?;
-    validate_digest("association contract digest", &association.contract_digest)?;
-    if association.evidence_name.is_empty() || association.contract_attribute.is_empty() {
+fn validate_source(source: &SourceKey) -> Result<(), EvidenceStoreError> {
+    if source.instrumentation_scope.is_empty() || source.signal_name.is_empty() {
         return Err(EvidenceStoreError::InvalidWrite(
-            "association evidence and contract attribute names must not be empty".to_owned(),
+            "source instrumentation scope and signal name must not be empty".to_owned(),
         ));
     }
-    validate_json("association correlation", &association.correlation_json)?;
-    validate_json("association source", &association.source_json)
+    let shape_is_valid = match source.signal {
+        EvidenceSignal::Metric => {
+            source
+                .metric_kind
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())
+                && source.metric_unit.is_some()
+                && source.parent_span_name.is_none()
+        }
+        EvidenceSignal::SpanEvent => {
+            source.metric_kind.is_none()
+                && source.metric_unit.is_none()
+                && source
+                    .parent_span_name
+                    .as_ref()
+                    .is_some_and(|value| !value.is_empty())
+        }
+        EvidenceSignal::Log | EvidenceSignal::Span => {
+            source.metric_kind.is_none()
+                && source.metric_unit.is_none()
+                && source.parent_span_name.is_none()
+        }
+    };
+    if !shape_is_valid {
+        return Err(EvidenceStoreError::InvalidWrite(
+            "source fields do not match the signal kind".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_diagnostic(diagnostic: &EvidenceDiagnostic) -> Result<(), EvidenceStoreError> {
     validate_digest("diagnostic ID", &diagnostic.diagnostic_id)?;
-    validate_digest("diagnostic snapshot digest", &diagnostic.snapshot_digest)?;
     if diagnostic.inbox_batch_id == 0 || diagnostic.code.is_empty() || diagnostic.message.is_empty()
     {
         return Err(EvidenceStoreError::InvalidWrite(
@@ -1109,42 +956,28 @@ fn decode_observation(row: &SqliteRow) -> Result<StoredEvidenceObservation, Evid
     let observed_at: String = row
         .try_get("observed_at_unix_nano")
         .map_err(EvidenceStoreError::unavailable)?;
-    let versions = MaterializerVersions {
-        materializer: row
-            .try_get("materializer_version")
+    let observation = EvidenceObservation {
+        observation_id: row
+            .try_get("observation_id")
             .map_err(EvidenceStoreError::unavailable)?,
-        decoder: row
-            .try_get("decoder_version")
+        logical_source_id: row
+            .try_get("logical_source_id")
             .map_err(EvidenceStoreError::unavailable)?,
-        identity: row
-            .try_get("identity_version")
+        content_digest: row
+            .try_get("content_digest")
             .map_err(EvidenceStoreError::unavailable)?,
-        projection: row
-            .try_get("projection_version")
-            .map_err(EvidenceStoreError::unavailable)?,
-        selector_protocol: row
-            .try_get("selector_protocol_version")
-            .map_err(EvidenceStoreError::unavailable)?,
-    };
-    Ok(StoredEvidenceObservation {
-        observation: EvidenceObservation {
-            observation_id: row
-                .try_get("observation_id")
+        authority: AuthorityScope {
+            tenant: row
+                .try_get("tenant")
                 .map_err(EvidenceStoreError::unavailable)?,
-            logical_source_id: row
-                .try_get("logical_source_id")
+            application: row
+                .try_get("application")
                 .map_err(EvidenceStoreError::unavailable)?,
-            content_digest: row
-                .try_get("content_digest")
+            environment: row
+                .try_get("environment")
                 .map_err(EvidenceStoreError::unavailable)?,
-            scope: DecisionScope {
-                application: row
-                    .try_get("application")
-                    .map_err(EvidenceStoreError::unavailable)?,
-                environment: row
-                    .try_get("environment")
-                    .map_err(EvidenceStoreError::unavailable)?,
-            },
+        },
+        source: SourceKey {
             signal,
             instrumentation_scope: row
                 .try_get("instrumentation_scope")
@@ -1158,24 +991,47 @@ fn decode_observation(row: &SqliteRow) -> Result<StoredEvidenceObservation, Evid
             metric_unit: row
                 .try_get("metric_unit")
                 .map_err(EvidenceStoreError::unavailable)?,
-            observed_at_unix_nano: parse_u64("observation time", &observed_at)?,
-            observed_time_source: row
-                .try_get("observed_time_source")
+            parent_span_name: row
+                .try_get("parent_span_name")
                 .map_err(EvidenceStoreError::unavailable)?,
-            protocol_kind: row
-                .try_get("protocol_kind")
-                .map_err(EvidenceStoreError::unavailable)?,
-            decision_id: row
-                .try_get("decision_id")
-                .map_err(EvidenceStoreError::unavailable)?,
-            contract_digest: row
-                .try_get("contract_digest")
-                .map_err(EvidenceStoreError::unavailable)?,
-            payload_json: row
-                .try_get("payload_json")
-                .map_err(EvidenceStoreError::unavailable)?,
-            versions,
         },
+        observed_at_unix_nano: parse_u64("observation time", &observed_at)?,
+        observed_time_source: row
+            .try_get("observed_time_source")
+            .map_err(EvidenceStoreError::unavailable)?,
+        protocol_kind: row
+            .try_get("protocol_kind")
+            .map_err(EvidenceStoreError::unavailable)?,
+        decision_id: row
+            .try_get("decision_id")
+            .map_err(EvidenceStoreError::unavailable)?,
+        contract_digest: row
+            .try_get("contract_digest")
+            .map_err(EvidenceStoreError::unavailable)?,
+        payload_json: row
+            .try_get("payload_json")
+            .map_err(EvidenceStoreError::unavailable)?,
+        versions: MaterializerVersions {
+            materializer: row
+                .try_get("materializer_version")
+                .map_err(EvidenceStoreError::unavailable)?,
+            decoder: row
+                .try_get("decoder_version")
+                .map_err(EvidenceStoreError::unavailable)?,
+            identity: row
+                .try_get("identity_version")
+                .map_err(EvidenceStoreError::unavailable)?,
+            projection: row
+                .try_get("projection_version")
+                .map_err(EvidenceStoreError::unavailable)?,
+            routing: row
+                .try_get("routing_version")
+                .map_err(EvidenceStoreError::unavailable)?,
+        },
+    };
+    validate_observation(&observation)?;
+    Ok(StoredEvidenceObservation {
+        observation,
         created_at: datetime_from_millis(
             "observation creation time",
             row.try_get("created_at_unix_ms")
@@ -1184,81 +1040,40 @@ fn decode_observation(row: &SqliteRow) -> Result<StoredEvidenceObservation, Evid
     })
 }
 
-fn decode_association(row: &SqliteRow) -> Result<StoredEvidenceAssociation, EvidenceStoreError> {
-    Ok(StoredEvidenceAssociation {
-        observation_id: row
-            .try_get("observation_id")
-            .map_err(EvidenceStoreError::unavailable)?,
-        scope: DecisionScope {
-            application: row
-                .try_get("application")
-                .map_err(EvidenceStoreError::unavailable)?,
-            environment: row
-                .try_get("environment")
-                .map_err(EvidenceStoreError::unavailable)?,
-        },
-        snapshot_digest: row
-            .try_get("snapshot_digest")
-            .map_err(EvidenceStoreError::unavailable)?,
-        contract_digest: row
-            .try_get("contract_digest")
-            .map_err(EvidenceStoreError::unavailable)?,
-        evidence_name: row
-            .try_get("evidence_name")
-            .map_err(EvidenceStoreError::unavailable)?,
-        contract_attribute: row
-            .try_get("contract_attribute")
-            .map_err(EvidenceStoreError::unavailable)?,
-        correlation_json: row
-            .try_get("correlation_json")
-            .map_err(EvidenceStoreError::unavailable)?,
-        source_json: row
-            .try_get("source_json")
-            .map_err(EvidenceStoreError::unavailable)?,
-    })
-}
-
 async fn count(pool: &SqlitePool, query: &'static str) -> Result<u64, EvidenceStoreError> {
     let value: i64 = sqlx::query_scalar(query)
         .fetch_one(pool)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
-    nonnegative_u64("row count", value)
+    u64::try_from(value)
+        .map_err(|_| EvidenceStoreError::CorruptData("negative row count".to_owned()))
+}
+
+fn positive_u64(name: &str, value: i64) -> Result<u64, EvidenceStoreError> {
+    let value = u64::try_from(value)
+        .map_err(|_| EvidenceStoreError::CorruptData(format!("{name} is negative")))?;
+    if value == 0 {
+        return Err(EvidenceStoreError::CorruptData(format!(
+            "{name} must be positive"
+        )));
+    }
+    Ok(value)
+}
+
+fn parse_u64(name: &str, value: &str) -> Result<u64, EvidenceStoreError> {
+    value
+        .parse()
+        .map_err(|error| EvidenceStoreError::CorruptData(format!("{name} is invalid: {error}")))
+}
+
+fn to_i64(name: &str, value: u64) -> Result<i64, EvidenceStoreError> {
+    i64::try_from(value)
+        .map_err(|_| EvidenceStoreError::InvalidWrite(format!("{name} exceeds i64::MAX")))
 }
 
 fn datetime_from_millis(name: &str, value: i64) -> Result<DateTime<Utc>, EvidenceStoreError> {
     Utc.timestamp_millis_opt(value).single().ok_or_else(|| {
-        EvidenceStoreError::CorruptData(format!("{name} {value} is outside the supported range"))
-    })
-}
-
-fn positive_u64(name: &str, value: i64) -> Result<u64, EvidenceStoreError> {
-    if value <= 0 {
-        return Err(EvidenceStoreError::CorruptData(format!(
-            "{name} must be positive, found {value}"
-        )));
-    }
-    Ok(value.cast_unsigned())
-}
-
-fn nonnegative_u64(name: &str, value: i64) -> Result<u64, EvidenceStoreError> {
-    if value < 0 {
-        return Err(EvidenceStoreError::CorruptData(format!(
-            "{name} must not be negative, found {value}"
-        )));
-    }
-    Ok(value.cast_unsigned())
-}
-
-fn to_i64(name: &str, value: u64) -> Result<i64, EvidenceStoreError> {
-    i64::try_from(value).map_err(|_| {
-        EvidenceStoreError::InvalidWrite(format!("{name} must fit in a signed 64-bit integer"))
-    })
-}
-
-fn parse_u64(name: &str, value: &str) -> Result<u64, EvidenceStoreError> {
-    value.parse::<u64>().map_err(|error| {
-        EvidenceStoreError::CorruptData(format!("{name} '{value}' is invalid: {error}"))
+        EvidenceStoreError::CorruptData(format!("{name} is outside the supported range"))
     })
 }
 
@@ -1267,7 +1082,7 @@ fn digest_parts(parts: &[&str]) -> String {
     for part in parts {
         hasher.update(
             u64::try_from(part.len())
-                .expect("string length must fit in u64")
+                .expect("digest component length must fit in u64")
                 .to_be_bytes(),
         );
         hasher.update(part.as_bytes());

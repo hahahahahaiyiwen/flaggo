@@ -45,10 +45,12 @@ route telemetry under configured service or instrumentation namespaces. It does
 not need to understand decision contracts, evidence sources, or dynamic
 contract selectors.
 
-The receiver validates and durably enqueues complete OTLP export requests. The
-Evidence Materializer owns decomposition, typed decoding, versioned relevance
-selection, deduplication, and the query-ready Evidence Store projection. Async
-analysis owns semantic interpretation and correlation.
+The receiver validates and durably enqueues complete OTLP export requests
+without extracting authority or routing metadata. One request may contain
+several Resources and authority scopes. The Evidence Materializer owns
+decomposition, typed decoding, route construction, relevance selection,
+deduplication, and the query-ready Evidence Store projection. Async analysis
+owns semantic interpretation and correlation.
 
 The SDK does not make the Decision Service persist a decision session and does
 not require a synchronous exposure-confirmation call.
@@ -74,12 +76,14 @@ abstraction before they can become candidate evidence.
 An application does not need the Flaggo SDK to send telemetry to Flaggo OTel
 Ingestion. It can emit standard OTLP logs, metrics, or traces directly through
 any OpenTelemetry SDK or Collector. For Phase 4, authentication may be added
-later; ingestion accepts telemetry with application/environment scope from OTLP
-resource attributes such as `service.name`, `flaggo.application`,
-`deployment.environment.name`, or `flaggo.environment`. The receiver verifies
-the signal-specific export-request message. Resource scope, candidate records,
-timestamps, observation identities, and indexable signal names are derived
-asynchronously by the Evidence Materializer.
+later; declared routing authority uses the `flaggo.tenant`,
+`flaggo.application`, and `flaggo.environment` OTel Resource attributes. The
+receiver verifies only transport and the signal-specific export-request
+message; it neither validates nor extracts those attributes. Authority,
+candidate records, timestamps, observation identities, and source keys are
+derived asynchronously by the Evidence Materializer. All three `flaggo.*`
+attributes are required non-empty strings; `service.name` and deployment
+environment attributes are not authority fallbacks.
 
 OTLP/HTTP senders may use no compression or standard gzip compression.
 Ingestion supports both and enforces a configurable decompressed request limit,
@@ -104,7 +108,7 @@ That observation must make the following semantic information available for
 later analysis:
 
 - the SDK-generated decision ID;
-- application/environment scope from OTLP resource attributes;
+- tenant/application/environment authority from OTLP resource attributes;
 - contract name;
 - contract and executable digests;
 - the returned result JSON and result hash;
@@ -169,24 +173,38 @@ contract attributes listed by `correlateBy`; each mapping identifies a
 The contract does not name a vendor table or database column. The receiver
 enqueues all valid application telemetry before selection. The materializer
 always recognizes built-in Flaggo protocol observations and separately applies
-the current contract's evidence sources to ordinary application telemetry.
-One candidate may be associated with different current contracts, but duplicate
-source selectors within one contract are invalid.
+active materialization routes to ordinary application telemetry.
 
-Contract Service exposes the authenticated scope's current contracts with
-learning evidence at `/v3/decision-contract-snapshots/current`. Entries are
-ordered by contract name and digest. A deterministic `snapshotDigest` is also
-returned as the response `ETag`, so Evidence Materializer can poll
-conditionally. The worker durably caches the last valid full snapshot; an
-unavailable or invalid refresh is diagnosed and never replaces that snapshot.
-If no service snapshot has ever been accepted, a built-in-only snapshot keeps
-`flaggo.decision.received` acquisition independent of selector availability.
+Contract Service exposes every current authority-bound contract at
+`/v3/decision-contract-catalog/current`. The complete deployed contract,
+including `AuthorityScope`, is covered by `contractDigest`. The materializer
+compiles that catalog into:
 
-A snapshot, decoder, identity, projection, or selector-protocol version change
-defines a new checkpoint namespace and replays the currently retained inbox
-range. Existing observations and associations remain immutable. Every
-association, provenance row, diagnostic, and checkpoint records the snapshot
-boundary that produced it.
+```text
+CurrentContracts
+  (AuthorityScope, contractName) -> contractDigest
+
+ActiveSourceCounts
+  MaterializationRoute -> u32
+```
+
+Several contracts may keep the same route active. Candidate admission is an
+expected `O(1)` route lookup and does not enumerate those contracts. Ordinary
+telemetry carries no contract digest and is stored once even when several
+contracts use its source.
+
+The catalog response `ETag` is opaque conditional-fetch state. It is never an
+observation, provenance, diagnostic, or checkpoint identity. The worker
+durably caches the last valid catalog only after replay for every route
+transition from zero references to one has succeeded. A failed or invalid
+refresh retains the previous catalog. With no catalog, an empty route map still
+keeps `flaggo.decision.received` acquisition independent of catalog
+availability.
+
+Decoder, identity, projection, or routing-protocol version changes define a
+new global forward-checkpoint namespace. Catalog changes do not. A newly active
+route replays the bounded retained inbox; a contract change that keeps its
+route active does not.
 
 ## Correlation and analysis
 
@@ -257,15 +275,18 @@ The versioned materializer produces:
   data point.
 
 It recursively decodes `AnyValue`, derives separate logical identities and
-canonical content digests, applies contract selectors, deduplicates, and writes
-query-ready observations. A materialized observation preserves the complete
-resource and instrumentation-scope context, the selected signal payload, the
-versions that produced it, and a reference to its inbox batch while retained.
+canonical content digests, performs route admission, deduplicates, and writes
+query-ready observations. A materialized observation preserves its complete
+authority and source key, resource and instrumentation-scope context, selected
+signal payload, producing versions, and inbox provenance.
 
 Evidence Store observations remain durable after eligible inbox payloads are
-compacted. New selector or decoder versions may backfill only within the
-currently retained replay range; analysis never silently scans the inbox as a
-fallback.
+compacted. Newly active routes or changed materialization versions may backfill
+only within the currently retained replay range; analysis never silently scans
+the inbox as a fallback. Materialization does not persist eager
+observation-to-contract associations. Analysis loads an exact immutable
+contract and joins its evidence declarations to reusable observations by
+`AuthorityScope + SourceKey` before evaluating predicates and correlation.
 
 The store is not:
 
@@ -309,8 +330,9 @@ evidence references in generation provenance rather than adding them to the
 initial contract syntax.
 
 When a newer digest becomes current, an older run may finish for reconstruction
-but cannot activate. Evidence observed for the older digest remains attached to
-it; Flaggo does not silently reinterpret it as evidence for the newer contract.
+but cannot activate. Analysis results and generation provenance remain attached
+to the digest that produced them. Immutable source observations may be reused
+only when a later analysis explicitly selects and interprets them.
 
 ## Phase 4 Flaggo OTLP logs mapping
 
@@ -346,8 +368,9 @@ Correlation attributes use `flaggo.correlation.<name>`.
    source per contract entry.
 5. Async analysis, not ingestion, decides whether decision observations and
    selected application telemetry are usable evidence.
-6. Evidence remains scoped to the exact contract digest under which it was
-   observed when that identity is known.
+6. Materialized application observations are reusable and contract-agnostic;
+   analysis outputs and generation provenance remain scoped to the exact
+   contract digest that interpreted them.
 7. Learning produces an immutable candidate and cannot activate it directly.
 8. Evidence delay or analysis failure leaves the existing runtime activation
    unchanged.

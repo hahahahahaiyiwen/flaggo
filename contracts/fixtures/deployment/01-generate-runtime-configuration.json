@@ -35,7 +35,7 @@
       },
       "bindings": {
         "tetris.dropInterval": {
-          "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f"
+          "contractDigest": "sha256:1b38f680acdc35cdc55b3c7ee02c0c52ae5a5f090ddcc583540e43b864d42b73"
         }
       }
     }

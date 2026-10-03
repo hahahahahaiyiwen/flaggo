@@ -3,18 +3,19 @@
 This TypeScript console application processes an in-memory queue while Flaggo
 chooses `demo.workerBatchSize`.
 
-`flaggo/contracts/demo.workerBatchSize.decision-contract.json` is the complete
-v3 `DecisionContract`, and `flaggo.deploy.json` lists it for deployment. The
-local environment:
+`flaggo/contracts/demo.workerBatchSize.decision-contract.json` is the authored,
+authority-free decision definition, and `flaggo.deploy.json` lists it for
+deployment. The local environment:
 
 1. starts Contract Service and Decision Service against one isolated SQLite
    database;
 2. starts Flaggo OTel Ingestion against the same database;
-3. deploys the contract through
+3. injects the manifest authority and deploys the resulting complete contract
+   through
    `PUT /v3/decision-contracts/demo.workerBatchSize`;
 4. generates one immutable `flaggo.runtime-config/v1` document containing the
    manifest authority, all three service URLs, and the returned exact
-   `contractDigest`; and
+   authority-bound `contractDigest`; and
 5. gives that configuration to both the decision client and telemetry
    providers.
 
@@ -36,8 +37,9 @@ selected batch size, and processing latency are also metrics. Each
 `flaggo.decision.received` observation. All logs correlate with the active
 worker span. OTLP success acknowledges durable inbox enqueue rather than
 immediate Evidence Store materialization. Runtime evaluation itself remains
-stateless. The generated authority (`local / adaptive-worker / development`)
-is attached to the shared OTel Resource as `flaggo.tenant`,
+stateless. The same generated authority
+(`local / adaptive-worker / development`) covered by the contract digest is
+attached to the shared OTel Resource as `flaggo.tenant`,
 `flaggo.application`, and `flaggo.environment`. Ordinary application logs,
 metrics, and spans remain contract-agnostic; exact contract provenance belongs
 to the SDK-owned decision observation.

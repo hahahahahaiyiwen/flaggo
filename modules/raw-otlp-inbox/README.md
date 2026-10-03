@@ -36,10 +36,13 @@ stores payloads in `raw_otlp_inbox_batches`.
 - Reads verify stored payload length, metadata, and SHA-256.
 - Unsupported schema versions fail explicitly; the adapter does not migrate or
   reinterpret them.
+- Inbox rows do not contain application-declared authority, source keys,
+  materialization routes, or contract associations. One row may contain
+  several OTel Resources and authority scopes.
 
 Defaults are 1 GiB of retained decompressed payload bytes and 24 hours of hard
 retention. Both are provided through `RawOtlpInboxLimits`.
 
 Receiver parsing, decompression, size enforcement, and OTLP HTTP responses
-belong to `apps/otel-ingestion`. Evidence interpretation and compaction belong
-to the future Evidence Materializer.
+belong to `apps/otel-ingestion`. Resource decomposition, routing, evidence
+interpretation, and projection belong to the Evidence Materializer.

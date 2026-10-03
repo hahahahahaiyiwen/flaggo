@@ -1,32 +1,24 @@
 use std::{env, num::NonZeroU16, time::Duration};
 
-use flaggo_evidence_store::DecisionScope;
-
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
-pub const APPLICATION_ENVIRONMENT_VARIABLE: &str = "FLAGGO_APPLICATION";
-pub const ENVIRONMENT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ENVIRONMENT";
-pub const SNAPSHOT_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_SNAPSHOT_URL";
-pub const SNAPSHOT_BEARER_TOKEN_ENVIRONMENT_VARIABLE: &str =
-    "FLAGGO_CONTRACT_SNAPSHOT_BEARER_TOKEN";
+pub const CATALOG_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_URL";
+pub const CATALOG_BEARER_TOKEN_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_BEARER_TOKEN";
 pub const POLL_INTERVAL_MILLISECONDS_ENVIRONMENT_VARIABLE: &str =
     "FLAGGO_MATERIALIZER_POLL_INTERVAL_MS";
-pub const SNAPSHOT_INTERVAL_SECONDS_ENVIRONMENT_VARIABLE: &str =
-    "FLAGGO_MATERIALIZER_SNAPSHOT_INTERVAL_SECONDS";
+pub const CATALOG_INTERVAL_SECONDS_ENVIRONMENT_VARIABLE: &str =
+    "FLAGGO_MATERIALIZER_CATALOG_INTERVAL_SECONDS";
 
 const DEFAULT_DATABASE_URL: &str = "sqlite://flaggo.db";
-const DEFAULT_APPLICATION: &str = "local-application";
-const DEFAULT_ENVIRONMENT: &str = "development";
 const DEFAULT_POLL_INTERVAL_MILLISECONDS: u64 = 250;
-const DEFAULT_SNAPSHOT_INTERVAL_SECONDS: u64 = 30;
+const DEFAULT_CATALOG_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_READ_LIMIT: u16 = 100;
 
 pub struct MaterializerConfig {
     pub database_url: String,
-    pub selector_scope: DecisionScope,
-    pub snapshot_url: Option<String>,
-    pub snapshot_bearer_token: Option<String>,
+    pub catalog_url: Option<String>,
+    pub catalog_bearer_token: Option<String>,
     pub poll_interval: Duration,
-    pub snapshot_interval: Duration,
+    pub catalog_interval: Duration,
     pub read_limit: NonZeroU16,
 }
 
@@ -34,15 +26,11 @@ impl MaterializerConfig {
     pub fn from_environment() -> Result<Self, String> {
         let database_url =
             nonempty_or_default(DATABASE_URL_ENVIRONMENT_VARIABLE, DEFAULT_DATABASE_URL)?;
-        let application =
-            nonempty_or_default(APPLICATION_ENVIRONMENT_VARIABLE, DEFAULT_APPLICATION)?;
-        let environment =
-            nonempty_or_default(ENVIRONMENT_ENVIRONMENT_VARIABLE, DEFAULT_ENVIRONMENT)?;
-        let snapshot_url = optional_nonempty(SNAPSHOT_URL_ENVIRONMENT_VARIABLE)?;
-        let snapshot_bearer_token = optional_nonempty(SNAPSHOT_BEARER_TOKEN_ENVIRONMENT_VARIABLE)?;
-        if snapshot_bearer_token.is_some() && snapshot_url.is_none() {
+        let catalog_url = optional_nonempty(CATALOG_URL_ENVIRONMENT_VARIABLE)?;
+        let catalog_bearer_token = optional_nonempty(CATALOG_BEARER_TOKEN_ENVIRONMENT_VARIABLE)?;
+        if catalog_bearer_token.is_some() && catalog_url.is_none() {
             return Err(format!(
-                "{SNAPSHOT_BEARER_TOKEN_ENVIRONMENT_VARIABLE} requires {SNAPSHOT_URL_ENVIRONMENT_VARIABLE}"
+                "{CATALOG_BEARER_TOKEN_ENVIRONMENT_VARIABLE} requires {CATALOG_URL_ENVIRONMENT_VARIABLE}"
             ));
         }
         let poll_interval = parse_duration(
@@ -50,20 +38,18 @@ impl MaterializerConfig {
             DEFAULT_POLL_INTERVAL_MILLISECONDS,
             Duration::from_millis,
         )?;
-        let snapshot_interval = parse_duration(
-            SNAPSHOT_INTERVAL_SECONDS_ENVIRONMENT_VARIABLE,
-            DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+        let catalog_interval = parse_duration(
+            CATALOG_INTERVAL_SECONDS_ENVIRONMENT_VARIABLE,
+            DEFAULT_CATALOG_INTERVAL_SECONDS,
             Duration::from_secs,
         )?;
 
         Ok(Self {
             database_url,
-            selector_scope: DecisionScope::new(application, environment)
-                .map_err(|error| error.to_string())?,
-            snapshot_url,
-            snapshot_bearer_token,
+            catalog_url,
+            catalog_bearer_token,
             poll_interval,
-            snapshot_interval,
+            catalog_interval,
             read_limit: NonZeroU16::new(DEFAULT_READ_LIMIT)
                 .expect("default read limit must be nonzero"),
         })

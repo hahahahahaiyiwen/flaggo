@@ -5,7 +5,7 @@ use std::error::Error;
 use chrono::Utc;
 use config::MaterializerConfig;
 use flaggo_evidence_materializer::{
-    CompiledSelectorSnapshot, EvidenceMaterializer, HttpSelectorSnapshotProvider, SnapshotFetch,
+    CatalogFetch, CompiledContractCatalog, EvidenceMaterializer, HttpContractCatalogProvider,
 };
 use flaggo_evidence_store::{EvidenceStore, SqliteEvidenceStore};
 use flaggo_raw_otlp_inbox::{RawOtlpInboxLimits, SqliteRawOtlpInbox};
@@ -23,46 +23,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let store = SqliteEvidenceStore::connect(&config.database_url).await?;
     let inbox_for_shutdown = inbox.clone();
     let store_for_shutdown = store.clone();
-    let materializer = EvidenceMaterializer::new(
-        inbox,
-        store.clone(),
-        config.selector_scope.clone(),
-        config.read_limit,
-    );
-    let mut snapshot = match store.load_active_snapshot().await? {
-        Some(stored) => CompiledSelectorSnapshot::compile(stored.payload)?,
-        None => {
-            let snapshot = CompiledSelectorSnapshot::built_in_only();
-            materializer
-                .activate_snapshot(&snapshot, Utc::now())
-                .await?;
-            snapshot
-        }
+    let materializer = EvidenceMaterializer::new(inbox, store.clone(), config.read_limit);
+    let (mut catalog, mut catalog_etag) = match store.load_catalog().await? {
+        Some(stored) => (
+            CompiledContractCatalog::compile(stored.payload)?,
+            Some(stored.etag),
+        ),
+        None => (CompiledContractCatalog::empty(), None),
     };
     let provider = config
-        .snapshot_url
+        .catalog_url
         .as_deref()
-        .map(|url| HttpSelectorSnapshotProvider::new(url, config.snapshot_bearer_token.clone()))
+        .map(|url| HttpContractCatalogProvider::new(url, config.catalog_bearer_token.clone()))
         .transpose()?;
     if let Some(provider) = &provider {
-        refresh_snapshot(provider, &materializer, &mut snapshot).await;
+        refresh_catalog(provider, &materializer, &mut catalog, &mut catalog_etag).await;
     }
 
     println!(
         "{}",
         json!({
-            "application": config.selector_scope.application,
-            "environment": config.selector_scope.environment,
-            "event": "materializer.started",
-            "snapshotDigest": snapshot.snapshot_digest
+            "activeRoutes": catalog.active_source_counts().len(),
+            "currentContracts": catalog.current_contracts().len(),
+            "event": "materializer.started"
         })
     );
 
     let mut work = interval(config.poll_interval);
     work.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut snapshots = interval(config.snapshot_interval);
-    snapshots.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    snapshots.tick().await;
+    let mut catalogs = interval(config.catalog_interval);
+    catalogs.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    catalogs.tick().await;
     loop {
         tokio::select! {
             shutdown = signal::ctrl_c() => {
@@ -75,26 +66,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 break;
             }
             _ = work.tick() => {
-                let result = materializer.run_once(&snapshot).await?;
+                let result = materializer.run_once(&catalog).await?;
                 if result.batches_read > 0 {
                     println!("{}", json!({
-                        "associationsCreated": result.associations_created,
                         "batchesRead": result.batches_read,
                         "conflictsCreated": result.conflicts_created,
                         "diagnosticsCreated": result.diagnostics_created,
                         "duplicateObservations": result.duplicate_observations,
                         "event": "materializer.batch_page_committed",
                         "observationsCreated": result.observations_created,
-                        "provenanceCreated": result.provenance_created,
-                        "snapshotDigest": snapshot.snapshot_digest
+                        "provenanceCreated": result.provenance_created
                     }));
                 }
             }
-            _ = snapshots.tick(), if provider.is_some() => {
-                refresh_snapshot(
+            _ = catalogs.tick(), if provider.is_some() => {
+                refresh_catalog(
                     provider.as_ref().expect("guard requires a provider"),
                     &materializer,
-                    &mut snapshot
+                    &mut catalog,
+                    &mut catalog_etag
                 ).await;
             }
         }
@@ -105,43 +95,55 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn refresh_snapshot<I, S>(
-    provider: &HttpSelectorSnapshotProvider,
+async fn refresh_catalog<I, S>(
+    provider: &HttpContractCatalogProvider,
     materializer: &EvidenceMaterializer<I, S>,
-    current: &mut CompiledSelectorSnapshot,
+    current: &mut CompiledContractCatalog,
+    current_etag: &mut Option<String>,
 ) where
     I: flaggo_raw_otlp_inbox::RawOtlpInbox,
     S: EvidenceStore,
 {
-    match provider.fetch(&current.snapshot_digest).await {
-        Ok(SnapshotFetch::NotModified) => {}
-        Ok(SnapshotFetch::Updated(snapshot)) => {
-            if let Err(error) = materializer.activate_snapshot(&snapshot, Utc::now()).await {
-                eprintln!(
-                    "{}",
-                    json!({
-                        "error": error.to_string(),
-                        "event": "materializer.snapshot_activation_failed"
-                    })
-                );
-                return;
+    match provider.fetch(current_etag.as_deref()).await {
+        Ok(CatalogFetch::NotModified) => {}
+        Ok(CatalogFetch::Updated { catalog, etag }) => {
+            match materializer
+                .activate_catalog(current, &catalog, etag.clone(), Utc::now())
+                .await
+            {
+                Ok(activation) => {
+                    println!(
+                        "{}",
+                        json!({
+                            "activeRoutes": catalog.active_source_counts().len(),
+                            "currentContracts": catalog.current_contracts().len(),
+                            "event": "materializer.catalog_activated",
+                            "replayBatchesRead": activation.replay.batches_read,
+                            "replayObservationsCreated": activation.replay.observations_created,
+                            "routesActivated": activation.routes_activated
+                        })
+                    );
+                    *current = catalog;
+                    *current_etag = Some(etag);
+                }
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        json!({
+                            "error": error.to_string(),
+                            "event": "materializer.catalog_activation_failed"
+                        })
+                    );
+                }
             }
-            println!(
-                "{}",
-                json!({
-                    "event": "materializer.snapshot_activated",
-                    "snapshotDigest": snapshot.snapshot_digest
-                })
-            );
-            *current = snapshot;
         }
         Err(error) => {
             eprintln!(
                 "{}",
                 json!({
                     "error": error.to_string(),
-                    "event": "materializer.snapshot_refresh_failed",
-                    "retainedSnapshotDigest": current.snapshot_digest
+                    "event": "materializer.catalog_refresh_failed",
+                    "retainedCatalog": current_etag.is_some()
                 })
             );
         }
