@@ -474,7 +474,6 @@ mod tests {
                 earliest_replay_at: None,
                 expired_batch_count: 0,
                 expired_payload_bytes: 0,
-                limits: RawOtlpInboxLimits::default(),
             })
         }
     }
@@ -731,15 +730,19 @@ mod tests {
                 .expect("SQLite inbox"),
         );
         let payload = metrics_json();
-        let response = router(inbox.clone(), OtlpReceiverConfig::default())
-            .oneshot(request(
-                "/v1/metrics",
-                Some("application/json"),
-                Some("gzip"),
-                gzip(payload),
-            ))
-            .await
-            .expect("receiver response");
+        let response = router(
+            inbox.clone(),
+            OtlpReceiverConfig::default(),
+            RawOtlpInboxLimits::default(),
+        )
+        .oneshot(request(
+            "/v1/metrics",
+            Some("application/json"),
+            Some("gzip"),
+            gzip(payload),
+        ))
+        .await
+        .expect("receiver response");
 
         assert_success(response, OtlpWireEncoding::ProtobufJson).await;
         let batches = inbox
@@ -933,7 +936,7 @@ mod tests {
     }
 
     fn test_router(inbox: Arc<TestInbox>, config: OtlpReceiverConfig) -> Router {
-        router(inbox, config)
+        router(inbox, config, RawOtlpInboxLimits::default())
     }
 
     async fn send(

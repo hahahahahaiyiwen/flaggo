@@ -8,7 +8,7 @@ use flaggo_evidence_materializer::{
     CatalogFetch, CompiledContractCatalog, EvidenceMaterializer, HttpContractCatalogProvider,
 };
 use flaggo_evidence_store::{EvidenceStore, SqliteEvidenceStore};
-use flaggo_raw_otlp_inbox::{RawOtlpInboxLimits, SqliteRawOtlpInbox};
+use flaggo_raw_otlp_inbox::SqliteRawOtlpInbox;
 use serde_json::json;
 use tokio::{
     signal,
@@ -18,8 +18,7 @@ use tokio::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let config = MaterializerConfig::from_environment()?;
-    let inbox =
-        SqliteRawOtlpInbox::connect(&config.database_url, RawOtlpInboxLimits::default()).await?;
+    let inbox = SqliteRawOtlpInbox::connect_reader(&config.database_url).await?;
     let store = SqliteEvidenceStore::connect(&config.database_url).await?;
     let inbox_for_shutdown = inbox.clone();
     let store_for_shutdown = store.clone();

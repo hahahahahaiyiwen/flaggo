@@ -12,6 +12,10 @@ decompressed OTLP export request and exposes:
 - monotonic batch-cursor reads for replay and materialization; and
 - capacity, retention, replay-boundary, and expiration health.
 
+`RawOtlpInboxRetention` exposes retention as a separate explicit maintenance
+operation. OTel Ingestion owns its schedule; materializer reads do not invoke
+it.
+
 The contract uses OTLP and inbox domain types only. It does not expose SQLx,
 SQLite connections, table names, or transactions.
 
@@ -27,13 +31,15 @@ stores payloads in `raw_otlp_inbox_batches`.
 - Media type is derived from the validated wire encoding.
 - Payload length and SHA-256 are calculated by the inbox.
 - An append commits before its receipt is returned.
-- Appends, replay reads, and health inspections serialize before hard-retention
-  evaluation, so expiry does not depend on new receiver traffic.
+- Appends never expire or delete retained rows.
+- Replay reads and health inspection are side-effect free and require no
+  retention configuration.
+- Explicit retention maintenance serializes with appends and transactionally
+  updates retained counts, expiration counts, and the earliest replay boundary.
 - Retained batch and payload-byte counters update in the same transaction, so
   capacity admission does not scan the full inbox.
-- Expired rows and their replay diagnostics commit even when the incoming
-  request is rejected for capacity.
-- Capacity pressure never evicts a non-expired batch.
+- Capacity pressure never evicts a batch; appends remain retryable until
+  explicit retention maintenance releases capacity.
 - Reads verify stored payload length, metadata, and SHA-256.
 - Unsupported schema versions fail explicitly; the adapter does not migrate or
   reinterpret them.

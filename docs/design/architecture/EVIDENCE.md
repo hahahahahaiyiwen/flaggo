@@ -286,10 +286,13 @@ query-ready observations. A materialized observation preserves its complete
 authority and source key, resource and instrumentation-scope context, selected
 signal payload, producing versions, and inbox provenance.
 
-Evidence Store observations remain durable after eligible inbox payloads are
-compacted. Newly active routes or changed materialization versions may backfill
-only within the currently retained replay range; analysis never silently scans
-the inbox as a fallback. Materialization does not persist eager
+Evidence Store observations remain durable after raw inbox payloads expire.
+OTel Ingestion periodically invokes the inbox-owned, receipt-age retention
+operation; receiver appends and materializer reads do not perform cleanup.
+Retention is independent of materialization progress. Newly active routes or
+changed materialization versions may backfill only within the currently
+retained replay range; analysis never silently scans the inbox as a fallback.
+Materialization does not persist eager
 observation-to-contract associations. Analysis loads an exact immutable
 contract and joins its evidence declarations to reusable observations by
 `AuthorityScope + SourceKey` before evaluating predicates and correlation.

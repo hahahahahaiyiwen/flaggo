@@ -10,7 +10,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use flaggo_raw_otlp_inbox::{
     DEFAULT_OTLP_PROFILE_VERSION, InboxClock, NewRawOtlpBatch, OtlpProfileVersion, OtlpSignal,
     OtlpTransportCompression, OtlpWireEncoding, RawOtlpInbox, RawOtlpInboxError,
-    RawOtlpInboxLimits, RawOtlpInboxLimitsError, SqliteRawOtlpInbox,
+    RawOtlpInboxLimits, RawOtlpInboxLimitsError, RawOtlpInboxRetention, SqliteRawOtlpInbox,
 };
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
@@ -130,6 +130,36 @@ async fn round_trips_complete_batches_through_storage_neutral_contract() {
 }
 
 #[tokio::test]
+async fn reader_connection_requires_no_retention_policy() {
+    let fixture = TestInbox::create(RawOtlpInboxLimits::default()).await;
+    fixture
+        .inbox
+        .append(batch(
+            OtlpSignal::Logs,
+            OtlpWireEncoding::Protobuf,
+            OtlpTransportCompression::Identity,
+            vec![1, 2, 3],
+        ))
+        .await
+        .expect("durable append");
+
+    let reader = SqliteRawOtlpInbox::connect_reader(&fixture.database_url)
+        .await
+        .expect("reader connection");
+    let batches = reader
+        .read_after(None, NonZeroU16::new(10).expect("nonzero limit"))
+        .await
+        .expect("reader replay");
+    let health = reader.inspect().await.expect("reader health");
+
+    assert_eq!(batches.len(), 1);
+    assert_eq!(health.retained_batch_count, 1);
+    assert_eq!(health.expired_batch_count, 0);
+    reader.close().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn reads_forward_from_monotonic_batch_cursor() {
     let fixture = TestInbox::create(RawOtlpInboxLimits::default()).await;
     for signal in [OtlpSignal::Logs, OtlpSignal::Metrics, OtlpSignal::Traces] {
@@ -241,7 +271,7 @@ async fn capacity_pressure_rejects_without_evicting_nonexpired_batches() {
 }
 
 #[tokio::test]
-async fn hard_expiry_commits_even_when_incoming_batch_is_too_large() {
+async fn append_does_not_expire_and_explicit_retention_releases_capacity() {
     let limits = RawOtlpInboxLimits::new(3, Duration::from_secs(10)).expect("valid inbox limits");
     let fixture = TestInbox::create(limits).await;
     fixture
@@ -262,20 +292,32 @@ async fn hard_expiry_commits_even_when_incoming_batch_is_too_large() {
             OtlpSignal::Traces,
             OtlpWireEncoding::Protobuf,
             OtlpTransportCompression::Identity,
-            vec![2; 4],
+            vec![2; 2],
         ))
         .await
-        .expect_err("oversized batch must be rejected");
+        .expect_err("append must not perform retention");
     assert!(matches!(
         error,
         RawOtlpInboxError::CapacityExceeded {
-            retained_payload_bytes: 0,
-            incoming_payload_bytes: 4,
+            retained_payload_bytes: 3,
+            incoming_payload_bytes: 2,
             max_retained_payload_bytes: 3
         }
     ));
 
     let health = fixture.inbox.inspect().await.expect("inbox health");
+    assert_eq!(health.retained_batch_count, 1);
+    assert_eq!(health.retained_payload_bytes, 3);
+    assert_eq!(health.expired_batch_count, 0);
+
+    let retention = fixture
+        .inbox
+        .enforce_retention()
+        .await
+        .expect("explicit retention");
+    assert_eq!(retention.expired_batch_count, 1);
+    assert_eq!(retention.expired_payload_bytes, 3);
+    let health = fixture.inbox.inspect().await.expect("retained health");
     assert_eq!(health.retained_batch_count, 0);
     assert_eq!(health.retained_payload_bytes, 0);
     assert_eq!(health.expired_batch_count, 1);
@@ -309,7 +351,7 @@ async fn hard_expiry_commits_even_when_incoming_batch_is_too_large() {
 }
 
 #[tokio::test]
-async fn idle_hard_expiry_applies_to_replay_reads_and_inspection() {
+async fn replay_reads_and_inspection_do_not_enforce_retention() {
     let limits = RawOtlpInboxLimits::new(10, Duration::from_secs(10)).expect("valid inbox limits");
     let fixture = TestInbox::create(limits).await;
     fixture
@@ -328,54 +370,48 @@ async fn idle_hard_expiry_applies_to_replay_reads_and_inspection() {
         .inbox
         .read_after(None, NonZeroU16::new(10).expect("nonzero limit"))
         .await
-        .expect("replay after idle expiry");
-    assert!(replay.is_empty());
+        .expect("side-effect-free replay");
+    assert_eq!(replay.len(), 1);
     let health = fixture
         .inbox
         .inspect()
         .await
-        .expect("health after replay read");
-    assert_eq!(health.retained_batch_count, 0);
-    assert_eq!(health.retained_payload_bytes, 0);
-    assert_eq!(health.expired_batch_count, 1);
-    assert_eq!(health.expired_payload_bytes, 3);
+        .expect("side-effect-free inspection");
+    assert_eq!(health.retained_batch_count, 1);
+    assert_eq!(health.retained_payload_bytes, 3);
+    assert_eq!(health.expired_batch_count, 0);
 
-    fixture
+    let retention = fixture
         .inbox
-        .append(batch(
-            OtlpSignal::Metrics,
-            OtlpWireEncoding::Protobuf,
-            OtlpTransportCompression::Identity,
-            vec![2; 2],
-        ))
+        .enforce_retention()
         .await
-        .expect("second append");
-    fixture.clock.advance(TimeDelta::seconds(11));
-
-    let health = fixture
-        .inbox
-        .inspect()
-        .await
-        .expect("idle expiry inspection");
-    assert_eq!(health.retained_batch_count, 0);
-    assert_eq!(health.retained_payload_bytes, 0);
-    assert_eq!(health.expired_batch_count, 2);
-    assert_eq!(health.expired_payload_bytes, 5);
-    assert_eq!(
-        health.earliest_replay_at,
-        Some(fixed_time() + TimeDelta::seconds(12))
-    );
+        .expect("explicit retention");
+    assert_eq!(retention.expired_batch_count, 1);
+    assert_eq!(retention.expired_payload_bytes, 3);
     let replay = fixture
         .inbox
         .read_after(None, NonZeroU16::new(10).expect("nonzero limit"))
         .await
-        .expect("replay after inspection expiry");
+        .expect("replay after explicit retention");
     assert!(replay.is_empty());
+    let health = fixture
+        .inbox
+        .inspect()
+        .await
+        .expect("health after retention");
+    assert_eq!(health.retained_batch_count, 0);
+    assert_eq!(health.retained_payload_bytes, 0);
+    assert_eq!(health.expired_batch_count, 1);
+    assert_eq!(health.expired_payload_bytes, 3);
+    assert_eq!(
+        health.earliest_replay_at,
+        Some(fixed_time() + TimeDelta::seconds(1))
+    );
     fixture.close().await;
 }
 
 #[tokio::test]
-async fn concurrent_idle_expiry_and_append_preserve_retention_counters() {
+async fn concurrent_retention_and_append_preserve_retention_counters() {
     let limits = RawOtlpInboxLimits::new(10, Duration::from_secs(10)).expect("valid inbox limits");
     let fixture = TestInbox::create(limits).await;
     fixture
@@ -390,24 +426,19 @@ async fn concurrent_idle_expiry_and_append_preserve_retention_counters() {
         .expect("initial append");
     fixture.clock.advance(TimeDelta::seconds(11));
 
-    let replay = fixture
-        .inbox
-        .read_after(None, NonZeroU16::new(10).expect("nonzero limit"));
+    let retention = fixture.inbox.enforce_retention();
     let append = fixture.inbox.append(batch(
         OtlpSignal::Metrics,
         OtlpWireEncoding::Protobuf,
         OtlpTransportCompression::Identity,
         vec![2; 3],
     ));
-    let (replay, append) = tokio::join!(replay, append);
-    let replay = replay.expect("concurrent replay");
+    let (retention, append) = tokio::join!(retention, append);
+    let retention = retention.expect("concurrent retention");
     append.expect("concurrent append");
 
-    assert!(
-        replay
-            .iter()
-            .all(|batch| batch.signal == OtlpSignal::Metrics)
-    );
+    assert_eq!(retention.expired_batch_count, 1);
+    assert_eq!(retention.expired_payload_bytes, 4);
     let health = fixture.inbox.inspect().await.expect("inbox health");
     assert_eq!(health.retained_batch_count, 1);
     assert_eq!(health.retained_payload_bytes, 3);

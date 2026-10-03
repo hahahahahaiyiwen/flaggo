@@ -13,6 +13,11 @@ transport encoding. It validates the signal-specific export request, enforces
 the configured limit after decompression, and acknowledges success only after
 the complete decompressed payload is durably appended to the inbox.
 
+The request path only appends. The host invokes the inbox-owned retention
+operation once before listening and then periodically, at least once per minute
+or once per retention period when that period is shorter. Retention is based
+only on inbox receipt age and is independent of materialization progress.
+
 ## Receiver boundary
 
 Accepted export requests are opaque durable work items after transport and

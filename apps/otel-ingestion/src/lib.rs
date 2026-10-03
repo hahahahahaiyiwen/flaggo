@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use flaggo_raw_otlp_inbox::RawOtlpInbox;
+use flaggo_raw_otlp_inbox::{RawOtlpInbox, RawOtlpInboxLimits};
 use serde_json::{Value, json};
 
 mod config;
@@ -27,15 +27,24 @@ pub const SERVICE_NAME: &str = "flaggo-otel-ingestion";
 #[derive(Clone)]
 pub(crate) struct AppState {
     inbox: Arc<dyn RawOtlpInbox>,
+    inbox_limits: RawOtlpInboxLimits,
     receiver: OtlpReceiverConfig,
 }
 
-pub fn router(inbox: Arc<dyn RawOtlpInbox>, receiver: OtlpReceiverConfig) -> Router {
+pub fn router(
+    inbox: Arc<dyn RawOtlpInbox>,
+    receiver: OtlpReceiverConfig,
+    inbox_limits: RawOtlpInboxLimits,
+) -> Router {
     Router::new()
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness))
         .merge(receiver::routes())
-        .with_state(AppState { inbox, receiver })
+        .with_state(AppState {
+            inbox,
+            inbox_limits,
+            receiver,
+        })
 }
 
 async fn liveness() -> Json<Value> {
@@ -57,9 +66,9 @@ async fn readiness(State(state): State<AppState>) -> Response {
                         .map(|value| value.to_rfc3339()),
                     "expiredBatchCount": health.expired_batch_count,
                     "expiredPayloadBytes": health.expired_payload_bytes,
-                    "hardRetentionSeconds": health.limits.hard_retention().as_secs(),
-                    "maximumRetainedPayloadBytes": health
-                        .limits
+                    "hardRetentionSeconds": state.inbox_limits.hard_retention().as_secs(),
+                    "maximumRetainedPayloadBytes": state
+                        .inbox_limits
                         .max_retained_payload_bytes(),
                     "newestRetainedAt": health
                         .newest_retained_at
@@ -144,22 +153,25 @@ mod tests {
                 earliest_replay_at: None,
                 expired_batch_count: 1,
                 expired_payload_bytes: 10,
-                limits: RawOtlpInboxLimits::default(),
             })
         }
     }
 
     #[tokio::test]
     async fn reports_liveness() {
-        let response = router(stub_inbox(true), OtlpReceiverConfig::default())
-            .oneshot(
-                Request::builder()
-                    .uri("/health/live")
-                    .body(Body::empty())
-                    .expect("valid request"),
-            )
-            .await
-            .expect("router response");
+        let response = router(
+            stub_inbox(true),
+            OtlpReceiverConfig::default(),
+            RawOtlpInboxLimits::default(),
+        )
+        .oneshot(
+            Request::builder()
+                .uri("/health/live")
+                .body(Body::empty())
+                .expect("valid request"),
+        )
+        .await
+        .expect("router response");
 
         assert_eq!(response.status(), StatusCode::OK);
         let payload = response_json(response).await;
@@ -169,15 +181,19 @@ mod tests {
 
     #[tokio::test]
     async fn reports_inbox_readiness_and_capacity_health() {
-        let response = router(stub_inbox(true), OtlpReceiverConfig::default())
-            .oneshot(
-                Request::builder()
-                    .uri("/health/ready")
-                    .body(Body::empty())
-                    .expect("valid request"),
-            )
-            .await
-            .expect("router response");
+        let response = router(
+            stub_inbox(true),
+            OtlpReceiverConfig::default(),
+            RawOtlpInboxLimits::default(),
+        )
+        .oneshot(
+            Request::builder()
+                .uri("/health/ready")
+                .body(Body::empty())
+                .expect("valid request"),
+        )
+        .await
+        .expect("router response");
 
         assert_eq!(response.status(), StatusCode::OK);
         let payload = response_json(response).await;
@@ -190,15 +206,19 @@ mod tests {
 
     #[tokio::test]
     async fn reports_unavailable_inbox_as_not_ready() {
-        let response = router(stub_inbox(false), OtlpReceiverConfig::default())
-            .oneshot(
-                Request::builder()
-                    .uri("/health/ready")
-                    .body(Body::empty())
-                    .expect("valid request"),
-            )
-            .await
-            .expect("router response");
+        let response = router(
+            stub_inbox(false),
+            OtlpReceiverConfig::default(),
+            RawOtlpInboxLimits::default(),
+        )
+        .oneshot(
+            Request::builder()
+                .uri("/health/ready")
+                .body(Body::empty())
+                .expect("valid request"),
+        )
+        .await
+        .expect("router response");
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let payload = response_json(response).await;
