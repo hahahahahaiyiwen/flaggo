@@ -1,10 +1,14 @@
-use std::{num::NonZeroU16, str::FromStr};
+use std::{
+    num::NonZeroU16,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
-use chrono::Utc;
+use chrono::{DateTime, TimeDelta, Utc};
 use flaggo_evidence_materializer::{CompiledContractCatalog, EvidenceMaterializer, decode_batch};
 use flaggo_evidence_store::{AuthorityScope, EvidenceStore, SqliteEvidenceStore};
 use flaggo_raw_otlp_inbox::{
-    DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpProfileVersion, OtlpSignal,
+    DEFAULT_OTLP_PROFILE_VERSION, InboxClock, NewRawOtlpBatch, OtlpProfileVersion, OtlpSignal,
     OtlpTransportCompression, OtlpWireEncoding, RawOtlpInbox, RawOtlpInboxLimits,
     SqliteRawOtlpInbox,
 };
@@ -61,6 +65,94 @@ async fn decodes_every_signal_shape_from_both_wire_encodings() {
             .is_none()
     );
 
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn timestamp_less_duplicate_deliveries_are_idempotent_during_forward_processing() {
+    verify_timestamp_less_duplicate_deliveries(true).await;
+}
+
+#[tokio::test]
+async fn timestamp_less_duplicate_deliveries_are_idempotent_during_route_replay() {
+    verify_timestamp_less_duplicate_deliveries(false).await;
+}
+
+async fn verify_timestamp_less_duplicate_deliveries(activate_before_delivery: bool) {
+    let fixture = Fixture::new().await;
+    let empty = CompiledContractCatalog::empty();
+    let catalog = contract_catalog(CONTRACT_DIGEST_ONE);
+    let materializer = EvidenceMaterializer::new(
+        fixture.inbox.clone(),
+        fixture.store.clone(),
+        NonZeroU16::new(10).unwrap(),
+    );
+    if activate_before_delivery {
+        materializer
+            .activate_catalog(
+                &empty,
+                &catalog,
+                "\"catalog-before-delivery\"".to_owned(),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+    }
+
+    fixture
+        .append_timestamp_less_signals(OtlpWireEncoding::Protobuf)
+        .await;
+    let first_received_at = fixture
+        .inbox
+        .read_after(None, NonZeroU16::new(1).unwrap())
+        .await
+        .unwrap()[0]
+        .received_at;
+    fixture.clock.advance(TimeDelta::seconds(1));
+    fixture
+        .append_timestamp_less_signals(OtlpWireEncoding::Protobuf)
+        .await;
+
+    let result = if activate_before_delivery {
+        materializer.run_once(&catalog).await.unwrap()
+    } else {
+        materializer
+            .activate_catalog(
+                &empty,
+                &catalog,
+                "\"catalog-after-delivery\"".to_owned(),
+                Utc::now(),
+            )
+            .await
+            .unwrap()
+            .replay
+    };
+    assert_eq!(result.batches_read, 6);
+    assert_eq!(result.observations_created, 4);
+    assert_eq!(result.duplicate_observations, 4);
+    assert_eq!(result.provenance_created, 8);
+    assert_eq!(result.diagnostics_created, 8);
+
+    let observations = fixture
+        .store
+        .list_observations(
+            &authority("local", "test-app", "test-env"),
+            NonZeroU16::new(10).unwrap(),
+        )
+        .await
+        .unwrap();
+    let first_received_at_unix_nano =
+        u64::try_from(first_received_at.timestamp_nanos_opt().unwrap()).unwrap();
+    assert_eq!(observations.len(), 4);
+    assert!(observations.iter().all(|stored| {
+        stored.observation.observed_time_source == "inbox.received_at"
+            && stored.observation.observed_at_unix_nano == first_received_at_unix_nano
+    }));
+
+    let health = fixture.store.inspect().await.unwrap();
+    assert_eq!(health.observation_count, 4);
+    assert_eq!(health.provenance_count, 8);
+    assert_eq!(health.diagnostic_count, 8);
     fixture.close().await;
 }
 
@@ -255,6 +347,7 @@ struct Fixture {
     _directory: TempDir,
     inbox: SqliteRawOtlpInbox,
     store: SqliteEvidenceStore,
+    clock: Arc<TestClock>,
 }
 
 impl Fixture {
@@ -264,14 +357,20 @@ impl Fixture {
             "sqlite://{}",
             directory.path().join("telemetry.db").display()
         );
-        let inbox = SqliteRawOtlpInbox::connect(&database_url, RawOtlpInboxLimits::default())
-            .await
-            .unwrap();
+        let clock = Arc::new(TestClock::new(Utc::now()));
+        let inbox = SqliteRawOtlpInbox::connect_with_clock(
+            &database_url,
+            RawOtlpInboxLimits::default(),
+            clock.clone(),
+        )
+        .await
+        .unwrap();
         let store = SqliteEvidenceStore::connect(&database_url).await.unwrap();
         Self {
             _directory: directory,
             inbox,
             store,
+            clock,
         }
     }
 
@@ -354,6 +453,32 @@ impl Fixture {
     }
 
     async fn append_traces(&self, encoding: OtlpWireEncoding) {
+        self.append_traces_with_times(encoding, 100, 200, 150).await;
+    }
+
+    async fn append_timestamp_less_signals(&self, encoding: OtlpWireEncoding) {
+        let mut log = application_log();
+        log.time_unix_nano = 0;
+        log.observed_time_unix_nano = 0;
+        self.append_logs(encoding, vec![log]).await;
+
+        let mut metric = gauge_metric(1);
+        let Some(metric::Data::Gauge(gauge)) = metric.data.as_mut() else {
+            unreachable!("gauge metric helper must produce gauge data");
+        };
+        gauge.data_points[0].start_time_unix_nano = 0;
+        gauge.data_points[0].time_unix_nano = 0;
+        self.append_metrics(encoding, vec![metric]).await;
+        self.append_traces_with_times(encoding, 0, 0, 0).await;
+    }
+
+    async fn append_traces_with_times(
+        &self,
+        encoding: OtlpWireEncoding,
+        start_time_unix_nano: u64,
+        end_time_unix_nano: u64,
+        event_time_unix_nano: u64,
+    ) {
         let request = ExportTraceServiceRequest {
             resource_spans: vec![ResourceSpans {
                 resource: Some(resource()),
@@ -363,11 +488,11 @@ impl Fixture {
                         trace_id: vec![1; 16],
                         span_id: vec![2; 8],
                         name: "demo.operation".to_owned(),
-                        start_time_unix_nano: 100,
-                        end_time_unix_nano: 200,
+                        start_time_unix_nano,
+                        end_time_unix_nano,
                         attributes: vec![string_kv("worker.id", "worker-1")],
                         events: vec![span::Event {
-                            time_unix_nano: 150,
+                            time_unix_nano: event_time_unix_nano,
                             name: "demo.event".to_owned(),
                             attributes: vec![string_kv("event.kind", "test")],
                             ..Default::default()
@@ -407,6 +532,29 @@ impl Fixture {
     async fn close(&self) {
         self.inbox.close().await;
         self.store.close().await;
+    }
+}
+
+struct TestClock {
+    current: Mutex<DateTime<Utc>>,
+}
+
+impl TestClock {
+    fn new(current: DateTime<Utc>) -> Self {
+        Self {
+            current: Mutex::new(current),
+        }
+    }
+
+    fn advance(&self, duration: TimeDelta) {
+        let mut current = self.current.lock().expect("test clock lock");
+        *current += duration;
+    }
+}
+
+impl InboxClock for TestClock {
+    fn now(&self) -> DateTime<Utc> {
+        *self.current.lock().expect("test clock lock")
     }
 }
 

@@ -185,6 +185,12 @@ function validateCorrelation(
         "Correlation attribute values must be strings, numbers, or booleans.",
       );
     }
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      inputError(
+        `${path}/${name}`,
+        "Numeric correlation attribute values must be finite.",
+      );
+    }
     result[name] = value;
   }
   return result;

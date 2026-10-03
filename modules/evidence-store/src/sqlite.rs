@@ -787,6 +787,11 @@ async fn verify_existing_observation(
     .map_err(EvidenceStoreError::unavailable)?;
     let mut existing = decode_observation(&row)?.observation;
     existing.versions.routing = observation.versions.routing.clone();
+    if existing.observed_time_source == "inbox.received_at"
+        && observation.observed_time_source == "inbox.received_at"
+    {
+        existing.observed_at_unix_nano = observation.observed_at_unix_nano;
+    }
     if existing != *observation {
         return Err(EvidenceStoreError::CorruptData(format!(
             "observation {} has inconsistent content",

@@ -27,7 +27,8 @@ stores payloads in `raw_otlp_inbox_batches`.
 - Media type is derived from the validated wire encoding.
 - Payload length and SHA-256 are calculated by the inbox.
 - An append commits before its receipt is returned.
-- Appends serialize before retention and capacity evaluation.
+- Appends, replay reads, and health inspections serialize before hard-retention
+  evaluation, so expiry does not depend on new receiver traffic.
 - Retained batch and payload-byte counters update in the same transaction, so
   capacity admission does not scan the full inbox.
 - Expired rows and their replay diagnostics commit even when the incoming

@@ -7,10 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDecisionClient,
+  recordDecisionReceived,
   type DecisionBindings,
   type DecisionSpec,
   type FetchLike,
   type FlaggoTelemetryLogger,
+  type RuntimeDecision,
 } from "../src/runtime/index.js";
 import { runtimeConfiguration } from "./runtime-configuration.js";
 
@@ -41,7 +43,7 @@ const bindings: DecisionBindings<Decisions> = {
 };
 const runtimeConfig = runtimeConfiguration(bindings);
 
-function decision(result = 4): object {
+function decision(result = 4): RuntimeDecision<number> {
   return {
     contractDigest,
     executableDigest,
@@ -161,6 +163,20 @@ describe("runtime telemetry", () => {
     });
 
     await expect(client.decide("parallelism")).rejects.toThrow();
+
+    expect(telemetry.records).toEqual([]);
+  });
+
+  it("rejects non-finite direct-helper correlation values", () => {
+    const telemetry = captureLogger();
+
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => recordDecisionReceived(telemetry.logger, {
+        contractName: "parallelism",
+        decision: decision(),
+        correlation: { queuePressure: value },
+      })).toThrow(/must be finite/u);
+    }
 
     expect(telemetry.records).toEqual([]);
   });

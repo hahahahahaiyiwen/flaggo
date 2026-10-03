@@ -4,6 +4,8 @@ use opentelemetry_proto::tonic::common::v1::{AnyValue, any_value};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use flaggo_evidence_store::EvidenceSignal;
+
 use crate::candidate::Candidate;
 
 const SDK_SCOPE: &str = "@flaggo/sdk";
@@ -27,6 +29,9 @@ pub(crate) enum BuiltInEvaluation {
 }
 
 pub(crate) fn evaluate(candidate: &Candidate) -> BuiltInEvaluation {
+    if candidate.signal != EvidenceSignal::Log {
+        return BuiltInEvaluation::NotBuiltIn;
+    }
     if candidate.instrumentation_scope != SDK_SCOPE {
         return BuiltInEvaluation::NotBuiltIn;
     }
@@ -221,4 +226,101 @@ fn is_bounded_name(value: &str, valid: impl Fn(u8) -> bool) -> bool {
 
 fn sha256(value: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use opentelemetry_proto::tonic::common::v1::KeyValue;
+    use serde_json::Value;
+
+    use super::*;
+
+    #[test]
+    fn non_log_signals_cannot_become_valid_protocol_events() {
+        for signal in [
+            EvidenceSignal::Metric,
+            EvidenceSignal::Span,
+            EvidenceSignal::SpanEvent,
+        ] {
+            let candidate = candidate(signal, EVENT_NAME, valid_protocol_attributes());
+            assert!(matches!(
+                evaluate(&candidate),
+                BuiltInEvaluation::NotBuiltIn
+            ));
+        }
+    }
+
+    #[test]
+    fn non_log_protocol_lookalikes_do_not_produce_protocol_diagnostics() {
+        for signal in [
+            EvidenceSignal::Metric,
+            EvidenceSignal::Span,
+            EvidenceSignal::SpanEvent,
+        ] {
+            let candidate = candidate(
+                signal,
+                "application.signal",
+                vec![string_attribute("flaggo.signal", "decision.received")],
+            );
+            assert!(matches!(
+                evaluate(&candidate),
+                BuiltInEvaluation::NotBuiltIn
+            ));
+        }
+    }
+
+    fn candidate(
+        signal: EvidenceSignal,
+        signal_name: &str,
+        signal_attributes: Vec<KeyValue>,
+    ) -> Candidate {
+        Candidate {
+            ordinal: 0,
+            signal,
+            instrumentation_scope: SDK_SCOPE.to_owned(),
+            signal_name: signal_name.to_owned(),
+            metric_kind: None,
+            metric_unit: None,
+            observed_at_unix_nano: 1,
+            observed_time_source: "signal.time_unix_nano",
+            resource: None,
+            resource_schema_url: String::new(),
+            scope: None,
+            scope_schema_url: String::new(),
+            signal_attributes,
+            parent_span_name: None,
+            payload: Value::Null,
+            identity: Value::Null,
+            identity_is_content_derived: false,
+        }
+    }
+
+    fn valid_protocol_attributes() -> Vec<KeyValue> {
+        vec![
+            string_attribute("flaggo.signal", "decision.received"),
+            string_attribute("flaggo.decision.id", "00000000-0000-4000-8000-000000000000"),
+            string_attribute("flaggo.contract.name", "parallelism"),
+            string_attribute(
+                "flaggo.contract.digest",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            string_attribute(
+                "flaggo.executable.digest",
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            ),
+            string_attribute("flaggo.result.json", "4"),
+            string_attribute("flaggo.result.hash", &sha256(b"4")),
+            string_attribute("flaggo.evaluation.source", "default"),
+        ]
+    }
+
+    fn string_attribute(key: &str, value: &str) -> KeyValue {
+        KeyValue {
+            key: key.to_owned(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue(value.to_owned())),
+            }),
+            key_strindex: 0,
+        }
+    }
 }

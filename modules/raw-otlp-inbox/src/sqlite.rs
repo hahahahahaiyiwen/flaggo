@@ -243,6 +243,41 @@ impl SqliteRawOtlpInbox {
         Ok((expired_batch_count_u64, expired_payload_bytes_u64))
     }
 
+    async fn expire_due(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    ) -> Result<(), RawOtlpInboxError> {
+        let lock_result = sqlx::query(
+            "UPDATE raw_otlp_inbox_state
+             SET write_revision = write_revision + 1
+             WHERE singleton = 1",
+        )
+        .execute(&mut **transaction)
+        .await
+        .map_err(RawOtlpInboxError::unavailable)?;
+        if lock_result.rows_affected() != 1 {
+            return Err(corrupt("singleton state row is missing"));
+        }
+
+        let (last_received_at_unix_ms, earliest_replay_at_unix_ms): (Option<i64>, Option<i64>) =
+            sqlx::query_as(
+                "SELECT last_received_at_unix_ms, earliest_replay_at_unix_ms
+                 FROM raw_otlp_inbox_state
+                 WHERE singleton = 1",
+            )
+            .fetch_one(&mut **transaction)
+            .await
+            .map_err(RawOtlpInboxError::unavailable)?;
+        let retention_reference_unix_ms = last_received_at_unix_ms
+            .into_iter()
+            .chain(earliest_replay_at_unix_ms)
+            .fold(self.clock.now().timestamp_millis(), i64::max);
+        let cutoff_unix_ms =
+            retention_reference_unix_ms.saturating_sub(self.limits.hard_retention_millis());
+        Self::expire_before(transaction, cutoff_unix_ms).await?;
+        Ok(())
+    }
+
     fn decode_row(row: &SqliteRow) -> Result<RawOtlpInboxBatch, RawOtlpInboxError> {
         let raw_batch_id: i64 = row
             .try_get("inbox_batch_id")
@@ -481,6 +516,12 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
         let after = after.map_or(0, InboxBatchId::get);
         let after = i64::try_from(after)
             .map_err(|_| corrupt(format!("batch cursor {after} exceeds SQLite integer range")))?;
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(RawOtlpInboxError::unavailable)?;
+        self.expire_due(&mut transaction).await?;
         let rows = sqlx::query(
             "SELECT
                 inbox_batch_id,
@@ -500,9 +541,13 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
         )
         .bind(after)
         .bind(i64::from(limit.get()))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *transaction)
         .await
         .map_err(RawOtlpInboxError::unavailable)?;
+        transaction
+            .commit()
+            .await
+            .map_err(RawOtlpInboxError::unavailable)?;
         rows.iter().map(Self::decode_row).collect()
     }
 
@@ -512,6 +557,7 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
             .begin()
             .await
             .map_err(RawOtlpInboxError::unavailable)?;
+        self.expire_due(&mut transaction).await?;
         let state = sqlx::query(
             "SELECT
                 retained_batch_count,
