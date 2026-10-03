@@ -201,16 +201,14 @@ contracts use its source.
 
 The catalog response `ETag` is opaque conditional-fetch state. It is never an
 observation, provenance, diagnostic, or checkpoint identity. The worker
-durably caches the last valid catalog only after replay for every route
-transition from zero references to one has succeeded. A failed or invalid
-refresh retains the previous catalog. With no catalog, an empty route map still
-keeps `flaggo.decision.received` acquisition independent of catalog
-availability.
+durably caches each valid catalog directly. A failed or invalid refresh retains
+the previous catalog. With no catalog, an empty route map still keeps
+`flaggo.decision.received` acquisition independent of catalog availability.
 
 Decoder, identity, projection, or routing-protocol version changes define a
-new global forward-checkpoint namespace. Catalog changes do not. A newly active
-route replays the bounded retained inbox; a contract change that keeps its
-route active does not.
+new global forward-checkpoint namespace. Catalog changes do not reset or bypass
+the checkpoint and never revisit completed inbox batches. Newly active routes
+apply when pending or future batches are first processed.
 
 ## Correlation and analysis
 
@@ -299,9 +297,9 @@ a conflict diagnostic.
 Evidence Store observations remain durable after raw inbox payloads expire.
 OTel Ingestion periodically invokes the inbox-owned, receipt-age retention
 operation; receiver appends and materializer reads do not perform cleanup.
-Retention is independent of materialization progress. Newly active routes or
-changed materialization versions may backfill only within the currently
-retained replay range; analysis never silently scans the inbox as a fallback.
+Retention is independent of materialization progress. Changed materialization
+versions may rematerialize only within the currently retained replay range;
+analysis never silently scans the inbox as a fallback.
 Materialization does not persist eager
 observation-to-contract associations. Analysis loads an exact immutable
 contract and joins its evidence declarations to reusable observations by
