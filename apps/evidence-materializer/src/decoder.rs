@@ -205,7 +205,9 @@ fn decompose_traces(
                             "parentSpan": span_json(&span)
                         }),
                         identity: json!({
-                            "eventIndex": event_index.to_string(),
+                            "eventName": event.name,
+                            "eventOccurrence": event_index.to_string(),
+                            "eventTimeUnixNano": event.time_unix_nano.to_string(),
                             "parentSpan": span_identity
                         }),
                         identity_is_content_derived: false,
@@ -582,4 +584,109 @@ fn exemplar_json(value: &Exemplar) -> Value {
 
 fn double_json(value: f64) -> Value {
     json!({ "doubleBits": format!("{:016x}", value.to_bits()) })
+}
+
+#[cfg(test)]
+mod tests {
+    use opentelemetry_proto::tonic::{
+        common::v1::AnyValue,
+        trace::v1::{ResourceSpans, ScopeSpans},
+    };
+
+    use super::*;
+
+    #[test]
+    fn span_identity_uses_only_trace_and_span_ids() {
+        let first = Span {
+            trace_id: vec![1; 16],
+            span_id: vec![2; 8],
+            name: "first".to_owned(),
+            attributes: vec![KeyValue {
+                key: "worker.id".to_owned(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue("one".to_owned())),
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut changed = first.clone();
+        changed.name = "changed".to_owned();
+        changed.attributes.clear();
+
+        let decoded = decompose_traces(trace_request(vec![first, changed]), Utc::now());
+
+        assert_eq!(decoded.candidates.len(), 2);
+        assert_eq!(
+            decoded.candidates[0].identity,
+            decoded.candidates[1].identity
+        );
+        assert_eq!(
+            decoded.candidates[0].identity,
+            json!({
+                "spanId": "0202020202020202",
+                "traceId": "01010101010101010101010101010101"
+            })
+        );
+    }
+
+    #[test]
+    fn span_event_identity_includes_name_timestamp_and_occurrence() {
+        let event = |name: &str, time_unix_nano| span::Event {
+            name: name.to_owned(),
+            time_unix_nano,
+            ..Default::default()
+        };
+        let span = Span {
+            trace_id: vec![1; 16],
+            span_id: vec![2; 8],
+            events: vec![
+                event("repeated", 10),
+                event("repeated", 10),
+                event("renamed", 10),
+                event("repeated", 11),
+            ],
+            ..Default::default()
+        };
+
+        let decoded = decompose_traces(trace_request(vec![span]), Utc::now());
+
+        assert_eq!(decoded.candidates.len(), 5);
+        assert_eq!(
+            decoded.candidates[1].identity,
+            json!({
+                "eventName": "repeated",
+                "eventOccurrence": "0",
+                "eventTimeUnixNano": "10",
+                "parentSpan": {
+                    "spanId": "0202020202020202",
+                    "traceId": "01010101010101010101010101010101"
+                }
+            })
+        );
+        assert_ne!(
+            decoded.candidates[1].identity,
+            decoded.candidates[2].identity
+        );
+        assert_ne!(
+            decoded.candidates[1].identity,
+            decoded.candidates[3].identity
+        );
+        assert_ne!(
+            decoded.candidates[1].identity,
+            decoded.candidates[4].identity
+        );
+    }
+
+    fn trace_request(spans: Vec<Span>) -> ExportTraceServiceRequest {
+        ExportTraceServiceRequest {
+            resource_spans: vec![ResourceSpans {
+                scope_spans: vec![ScopeSpans {
+                    spans,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        }
+    }
 }

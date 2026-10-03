@@ -120,15 +120,6 @@ impl CompiledContractCatalog {
     pub fn contains_route(&self, route: &MaterializationRoute) -> bool {
         self.active_source_counts.contains_key(route)
     }
-
-    #[must_use]
-    pub fn newly_active_routes(&self, previous: &Self) -> HashSet<MaterializationRoute> {
-        self.active_source_counts
-            .keys()
-            .filter(|route| !previous.active_source_counts.contains_key(*route))
-            .cloned()
-            .collect()
-    }
 }
 
 #[derive(Debug, Error)]
@@ -396,25 +387,6 @@ mod tests {
             .collect::<Vec<_>>();
         counts.sort_unstable();
         assert_eq!(counts, vec![1, 2]);
-    }
-
-    #[test]
-    fn only_zero_to_one_routes_require_replay() {
-        let previous =
-            CompiledContractCatalog::compile(catalog_payload(&[("first", "1", "shared")]))
-                .expect("previous catalog");
-        let next = CompiledContractCatalog::compile(catalog_payload(&[
-            ("second", "2", "shared"),
-            ("third", "3", "new"),
-        ]))
-        .expect("next catalog");
-
-        let routes = next.newly_active_routes(&previous);
-        assert_eq!(routes.len(), 1);
-        assert_eq!(
-            routes.iter().next().expect("new route").source.signal_name,
-            "new"
-        );
     }
 
     #[test]

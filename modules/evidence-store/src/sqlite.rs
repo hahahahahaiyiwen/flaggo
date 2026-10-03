@@ -9,14 +9,14 @@ use sqlx::{
 };
 
 use crate::{
-    AuthorityScope, EvidenceDiagnostic, EvidenceMaterializationCommit, EvidenceMaterializationMode,
-    EvidenceObservation, EvidenceSignal, EvidenceStore, EvidenceStoreCommitResult,
-    EvidenceStoreError, EvidenceStoreHealth, ForwardMaterializationKey, MaterializerVersions,
-    SourceKey, StoredContractCatalog, StoredEvidenceObservation,
+    AuthorityScope, EvidenceDiagnostic, EvidenceMaterializationCommit, EvidenceObservation,
+    EvidenceSignal, EvidenceStore, EvidenceStoreCommitResult, EvidenceStoreError,
+    EvidenceStoreHealth, ForwardMaterializationKey, MaterializerVersions, SourceKey,
+    StoredContractCatalog, StoredEvidenceObservation,
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const CREATE_SCHEMA_VERSIONS: &str = "
@@ -104,7 +104,15 @@ const CREATE_OBSERVATION_INDEXES: &str = "
     );
 
     CREATE INDEX IF NOT EXISTS ix_evidence_observations_logical_source
-    ON evidence_observations(logical_source_id, observation_id)
+    ON evidence_observations(logical_source_id, observation_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_evidence_observations_logical_version
+    ON evidence_observations(
+        logical_source_id,
+        decoder_version,
+        identity_version,
+        projection_version
+    )
 ";
 const CREATE_PROVENANCE: &str = "
     CREATE TABLE IF NOT EXISTS evidence_observation_provenance (
@@ -136,14 +144,16 @@ const CREATE_CONFLICTS: &str = "
     CREATE TABLE IF NOT EXISTS evidence_observation_conflicts (
         conflict_id TEXT PRIMARY KEY,
         logical_source_id TEXT NOT NULL,
-        first_observation_id TEXT NOT NULL,
-        second_observation_id TEXT NOT NULL,
-        first_content_digest TEXT NOT NULL,
-        second_content_digest TEXT NOT NULL,
+        accepted_observation_id TEXT NOT NULL,
+        accepted_content_digest TEXT NOT NULL,
+        rejected_content_digest TEXT NOT NULL,
+        rejected_inbox_batch_id INTEGER NOT NULL CHECK(rejected_inbox_batch_id > 0),
+        rejected_candidate_ordinal INTEGER NOT NULL CHECK(rejected_candidate_ordinal >= 0),
+        decoder_version TEXT NOT NULL,
+        identity_version TEXT NOT NULL,
+        projection_version TEXT NOT NULL,
         detected_at_unix_ms INTEGER NOT NULL,
-        FOREIGN KEY(first_observation_id)
-            REFERENCES evidence_observations(observation_id),
-        FOREIGN KEY(second_observation_id)
+        FOREIGN KEY(accepted_observation_id)
             REFERENCES evidence_observations(observation_id)
     )
 ";
@@ -182,7 +192,7 @@ impl SqliteEvidenceStore {
     async fn initialize(&self) -> Result<(), EvidenceStoreError> {
         let mut transaction = self
             .pool
-            .begin()
+            .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(EvidenceStoreError::unavailable)?;
         sqlx::query(CREATE_SCHEMA_VERSIONS)
@@ -296,109 +306,113 @@ impl SqliteEvidenceStore {
         .map(|result| result.rows_affected())
     }
 
-    async fn insert_conflicts(
+    async fn stored_logical_observation(
         transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         observation: &EvidenceObservation,
+    ) -> Result<Option<(String, String)>, EvidenceStoreError> {
+        let row = sqlx::query(
+            "SELECT observation_id, content_digest
+             FROM evidence_observations
+             WHERE logical_source_id = ?
+               AND decoder_version = ?
+               AND identity_version = ?
+               AND projection_version = ?",
+        )
+        .bind(&observation.logical_source_id)
+        .bind(&observation.versions.decoder)
+        .bind(&observation.versions.identity)
+        .bind(&observation.versions.projection)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(EvidenceStoreError::unavailable)?;
+        row.map(|row| {
+            Ok((
+                row.try_get("observation_id")
+                    .map_err(EvidenceStoreError::unavailable)?,
+                row.try_get("content_digest")
+                    .map_err(EvidenceStoreError::unavailable)?,
+            ))
+        })
+        .transpose()
+    }
+
+    async fn insert_conflict(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        observation: &EvidenceObservation,
+        accepted_observation_id: &str,
+        accepted_content_digest: &str,
         inbox_batch_id: u64,
         candidate_ordinal: u32,
         created_at_unix_ms: i64,
     ) -> Result<(u64, u64), EvidenceStoreError> {
-        let rows = sqlx::query(
-            "SELECT observation_id, content_digest
-             FROM evidence_observations
-             WHERE logical_source_id = ?
-               AND observation_id <> ?
-               AND content_digest <> ?",
+        let conflict_id = digest_parts(&[
+            "evidence-conflict/v2",
+            &observation.logical_source_id,
+            accepted_content_digest,
+            &observation.content_digest,
+            &observation.versions.decoder,
+            &observation.versions.identity,
+            &observation.versions.projection,
+        ]);
+        let inserted = sqlx::query(
+            "INSERT INTO evidence_observation_conflicts(
+                conflict_id,
+                logical_source_id,
+                accepted_observation_id,
+                accepted_content_digest,
+                rejected_content_digest,
+                rejected_inbox_batch_id,
+                rejected_candidate_ordinal,
+                decoder_version,
+                identity_version,
+                projection_version,
+                detected_at_unix_ms
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(conflict_id) DO NOTHING",
         )
+        .bind(&conflict_id)
         .bind(&observation.logical_source_id)
-        .bind(&observation.observation_id)
+        .bind(accepted_observation_id)
+        .bind(accepted_content_digest)
         .bind(&observation.content_digest)
-        .fetch_all(&mut **transaction)
+        .bind(to_i64("inbox batch ID", inbox_batch_id)?)
+        .bind(i64::from(candidate_ordinal))
+        .bind(&observation.versions.decoder)
+        .bind(&observation.versions.identity)
+        .bind(&observation.versions.projection)
+        .bind(created_at_unix_ms)
+        .execute(&mut **transaction)
         .await
-        .map_err(EvidenceStoreError::unavailable)?;
-        let mut conflicts_created = 0;
-        let mut diagnostics_created = 0;
-        for row in rows {
-            let existing_id: String = row
-                .try_get("observation_id")
-                .map_err(EvidenceStoreError::unavailable)?;
-            let existing_digest: String = row
-                .try_get("content_digest")
-                .map_err(EvidenceStoreError::unavailable)?;
-            let (first_id, second_id, first_digest, second_digest) =
-                if existing_id <= observation.observation_id {
-                    (
-                        existing_id,
-                        observation.observation_id.clone(),
-                        existing_digest,
-                        observation.content_digest.clone(),
-                    )
-                } else {
-                    (
-                        observation.observation_id.clone(),
-                        existing_id,
-                        observation.content_digest.clone(),
-                        existing_digest,
-                    )
-                };
-            let conflict_id = digest_parts(&[
-                "evidence-conflict/v1",
-                &observation.logical_source_id,
-                &first_id,
-                &second_id,
-            ]);
-            let inserted = sqlx::query(
-                "INSERT INTO evidence_observation_conflicts(
-                    conflict_id,
-                    logical_source_id,
-                    first_observation_id,
-                    second_observation_id,
-                    first_content_digest,
-                    second_content_digest,
-                    detected_at_unix_ms
-                 )
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(conflict_id) DO NOTHING",
+        .map_err(EvidenceStoreError::unavailable)?
+        .rows_affected();
+        let diagnostics_created = if inserted == 1 {
+            Self::insert_diagnostic(
+                transaction,
+                &EvidenceDiagnostic {
+                    diagnostic_id: conflict_id,
+                    inbox_batch_id,
+                    candidate_ordinal: Some(candidate_ordinal),
+                    code: "logical-source-conflict".to_owned(),
+                    message: "Candidate content conflicts with the accepted logical source."
+                        .to_owned(),
+                    detail_json: Some(
+                        serde_json::to_vec(&serde_json::json!({
+                            "acceptedContentDigest": accepted_content_digest,
+                            "acceptedObservationId": accepted_observation_id,
+                            "logicalSourceId": observation.logical_source_id,
+                            "rejectedContentDigest": observation.content_digest
+                        }))
+                        .expect("conflict detail JSON must serialize"),
+                    ),
+                },
+                created_at_unix_ms,
             )
-            .bind(&conflict_id)
-            .bind(&observation.logical_source_id)
-            .bind(&first_id)
-            .bind(&second_id)
-            .bind(&first_digest)
-            .bind(&second_digest)
-            .bind(created_at_unix_ms)
-            .execute(&mut **transaction)
-            .await
-            .map_err(EvidenceStoreError::unavailable)?
-            .rows_affected();
-            conflicts_created += inserted;
-            if inserted == 1 {
-                diagnostics_created += Self::insert_diagnostic(
-                    transaction,
-                    &EvidenceDiagnostic {
-                        diagnostic_id: conflict_id,
-                        inbox_batch_id,
-                        candidate_ordinal: Some(candidate_ordinal),
-                        code: "logical-source-conflict".to_owned(),
-                        message: "Distinct candidate content shares one logical source identity."
-                            .to_owned(),
-                        detail_json: Some(
-                            serde_json::to_vec(&serde_json::json!({
-                                "firstContentDigest": first_digest,
-                                "firstObservationId": first_id,
-                                "logicalSourceId": observation.logical_source_id,
-                                "secondContentDigest": second_digest,
-                                "secondObservationId": second_id
-                            }))
-                            .expect("conflict detail JSON must serialize"),
-                        ),
-                    },
-                    created_at_unix_ms,
-                )
-                .await?;
-            }
-        }
-        Ok((conflicts_created, diagnostics_created))
+            .await?
+        } else {
+            0
+        };
+        Ok((inserted, diagnostics_created))
     }
 }
 
@@ -491,13 +505,12 @@ impl EvidenceStore for SqliteEvidenceStore {
         validate_commit(&commit)?;
         let mut transaction = self
             .pool
-            .begin()
+            .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(EvidenceStoreError::unavailable)?;
-        if commit.mode == EvidenceMaterializationMode::Forward
-            && Self::stored_checkpoint(&mut transaction, &commit.key)
-                .await?
-                .is_some_and(|value| value >= commit.inbox_batch_id)
+        if Self::stored_checkpoint(&mut transaction, &commit.key)
+            .await?
+            .is_some_and(|value| value >= commit.inbox_batch_id)
         {
             transaction
                 .rollback()
@@ -513,6 +526,28 @@ impl EvidenceStore for SqliteEvidenceStore {
         let mut result = EvidenceStoreCommitResult::default();
         for write in &commit.observations {
             let observation = &write.observation;
+            if let Some((accepted_id, accepted_digest)) =
+                Self::stored_logical_observation(&mut transaction, observation).await?
+            {
+                if accepted_digest == observation.content_digest {
+                    result.duplicate_observations += 1;
+                } else {
+                    let (conflicts, diagnostics) = Self::insert_conflict(
+                        &mut transaction,
+                        observation,
+                        &accepted_id,
+                        &accepted_digest,
+                        commit.inbox_batch_id,
+                        write.candidate_ordinal,
+                        created_at_unix_ms,
+                    )
+                    .await?;
+                    result.conflicts_created += conflicts;
+                    result.diagnostics_created += diagnostics;
+                }
+                continue;
+            }
+
             let inserted = sqlx::query(
                 "INSERT INTO evidence_observations(
                     observation_id,
@@ -571,24 +606,12 @@ impl EvidenceStore for SqliteEvidenceStore {
             .await
             .map_err(EvidenceStoreError::unavailable)?
             .rows_affected();
-            if inserted == 1 {
-                result.observations_created += 1;
-            } else {
+            if inserted != 1 {
                 verify_existing_observation(&mut transaction, observation).await?;
                 result.duplicate_observations += 1;
+                continue;
             }
-
-            let (conflicts, conflict_diagnostics) = Self::insert_conflicts(
-                &mut transaction,
-                observation,
-                commit.inbox_batch_id,
-                write.candidate_ordinal,
-                created_at_unix_ms,
-            )
-            .await?;
-            result.conflicts_created += conflicts;
-            result.diagnostics_created += conflict_diagnostics;
-
+            result.observations_created += 1;
             result.provenance_created += sqlx::query(
                 "INSERT INTO evidence_observation_provenance(
                     observation_id,
@@ -596,8 +619,7 @@ impl EvidenceStore for SqliteEvidenceStore {
                     candidate_ordinal,
                     recorded_at_unix_ms
                  )
-                 VALUES (?, ?, ?, ?)
-                 ON CONFLICT DO NOTHING",
+                 VALUES (?, ?, ?, ?)",
             )
             .bind(&observation.observation_id)
             .bind(to_i64("inbox batch ID", commit.inbox_batch_id)?)
@@ -614,42 +636,40 @@ impl EvidenceStore for SqliteEvidenceStore {
                 Self::insert_diagnostic(&mut transaction, diagnostic, created_at_unix_ms).await?;
         }
 
-        if commit.mode == EvidenceMaterializationMode::Forward {
-            sqlx::query(
-                "INSERT INTO evidence_materializer_checkpoints(
-                    materializer_version,
-                    decoder_version,
-                    identity_version,
-                    projection_version,
-                    routing_version,
-                    last_inbox_batch_id,
-                    updated_at_unix_ms
-                 )
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(
-                    materializer_version,
-                    decoder_version,
-                    identity_version,
-                    projection_version,
-                    routing_version
-                 )
-                 DO UPDATE SET
-                    last_inbox_batch_id = excluded.last_inbox_batch_id,
-                    updated_at_unix_ms = excluded.updated_at_unix_ms
-                 WHERE evidence_materializer_checkpoints.last_inbox_batch_id
-                       < excluded.last_inbox_batch_id",
-            )
-            .bind(&commit.key.versions.materializer)
-            .bind(&commit.key.versions.decoder)
-            .bind(&commit.key.versions.identity)
-            .bind(&commit.key.versions.projection)
-            .bind(&commit.key.versions.routing)
-            .bind(to_i64("inbox batch ID", commit.inbox_batch_id)?)
-            .bind(created_at_unix_ms)
-            .execute(&mut *transaction)
-            .await
-            .map_err(EvidenceStoreError::unavailable)?;
-        }
+        sqlx::query(
+            "INSERT INTO evidence_materializer_checkpoints(
+                materializer_version,
+                decoder_version,
+                identity_version,
+                projection_version,
+                routing_version,
+                last_inbox_batch_id,
+                updated_at_unix_ms
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(
+                materializer_version,
+                decoder_version,
+                identity_version,
+                projection_version,
+                routing_version
+             )
+             DO UPDATE SET
+                last_inbox_batch_id = excluded.last_inbox_batch_id,
+                updated_at_unix_ms = excluded.updated_at_unix_ms
+             WHERE evidence_materializer_checkpoints.last_inbox_batch_id
+                   < excluded.last_inbox_batch_id",
+        )
+        .bind(&commit.key.versions.materializer)
+        .bind(&commit.key.versions.decoder)
+        .bind(&commit.key.versions.identity)
+        .bind(&commit.key.versions.projection)
+        .bind(&commit.key.versions.routing)
+        .bind(to_i64("inbox batch ID", commit.inbox_batch_id)?)
+        .bind(created_at_unix_ms)
+        .execute(&mut *transaction)
+        .await
+        .map_err(EvidenceStoreError::unavailable)?;
         transaction
             .commit()
             .await

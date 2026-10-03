@@ -46,19 +46,25 @@ impl Candidate {
     }
 
     pub fn canonical_identity(&self) -> Value {
-        json!({
-            "resource": resource_json(self.resource.as_ref()),
-            "resourceSchemaUrl": self.resource_schema_url,
-            "scope": scope_json(self.scope.as_ref()),
-            "scopeSchemaUrl": self.scope_schema_url,
-            "signal": {
+        match self.signal {
+            EvidenceSignal::Metric => json!({
+                "resource": resource_json(self.resource.as_ref()),
+                "resourceSchemaUrl": self.resource_schema_url,
+                "scope": scope_json(self.scope.as_ref()),
+                "scopeSchemaUrl": self.scope_schema_url,
+                "signal": {
+                    "identity": self.identity,
+                    "kind": self.signal.as_str(),
+                    "metricKind": self.metric_kind,
+                    "metricUnit": self.metric_unit,
+                    "name": self.signal_name
+                }
+            }),
+            EvidenceSignal::Log | EvidenceSignal::Span | EvidenceSignal::SpanEvent => json!({
                 "identity": self.identity,
-                "kind": self.signal.as_str(),
-                "metricKind": self.metric_kind,
-                "metricUnit": self.metric_unit,
-                "name": self.signal_name
-            }
-        })
+                "kind": self.signal.as_str()
+            }),
+        }
     }
 
     pub fn resource_attributes(&self) -> &[KeyValue] {

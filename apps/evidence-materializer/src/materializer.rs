@@ -9,8 +9,7 @@ use thiserror::Error;
 
 use crate::{
     CompiledContractCatalog, DECODER_VERSION, IDENTITY_VERSION, MATERIALIZER_VERSION,
-    PROJECTION_VERSION, ROUTING_VERSION,
-    projector::{ProjectionRoutes, project_batch},
+    PROJECTION_VERSION, ROUTING_VERSION, projector::project_batch,
 };
 
 pub struct EvidenceMaterializer<I, S> {
@@ -42,33 +41,10 @@ where
 
     pub async fn activate_catalog(
         &self,
-        current: &CompiledContractCatalog,
         next: &CompiledContractCatalog,
         etag: String,
         fetched_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<CatalogActivationResult, MaterializerError> {
-        let newly_active_routes = next.newly_active_routes(current);
-        let mut replay = MaterializerRunResult::default();
-        if !newly_active_routes.is_empty() {
-            let mut after = None;
-            loop {
-                let batches = self.inbox.read_after(after, self.read_limit).await?;
-                if batches.is_empty() {
-                    break;
-                }
-                replay.batches_read +=
-                    u64::try_from(batches.len()).expect("batch page length must fit in u64");
-                for batch in batches {
-                    after = Some(batch.inbox_batch_id);
-                    let commit = project_batch(
-                        &batch,
-                        ProjectionRoutes::Replay(&newly_active_routes),
-                        &self.versions,
-                    );
-                    replay.add_commit(self.store.commit(commit).await?);
-                }
-            }
-        }
+    ) -> Result<(), MaterializerError> {
         self.store
             .save_catalog(StoredContractCatalog {
                 etag,
@@ -76,11 +52,7 @@ where
                 fetched_at,
             })
             .await?;
-        Ok(CatalogActivationResult {
-            routes_activated: u64::try_from(newly_active_routes.len())
-                .expect("route count must fit in u64"),
-            replay,
-        })
+        Ok(())
     }
 
     pub async fn run_once(
@@ -98,7 +70,7 @@ where
             ..MaterializerRunResult::default()
         };
         for batch in batches {
-            let commit = project_batch(&batch, ProjectionRoutes::Forward(catalog), &self.versions);
+            let commit = project_batch(&batch, catalog, &self.versions);
             result.add_commit(self.store.commit(commit).await?);
         }
         Ok(result)
@@ -107,12 +79,6 @@ where
     pub fn store(&self) -> &S {
         &self.store
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CatalogActivationResult {
-    pub routes_activated: u64,
-    pub replay: MaterializerRunResult,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   createRustHostEnvironment,
+  createStructuredLogObserver,
   parseListeningUrl,
   rustBinaryPath,
   sqliteDatabaseUrl,
@@ -31,6 +32,23 @@ test("listening observer accepts .NET and Rust host events", () => {
     })),
     undefined,
   );
+});
+
+test("structured log observer captures complete JSON objects", () => {
+  const entries = [];
+  const observer = createStructuredLogObserver(
+    () => {},
+    (entry) => entries.push(entry),
+  );
+
+  observer.write("not json\n{\"event\":\"materializer.");
+  observer.write("started\",\"activeRoutes\":2}\n");
+  observer.end();
+
+  assert.deepEqual(entries, [{
+    event: "materializer.started",
+    activeRoutes: 2,
+  }]);
 });
 
 test("Rust binary paths are platform-specific", () => {

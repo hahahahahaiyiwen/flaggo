@@ -14,8 +14,8 @@ Contract Service owns management routes. Decision Service owns decide and
 health routes. OTel Ingestion owns the `/v1/logs`, `/v1/metrics`, and
 `/v1/traces` telemetry endpoints. It durably appends each complete valid export
 request to the bounded Raw OTLP Inbox before acknowledgement. Evidence
-Materializer is a standalone Rust worker that replays the inbox through
-versioned checkpoints and transactionally writes selected query-ready
+Materializer is a standalone Rust worker that reads pending inbox batches in
+order through a versioned forward checkpoint and transactionally writes query-ready
 observations, provenance, conflicts, and diagnostics to Evidence Store.
 Contract-specific association is deferred to analysis. Reusable strict HTTP
 mechanics live under `modules/hosting`; apps do not reference another app
@@ -29,6 +29,9 @@ evidence routes across all authorities; an optional
 authentication. Without that endpoint, the worker keeps materializing strictly
 valid built-in Flaggo protocol observations using its last durable catalog or
 an empty route catalog.
+
+Exactly one materializer may be active per database. Catalog changes affect
+only pending and future inbox batches; they do not revisit completed batches.
 
 The Phase 4 Evidence Materializer strictly derives tenant, application, and
 environment from `flaggo.*` OTLP Resource attributes. The receiver does not

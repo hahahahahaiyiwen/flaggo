@@ -38,12 +38,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Some(provider) = &provider {
         refresh_catalog(provider, &materializer, &mut catalog, &mut catalog_etag).await;
     }
+    let evidence_store = store.inspect().await?;
 
     println!(
         "{}",
         json!({
             "activeRoutes": catalog.active_source_counts().len(),
             "currentContracts": catalog.current_contracts().len(),
+            "evidenceStore": {
+                "conflictCount": evidence_store.conflict_count,
+                "diagnosticCount": evidence_store.diagnostic_count,
+                "hasCachedCatalog": evidence_store.has_cached_catalog,
+                "observationCount": evidence_store.observation_count,
+                "provenanceCount": evidence_store.provenance_count
+            },
             "event": "materializer.started"
         })
     );
@@ -107,19 +115,16 @@ async fn refresh_catalog<I, S>(
         Ok(CatalogFetch::NotModified) => {}
         Ok(CatalogFetch::Updated { catalog, etag }) => {
             match materializer
-                .activate_catalog(current, &catalog, etag.clone(), Utc::now())
+                .activate_catalog(&catalog, etag.clone(), Utc::now())
                 .await
             {
-                Ok(activation) => {
+                Ok(()) => {
                     println!(
                         "{}",
                         json!({
                             "activeRoutes": catalog.active_source_counts().len(),
                             "currentContracts": catalog.current_contracts().len(),
-                            "event": "materializer.catalog_activated",
-                            "replayBatchesRead": activation.replay.batches_read,
-                            "replayObservationsCreated": activation.replay.observations_created,
-                            "routesActivated": activation.routes_activated
+                            "event": "materializer.catalog_activated"
                         })
                     );
                     *current = catalog;

@@ -133,16 +133,9 @@ pub struct EvidenceDiagnostic {
     pub detail_json: Option<Vec<u8>>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EvidenceMaterializationMode {
-    Forward,
-    Replay,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EvidenceMaterializationCommit {
     pub key: ForwardMaterializationKey,
-    pub mode: EvidenceMaterializationMode,
     pub inbox_batch_id: u64,
     pub observations: Vec<EvidenceObservationWrite>,
     pub diagnostics: Vec<EvidenceDiagnostic>,

@@ -37,6 +37,7 @@ async function play(lifecycle) {
     fetch: hosts.fetch,
     signal: lifecycle.signal,
   });
+  await hosts.startEvidenceMaterializer();
 
   const [
     { createFlaggoDropIntervalProvider },

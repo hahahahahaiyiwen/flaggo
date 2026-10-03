@@ -105,35 +105,22 @@ async fn decodes_original_protobuf_field_names_for_every_signal() {
 }
 
 #[tokio::test]
-async fn timestamp_less_duplicate_deliveries_are_idempotent_during_forward_processing() {
-    verify_timestamp_less_duplicate_deliveries(true).await;
-}
-
-#[tokio::test]
-async fn timestamp_less_duplicate_deliveries_are_idempotent_during_route_replay() {
-    verify_timestamp_less_duplicate_deliveries(false).await;
-}
-
-async fn verify_timestamp_less_duplicate_deliveries(activate_before_delivery: bool) {
+async fn timestamp_less_duplicate_deliveries_create_no_duplicate_provenance() {
     let fixture = Fixture::new().await;
-    let empty = CompiledContractCatalog::empty();
     let catalog = contract_catalog(CONTRACT_DIGEST_ONE);
     let materializer = EvidenceMaterializer::new(
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
     );
-    if activate_before_delivery {
-        materializer
-            .activate_catalog(
-                &empty,
-                &catalog,
-                "\"catalog-before-delivery\"".to_owned(),
-                Utc::now(),
-            )
-            .await
-            .unwrap();
-    }
+    materializer
+        .activate_catalog(
+            &catalog,
+            "\"catalog-before-delivery\"".to_owned(),
+            Utc::now(),
+        )
+        .await
+        .unwrap();
 
     fixture
         .append_timestamp_less_signals(OtlpWireEncoding::Protobuf)
@@ -149,24 +136,11 @@ async fn verify_timestamp_less_duplicate_deliveries(activate_before_delivery: bo
         .append_timestamp_less_signals(OtlpWireEncoding::Protobuf)
         .await;
 
-    let result = if activate_before_delivery {
-        materializer.run_once(&catalog).await.unwrap()
-    } else {
-        materializer
-            .activate_catalog(
-                &empty,
-                &catalog,
-                "\"catalog-after-delivery\"".to_owned(),
-                Utc::now(),
-            )
-            .await
-            .unwrap()
-            .replay
-    };
+    let result = materializer.run_once(&catalog).await.unwrap();
     assert_eq!(result.batches_read, 6);
     assert_eq!(result.observations_created, 4);
     assert_eq!(result.duplicate_observations, 4);
-    assert_eq!(result.provenance_created, 8);
+    assert_eq!(result.provenance_created, 4);
     assert_eq!(result.diagnostics_created, 8);
 
     let observations = fixture
@@ -187,14 +161,26 @@ async fn verify_timestamp_less_duplicate_deliveries(activate_before_delivery: bo
 
     let health = fixture.store.inspect().await.unwrap();
     assert_eq!(health.observation_count, 4);
-    assert_eq!(health.provenance_count, 8);
+    assert_eq!(health.provenance_count, 4);
     assert_eq!(health.diagnostic_count, 8);
     fixture.close().await;
 }
 
 #[tokio::test]
-async fn materializes_protocol_and_selected_telemetry_with_backfill_and_conflicts() {
+async fn materializes_protocol_and_selected_telemetry_with_conflict_rejection() {
     let fixture = Fixture::new().await;
+    let authority = authority("local", "test-app", "test-env");
+    let catalog_one = contract_catalog(CONTRACT_DIGEST_ONE);
+    let materializer = EvidenceMaterializer::new(
+        fixture.inbox.clone(),
+        fixture.store.clone(),
+        NonZeroU16::new(10).unwrap(),
+    );
+    materializer
+        .activate_catalog(&catalog_one, "\"catalog-one\"".to_owned(), Utc::now())
+        .await
+        .unwrap();
+
     fixture
         .append_logs(
             OtlpWireEncoding::ProtobufJson,
@@ -214,37 +200,12 @@ async fn materializes_protocol_and_selected_telemetry_with_backfill_and_conflict
         .await;
     fixture.append_traces(OtlpWireEncoding::ProtobufJson).await;
 
-    let authority = authority("local", "test-app", "test-env");
-    let empty = CompiledContractCatalog::empty();
-    let catalog_one = contract_catalog(CONTRACT_DIGEST_ONE);
-    let materializer = EvidenceMaterializer::new(
-        fixture.inbox.clone(),
-        fixture.store.clone(),
-        NonZeroU16::new(10).unwrap(),
-    );
-
-    let first = materializer.run_once(&empty).await.unwrap();
+    let first = materializer.run_once(&catalog_one).await.unwrap();
     assert_eq!(first.batches_read, 4);
-    assert_eq!(first.observations_created, 1);
-    assert_eq!(first.diagnostics_created, 1);
-    assert_eq!(first.conflicts_created, 0);
-    assert_eq!(first.provenance_created, 1);
-
-    let activation = materializer
-        .activate_catalog(
-            &empty,
-            &catalog_one,
-            "\"catalog-one\"".to_owned(),
-            Utc::now(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(activation.routes_activated, 4);
-    assert_eq!(activation.replay.batches_read, 4);
-    assert_eq!(activation.replay.observations_created, 6);
-    assert_eq!(activation.replay.duplicate_observations, 0);
-    assert_eq!(activation.replay.provenance_created, 6);
-    assert_eq!(activation.replay.conflicts_created, 1);
+    assert_eq!(first.observations_created, 6);
+    assert_eq!(first.diagnostics_created, 2);
+    assert_eq!(first.conflicts_created, 1);
+    assert_eq!(first.provenance_created, 6);
 
     let no_work = materializer.run_once(&catalog_one).await.unwrap();
     assert_eq!(no_work.batches_read, 0);
@@ -254,7 +215,7 @@ async fn materializes_protocol_and_selected_telemetry_with_backfill_and_conflict
         .list_observations(&authority, NonZeroU16::new(20).unwrap())
         .await
         .unwrap();
-    assert_eq!(observations.len(), 7);
+    assert_eq!(observations.len(), 6);
     let protocol = observations
         .iter()
         .find(|stored| stored.observation.protocol_kind.as_deref() == Some("decision.received"))
@@ -269,26 +230,14 @@ async fn materializes_protocol_and_selected_telemetry_with_backfill_and_conflict
     );
 
     let catalog_two = contract_catalog(CONTRACT_DIGEST_TWO);
-    let same_routes = materializer
-        .activate_catalog(
-            &catalog_one,
-            &catalog_two,
-            "\"catalog-two\"".to_owned(),
-            Utc::now(),
-        )
+    materializer
+        .activate_catalog(&catalog_two, "\"catalog-two\"".to_owned(), Utc::now())
         .await
         .unwrap();
-    assert_eq!(same_routes.routes_activated, 0);
-    assert_eq!(same_routes.replay.batches_read, 0);
 
     let deactivated = CompiledContractCatalog::empty();
     materializer
-        .activate_catalog(
-            &catalog_two,
-            &deactivated,
-            "\"catalog-empty\"".to_owned(),
-            Utc::now(),
-        )
+        .activate_catalog(&deactivated, "\"catalog-empty\"".to_owned(), Utc::now())
         .await
         .unwrap();
     let mut inactive_log = application_log();
@@ -302,20 +251,24 @@ async fn materializes_protocol_and_selected_telemetry_with_backfill_and_conflict
     assert_eq!(inactive.observations_created, 0);
 
     let log_only = log_contract_catalog(CONTRACT_DIGEST_ONE);
-    let reactivated = materializer
-        .activate_catalog(
-            &deactivated,
-            &log_only,
-            "\"catalog-reactivated\"".to_owned(),
-            Utc::now(),
-        )
+    materializer
+        .activate_catalog(&log_only, "\"catalog-reactivated\"".to_owned(), Utc::now())
         .await
         .unwrap();
-    assert_eq!(reactivated.routes_activated, 1);
-    assert_eq!(reactivated.replay.batches_read, 5);
-    assert_eq!(reactivated.replay.observations_created, 1);
-    assert_eq!(reactivated.replay.duplicate_observations, 2);
-    assert_eq!(reactivated.replay.provenance_created, 1);
+    assert_eq!(
+        materializer.run_once(&log_only).await.unwrap().batches_read,
+        0
+    );
+
+    let mut future_log = application_log();
+    future_log.time_unix_nano = 3_000;
+    future_log.observed_time_unix_nano = 3_001;
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, vec![future_log])
+        .await;
+    let future = materializer.run_once(&log_only).await.unwrap();
+    assert_eq!(future.batches_read, 1);
+    assert_eq!(future.observations_created, 1);
 
     let restarted = EvidenceMaterializer::new(
         fixture.inbox.clone(),
@@ -324,8 +277,8 @@ async fn materializes_protocol_and_selected_telemetry_with_backfill_and_conflict
     );
     assert_eq!(restarted.run_once(&log_only).await.unwrap().batches_read, 0);
     let health = fixture.store.inspect().await.unwrap();
-    assert_eq!(health.observation_count, 8);
-    assert_eq!(health.provenance_count, 8);
+    assert_eq!(health.observation_count, 7);
+    assert_eq!(health.provenance_count, 7);
     assert_eq!(health.conflict_count, 1);
     assert_eq!(health.diagnostic_count, 2);
 
@@ -333,12 +286,59 @@ async fn materializes_protocol_and_selected_telemetry_with_backfill_and_conflict
 }
 
 #[tokio::test]
+async fn rejects_changed_content_for_explicit_log_and_span_identities() {
+    let fixture = Fixture::new().await;
+    let catalog = log_and_span_contract_catalog(CONTRACT_DIGEST_ONE);
+    let materializer = EvidenceMaterializer::new(
+        fixture.inbox.clone(),
+        fixture.store.clone(),
+        NonZeroU16::new(10).unwrap(),
+    );
+    materializer
+        .activate_catalog(&catalog, "\"catalog-identities\"".to_owned(), Utc::now())
+        .await
+        .unwrap();
+
+    let mut first_log = application_log();
+    first_log.attributes.push(string_kv(
+        "flaggo.observation.id",
+        "01956fd2-bc5d-4ad9-8e4b-2a5db5b55512",
+    ));
+    let mut changed_log = first_log.clone();
+    changed_log.severity_text = "changed".to_owned();
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, vec![first_log, changed_log])
+        .await;
+
+    let first_span = test_span(vec![string_kv("worker.id", "worker-1")]);
+    let mut changed_span = first_span.clone();
+    changed_span.attributes = vec![string_kv("worker.id", "worker-2")];
+    fixture
+        .append_trace_spans(
+            OtlpWireEncoding::ProtobufJson,
+            vec![first_span, changed_span],
+        )
+        .await;
+
+    let result = materializer.run_once(&catalog).await.unwrap();
+    assert_eq!(result.batches_read, 2);
+    assert_eq!(result.observations_created, 2);
+    assert_eq!(result.duplicate_observations, 0);
+    assert_eq!(result.provenance_created, 2);
+    assert_eq!(result.conflicts_created, 2);
+    assert_eq!(result.diagnostics_created, 2);
+
+    let health = fixture.store.inspect().await.unwrap();
+    assert_eq!(health.observation_count, 2);
+    assert_eq!(health.provenance_count, 2);
+    assert_eq!(health.conflict_count, 2);
+    assert_eq!(health.diagnostic_count, 2);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
     let fixture = Fixture::new().await;
-    fixture
-        .append_mixed_authority_logs(OtlpWireEncoding::ProtobufJson)
-        .await;
-    let empty = CompiledContractCatalog::empty();
     let catalog = log_contract_catalog(CONTRACT_DIGEST_ONE);
     let materializer = EvidenceMaterializer::new(
         fixture.inbox.clone(),
@@ -346,13 +346,17 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
         NonZeroU16::new(10).unwrap(),
     );
 
-    let activation = materializer
-        .activate_catalog(&empty, &catalog, "\"catalog-mixed\"".to_owned(), Utc::now())
+    materializer
+        .activate_catalog(&catalog, "\"catalog-mixed\"".to_owned(), Utc::now())
         .await
         .unwrap();
+    fixture
+        .append_mixed_authority_logs(OtlpWireEncoding::ProtobufJson)
+        .await;
+    let result = materializer.run_once(&catalog).await.unwrap();
 
-    assert_eq!(activation.replay.observations_created, 1);
-    assert_eq!(activation.replay.diagnostics_created, 1);
+    assert_eq!(result.observations_created, 1);
+    assert_eq!(result.diagnostics_created, 1);
     assert_eq!(
         fixture
             .store
@@ -515,26 +519,25 @@ impl Fixture {
         end_time_unix_nano: u64,
         event_time_unix_nano: u64,
     ) {
+        let mut span = test_span(vec![string_kv("worker.id", "worker-1")]);
+        span.start_time_unix_nano = start_time_unix_nano;
+        span.end_time_unix_nano = end_time_unix_nano;
+        span.events = vec![span::Event {
+            time_unix_nano: event_time_unix_nano,
+            name: "demo.event".to_owned(),
+            attributes: vec![string_kv("event.kind", "test")],
+            ..Default::default()
+        }];
+        self.append_trace_spans(encoding, vec![span]).await;
+    }
+
+    async fn append_trace_spans(&self, encoding: OtlpWireEncoding, spans: Vec<Span>) {
         let request = ExportTraceServiceRequest {
             resource_spans: vec![ResourceSpans {
                 resource: Some(resource()),
                 scope_spans: vec![ScopeSpans {
                     scope: Some(scope("demo.traces")),
-                    spans: vec![Span {
-                        trace_id: vec![1; 16],
-                        span_id: vec![2; 8],
-                        name: "demo.operation".to_owned(),
-                        start_time_unix_nano,
-                        end_time_unix_nano,
-                        attributes: vec![string_kv("worker.id", "worker-1")],
-                        events: vec![span::Event {
-                            time_unix_nano: event_time_unix_nano,
-                            name: "demo.event".to_owned(),
-                            attributes: vec![string_kv("event.kind", "test")],
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    }],
+                    spans,
                     schema_url: String::new(),
                 }],
                 schema_url: String::new(),
@@ -672,6 +675,18 @@ fn application_log() -> LogRecord {
             )),
         }),
         attributes: vec![string_kv("worker.id", "worker-1")],
+        ..Default::default()
+    }
+}
+
+fn test_span(attributes: Vec<KeyValue>) -> Span {
+    Span {
+        trace_id: vec![1; 16],
+        span_id: vec![2; 8],
+        name: "demo.operation".to_owned(),
+        start_time_unix_nano: 100,
+        end_time_unix_nano: 200,
+        attributes,
         ..Default::default()
     }
 }
@@ -844,6 +859,14 @@ fn contract_catalog(contract_digest: &str) -> CompiledContractCatalog {
 
 fn log_contract_catalog(contract_digest: &str) -> CompiledContractCatalog {
     compile_catalog(contract_digest, vec![evidence_sources().remove(0)])
+}
+
+fn log_and_span_contract_catalog(contract_digest: &str) -> CompiledContractCatalog {
+    let sources = evidence_sources();
+    compile_catalog(
+        contract_digest,
+        vec![sources[0].clone(), sources[2].clone()],
+    )
 }
 
 fn compile_catalog(

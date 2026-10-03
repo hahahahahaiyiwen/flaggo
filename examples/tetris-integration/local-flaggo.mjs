@@ -20,6 +20,7 @@ export async function startLocalFlaggoHosts({
     database: resolve(runDirectory, "flaggo.db"),
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
+    evidenceMaterializerLog: resolve(runDirectory, "evidence-materializer.log"),
     otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
   };
   const commonConfiguration = {
@@ -91,11 +92,35 @@ export async function startLocalFlaggoHosts({
   );
   lifecycle.assertHealthy();
 
+  async function startEvidenceMaterializer() {
+    const host = lifecycle.startHost(() => startRustHost(
+      "tetris-evidence-materializer",
+      "flaggo-evidence-materializer",
+      paths.evidenceMaterializerLog,
+      repositoryRoot,
+      {
+        FLAGGO_CONTRACT_CATALOG_URL:
+          `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
+        FLAGGO_DATABASE_URL: sqliteDatabaseUrl(paths.database),
+        FLAGGO_MATERIALIZER_CATALOG_INTERVAL_SECONDS: "1",
+        FLAGGO_MATERIALIZER_POLL_INTERVAL_MS: "25",
+      },
+      { reportsListeningUrl: false },
+    ));
+    const startup = await host.waitForStructuredLog(
+      (entry) => entry.event === "materializer.started",
+      { signal: lifecycle.signal },
+    );
+    lifecycle.assertHealthy();
+    return { host, startup };
+  }
+
   return {
     ...hosts,
     fetch: fetchWithAbort,
     otelIngestion,
     otelIngestionUrl,
+    startEvidenceMaterializer,
   };
 }
 

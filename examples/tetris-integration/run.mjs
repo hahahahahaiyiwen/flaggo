@@ -42,6 +42,19 @@ async function runIntegration(lifecycle) {
     fetch: hosts.fetch,
     signal: lifecycle.signal,
   });
+  const {
+    host: materializer,
+    startup: materializerStartup,
+  } = await hosts.startEvidenceMaterializer();
+  assert.equal(materializerStartup.activeRoutes, 2);
+  assert.equal(materializerStartup.currentContracts, 1);
+  assert.deepEqual(materializerStartup.evidenceStore, {
+    conflictCount: 0,
+    diagnosticCount: 0,
+    hasCachedCatalog: true,
+    observationCount: 0,
+    provenanceCount: 0,
+  });
   const capturedDecisions = [];
   const forwardingFetch = async (input, init) => {
     const isDecision = String(input).includes("/decisions");
@@ -149,6 +162,12 @@ async function runIntegration(lifecycle) {
     hosts,
     requests: proxy.requests,
   });
+  const materializedEvidence = await waitForEvidenceMaterialization({
+    expectedBatches:
+      storedInbox.retainedBatchCount - initialInbox.retainedBatchCount,
+    host: materializer,
+    signal: lifecycle.signal,
+  });
 
   assert.equal(capturedDecisions.length, 2);
   const decisionsBySession = new Map(
@@ -205,6 +224,7 @@ async function runIntegration(lifecycle) {
   assertEquivalentDecision(restHigh, highDecision.response);
   assertEquivalentDecision(restLow, lowDecision.response);
 
+  await materializer.stop();
   await hosts.decision.stop();
   await assert.rejects(() =>
     postDecisionRest({
@@ -234,6 +254,29 @@ async function runIntegration(lifecycle) {
     reopenedInbox.retainedPayloadBytes,
     storedInbox.retainedPayloadBytes,
   );
+  const {
+    startup: reopenedEvidence,
+  } = await restartedHosts.startEvidenceMaterializer();
+  assert.equal(reopenedEvidence.activeRoutes, materializerStartup.activeRoutes);
+  assert.equal(
+    reopenedEvidence.currentContracts,
+    materializerStartup.currentContracts,
+  );
+  assert.deepEqual(reopenedEvidence.evidenceStore, {
+    conflictCount:
+      materializerStartup.evidenceStore.conflictCount
+      + materializedEvidence.conflictsCreated,
+    diagnosticCount:
+      materializerStartup.evidenceStore.diagnosticCount
+      + materializedEvidence.diagnosticsCreated,
+    hasCachedCatalog: true,
+    observationCount:
+      materializerStartup.evidenceStore.observationCount
+      + materializedEvidence.observationsCreated,
+    provenanceCount:
+      materializerStartup.evidenceStore.provenanceCount
+      + materializedEvidence.provenanceCreated,
+  });
   const restartedHigh = await postDecisionRest({
     fetch: restartedHosts.fetch,
     decisionUrl: restartedHosts.decisionUrl,
@@ -257,6 +300,12 @@ async function runIntegration(lifecycle) {
     rawOtlpInbox: {
       retainedBatches: storedInbox.retainedBatchCount,
       retainedPayloadBytes: storedInbox.retainedPayloadBytes,
+      survivedRestart: true,
+    },
+    evidenceStore: {
+      ...reopenedEvidence.evidenceStore,
+      batchesMaterialized: materializedEvidence.batchesRead,
+      duplicateObservations: materializedEvidence.duplicateObservations,
       survivedRestart: true,
     },
     restParity: {
@@ -443,6 +492,49 @@ function moveHorizontally(session, offset) {
   for (let count = 0; count < Math.abs(offset); count += 1) {
     assert.equal(session.dispatch(command).changed, true);
   }
+}
+
+async function waitForEvidenceMaterialization({
+  expectedBatches,
+  host,
+  signal,
+}) {
+  assert.ok(expectedBatches > 0);
+  let observedBatches = 0;
+  await host.waitForStructuredLog(
+    (entry) => {
+      if (entry.event !== "materializer.batch_page_committed") return false;
+      observedBatches += entry.batchesRead;
+      return observedBatches >= expectedBatches;
+    },
+    { signal },
+  );
+
+  const entries = host.structuredLogs.filter(
+    (entry) => entry.event === "materializer.batch_page_committed",
+  );
+  const properties = [
+    "batchesRead",
+    "conflictsCreated",
+    "diagnosticsCreated",
+    "duplicateObservations",
+    "observationsCreated",
+    "provenanceCreated",
+  ];
+  const summary = Object.fromEntries(
+    properties.map((property) => [
+      property,
+      entries.reduce((total, entry) => {
+        assert.equal(Number.isSafeInteger(entry[property]), true);
+        return total + entry[property];
+      }, 0),
+    ]),
+  );
+  assert.equal(summary.batchesRead, expectedBatches);
+  assert.ok(summary.observationsCreated > 0);
+  assert.equal(summary.provenanceCreated, summary.observationsCreated);
+  assert.equal(summary.conflictsCreated, 0);
+  return summary;
 }
 
 async function assertRawOtlpInboxStorage({ initial, hosts, requests }) {

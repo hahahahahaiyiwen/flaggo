@@ -30,8 +30,9 @@ The command builds and starts Contract Service, Decision Service, and OTel
 Ingestion against an isolated SQLite database, then reads the authority-free
 contract definitions listed in `flaggo.deploy.json`. Deployment injects the
 manifest authority into each complete contract before the Contract Service
-computes its immutable digest. It binds the returned authority-bound digest
-into a generated `flaggo.runtime-config/v1` document and gives that one
+computes its immutable digest. After deployment, the command starts Evidence
+Materializer with the deployed catalog, binds the returned authority-bound
+digest into a generated `flaggo.runtime-config/v1` document, and gives that one
 configuration to the decision client and all three telemetry providers before
 starting the game. The manifest authority is
 `local / tetris / integration`. All services and the temporary database are
@@ -202,9 +203,13 @@ receiver, and checks resource/scope metadata, cross-signal correlation,
 session isolation, future evidence candidates, and deliberately unmatched
 operational telemetry. The test compares the forwarded request count and
 decompressed byte total with OTel Ingestion's raw-inbox health, then restarts
-the receiver on the same SQLite database and verifies those retained values
-survive reopening. It also verifies SDK-owned `_random`, exact digest
-provenance, direct REST parity from the captured session attributes,
-retired-field absence, explicit failure after Decision Service stops, and
-contract persistence across restart. Exporters are force-flushed before
-assertions, so an export, receiver, or durable-inbox failure fails the run.
+the hosts on the same SQLite database and verifies those retained values
+survive reopening. Evidence Materializer starts only after deployment, consumes
+every retained Raw OTLP Inbox batch, and must create durable observations and
+origin provenance without conflicts. Its startup health after restart must
+report the same Evidence Store counts. The test also verifies SDK-owned
+`_random`, exact digest provenance, direct REST parity from the captured
+session attributes, retired-field absence, explicit failure after Decision
+Service stops, and contract persistence across restart. Exporters are
+force-flushed before assertions, so an export, receiver, materializer, or
+durable-store failure fails the run.

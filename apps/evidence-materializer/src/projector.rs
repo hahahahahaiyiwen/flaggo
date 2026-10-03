@@ -1,8 +1,6 @@
-use std::collections::HashSet;
-
 use flaggo_evidence_store::{
-    AuthorityScope, EvidenceDiagnostic, EvidenceMaterializationCommit, EvidenceMaterializationMode,
-    EvidenceObservation, EvidenceObservationWrite, ForwardMaterializationKey, MaterializerVersions,
+    AuthorityScope, EvidenceDiagnostic, EvidenceMaterializationCommit, EvidenceObservation,
+    EvidenceObservationWrite, ForwardMaterializationKey, MaterializerVersions,
 };
 use flaggo_raw_otlp_inbox::RawOtlpInboxBatch;
 use opentelemetry_proto::tonic::common::v1::{KeyValue, any_value};
@@ -16,34 +14,9 @@ use crate::{
     decode_batch,
 };
 
-pub(crate) enum ProjectionRoutes<'a> {
-    Forward(&'a CompiledContractCatalog),
-    Replay(&'a HashSet<MaterializationRoute>),
-}
-
-impl ProjectionRoutes<'_> {
-    fn contains(&self, route: &MaterializationRoute) -> bool {
-        match self {
-            Self::Forward(catalog) => catalog.contains_route(route),
-            Self::Replay(routes) => routes.contains(route),
-        }
-    }
-
-    const fn includes_built_in_protocol(&self) -> bool {
-        matches!(self, Self::Forward(_))
-    }
-
-    const fn mode(&self) -> EvidenceMaterializationMode {
-        match self {
-            Self::Forward(_) => EvidenceMaterializationMode::Forward,
-            Self::Replay(_) => EvidenceMaterializationMode::Replay,
-        }
-    }
-}
-
 pub(crate) fn project_batch(
     batch: &RawOtlpInboxBatch,
-    routes: ProjectionRoutes<'_>,
+    catalog: &CompiledContractCatalog,
     versions: &MaterializerVersions,
 ) -> EvidenceMaterializationCommit {
     let decoded = decode_batch(batch);
@@ -80,28 +53,24 @@ pub(crate) fn project_batch(
 
         match evaluate_builtin(&candidate) {
             BuiltInEvaluation::Valid(decision) => {
-                if routes.includes_built_in_protocol() {
-                    observations.push(create_observation(
-                        candidate,
-                        authority,
-                        Some("decision.received".to_owned()),
-                        Some(decision.decision_id),
-                        Some(decision.contract_digest),
-                        versions,
-                    ));
-                }
+                observations.push(create_observation(
+                    candidate,
+                    authority,
+                    Some("decision.received".to_owned()),
+                    Some(decision.decision_id),
+                    Some(decision.contract_digest),
+                    versions,
+                ));
                 continue;
             }
             BuiltInEvaluation::Invalid(diagnostic) => {
-                if routes.includes_built_in_protocol() {
-                    diagnostics.push(create_diagnostic(
-                        batch.inbox_batch_id.get(),
-                        Some(candidate.ordinal),
-                        &diagnostic.code,
-                        diagnostic.message,
-                        Some(diagnostic.detail),
-                    ));
-                }
+                diagnostics.push(create_diagnostic(
+                    batch.inbox_batch_id.get(),
+                    Some(candidate.ordinal),
+                    &diagnostic.code,
+                    diagnostic.message,
+                    Some(diagnostic.detail),
+                ));
                 continue;
             }
             BuiltInEvaluation::NotBuiltIn => {}
@@ -111,7 +80,7 @@ pub(crate) fn project_batch(
             authority: authority.clone(),
             source: candidate.source_key(),
         };
-        if !routes.contains(&route) {
+        if !catalog.contains_route(&route) {
             continue;
         }
         observations.push(create_observation(
@@ -123,7 +92,6 @@ pub(crate) fn project_batch(
         key: ForwardMaterializationKey {
             versions: versions.clone(),
         },
-        mode: routes.mode(),
         inbox_batch_id: batch.inbox_batch_id.get(),
         observations,
         diagnostics,
@@ -143,7 +111,7 @@ fn create_observation(
     let content_digest = hash_bytes(&payload_json);
     let logical_source_id = if candidate.identity_is_content_derived {
         hash_parts(&[
-            b"flaggo-logical-source-content-v2",
+            b"flaggo-logical-source-content-v3",
             authority.tenant.as_bytes(),
             authority.application.as_bytes(),
             authority.environment.as_bytes(),
@@ -153,7 +121,7 @@ fn create_observation(
         let identity_json = serde_json::to_vec(&candidate.canonical_identity())
             .expect("canonical identity JSON must serialize");
         hash_parts(&[
-            b"flaggo-logical-source-v2",
+            b"flaggo-logical-source-v3",
             authority.tenant.as_bytes(),
             authority.application.as_bytes(),
             authority.environment.as_bytes(),
@@ -161,7 +129,7 @@ fn create_observation(
         ])
     };
     let observation_id = hash_parts(&[
-        b"flaggo-observation-v2",
+        b"flaggo-observation-v3",
         logical_source_id.as_bytes(),
         content_digest.as_bytes(),
         versions.materializer.as_bytes(),
