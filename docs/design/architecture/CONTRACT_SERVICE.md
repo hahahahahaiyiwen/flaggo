@@ -14,6 +14,10 @@ transitions belong to
 [Decision contract lifecycle](../contracts/LIFECYCLE.md), and the Management
 API v3 OpenAPI document is the wire-level authority.
 
+The Contract Service app boundary and its relationship to every other app are
+canonical in
+[Application boundaries and lifecycle](APP_BOUNDARIES.md).
+
 ## System context
 
 ```text
@@ -26,7 +30,10 @@ contract author
        -> Contract Store
        -> executable generator
        -> Executable Store
-       -> learning scheduler
+
+Evidence Store -> Async Analysis (planned)
+                    -> immutable candidate + provenance
+                    -> Contract Service validation and activation
 ```
 
 The management client supplies the complete authority-bound deployed contract.
@@ -219,12 +226,13 @@ The Contract Service owns:
 - candidate validation and immutable executable persistence;
 - atomic activation;
 - management current-version transitions;
-- triggering or scheduling evidence-based generation; and
+- receiving planned evidence-generated candidate proposals through an explicit
+  app boundary; and
 - management response and Problem Details mapping.
 
 It does not evaluate runtime decision requests, construct `RuntimeInput`,
-collect application evidence synchronously, or infer contract compatibility
-across digests.
+collect application evidence synchronously, schedule evidence analysis, or
+infer contract compatibility across digests.
 
 ## Service dependencies and owned records
 
@@ -233,7 +241,8 @@ across digests.
 | Contract Store | Persist and read immutable accepted versions by scope, name, and digest |
 | Executable Store | Persist immutable generated executables and provenance; atomically manage scoped Candidate, Active, and Inactive lifecycle state |
 | Management current pointer | Select the version returned by the name-level management read and eligible for new evidence-based analysis |
-| Generation capability | Produce default, authored, or evidence-based candidates without granting runtime authority |
+| Generation capability | Produce default and authored candidates without granting runtime authority |
+| Planned candidate ingress | Receive evidence-generated candidates and provenance from Async Analysis for authoritative validation and activation |
 
 The physical database layout is an implementation choice. These records have
 different semantic roles even when stored transactionally in one database.
@@ -259,9 +268,11 @@ same candidate-validation and activation boundary.
 
 ### Evidence-generated executable
 
-The learning scheduler uses the current accepted contract and its interval. A
-learning worker may return an immutable candidate and provenance, but it cannot
-write runtime authority.
+Async Analysis owns interval scheduling, evidence selection, correlation, and
+evidence-based generation. It reads exact current contracts through a Contract
+Service boundary and may return an immutable candidate plus provenance, but it
+cannot write runtime authority. The candidate-submission API is not yet
+implemented.
 
 The initial policy is `mode: auto-activation`. After validating a candidate
 and confirming that its contract is still current, the Contract Service
@@ -325,10 +336,13 @@ executable from another contract digest.
 8. The management current-version pointer never selects a runtime contract
    version.
 9. Older digest activations survive acceptance of a newer version.
-10. Runtime evaluation and exposure reporting remain outside Contract Service.
+10. Runtime evaluation, application result use, and telemetry emission remain
+    outside Contract Service.
 
 ## Related documents
 
+- [Application boundaries and lifecycle](APP_BOUNDARIES.md)
+- [Contract Service app](../../../apps/contract-service/README.md)
 - [Architecture overview](OVERVIEW.md)
 - [Decision authority](AUTHORITY.md)
 - [Runtime client and Decision Service](RUNTIME.md)

@@ -13,6 +13,9 @@ raw-otlp-inbox
 hosting
 ```
 
+The semantic owner and allowed access for each store are defined in
+[Application boundaries and lifecycle](../docs/design/architecture/APP_BOUNDARIES.md#durable-state-ownership).
+
 Each module owns one cohesive domain, store, or hosting boundary. Modules do
 not depend on an app composition root or on the legacy
 `packages/shared-contracts` project.
@@ -27,8 +30,9 @@ not depend on an app composition root or on the legacy
   scoped Candidate, Active, and Inactive lifecycle state.
 - Evidence Store is a Rust storage-neutral contract with a SQLx/SQLite adapter.
   It atomically persists selected query-ready telemetry observations,
-  materialization provenance, selector associations, diagnostics, versioned
-  checkpoints, and logical-source conflicts for asynchronous analysis.
+  materialization provenance, diagnostics, the current catalog cache,
+  versioned checkpoints, and logical-source conflicts for asynchronous
+  analysis.
 - Raw OTLP Inbox persists complete validated OTLP export requests as a bounded,
   replayable work log without depending on its SQLx/SQLite adapter contract.
 - Hosting owns reusable strict HTTP, authentication, correlation, Problem

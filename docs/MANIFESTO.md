@@ -24,8 +24,9 @@ gaining an asynchronous evidence-driven learning loop.
    exposure, and correlated outcome before expanding the platform.
 2. **Use cohesive boundaries.** Contract Service owns immutable contract
    versions and executable activation. Decision Service owns stateless runtime
-   evaluation. The application and SDK own complete input construction and
-   exposure reporting. Evidence ingestion and learning remain asynchronous.
+   evaluation. The SDK owns complete input construction and decision-receipt
+   telemetry; the application owns result application and ordinary telemetry.
+   Evidence ingestion, materialization, and learning remain asynchronous.
 3. **Keep runtime behavior explicit and bounded.** Attribute and result schemas
    define the interface; immutable executables define deterministic behavior.
    Runtime never invokes generation or analysis.

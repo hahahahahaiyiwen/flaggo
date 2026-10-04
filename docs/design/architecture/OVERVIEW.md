@@ -47,70 +47,11 @@ runtime authority.
 
 ## System context
 
-```text
-                    management and future learning path
-
-contract source
-      |
-      v
-Application / CI
-      |
-      | Management API v3
-      v
-+--------------------+       +----------------------+
-| Contract Service   |------>| Contract Store       |
-|                    |       | accepted versions    |
-| accept / validate  |       +----------------------+
-| generate / govern  |       +----------------------+
-| validate / activate|------>| Executable Store     |
-+---------+----------+       | immutable artifacts  |
-          |                  | + scoped lifecycle   |
-                             +----------+-----------+
-                                        ^
-                                        |
-                              validated candidate
-                                        |
-                             +----------+-----------+
-                             | Learning Worker      |
-                             | asynchronous analysis|
-                             +----------+-----------+
-                                        ^
-                                        |
-                             +----------+-----------+
-                             | Evidence Store       |
-                             | exposure + outcomes  |
-                             +----------+-----------+
-                                        ^
-                                        |
-                              OpenTelemetry pipeline
-
-                           runtime evaluation path
-
-Application
-    |
-    | bind attributes; SDK adds internal attributes
-    v
-Flaggo SDK
-    |
-    | POST exact contract name + digest + RuntimeInput
-    v
-+--------------------+
-| Decision Service   |
-| authenticate scope |
-| resolve activation |
-| evaluate executable|
-+---------+----------+
-          |
-          v
-RuntimeDecision
-    |
-    +------------------------------------> SDK emits
-                                          flaggo.decision.received
-                                          through OpenTelemetry
-    |
-    v
-application applies result
-```
+[Application boundaries and lifecycle](APP_BOUNDARIES.md) is the canonical
+end-to-end map. It distinguishes client activity, Web APIs, background workers,
+and stores; defines every app's responsibilities and prohibited
+responsibilities; and documents store ownership, authority transitions,
+failure isolation, and instance-multiplicity constraints.
 
 An implementation may co-locate services or stores. The logical ownership and
 request-path boundaries remain the same even when deployment units are
@@ -148,7 +89,8 @@ The Contract Service owns the management resource and executable lifecycle:
 - persist immutable accepted versions;
 - generate and activate the required default executable before reporting the
   version ready;
-- coordinate authored and evidence-based executable generation;
+- generate authored executables and receive evidence-generated candidate
+  proposals from Async Analysis;
 - validate immutable candidates against their exact contract;
 - atomically activate one executable for a contract digest in an authenticated
   tenant/application/environment scope.
@@ -171,9 +113,9 @@ dedicated workers. Evidence-based analysis is asynchronous and consumes
 evidence outside the runtime path.
 
 Every candidate records its exact `contractDigest` and generation provenance.
-A learning worker may propose a candidate but cannot write runtime authority
-directly. The Contract Service validates the candidate and applies its
-activation policy.
+Async Analysis may propose a candidate but cannot write runtime authority
+directly. The candidate returns through Contract Service, which validates it
+and applies its activation policy.
 
 The initial evidence-based policy is `mode: auto-activation`. For a valid
 candidate from the current contract, the Contract Service attempts an
@@ -216,6 +158,12 @@ The Evidence Store supports later analysis and provenance. It is not a
 synchronous operand store for Decision Service requests.
 
 ## Data ownership
+
+The complete ownership matrix, including Raw OTLP Inbox, materializer
+checkpoint and catalog cache, Evidence Store, and planned analysis provenance,
+is defined in
+[Application boundaries and lifecycle](APP_BOUNDARIES.md#durable-state-ownership).
+The core online authority data is:
 
 | Data | Owner | Mutability | Runtime role |
 | --- | --- | --- | --- |
@@ -275,11 +223,12 @@ authority across digests.
 7. A newer digest does not deactivate or reinterpret an older digest.
 8. Authentication establishes tenant/application/environment scope; contract
    attributes never do.
-9. A returned decision becomes an exposure only when the application applies
-   it and the SDK reports that exposure.
+9. A returned decision and the built-in decision-received observation do not
+   prove that the application applied the result.
 
 ## Related documents
 
+- [Application boundaries and lifecycle](APP_BOUNDARIES.md)
 - [Contract clients and Contract Service](CONTRACT_SERVICE.md)
 - [Decision authority](AUTHORITY.md)
 - [Runtime client and Decision Service](RUNTIME.md)

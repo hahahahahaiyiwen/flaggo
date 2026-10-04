@@ -1,60 +1,37 @@
 # Applications
 
-`apps` contains independently runnable composition roots. The active service
-composition roots are:
+`apps` contains application composition roots. An app chooses concrete
+adapters, configuration, lifecycle, and hosting for one cohesive operational
+boundary; reusable domain and store contracts remain under `modules`.
 
-```text
-apps/contract-service
-apps/decision-service
-apps/evidence-materializer
-apps/otel-ingestion
-```
+The canonical relationship between clients, APIs, workers, and stores is
+[Application boundaries and lifecycle](../docs/design/architecture/APP_BOUNDARIES.md).
 
-Contract Service owns management routes. Decision Service owns decide and
-health routes. OTel Ingestion owns the `/v1/logs`, `/v1/metrics`, and
-`/v1/traces` telemetry endpoints. It durably appends each complete valid export
-request to the bounded Raw OTLP Inbox before acknowledgement. Evidence
-Materializer is a standalone Rust worker that reads pending inbox batches in
-order through a versioned forward checkpoint and transactionally writes query-ready
-observations, provenance, conflicts, and diagnostics to Evidence Store.
-Contract-specific association is deferred to analysis. Reusable strict HTTP
-mechanics live under `modules/hosting`; apps do not reference another app
-project.
+## Current composition roots
 
-Evidence Materializer and OTel Ingestion share `FLAGGO_DATABASE_URL` (default
-`sqlite://flaggo.db`). Set `FLAGGO_CONTRACT_CATALOG_URL` to the Contract Service
-`/v3/decision-contract-catalog/current` endpoint to enable ordinary application
-evidence routes across all authorities; an optional
-`FLAGGO_CONTRACT_CATALOG_BEARER_TOKEN` supplies non-development
-authentication. Without that endpoint, the worker keeps materializing strictly
-valid built-in Flaggo protocol observations using its last durable catalog or
-an empty route catalog.
+| App | Execution model | Boundary |
+| --- | --- | --- |
+| [Contract Service](contract-service/README.md) | Web API | Contract acceptance, executable validation, and activation authority |
+| [Decision Service](decision-service/README.md) | Web API | Stateless exact-version runtime evaluation |
+| [OTel Ingestion](otel-ingestion/README.md) | Web API plus background worker | Append-before-acknowledgement OTLP ingress and Raw OTLP Inbox retention |
+| [Evidence Materializer](evidence-materializer/README.md) | Background worker | Forward-only Raw OTLP Inbox to Evidence Store projection |
 
-Exactly one materializer may be active per database. Catalog changes affect
-only pending and future inbox batches; they do not revisit completed batches.
-The worker's structured startup and batch-commit events report its forward
-checkpoint, exact pending-batch count, oldest pending age, newest evidence
-timestamp, and evidence freshness. A fatal startup, inspection, or
-materialization failure emits `materializer.failed` before the process exits.
+[Operator Console](operator-console/README.md) is a planned client, not a
+current runnable server composition root. Async Analysis is also planned and
+will receive its own app boundary when implemented.
 
-The Phase 4 Evidence Materializer strictly derives tenant, application, and
-environment from `flaggo.*` OTLP Resource attributes. The receiver does not
-require authentication. Authentication and authorization for telemetry writes
-are deferred to a later phase.
+## Boundary rules
 
-The pre-v3 shared host stack was removed after the v3 consumer cutover.
-Neither service exposes forwarding projects, compatibility routes, or
-alternate legacy APIs.
-
-Service readiness requires each store's exact schema version and readable
-owned tables and columns. It does not scan every stored artifact. Exact
-contract and executable integrity remains enforced when an authority record is
-read, and Decision Service materializes the selected executable before
-evaluation.
-
-Decision Service readiness does not require an Evidence module, OTLP routes, a
-Collector, async analysis, or durable decision append.
-
-Both hosts configure the same local SQLite database path/connection string.
-Each store module owns its tables and exact schema version; hosts do not issue
-SQL directly.
+- Diagram nodes are conceptual components, not process or replica counts.
+- A rectangle denotes a request-serving Web API. A diamond denotes
+  asynchronous or periodic work. OTel Ingestion currently hosts both roles in
+  one binary.
+- Apps do not reference another app project. Cross-app communication uses an
+  explicit API or domain/store contract.
+- Physical co-location does not transfer ownership. The current local
+  deployment shares SQLite files while each store module owns its schema and
+  each app has a distinct semantic access role.
+- Contract and Decision APIs never depend on telemetry ingestion,
+  materialization, evidence freshness, or analysis.
+- The pre-v3 service stack and compatibility routes are not part of the
+  current architecture.

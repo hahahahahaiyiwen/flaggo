@@ -11,22 +11,35 @@ DecisionContract
 
 ActiveExecutable + complete RuntimeInput
   -> stateless deterministic RuntimeDecision
+
+RuntimeDecision receipt + application telemetry
+  -> OTLP ingestion
+  -> forward-only evidence materialization
+  -> planned asynchronous analysis
+  -> immutable candidate proposal
+  -> Contract Service validation and activation
 ```
 
 The application and SDK own complete input construction and the transition
-from a returned decision to an applied exposure. Evidence flows through
-OpenTelemetry into asynchronous learning; it is not a runtime operand.
+from a returned decision to application behavior. The current SDK reports
+decision receipt, while ordinary application telemetry supplies surrounding
+activity. Evidence flows through OpenTelemetry into asynchronous processing; it
+is not a runtime operand.
 
 ## Implementation phase
 
-[Phase 3 implementation scope](PHASE_3.md) distinguishes behavior implemented
-by the current v3 stack from accepted-but-inactive contract declarations and
-deferred evidence, learning, telemetry, fallback, and deployment work.
+[Phase 3 implementation scope](PHASE_3.md) records the earlier management and
+runtime milestone. The current stack also implements direct OTLP ingestion, a
+bounded Raw OTLP Inbox, forward-only Evidence Materialization, and durable
+Evidence Store observations. Async Analysis, evidence correlation, and learned
+candidate generation remain planned. The GitHub Project and native issue graph
+are the roadmap authority.
 
 ## Architecture
 
 | Question | Current design |
 | --- | --- |
+| What is the canonical end-to-end lifecycle and who owns each boundary? | [Application boundaries and lifecycle](architecture/APP_BOUNDARIES.md) |
 | How do clients, services, workers, and stores fit together? | [Architecture overview](architecture/OVERVIEW.md) |
 | What establishes accepted and active authority? | [Decision authority](architecture/AUTHORITY.md) |
 | How do authoring clients and Contract Service manage versions and activation? | [Contract clients and Contract Service](architecture/CONTRACT_SERVICE.md) |
@@ -48,18 +61,19 @@ services or stores without changing those boundaries.
 The v3 OpenAPI and JSON Schemas are authoritative for wire behavior. Design
 documents explain the target ownership and invariants behind those contracts.
 
-## Implemented server boundary
+## Implemented app boundaries
 
-Contract Service validates and accepts immutable named versions, persists
-canonical identities, generates default and expression-authored executables,
-activates them for the authenticated scope and exact digest, and exposes
-current and historical Management API v3 resources.
+| App | Current responsibility |
+| --- | --- |
+| Contract Service | Accept immutable named versions, generate default and authored executables, and own candidate validation and activation |
+| Decision Service | Resolve the executable active for an exact requested digest and return a bounded decision without semantic request persistence |
+| OTel Ingestion | Validate OTLP transport and append complete requests to the bounded Raw OTLP Inbox before acknowledgement |
+| Evidence Materializer | Read retained inbox batches forward and persist query-ready observations, provenance, diagnostics, conflicts, catalog cache, and checkpoint |
 
-Decision Service validates complete SDK input, resolves the executable active
-for the requested exact version, evaluates its checked expressions, and
-returns a RuntimeDecision without persisting request state. Evidence-based
-generation can extend the existing candidate-validation-activation boundary
-without changing runtime contract identity.
+The app-local operational contracts are indexed in
+[`apps/README.md`](../../apps/README.md). Async Analysis can extend the existing
+candidate-validation-and-activation boundary without changing runtime identity
+or writing runtime authority directly.
 
 ## Archived designs
 
