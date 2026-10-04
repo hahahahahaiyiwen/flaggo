@@ -19,6 +19,10 @@ The architecture distinguishes:
 Conflating these concepts would make runtime depend on delayed telemetry or
 would treat a returned-but-unused decision as clean learning evidence.
 
+The OTel Ingestion, Evidence Materializer, and planned Async Analysis app
+boundaries are canonical in
+[Application boundaries and lifecycle](APP_BOUNDARIES.md).
+
 ## Evidence flow
 
 ```text
@@ -349,10 +353,10 @@ activation attempts.
 activation mapping after validation. Runtime never scans the Evidence Store or
 Executable Store for the latest generated artifact.
 
-The learning service chooses aggregation windows, populations, primary
-objective aggregation, and analysis method. It records those choices and the
-evidence references in generation provenance rather than adding them to the
-initial contract syntax.
+Async Analysis chooses aggregation windows, populations, primary objective
+aggregation, and analysis method. It records those choices and the evidence
+references in generation provenance rather than adding them to the initial
+contract syntax.
 
 When a newer digest becomes current, an older run may finish for reconstruction
 but cannot activate. Analysis results and generation provenance remain attached
@@ -402,6 +406,9 @@ Correlation attributes use `flaggo.correlation.<name>`.
 
 ## Related documents
 
+- [Application boundaries and lifecycle](APP_BOUNDARIES.md)
+- [OTel Ingestion app](../../../apps/otel-ingestion/README.md)
+- [Evidence Materializer app](../../../apps/evidence-materializer/README.md)
 - [Architecture overview](OVERVIEW.md)
 - [Contract clients and Contract Service](CONTRACT_SERVICE.md)
 - [Decision authority](AUTHORITY.md)

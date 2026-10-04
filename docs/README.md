@@ -4,11 +4,11 @@ Flaggo lets applications delegate selected runtime variables to explicit,
 versioned `DecisionContract` resources and immutable `DecisionExecutable`
 artifacts.
 
-In Phase 3, the SDK constructs complete runtime input and the application
-decides how to apply returned results. Flaggo implements contract acceptance,
-default and deterministic authored-executable generation, atomic activation,
-and stateless runtime evaluation. Exposure telemetry, evidence ingestion and
-correlation, and asynchronous evidence-based generation remain future work.
+The implemented stack covers contract acceptance, default and deterministic
+authored-executable generation, atomic activation, stateless runtime
+evaluation, direct OTLP ingestion, a bounded Raw OTLP Inbox, and forward-only
+Evidence Materialization. Evidence correlation and asynchronous
+evidence-based candidate generation remain planned.
 
 ## Product model
 
@@ -22,27 +22,35 @@ DecisionContract
 
 ActiveExecutable + complete RuntimeInput
   -> deterministic RuntimeDecision
-  -> application applies result
-  -> future exposure, evidence, and learning loop
+
+decision receipt + application telemetry
+  -> Raw OTLP Inbox
+  -> Evidence Store
+  -> planned Async Analysis
+  -> CandidateExecutable
+  -> Contract Service validation and activation
 ```
 
 Activation is the only transition that grants runtime authority. The initial
 learning declaration uses `mode: auto-activation` to define how a future valid
-evidence-generated candidate would attempt activation. Phase 3 stores that
-declaration but does not run evidence ingestion or a learning worker. Runtime
-never selects a contract or executable by generation recency.
+evidence-generated candidate would attempt activation. Async Analysis cannot
+write runtime authority directly; its candidate returns through Contract
+Service validation and activation. Runtime never selects a contract or
+executable by generation recency.
 
 ## Current state
 
 The v3 management and runtime contracts are implemented by Contract Service,
-Decision Service, their shared modules, and the TypeScript SDK. Management
-addresses a logical decision by name and immutable versions by
-`contractDigest`. Runtime requests one exact name/digest pair and resolves the
-executable active for that digest in the authenticated tenant/application/environment
+Decision Service, reusable modules, and the TypeScript SDK. OTel Ingestion and
+Evidence Materializer implement the telemetry-to-query-ready-evidence
+foundation. Management addresses a logical decision by name and immutable
+versions by `contractDigest`; runtime resolves only the executable active for
+the exact requested digest and authenticated tenant/application/environment
 scope.
 
-The pre-v3 implementation has been removed. Evidence ingestion and
-asynchronous evidence-based generation remain future implementation work.
+The pre-v3 implementation has been removed. Async Analysis, evidence
+correlation, and evidence-generated candidate production remain future
+implementation work.
 
 [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3), native issue
 dependencies, and self-contained issue contracts remain the authoritative
@@ -53,10 +61,13 @@ roadmap and status source. This page is orientation, not a second roadmap.
 | Question | Source |
 | --- | --- |
 | Why does Flaggo exist? | [Manifesto](MANIFESTO.md) |
-| What is implemented in Phase 3 and what remains deferred? | [Phase 3 implementation scope](design/PHASE_3.md) |
+| What is the canonical lifecycle and who owns each app or store boundary? | [Application boundaries and lifecycle](design/architecture/APP_BOUNDARIES.md) |
+| What does each runnable composition root own? | [`apps/`](../apps/README.md) |
+| What did the Phase 3 management/runtime milestone contain? | [Phase 3 implementation scope](design/PHASE_3.md) |
 | How do clients, services, workers, and stores fit together? | [Architecture overview](design/architecture/OVERVIEW.md) |
 | How do authoring clients deploy and inspect contracts? | [Contract clients and Contract Service](design/architecture/CONTRACT_SERVICE.md) |
 | How do applications and the SDK call runtime? | [Runtime client and Decision Service](design/architecture/RUNTIME.md) |
+| How do OTLP ingestion, materialization, evidence, and planned analysis relate? | [Evidence and learning](design/architecture/EVIDENCE.md) |
 | What are the contract and executable primitives? | [Decision contracts and executables](design/contracts/CONTRACTS.md) |
 | How does the lifecycle progress? | [Decision contract lifecycle](design/contracts/LIFECYCLE.md) |
 | How does exact-version stateless evaluation work? | [Runtime evaluation model](design/contracts/RUNTIME_EVALUATION.md) |

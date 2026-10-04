@@ -5,10 +5,11 @@ application code an explicit way to deploy a versioned `DecisionContract`,
 activate one immutable `DecisionExecutable`, and request a deterministic
 result for an exact contract version.
 
-Phase 3 implements complete SDK input construction, contract acceptance,
-default and deterministic authored-executable generation, atomic activation,
-and stateless runtime evaluation. Exposure telemetry, evidence ingestion and
-correlation, and asynchronous evidence-based generation remain future work.
+The current stack implements complete SDK input construction, contract
+acceptance, default and deterministic authored-executable generation, atomic
+activation, stateless runtime evaluation, direct OTLP ingestion, a bounded Raw
+OTLP Inbox, and forward-only Evidence Materialization. Evidence correlation
+and asynchronous evidence-based generation remain planned.
 
 ## Target product model
 
@@ -22,24 +23,30 @@ DecisionContract
 
 ActiveExecutable + complete RuntimeInput
   -> deterministic RuntimeDecision
-  -> application applies result
-  -> future exposure, evidence, and learning loop
+
+decision receipt + application telemetry
+  -> Raw OTLP Inbox
+  -> Evidence Store
+  -> planned Async Analysis
+  -> CandidateExecutable
+  -> Contract Service validation and activation
 ```
 
 Activation is the only transition that grants runtime authority. The initial
 learning declaration uses `mode: auto-activation` to define how a future valid
-evidence-generated candidate would attempt activation. Phase 3 stores that
-declaration but does not run evidence ingestion or a learning worker. Runtime
-reads only the activation mapping.
+evidence-generated candidate would attempt activation. Async Analysis cannot
+write runtime authority directly; runtime reads only the activation mapping.
 
 The repository implements this v3 model through Contract Service, Decision
-Service, reusable domain/store modules, the TypeScript SDK, and real-host
-examples. The pre-v3 service stack has been removed.
+Service, OTel Ingestion, Evidence Materializer, reusable domain/store modules,
+the TypeScript SDK, and real-host examples. The pre-v3 service stack has been
+removed.
 
 ## Start here
 
 - [Documentation home](docs/README.md)
 - [Manifesto](docs/MANIFESTO.md)
+- [Application boundaries and lifecycle](docs/design/architecture/APP_BOUNDARIES.md)
 - [Architecture overview](docs/design/architecture/OVERVIEW.md)
 - [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
 - [Contributing](CONTRIBUTING.md)
@@ -75,7 +82,7 @@ Decision Service.
 ## Repository layout
 
 ```text
-apps/          Runnable service hosts
+apps/          Runnable application composition roots
 modules/       Internal business capabilities and owned ports
 packages/      Reusable SDK and data-contract packages
 contracts/     OpenAPI, JSON Schema, OTel profiles, fixtures, and conformance

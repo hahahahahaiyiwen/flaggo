@@ -3,14 +3,19 @@
 ## Purpose
 
 This document describes the runtime path from application code through the
-Flaggo SDK and Decision Service to an applied result and exposure observation.
-It defines client and service responsibilities, online dependencies,
-statelessness, concurrency, and failure boundaries.
+Flaggo SDK and Decision Service to a returned decision, application-controlled
+result use, and a decision-received observation. It defines client and service
+responsibilities, online dependencies, statelessness, concurrency, and failure
+boundaries.
 
 It does not redefine `RuntimeInput`, `RuntimeDecision`, rule evaluation, or
 fallback semantics. Those belong to
 [Runtime evaluation model](../contracts/RUNTIME_EVALUATION.md), and the Runtime
 API v3 OpenAPI document and schema are the wire-level authority.
+
+The Decision Service app boundary and its relationship to every other app are
+canonical in
+[Application boundaries and lifecycle](APP_BOUNDARIES.md).
 
 ## System context
 
@@ -46,7 +51,8 @@ For one logical evaluation, application code:
 2. asks the SDK to evaluate the exact contract version;
 3. receives either a `RuntimeDecision` or an explicit failure;
 4. decides whether to apply the returned result; and
-5. reports the exposure through the SDK after applying the result.
+5. emits ordinary application telemetry about the resulting activity through
+   its OpenTelemetry pipeline.
 
 The SDK:
 
@@ -61,10 +67,11 @@ The SDK:
 - emits a raw decision-received observation after a successful decision when
   SDK telemetry is configured.
 
-The current TypeScript SDK phase implements this flow through the returned
-`RuntimeDecision`. The decision-received observation is not proof that the
-application applied the result. Application outcome telemetry and async
-analysis own later interpretation and correlation.
+The current TypeScript SDK emits a decision-received observation after the
+successful response. That observation is not proof that the application
+applied the result. Application telemetry and Async Analysis own later
+interpretation and correlation; there is no synchronous exposure-confirmation
+operation.
 
 Future SDK-local fallback to a contract default or cached prior decision is a
 separate policy. It does not change the Decision Service response or create a
@@ -240,6 +247,8 @@ SDK-local outage fallback remains a separate deferred concern.
 
 ## Related documents
 
+- [Application boundaries and lifecycle](APP_BOUNDARIES.md)
+- [Decision Service app](../../../apps/decision-service/README.md)
 - [Architecture overview](OVERVIEW.md)
 - [Contract clients and Contract Service](CONTRACT_SERVICE.md)
 - [Decision authority](AUTHORITY.md)

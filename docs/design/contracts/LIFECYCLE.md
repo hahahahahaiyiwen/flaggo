@@ -276,16 +276,16 @@ Contract Acceptance occurs once per digest, but Executable Generation and
 Runtime Evaluation may form a continuous asynchronous feedback loop:
 
 ```text
-                         +------------------------------+
-                         |                              |
-                         v                              |
-ActiveExecutable -> Runtime Evaluation -> exposure -> evidence
-       ^                                                |
-       |                                                v
-       +-- atomic auto-activation <- valid CandidateExecutable
-                                                ^
-                                                |
-                              interval -> asynchronous analysis
+ActiveExecutable -> Runtime Evaluation -> RuntimeDecision
+       ^                                     |
+       |                                     v
+       |                      decision receipt + app telemetry
+       |                                     |
+       |                                     v
+       +-- atomic activation <- valid candidate <- Async Analysis
+                                                     ^
+                                                     |
+                                          materialized observations
 ```
 
 Runtime and learning progress independently:
@@ -368,6 +368,7 @@ pipeline and must be recorded in candidate provenance.
 
 ## Related documents
 
+- [Application boundaries and lifecycle](../architecture/APP_BOUNDARIES.md)
 - [Decision contracts and executables](CONTRACTS.md)
 - [Runtime evaluation model](RUNTIME_EVALUATION.md)
 - [Decision authority](../architecture/AUTHORITY.md)

@@ -147,11 +147,11 @@ Contract Service immediately attempts atomic activation. A failed validation,
 superseded learning run, or failed activation leaves the existing executable
 active.
 
-`auto-activation` does not grant the learning worker authority to change
-executable lifecycle state, and it does not tell the Decision Service to
-discover the latest generated executable. The worker produces an immutable
-candidate; the Contract Service performs the checked activation transition
-through `IExecutableStore`.
+`auto-activation` does not grant Async Analysis authority to change executable
+lifecycle state, and it does not tell the Decision Service to discover the
+latest generated executable. Analysis produces an immutable candidate; the
+Contract Service performs the checked activation transition through
+`IExecutableStore`.
 
 ## Activation
 
@@ -250,6 +250,7 @@ model.
 
 ## Related documents
 
+- [Application boundaries and lifecycle](APP_BOUNDARIES.md)
 - [Architecture overview](OVERVIEW.md)
 - [Contract clients and Contract Service](CONTRACT_SERVICE.md)
 - [Runtime client and Decision Service](RUNTIME.md)
