@@ -199,6 +199,75 @@ async fn reads_forward_from_monotonic_batch_cursor() {
 }
 
 #[tokio::test]
+async fn inspects_backlog_after_a_forward_cursor() {
+    let fixture = TestInbox::create(RawOtlpInboxLimits::default()).await;
+    let first = fixture
+        .inbox
+        .append(batch(
+            OtlpSignal::Logs,
+            OtlpWireEncoding::Protobuf,
+            OtlpTransportCompression::Identity,
+            vec![1],
+        ))
+        .await
+        .expect("first append");
+    fixture.clock.advance(TimeDelta::seconds(1));
+    let second_received_at = fixture
+        .inbox
+        .append(batch(
+            OtlpSignal::Metrics,
+            OtlpWireEncoding::Protobuf,
+            OtlpTransportCompression::Identity,
+            vec![2],
+        ))
+        .await
+        .expect("second append")
+        .received_at;
+    fixture.clock.advance(TimeDelta::seconds(1));
+    let third = fixture
+        .inbox
+        .append(batch(
+            OtlpSignal::Traces,
+            OtlpWireEncoding::Protobuf,
+            OtlpTransportCompression::Identity,
+            vec![3],
+        ))
+        .await
+        .expect("third append");
+
+    let all = fixture
+        .inbox
+        .inspect_after(None)
+        .await
+        .expect("complete backlog");
+    let remaining = fixture
+        .inbox
+        .inspect_after(Some(first.inbox_batch_id))
+        .await
+        .expect("remaining backlog");
+    let empty = fixture
+        .inbox
+        .inspect_after(Some(third.inbox_batch_id))
+        .await
+        .expect("empty backlog");
+
+    assert_eq!(all.batch_count, 3);
+    assert_eq!(all.oldest_received_at, Some(fixed_time()));
+    assert_eq!(
+        all.newest_received_at,
+        Some(fixed_time() + TimeDelta::seconds(2))
+    );
+    assert_eq!(remaining.batch_count, 2);
+    assert_eq!(remaining.oldest_received_at, Some(second_received_at));
+    assert_eq!(
+        remaining.newest_received_at,
+        Some(fixed_time() + TimeDelta::seconds(2))
+    );
+    assert_eq!(empty, Default::default());
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn receipt_order_does_not_move_backward_when_the_clock_does() {
     let fixture = TestInbox::create(RawOtlpInboxLimits::default()).await;
     let first = fixture

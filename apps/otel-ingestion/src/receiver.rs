@@ -354,8 +354,8 @@ mod tests {
     use flaggo_raw_otlp_inbox::{
         DEFAULT_OTLP_PROFILE_VERSION, InboxAppendReceipt, InboxBatchId, InboxClock,
         NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression, OtlpWireEncoding, PayloadSha256,
-        RawOtlpInbox, RawOtlpInboxBatch, RawOtlpInboxError, RawOtlpInboxHealth, RawOtlpInboxLimits,
-        SqliteRawOtlpInbox, SystemInboxClock,
+        RawOtlpInbox, RawOtlpInboxBacklog, RawOtlpInboxBatch, RawOtlpInboxError,
+        RawOtlpInboxHealth, RawOtlpInboxLimits, SqliteRawOtlpInbox, SystemInboxClock,
     };
     use flate2::{Compression, write::GzEncoder};
     use opentelemetry_proto::tonic::{
@@ -475,6 +475,15 @@ mod tests {
                 expired_batch_count: 0,
                 expired_payload_bytes: 0,
             })
+        }
+
+        async fn inspect_after(
+            &self,
+            _after: Option<InboxBatchId>,
+        ) -> Result<RawOtlpInboxBacklog, RawOtlpInboxError> {
+            Err(RawOtlpInboxError::CorruptData(
+                "test inbox does not implement backlog inspection".to_owned(),
+            ))
         }
     }
 

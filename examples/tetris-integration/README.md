@@ -201,20 +201,29 @@ line clear and rejected recovery actions, verifies the `850` and `750` paths,
 captures logs, metrics, and traces while forwarding them to the Rust OTLP
 receiver, and checks resource/scope metadata, cross-signal correlation,
 session isolation, future evidence candidates, and deliberately unmatched
-operational telemetry. The test compares the forwarded request count and
-decompressed byte total with OTel Ingestion's raw-inbox health, then restarts
-the hosts on the same SQLite database and verifies those retained values
-survive reopening. Evidence Materializer starts only after deployment, consumes
-every retained Raw OTLP Inbox batch, and must create durable observations and
-origin provenance without conflicts. After stopping the writers, a Rust
-assertion reads those rows through the production Evidence Store API and
-requires exactly the two catalog-selected metric sources plus the two built-in
-decision observations. It verifies authority, source shape, materializer
-versions, content digests, contract/executable provenance, rule results, and
-the expected high/low session correlation while rejecting any unselected
-source. Materializer startup health after restart must then report the same
-Evidence Store counts. The test also verifies SDK-owned `_random`, direct REST
-parity from the captured session attributes, retired-field absence, explicit
-failure after Decision Service stops, and contract persistence across restart.
-Exporters are force-flushed before assertions, so an export, receiver,
-materializer, semantic-evidence, or durable-store failure fails the run.
+operational telemetry. Before application traffic, it sends minimal non-empty,
+valid binary protobuf requests with identity and gzip transport compression to
+each live `/v1/logs`, `/v1/metrics`, and `/v1/traces` endpoint. It verifies the
+HTTP responses and later reads the retained batches through the production Raw
+OTLP Inbox API to prove the complete six-case transport matrix was durably
+stored.
+The test compares the forwarded application request count and decompressed byte
+total with OTel Ingestion's raw-inbox health, then restarts the hosts on the same
+SQLite database and verifies those retained values survive reopening. Evidence
+Materializer starts only after deployment, consumes every retained Raw OTLP
+Inbox batch, and must create durable observations and origin provenance without
+conflicts. Its structured startup and commit events must expose the expected
+checkpoint, pending-batch lag, oldest pending age, newest evidence timestamp,
+and evidence freshness. After stopping the writers, a Rust assertion reads
+those rows through the production Evidence Store API and requires exactly the
+two catalog-selected metric sources plus the two built-in decision
+observations. It verifies authority, source shape, materializer versions,
+content digests, contract/executable provenance, rule results, and the expected
+high/low session correlation while rejecting any unselected source.
+Materializer startup health after restart must then report the same Evidence
+Store counts with no pending batches. The test also verifies SDK-owned
+`_random`, direct REST parity from the captured session attributes,
+retired-field absence, explicit failure after Decision Service stops, and
+contract persistence across restart. Exporters are force-flushed before
+assertions, so an export, receiver, materializer, semantic-evidence, or
+durable-store failure fails the run.

@@ -383,6 +383,55 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
     fixture.close().await;
 }
 
+#[tokio::test]
+async fn reports_checkpoint_backlog_and_evidence_freshness() {
+    let fixture = Fixture::new().await;
+    let catalog = contract_catalog(CONTRACT_DIGEST_ONE);
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, vec![application_log()])
+        .await;
+    fixture.clock.advance(TimeDelta::seconds(1));
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, vec![application_log()])
+        .await;
+    let materializer = EvidenceMaterializer::new(
+        fixture.inbox.clone(),
+        fixture.store.clone(),
+        NonZeroU16::new(1).unwrap(),
+    );
+
+    let before = materializer.inspect().await.unwrap();
+    assert_eq!(before.checkpoint_batch_id, None);
+    assert_eq!(before.pending_batch_count, 2);
+    assert!(before.oldest_pending_received_at.is_some());
+    assert!(before.newest_pending_received_at.is_some());
+    assert_eq!(before.evidence_store.newest_observed_at_unix_nano, None);
+
+    let first = materializer.run_once(&catalog).await.unwrap();
+    assert_eq!(first.batches_read, 1);
+    let between = materializer.inspect().await.unwrap();
+    assert_eq!(between.checkpoint_batch_id, Some(1));
+    assert_eq!(between.pending_batch_count, 1);
+    assert!(between.oldest_pending_received_at.is_some());
+    assert!(
+        between
+            .evidence_store
+            .newest_observed_at_unix_nano
+            .is_some()
+    );
+
+    let second = materializer.run_once(&catalog).await.unwrap();
+    assert_eq!(second.batches_read, 1);
+    let after = materializer.inspect().await.unwrap();
+    assert_eq!(after.checkpoint_batch_id, Some(2));
+    assert_eq!(after.pending_batch_count, 0);
+    assert_eq!(after.oldest_pending_received_at, None);
+    assert_eq!(after.newest_pending_received_at, None);
+    assert!(after.evidence_store.newest_observed_at_unix_nano.is_some());
+
+    fixture.close().await;
+}
+
 struct Fixture {
     _directory: TempDir,
     inbox: SqliteRawOtlpInbox,

@@ -32,6 +32,10 @@ an empty route catalog.
 
 Exactly one materializer may be active per database. Catalog changes affect
 only pending and future inbox batches; they do not revisit completed batches.
+The worker's structured startup and batch-commit events report its forward
+checkpoint, exact pending-batch count, oldest pending age, newest evidence
+timestamp, and evidence freshness. A fatal startup, inspection, or
+materialization failure emits `materializer.failed` before the process exits.
 
 The Phase 4 Evidence Materializer strictly derives tenant, application, and
 environment from `flaggo.*` OTLP Resource attributes. The receiver does not

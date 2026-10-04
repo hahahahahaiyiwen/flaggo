@@ -9,7 +9,9 @@ mod route;
 
 pub use catalog::{CompiledContractCatalog, ContractCatalogError};
 pub use decoder::{DecodedBatch, DecoderDiagnostic, decode_batch};
-pub use materializer::{EvidenceMaterializer, MaterializerError, MaterializerRunResult};
+pub use materializer::{
+    EvidenceMaterializer, MaterializerError, MaterializerHealth, MaterializerRunResult,
+};
 pub use provider::{CatalogFetch, CatalogProviderError, HttpContractCatalogProvider};
 pub use route::{CurrentContractKey, MaterializationRoute};
 

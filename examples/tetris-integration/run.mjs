@@ -5,6 +5,7 @@ import { rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { gzipSync } from "node:zlib";
 
 import {
   createHostLifecycle,
@@ -33,6 +34,10 @@ async function runIntegration(lifecycle) {
   const initialInbox = await readRawOtlpInboxHealth(hosts);
   assert.equal(initialInbox.retainedBatchCount, 0);
   assert.equal(initialInbox.retainedPayloadBytes, 0);
+  const conformanceInbox = await assertLiveOtlpTransportConformance({
+    hosts,
+    initial: initialInbox,
+  });
   const proxy = await startRecordingProxy(hosts.otelIngestionUrl);
   lifecycle.trackHost(proxy);
   const deployed = await deployTetrisContract({
@@ -58,6 +63,17 @@ async function runIntegration(lifecycle) {
     observationCount: 0,
     provenanceCount: 0,
   });
+  assertMaterializationHealth(materializerStartup.materialization);
+  assert.equal(materializerStartup.materialization.checkpointBatchId, null);
+  assert.equal(materializerStartup.materialization.pendingBatchCount, 6);
+  assert.equal(
+    materializerStartup.materialization.newestEvidenceObservedAtUnixNano,
+    null,
+  );
+  assert.equal(
+    materializerStartup.materialization.evidenceFreshnessMilliseconds,
+    null,
+  );
   const capturedDecisions = [];
   const forwardingFetch = async (input, init) => {
     const isDecision = String(input).includes("/decisions");
@@ -161,13 +177,12 @@ async function runIntegration(lifecycle) {
     await telemetry.shutdown();
   }
   const storedInbox = await assertRawOtlpInboxStorage({
-    initial: initialInbox,
+    initial: conformanceInbox,
     hosts,
     requests: proxy.requests,
   });
   const materializedEvidence = await waitForEvidenceMaterialization({
-    expectedBatches:
-      storedInbox.retainedBatchCount - initialInbox.retainedBatchCount,
+    expectedBatches: storedInbox.retainedBatchCount,
     host: materializer,
     signal: lifecycle.signal,
   });
@@ -286,6 +301,21 @@ async function runIntegration(lifecycle) {
       materializerStartup.evidenceStore.provenanceCount
       + materializedEvidence.provenanceCreated,
   });
+  assertMaterializationHealth(reopenedEvidence.materialization);
+  assert.equal(
+    reopenedEvidence.materialization.checkpointBatchId,
+    storedInbox.retainedBatchCount,
+  );
+  assert.equal(reopenedEvidence.materialization.pendingBatchCount, 0);
+  assert.match(
+    reopenedEvidence.materialization.newestEvidenceObservedAtUnixNano,
+    /^\d+$/u,
+  );
+  assert.ok(
+    Number.isSafeInteger(
+      reopenedEvidence.materialization.evidenceFreshnessMilliseconds,
+    ),
+  );
   const restartedHigh = await postDecisionRest({
     fetch: restartedHosts.fetch,
     decisionUrl: restartedHosts.decisionUrl,
@@ -307,6 +337,7 @@ async function runIntegration(lifecycle) {
     },
     telemetry: telemetrySummary,
     rawOtlpInbox: {
+      liveTransportConformance: true,
       retainedBatches: storedInbox.retainedBatchCount,
       retainedPayloadBytes: storedInbox.retainedPayloadBytes,
       survivedRestart: true,
@@ -318,6 +349,7 @@ async function runIntegration(lifecycle) {
       semanticValidation: true,
       survivedRestart: true,
     },
+    materialization: reopenedEvidence.materialization,
     restParity: {
       high: restHigh.result,
       low: restLow.result,
@@ -546,7 +578,86 @@ async function waitForEvidenceMaterialization({
   assert.equal(summary.conflictsCreated, 0);
   assert.equal(summary.diagnosticsCreated, 0);
   assert.equal(summary.duplicateObservations, 0);
-  return summary;
+  const materialization = entries.at(-1).materialization;
+  assertMaterializationHealth(materialization);
+  assert.equal(materialization.checkpointBatchId, expectedBatches);
+  assert.equal(materialization.pendingBatchCount, 0);
+  assert.match(
+    materialization.newestEvidenceObservedAtUnixNano,
+    /^\d+$/u,
+  );
+  assert.ok(
+    Number.isSafeInteger(materialization.evidenceFreshnessMilliseconds),
+  );
+  return { ...summary, materialization };
+}
+
+async function assertLiveOtlpTransportConformance({ hosts, initial }) {
+  const protobufRequest = Buffer.from([0x0a, 0x00]);
+  const compressions = [
+    {
+      contentEncoding: "identity",
+      payload: protobufRequest,
+    },
+    {
+      contentEncoding: "gzip",
+      payload: gzipSync(protobufRequest),
+    },
+  ];
+  for (const path of ["/v1/logs", "/v1/metrics", "/v1/traces"]) {
+    for (const { contentEncoding, payload } of compressions) {
+      const response = await hosts.fetch(
+        `${hosts.otelIngestionUrl}${path}`,
+        {
+          method: "POST",
+          headers: {
+            "content-encoding": contentEncoding,
+            "content-type": "application/x-protobuf",
+          },
+          body: payload,
+        },
+      );
+      const responseBody = Buffer.from(await response.arrayBuffer());
+      assert.equal(
+        response.status,
+        200,
+        `${path} ${contentEncoding} returned HTTP ${response.status}`,
+      );
+      assert.equal(
+        response.headers.get("content-type"),
+        "application/x-protobuf",
+      );
+      assert.equal(responseBody.length, 0);
+    }
+  }
+
+  const stored = await readRawOtlpInboxHealth(hosts);
+  assert.equal(stored.retainedBatchCount - initial.retainedBatchCount, 6);
+  assert.equal(
+    stored.retainedPayloadBytes - initial.retainedPayloadBytes,
+    protobufRequest.length * 6,
+  );
+  return stored;
+}
+
+function assertMaterializationHealth(health) {
+  assert.equal(typeof health, "object");
+  assert.ok(health !== null);
+  assert.ok(Number.isSafeInteger(health.pendingBatchCount));
+  assert.ok(health.pendingBatchCount >= 0);
+  assert.equal(typeof health.observedAt, "string");
+  assert.ok(Number.isFinite(Date.parse(health.observedAt)));
+  if (health.pendingBatchCount === 0) {
+    assert.equal(health.oldestPendingReceivedAt, null);
+    assert.equal(health.oldestPendingAgeMilliseconds, null);
+    assert.equal(health.newestPendingReceivedAt, null);
+  } else {
+    assert.equal(typeof health.oldestPendingReceivedAt, "string");
+    assert.ok(Number.isFinite(Date.parse(health.oldestPendingReceivedAt)));
+    assert.ok(Number.isSafeInteger(health.oldestPendingAgeMilliseconds));
+    assert.equal(typeof health.newestPendingReceivedAt, "string");
+    assert.ok(Number.isFinite(Date.parse(health.newestPendingReceivedAt)));
+  }
 }
 
 async function assertPersistedTetrisEvidence({

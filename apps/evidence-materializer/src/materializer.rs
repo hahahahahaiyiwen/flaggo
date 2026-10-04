@@ -1,8 +1,9 @@
 use std::num::{NonZeroU16, NonZeroU64};
 
+use chrono::{DateTime, Utc};
 use flaggo_evidence_store::{
-    EvidenceStore, EvidenceStoreCommitResult, EvidenceStoreError, ForwardMaterializationKey,
-    MaterializerVersions, StoredContractCatalog,
+    EvidenceStore, EvidenceStoreCommitResult, EvidenceStoreError, EvidenceStoreHealth,
+    ForwardMaterializationKey, MaterializerVersions, StoredContractCatalog,
 };
 use flaggo_raw_otlp_inbox::{InboxBatchId, RawOtlpInbox, RawOtlpInboxError};
 use thiserror::Error;
@@ -59,9 +60,7 @@ where
         &self,
         catalog: &CompiledContractCatalog,
     ) -> Result<MaterializerRunResult, MaterializerError> {
-        let key = ForwardMaterializationKey {
-            versions: self.versions.clone(),
-        };
+        let key = self.forward_key();
         let checkpoint = self.store.forward_checkpoint(&key).await?;
         let after = checkpoint.and_then(NonZeroU64::new).map(InboxBatchId::new);
         let batches = self.inbox.read_after(after, self.read_limit).await?;
@@ -76,9 +75,40 @@ where
         Ok(result)
     }
 
+    pub async fn inspect(&self) -> Result<MaterializerHealth, MaterializerError> {
+        let checkpoint_batch_id = self.store.forward_checkpoint(&self.forward_key()).await?;
+        let after = checkpoint_batch_id
+            .and_then(NonZeroU64::new)
+            .map(InboxBatchId::new);
+        let backlog = self.inbox.inspect_after(after).await?;
+        let evidence_store = self.store.inspect().await?;
+        Ok(MaterializerHealth {
+            checkpoint_batch_id,
+            pending_batch_count: backlog.batch_count,
+            oldest_pending_received_at: backlog.oldest_received_at,
+            newest_pending_received_at: backlog.newest_received_at,
+            evidence_store,
+        })
+    }
+
     pub fn store(&self) -> &S {
         &self.store
     }
+
+    fn forward_key(&self) -> ForwardMaterializationKey {
+        ForwardMaterializationKey {
+            versions: self.versions.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaterializerHealth {
+    pub checkpoint_batch_id: Option<u64>,
+    pub pending_batch_count: u64,
+    pub oldest_pending_received_at: Option<DateTime<Utc>>,
+    pub newest_pending_received_at: Option<DateTime<Utc>>,
+    pub evidence_store: EvidenceStoreHealth,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

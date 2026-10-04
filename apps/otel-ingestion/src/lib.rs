@@ -110,8 +110,8 @@ mod tests {
         http::{Request, StatusCode},
     };
     use flaggo_raw_otlp_inbox::{
-        InboxAppendReceipt, InboxBatchId, NewRawOtlpBatch, RawOtlpInbox, RawOtlpInboxBatch,
-        RawOtlpInboxError, RawOtlpInboxHealth, RawOtlpInboxLimits,
+        InboxAppendReceipt, InboxBatchId, NewRawOtlpBatch, RawOtlpInbox, RawOtlpInboxBacklog,
+        RawOtlpInboxBatch, RawOtlpInboxError, RawOtlpInboxHealth, RawOtlpInboxLimits,
     };
     use serde_json::Value;
     use tower::ServiceExt;
@@ -154,6 +154,13 @@ mod tests {
                 expired_batch_count: 1,
                 expired_payload_bytes: 10,
             })
+        }
+
+        async fn inspect_after(
+            &self,
+            _after: Option<InboxBatchId>,
+        ) -> Result<RawOtlpInboxBacklog, RawOtlpInboxError> {
+            Err(not_implemented())
         }
     }
 

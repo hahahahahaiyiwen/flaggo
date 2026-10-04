@@ -6,10 +6,11 @@ use chrono::Utc;
 use config::MaterializerConfig;
 use flaggo_evidence_materializer::{
     CatalogFetch, CompiledContractCatalog, EvidenceMaterializer, HttpContractCatalogProvider,
+    MaterializerHealth,
 };
 use flaggo_evidence_store::{EvidenceStore, SqliteEvidenceStore};
 use flaggo_raw_otlp_inbox::SqliteRawOtlpInbox;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::{
     signal,
     time::{MissedTickBehavior, interval},
@@ -17,6 +18,22 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    match run().await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            eprintln!(
+                "{}",
+                json!({
+                    "error": error.to_string(),
+                    "event": "materializer.failed"
+                })
+            );
+            Err(error)
+        }
+    }
+}
+
+async fn run() -> Result<(), Box<dyn Error>> {
     let config = MaterializerConfig::from_environment()?;
     let inbox = SqliteRawOtlpInbox::connect_reader(&config.database_url).await?;
     let store = SqliteEvidenceStore::connect(&config.database_url).await?;
@@ -38,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Some(provider) = &provider {
         refresh_catalog(provider, &materializer, &mut catalog, &mut catalog_etag).await;
     }
-    let evidence_store = store.inspect().await?;
+    let health = materializer.inspect().await?;
 
     println!(
         "{}",
@@ -46,13 +63,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "activeRoutes": catalog.active_source_counts().len(),
             "currentContracts": catalog.current_contracts().len(),
             "evidenceStore": {
-                "conflictCount": evidence_store.conflict_count,
-                "diagnosticCount": evidence_store.diagnostic_count,
-                "hasCachedCatalog": evidence_store.has_cached_catalog,
-                "observationCount": evidence_store.observation_count,
-                "provenanceCount": evidence_store.provenance_count
+                "conflictCount": health.evidence_store.conflict_count,
+                "diagnosticCount": health.evidence_store.diagnostic_count,
+                "hasCachedCatalog": health.evidence_store.has_cached_catalog,
+                "observationCount": health.evidence_store.observation_count,
+                "provenanceCount": health.evidence_store.provenance_count
             },
-            "event": "materializer.started"
+            "event": "materializer.started",
+            "materialization": materialization_health_json(&health, Utc::now())
         })
     );
 
@@ -75,12 +93,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             _ = work.tick() => {
                 let result = materializer.run_once(&catalog).await?;
                 if result.batches_read > 0 {
+                    let health = materializer.inspect().await?;
                     println!("{}", json!({
                         "batchesRead": result.batches_read,
                         "conflictsCreated": result.conflicts_created,
                         "diagnosticsCreated": result.diagnostics_created,
                         "duplicateObservations": result.duplicate_observations,
                         "event": "materializer.batch_page_committed",
+                        "materialization": materialization_health_json(&health, Utc::now()),
                         "observationsCreated": result.observations_created,
                         "provenanceCreated": result.provenance_created
                     }));
@@ -100,6 +120,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
     inbox_for_shutdown.close().await;
     store_for_shutdown.close().await;
     Ok(())
+}
+
+fn materialization_health_json(
+    health: &MaterializerHealth,
+    observed_at: chrono::DateTime<Utc>,
+) -> Value {
+    let observed_at_unix_nano = u64::try_from(
+        observed_at
+            .timestamp_nanos_opt()
+            .expect("current UTC time must fit Unix nanoseconds"),
+    )
+    .expect("current UTC time must follow the Unix epoch");
+    let evidence_freshness_milliseconds = health
+        .evidence_store
+        .newest_observed_at_unix_nano
+        .map(|newest| observed_at_unix_nano.saturating_sub(newest) / 1_000_000);
+    let oldest_pending_age_milliseconds = health
+        .oldest_pending_received_at
+        .map(|oldest| u64::try_from((observed_at - oldest).num_milliseconds()).unwrap_or(0));
+
+    json!({
+        "checkpointBatchId": health.checkpoint_batch_id,
+        "evidenceFreshnessMilliseconds": evidence_freshness_milliseconds,
+        "newestEvidenceObservedAtUnixNano": health
+            .evidence_store
+            .newest_observed_at_unix_nano
+            .map(|value| value.to_string()),
+        "newestPendingReceivedAt": health
+            .newest_pending_received_at
+            .map(|value| value.to_rfc3339()),
+        "observedAt": observed_at.to_rfc3339(),
+        "oldestPendingAgeMilliseconds": oldest_pending_age_milliseconds,
+        "oldestPendingReceivedAt": health
+            .oldest_pending_received_at
+            .map(|value| value.to_rfc3339()),
+        "pendingBatchCount": health.pending_batch_count
+    })
 }
 
 async fn refresh_catalog<I, S>(

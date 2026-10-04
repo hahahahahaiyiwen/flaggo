@@ -300,6 +300,14 @@ operation; receiver appends and materializer reads do not perform cleanup.
 Retention is independent of materialization progress. Changed materialization
 versions may rematerialize only within the currently retained replay range;
 analysis never silently scans the inbox as a fallback.
+Evidence Materializer exposes operational progress through structured process
+events. Startup and every committed batch page report the versioned forward
+checkpoint, exact retained batches after that checkpoint, oldest pending
+receipt age, newest persisted evidence timestamp, and evidence freshness.
+Fatal startup, inspection, or materialization failures emit a structured
+failure event before process exit. Duplicate and conflict counts remain part
+of each committed-page event, while durable conflict and diagnostic totals are
+reported at startup.
 Materialization does not persist eager
 observation-to-contract associations. Analysis loads an exact immutable
 contract and joins its evidence declarations to reusable observations by

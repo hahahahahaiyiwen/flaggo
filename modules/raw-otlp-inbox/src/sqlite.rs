@@ -15,9 +15,9 @@ use sqlx::{
 
 use crate::{
     InboxAppendReceipt, InboxBatchId, InboxClock, NewRawOtlpBatch, OtlpProfileVersion, OtlpSignal,
-    OtlpTransportCompression, OtlpWireEncoding, PayloadSha256, RawOtlpInbox, RawOtlpInboxBatch,
-    RawOtlpInboxError, RawOtlpInboxHealth, RawOtlpInboxLimits, RawOtlpInboxRetention,
-    RawOtlpInboxRetentionResult, SystemInboxClock,
+    OtlpTransportCompression, OtlpWireEncoding, PayloadSha256, RawOtlpInbox, RawOtlpInboxBacklog,
+    RawOtlpInboxBatch, RawOtlpInboxError, RawOtlpInboxHealth, RawOtlpInboxLimits,
+    RawOtlpInboxRetention, RawOtlpInboxRetentionResult, SystemInboxClock,
 };
 
 const COMPONENT_NAME: &str = "raw-otlp-inbox";
@@ -508,6 +508,45 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
         .await
         .map_err(RawOtlpInboxError::unavailable)?;
         rows.iter().map(Self::decode_row).collect()
+    }
+
+    async fn inspect_after(
+        &self,
+        after: Option<InboxBatchId>,
+    ) -> Result<RawOtlpInboxBacklog, RawOtlpInboxError> {
+        let after = after.map_or(0, InboxBatchId::get);
+        let after = i64::try_from(after)
+            .map_err(|_| corrupt(format!("batch cursor {after} exceeds SQLite integer range")))?;
+        let row = sqlx::query(
+            "SELECT
+                COUNT(*) AS batch_count,
+                MIN(received_at_unix_ms) AS oldest_received_at_unix_ms,
+                MAX(received_at_unix_ms) AS newest_received_at_unix_ms
+             FROM raw_otlp_inbox_batches
+             WHERE inbox_batch_id > ?",
+        )
+        .bind(after)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(RawOtlpInboxError::unavailable)?;
+
+        Ok(RawOtlpInboxBacklog {
+            batch_count: nonnegative(
+                "backlog batch count",
+                row.try_get("batch_count")
+                    .map_err(RawOtlpInboxError::unavailable)?,
+            )?,
+            oldest_received_at: optional_timestamp(
+                "oldest backlog receipt time",
+                row.try_get("oldest_received_at_unix_ms")
+                    .map_err(RawOtlpInboxError::unavailable)?,
+            )?,
+            newest_received_at: optional_timestamp(
+                "newest backlog receipt time",
+                row.try_get("newest_received_at_unix_ms")
+                    .map_err(RawOtlpInboxError::unavailable)?,
+            )?,
+        })
     }
 
     async fn inspect(&self) -> Result<RawOtlpInboxHealth, RawOtlpInboxError> {

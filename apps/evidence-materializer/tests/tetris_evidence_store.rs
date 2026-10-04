@@ -10,6 +10,9 @@ use flaggo_evidence_materializer::{
 use flaggo_evidence_store::{
     AuthorityScope, EvidenceObservation, EvidenceSignal, EvidenceStore, SqliteEvidenceStore,
 };
+use flaggo_raw_otlp_inbox::{
+    OtlpTransportCompression, OtlpWireEncoding, RawOtlpInbox, RawOtlpInboxBatch, SqliteRawOtlpInbox,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -23,6 +26,7 @@ async fn persisted_tetris_evidence_is_semantically_correct() {
     let database_url = required_environment(DATABASE_URL_ENVIRONMENT_VARIABLE);
     let expected_contract_digest = required_environment(CONTRACT_DIGEST_ENVIRONMENT_VARIABLE);
     let expected_executable_digest = required_environment(EXECUTABLE_DIGEST_ENVIRONMENT_VARIABLE);
+    assert_live_transport_conformance(&database_url).await;
     let authority = AuthorityScope::new(
         "local".to_owned(),
         "tetris".to_owned(),
@@ -119,6 +123,55 @@ async fn persisted_tetris_evidence_is_semantically_correct() {
     );
 
     store.close().await;
+}
+
+async fn assert_live_transport_conformance(database_url: &str) {
+    let inbox = SqliteRawOtlpInbox::connect_reader(database_url)
+        .await
+        .expect("Tetris Raw OTLP Inbox");
+    let batches = inbox
+        .read_after(
+            None,
+            NonZeroU16::new(100).expect("nonzero inbox read limit"),
+        )
+        .await
+        .expect("retained Tetris OTLP batches");
+    let conformance = batches
+        .iter()
+        .filter(|batch| batch.wire_encoding == OtlpWireEncoding::Protobuf)
+        .collect::<Vec<_>>();
+
+    assert_eq!(conformance.len(), 6);
+    assert!(conformance.iter().all(|batch| {
+        batch.media_type == "application/x-protobuf"
+            && batch.payload == [0x0a, 0x00]
+            && batch.payload_length == 2
+    }));
+    assert_eq!(
+        transport_matrix(&conformance),
+        BTreeSet::from([
+            ("logs", "gzip"),
+            ("logs", "identity"),
+            ("metrics", "gzip"),
+            ("metrics", "identity"),
+            ("traces", "gzip"),
+            ("traces", "identity"),
+        ])
+    );
+    inbox.close().await;
+}
+
+fn transport_matrix<'a>(batches: &'a [&RawOtlpInboxBatch]) -> BTreeSet<(&'a str, &'a str)> {
+    batches
+        .iter()
+        .map(|batch| {
+            let compression = match batch.transport_compression {
+                OtlpTransportCompression::Identity => "identity",
+                OtlpTransportCompression::Gzip => "gzip",
+            };
+            (batch.signal.as_str(), compression)
+        })
+        .collect()
 }
 
 fn assert_common_payload(payload: &Value, observation: &EvidenceObservation) {

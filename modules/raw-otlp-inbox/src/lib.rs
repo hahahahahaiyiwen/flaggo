@@ -279,6 +279,13 @@ pub struct RawOtlpInboxHealth {
     pub expired_payload_bytes: u64,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RawOtlpInboxBacklog {
+    pub batch_count: u64,
+    pub oldest_received_at: Option<DateTime<Utc>>,
+    pub newest_received_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RawOtlpInboxRetentionResult {
     pub expired_batch_count: u64,
@@ -342,6 +349,11 @@ pub trait RawOtlpInbox: Send + Sync {
         after: Option<InboxBatchId>,
         limit: NonZeroU16,
     ) -> Result<Vec<RawOtlpInboxBatch>, RawOtlpInboxError>;
+
+    async fn inspect_after(
+        &self,
+        after: Option<InboxBatchId>,
+    ) -> Result<RawOtlpInboxBacklog, RawOtlpInboxError>;
 
     async fn inspect(&self) -> Result<RawOtlpInboxHealth, RawOtlpInboxError>;
 }
