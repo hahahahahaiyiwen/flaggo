@@ -12,6 +12,11 @@
       "Content-Type": "application/json"
     },
     "body": {
+      "authority": {
+        "tenant": "local",
+        "application": "tetris",
+        "environment": "integration"
+      },
       "name": "tetris.dropInterval",
       "expression_syntax": "flaggo.cel/v1",
       "attributes": [
@@ -92,18 +97,42 @@
           {
             "name": "placement_time",
             "attribute": "recent_placement_time_ms",
-            "binding": "tetris.placement_time",
             "correlateBy": [
               "session_id"
-            ]
+            ],
+            "source": {
+              "kind": "metric",
+              "scope": "tetris.engine",
+              "name": "tetris.placement_time",
+              "metricKind": "histogram",
+              "unit": "ms",
+              "correlation": {
+                "session_id": {
+                  "location": "signal",
+                  "attribute": "tetris.session.id"
+                }
+              }
+            }
           },
           {
             "name": "recovery_failure",
             "attribute": "recovery_failures",
-            "binding": "tetris.recovery_failure",
             "correlateBy": [
               "session_id"
-            ]
+            ],
+            "source": {
+              "kind": "metric",
+              "scope": "tetris.engine",
+              "name": "tetris.recovery_failure",
+              "metricKind": "sum",
+              "unit": "{failure}",
+              "correlation": {
+                "session_id": {
+                  "location": "signal",
+                  "attribute": "tetris.session.id"
+                }
+              }
+            }
           }
         ],
         "objective": {
@@ -129,7 +158,7 @@
     },
     "body": {
       "status": "valid",
-      "contractDigest": "sha256:76837952bcc85c474be3f721cb6236a7e610ecdc38672e0149fc4c347816a7ae",
+      "contractDigest": "sha256:7394e6ec3d9eee8d559c4e5b44b15fb5ab7827e5307d5877f369ba0c9ded8098",
       "issues": []
     }
   }

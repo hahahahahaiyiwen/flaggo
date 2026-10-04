@@ -1,5 +1,10 @@
 {
-  "format": "flaggo.deploy/v1",
+  "format": "flaggo.deploy/v2",
+  "authority": {
+    "tenant": "local",
+    "application": "tetris",
+    "environment": "integration"
+  },
   "contracts": [
     "flaggo/contracts/tetris.dropInterval.decision-contract.json"
   ]

@@ -9,7 +9,7 @@ namespace Flaggo.Core.Tests;
 
 public sealed class StoreTests
 {
-    private static readonly DecisionScope Scope = new("checkout", "production");
+    private static readonly AuthorityScope Scope = new("local", "checkout", "production");
 
     [Fact]
     public async Task ContractVersionsAreImmutableScopedAndPersistent()
@@ -34,7 +34,7 @@ public sealed class StoreTests
         Assert.Equal(acceptedAt, persisted.AcceptedAt);
         Assert.Equal(100, persisted.Contract.Result.Default.GetInt32());
         Assert.Null(await store.GetAsync(
-            new DecisionScope("checkout", "staging"),
+            new AuthorityScope("local", "checkout", "staging"),
             contract.Name,
             digest));
 
@@ -43,6 +43,46 @@ public sealed class StoreTests
             version with { Contract = changedContract }));
         Assert.Equal(100, (await store.GetAsync(Scope, contract.Name, digest))!
             .Contract.Result.Default.GetInt32());
+    }
+
+    [Fact]
+    public async Task ContractAuthorityChangesDigestAndCurrentCatalogIdentity()
+    {
+        using var database = new TemporaryDatabase();
+        var store = new SqliteContractVersionStore(database.ConnectionString);
+        await store.InitializeAsync();
+        var firstContract = CreateContract(defaultValue: 100);
+        var secondScope = new AuthorityScope("acme", "checkout", "production");
+        var secondContract = firstContract with { Authority = secondScope };
+        var first = new AcceptedContractVersion(
+            Scope,
+            ContractDigests.ComputeContractDigest(firstContract),
+            new DateTimeOffset(2026, 3, 1, 10, 0, 0, TimeSpan.Zero),
+            firstContract);
+        var second = new AcceptedContractVersion(
+            secondScope,
+            ContractDigests.ComputeContractDigest(secondContract),
+            first.AcceptedAt,
+            secondContract);
+
+        Assert.NotEqual(first.ContractDigest, second.ContractDigest);
+        await store.PutAsync(first);
+        await store.PutAsync(second);
+        await store.SetCurrentAsync(
+            first.Scope,
+            first.Contract.Name,
+            first.ContractDigest);
+        await store.SetCurrentAsync(
+            second.Scope,
+            second.Contract.Name,
+            second.ContractDigest);
+
+        var current = await store.ListAllCurrentAsync();
+
+        Assert.Collection(
+            current,
+            version => Assert.Equal(secondScope, version.Scope),
+            version => Assert.Equal(Scope, version.Scope));
     }
 
     [Fact]
@@ -130,7 +170,7 @@ public sealed class StoreTests
         Assert.Equal(createdAt, persisted.CreatedAt);
         Assert.Equal("test", persisted.Provenance!.Value.GetProperty("source").GetString());
         Assert.Null(await store.GetAsync(
-            new DecisionScope("checkout", "staging"),
+            new AuthorityScope("local", "checkout", "staging"),
             candidate.ExecutableDigest));
 
         await Assert.ThrowsAsync<ArgumentException>(() => store.PutCandidateAsync(
@@ -276,6 +316,35 @@ public sealed class StoreTests
         Assert.True(await executableStore.IsAvailableAsync());
     }
 
+    [Theory]
+    [InlineData("contract-store")]
+    [InlineData("executable-store")]
+    public async Task InitializationRejectsVersionOneSchemasWithoutMigration(string component)
+    {
+        using var database = new TemporaryDatabase();
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "CREATE TABLE flaggo_schema_versions ("
+            + "component TEXT PRIMARY KEY NOT NULL, "
+            + "version INTEGER NOT NULL); "
+            + $"INSERT INTO flaggo_schema_versions(component, version) "
+            + $"VALUES ('{component}', 1);");
+
+        Task InitializeAsync() => component switch
+        {
+            "contract-store" => new SqliteContractVersionStore(database.ConnectionString)
+                .InitializeAsync(),
+            "executable-store" => new SqliteExecutableStore(database.ConnectionString)
+                .InitializeAsync(),
+            _ => throw new InvalidOperationException($"Unknown component '{component}'.")
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(InitializeAsync);
+        Assert.Equal(
+            $"Unsupported {component} schema version 1; expected 2.",
+            exception.Message);
+    }
+
     [Fact]
     public async Task AvailabilityRejectsUnknownOwnedSchemaVersions()
     {
@@ -287,16 +356,16 @@ public sealed class StoreTests
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 2 "
+            "UPDATE flaggo_schema_versions SET version = 3 "
             + "WHERE component = 'contract-store';");
         Assert.False(await contractStore.IsAvailableAsync());
         Assert.True(await executableStore.IsAvailableAsync());
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 1 "
+            "UPDATE flaggo_schema_versions SET version = 2 "
             + "WHERE component = 'contract-store'; "
-            + "UPDATE flaggo_schema_versions SET version = 2 "
+            + "UPDATE flaggo_schema_versions SET version = 3 "
             + "WHERE component = 'executable-store';");
         Assert.True(await contractStore.IsAvailableAsync());
         Assert.False(await executableStore.IsAvailableAsync());
@@ -338,6 +407,7 @@ public sealed class StoreTests
     private static DecisionContract CreateContract(int defaultValue) =>
         new()
         {
+            Authority = Scope,
             Name = "checkout.delay",
             ExpressionSyntax = "flaggo.cel/v1",
             Attributes = [],

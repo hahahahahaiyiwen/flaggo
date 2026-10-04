@@ -12,24 +12,39 @@ combined:
 
 Only the third question selects runtime behavior.
 
-## Authenticated scope
+## Authority scope
 
-All management and runtime authority is interpreted within the authenticated
-application/environment scope. That scope comes from credentials and server
-authorization policy, not from contract attributes, route names, exposure
-context, or user-provided identifiers.
+Every deployed `DecisionContract` contains one immutable authority:
 
-Bearer tokens represent that scope with two required claims:
+```text
+AuthorityScope {
+  tenant
+  application
+  environment
+}
+```
+
+Deployment tooling injects the `flaggo.deploy/v2` manifest authority into each
+authored contract before validation and digest calculation. The resulting
+`contractDigest` therefore identifies one authority-bound contract. Changing
+any authority member creates a different digest even when authored decision
+logic is unchanged.
+
+Management reads and runtime evaluation recover that same scope from three
+required claims:
 
 | Claim | Meaning |
 | --- | --- |
+| `flaggo_tenant` | Stable tenant identifier |
 | `flaggo_application` | Stable application identifier |
 | `flaggo_environment` | Stable deployment-environment identifier |
 
-Both claims must be non-empty strings. Authorization scopes are read from the
-standard space-delimited `scope` claim or the `scp` claim. If both are present,
-their values are combined. A token missing either Flaggo scope claim is not a
-valid management or runtime authority identity.
+All three claims must be non-empty strings. Authorization scopes are read from
+the standard space-delimited `scope` claim or the `scp` claim. If both are
+present, their values are combined. A token missing any Flaggo authority claim
+is not a valid management-read or runtime identity. The initial deployment API
+accepts declared authority; future credential-derived authority may constrain
+that declaration.
 
 The conceptual authority records are:
 
@@ -63,8 +78,8 @@ contract version.
 Contract Acceptance validates, canonicalizes, hashes, and durably stores one
 exact `DecisionContract`. Acceptance establishes:
 
-- the named contract version exists in the authenticated scope;
-- its semantic content is immutable under `contractDigest`;
+- the named contract version exists in its declared authority scope;
+- its authority and semantic content are immutable under `contractDigest`;
 - generated executables must conform to that exact content; and
 - its required `result.default` may be used to generate the default
   executable.
@@ -78,16 +93,15 @@ Contract Service has generated and activated its default executable. An
 internal staging record that has not completed that transition is not exposed
 as accepted-ready runtime authority.
 
-The Contract Service may also maintain:
+The Contract Service also maintains:
 
 ```text
 ManagementCurrent[scope, contractName] = contractDigest
-LearningHead[scope, contractName] = contractDigest
 ```
 
-`ManagementCurrent` supports management `GET` operations. `LearningHead`
-selects the version eligible for ongoing evidence-based analysis. Neither
-pointer participates in runtime version resolution.
+`ManagementCurrent` supports management `GET` operations and selects the
+accepted-ready version eligible for new evidence-based analysis. It does not
+participate in runtime version resolution.
 
 ## Executable identity and lifecycle roles
 
@@ -128,7 +142,7 @@ generation and validation steps. Evidence-generated candidates use
 mode: auto-activation
 ```
 
-For a valid evidence-generated candidate from the current learning head, the
+For a valid evidence-generated candidate from the current contract, the
 Contract Service immediately attempts atomic activation. A failed validation,
 superseded learning run, or failed activation leaves the existing executable
 active.
@@ -154,8 +168,8 @@ Before writing the mapping, the Contract Service verifies:
 1. the contract digest is accepted in the same scope;
 2. the executable exists and binds that exact digest;
 3. the executable content matches its digest and conforms to the contract;
-4. an evidence-generated candidate still belongs to the current learning
-   head and has not been superseded.
+4. an evidence-generated candidate still belongs to the current contract and
+   has not been superseded.
 
 The state replacement is atomic. A reader observes either the complete
 previous active executable or the complete replacement. The immutable
@@ -173,7 +187,7 @@ or acceptance of a newer contract digest. The authority boundary resolves
 those races before changing activation:
 
 - only one complete executable digest can occupy a digest's activation slot;
-- a superseded learning run cannot restore an older learning head;
+- a superseded learning run cannot activate after the current contract changes;
 - duplicate activation of the same executable is idempotent;
 - a failed validation or activation attempt leaves the prior activation
   intact; and
@@ -196,7 +210,7 @@ For an exact-version request, the Decision Service resolves:
 
 It fails explicitly if any link is missing or inconsistent. It never:
 
-- follows `ManagementCurrent` or `LearningHead`;
+- follows `ManagementCurrent`;
 - substitutes another digest's executable;
 - reconstructs a missing executable from the default;
 - resolves a fallback target or parent hierarchy; or
@@ -229,8 +243,7 @@ model.
 5. Generation never implies runtime authority; activation does.
 6. Activation is atomic and selects exactly one executable for a scope and
    contract digest.
-7. Management current-version and learning-head pointers never select a
-   runtime version.
+7. The management current-version pointer never selects a runtime version.
 8. A failed replacement leaves the existing active executable unchanged.
 9. New contract versions preserve old-version activations.
 10. Authentication, not decision data, establishes authority scope.

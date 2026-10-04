@@ -1,0 +1,24 @@
+{
+  "name": "otlp-http-logs-protobuf-gzip",
+  "scenarios": [],
+  "invariant": "Flaggo accepts a gzip-compressed binary OTLP/HTTP logs export and returns the matching empty binary OTLP success response.",
+  "otlpProfile": "flaggo.otlp-http",
+  "otlpSignal": "logs",
+  "protocol": "base64",
+  "request": {
+    "method": "POST",
+    "path": "/v1/logs",
+    "headers": {
+      "Content-Type": "application/x-protobuf",
+      "Content-Encoding": "gzip"
+    },
+    "bodyBase64": "H4sIAAAAAAAC/+OSE5IRkkqSSMtJTE/P10tJTc4szszP0ytKTU7NLEtNAQBF92uBIAAAAA=="
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/x-protobuf"
+    },
+    "bodyBase64": ""
+  }
+}

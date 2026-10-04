@@ -2,10 +2,14 @@
 """Offline conformance gate for the v3 management and runtime contracts."""
 from __future__ import annotations
 
+import base64
+import binascii
+import gzip
 import hashlib
 import json
 import re
 import sys
+import zlib
 from copy import deepcopy
 from pathlib import Path
 
@@ -19,7 +23,10 @@ CONTRACTS = Path(__file__).resolve().parents[1]
 SCHEMAS_DIR = CONTRACTS / "schemas"
 OPENAPI_DIR = CONTRACTS / "openapi"
 FIXTURES_DIR = CONTRACTS / "fixtures"
+OTEL_DIR = CONTRACTS / "otel"
 MANIFEST = CONTRACTS / "conformance" / "fixture-manifest-v1.json"
+OTLP_PROFILE = OTEL_DIR / "flaggo-otlp-http-profile-v1.json"
+TELEMETRY_SCHEMA = OTEL_DIR / "flaggo-telemetry-schema-1.0.0.yaml"
 CANONICALIZATION_VECTORS = (
     CONTRACTS / "conformance" / "canonicalization-vectors-v1.json"
 )
@@ -29,13 +36,16 @@ SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 SCHEMA_FILES = [
     "runtime-models-v3.schema.json",
     "management-models-v3.schema.json",
+    "deployment-models-v2.schema.json",
     "problem-details-v3.schema.json",
+    "telemetry-events-v1.schema.json",
+    "otlp-http-profile-v1.schema.json",
 ]
 OPENAPI_FILES = [
     "flaggo-runtime-v3.yaml",
     "flaggo-management-v3.yaml",
 ]
-FIXTURE_REQUIRED_KEYS = {"name", "scenario", "invariant", "request", "expected"}
+FIXTURE_REQUIRED_KEYS = {"name", "invariant", "request", "expected"}
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 RUNTIME_PATH_PATTERN = re.compile(
     r"^/v3/decision-contracts/[^/]+/versions/(?P<digest>sha256:[0-9a-f]{64})/decisions$"
@@ -81,6 +91,323 @@ def strict_json_loads(value: str):
 
 def load_json(path: Path):
     return strict_json_loads(path.read_text(encoding="utf-8"))
+
+
+def validate_telemetry_schema(rep: Report) -> None:
+    context = f"otel-schema:{TELEMETRY_SCHEMA.name}"
+    try:
+        document = load_json(TELEMETRY_SCHEMA)
+    except Exception as exc:  # noqa: BLE001
+        rep.fail(f"{context}: does not parse: {exc}")
+        return
+
+    rep.check(
+        document.get("file_format") == "1.1.0",
+        f"{context}: file_format must be 1.1.0",
+    )
+    schema_url = "https://flaggo.dev/schemas/telemetry/1.0.0"
+    rep.check(
+        document.get("schema_url") == schema_url,
+        f"{context}: schema_url must be {schema_url}",
+    )
+    versions = document.get("versions")
+    rep.check(
+        isinstance(versions, dict) and set(versions) == {"1.0.0"},
+        f"{context}: initial schema must define only version 1.0.0",
+    )
+    if not isinstance(versions, dict) or "1.0.0" not in versions:
+        return
+
+    version = versions["1.0.0"]
+    rep.check(
+        isinstance(version, dict),
+        f"{context}: version 1.0.0 must be an object",
+    )
+    if not isinstance(version, dict):
+        return
+    for section in ("all", "logs"):
+        changes = version.get(section, {}).get("changes")
+        rep.check(
+            changes == [],
+            f"{context}: initial {section} changes must be empty",
+        )
+
+
+def validate_otlp_profile(
+    profile: dict,
+    registry: Registry,
+    rep: Report,
+) -> None:
+    context = f"otlp-profile:{OTLP_PROFILE.name}"
+    validate_body(
+        profile,
+        "otlp-http-profile-v1.schema.json",
+        registry,
+        rep,
+        context,
+    )
+
+    signals = profile.get("signals", [])
+    by_name = {
+        signal.get("name"): signal
+        for signal in signals
+        if isinstance(signal, dict)
+    }
+    expected_signals = {
+        "logs": (
+            "/v1/logs",
+            "resourceLogs",
+            "opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest",
+            "opentelemetry.proto.collector.logs.v1.ExportLogsServiceResponse",
+        ),
+        "metrics": (
+            "/v1/metrics",
+            "resourceMetrics",
+            "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest",
+            "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceResponse",
+        ),
+        "traces": (
+            "/v1/traces",
+            "resourceSpans",
+            "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest",
+            "opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse",
+        ),
+    }
+    rep.check(
+        set(by_name) == set(expected_signals) and len(signals) == 3,
+        f"{context}: logs, metrics, and traces must each appear exactly once",
+    )
+    for name, expected in expected_signals.items():
+        signal = by_name.get(name, {})
+        actual = (
+            signal.get("path"),
+            signal.get("jsonRoot"),
+            signal.get("requestType"),
+            signal.get("responseType"),
+        )
+        rep.check(
+            actual == expected,
+            f"{context}: {name} signal mapping does not match OTLP",
+        )
+
+    encodings = {
+        item.get("contentType"): item.get("wireEncoding")
+        for item in profile.get("encodings", [])
+        if isinstance(item, dict)
+    }
+    rep.check(
+        encodings
+        == {
+            "application/x-protobuf": "protobuf",
+            "application/json": "protobuf-json",
+        },
+        f"{context}: both standard OTLP/HTTP encodings are required",
+    )
+    rep.check(
+        set(profile.get("compression", [])) == {"identity", "gzip"},
+        f"{context}: identity and gzip compression are required",
+    )
+    rep.check(
+        set(profile.get("failure", {}).get("retryableStatuses", []))
+        == {429, 502, 503, 504},
+        f"{context}: retryable statuses must match OTLP/HTTP",
+    )
+    rep.check(
+        profile.get("success", {}).get("partialSuccess") is False,
+        f"{context}: durable inbox acknowledgement requires full-request success",
+    )
+
+
+def flaggo_event_semantic_errors(body) -> list[str]:
+    errors = []
+    if not isinstance(body, dict):
+        return errors
+    attributes = body.get("attributes")
+    if not isinstance(attributes, dict):
+        return errors
+
+    if body.get("eventName") == "flaggo.decision.received":
+        result_json = attributes.get("flaggo.result.json")
+        result_hash = attributes.get("flaggo.result.hash")
+        if not isinstance(result_json, str) or not isinstance(result_hash, str):
+            return errors
+        try:
+            strict_json_loads(result_json)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"flaggo.result.json is not strict JSON: {exc}")
+            return errors
+        expected_hash = "sha256:" + hashlib.sha256(
+            result_json.encode("utf-8")
+        ).hexdigest()
+        if result_hash != expected_hash:
+            errors.append(
+                "flaggo.result.hash does not match flaggo.result.json"
+            )
+    return errors
+
+
+def validate_flaggo_event(body, rep: Report, context: str) -> None:
+    errors = flaggo_event_semantic_errors(body)
+    for error in errors:
+        rep.fail(f"{context}: {error}")
+    if not errors:
+        rep.check(True, "")
+
+
+def decode_base64(value, rep: Report, context: str) -> bytes | None:
+    if not isinstance(value, str):
+        rep.fail(f"{context}: bodyBase64 must be a string")
+        return None
+    try:
+        return base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        rep.fail(f"{context}: bodyBase64 is invalid: {exc}")
+        return None
+
+
+def read_varint(data: bytes, offset: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    while offset < len(data) and shift < 70:
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, offset
+        shift += 7
+    raise ValueError("invalid protobuf varint")
+
+
+def has_length_delimited_field_one(data: bytes) -> bool:
+    offset = 0
+    found = False
+    while offset < len(data):
+        key, offset = read_varint(data, offset)
+        field_number = key >> 3
+        wire_type = key & 0x07
+        if wire_type == 0:
+            _, offset = read_varint(data, offset)
+        elif wire_type == 1:
+            offset += 8
+        elif wire_type == 2:
+            length, offset = read_varint(data, offset)
+            end = offset + length
+            if end > len(data):
+                raise ValueError("length-delimited field exceeds payload")
+            found = found or field_number == 1
+            offset = end
+        elif wire_type == 5:
+            offset += 4
+        else:
+            raise ValueError(f"unsupported protobuf wire type {wire_type}")
+        if offset > len(data):
+            raise ValueError("protobuf field exceeds payload")
+    return found
+
+
+def validate_otlp_fixture(
+    fixture: dict,
+    profile: dict,
+    rep: Report,
+    context: str,
+) -> None:
+    if fixture.get("otlpProfile") != profile.get("profile"):
+        rep.fail(f"{context}: unknown OTLP profile")
+        return
+
+    signal_name = fixture.get("otlpSignal")
+    signal = next(
+        (
+            item
+            for item in profile.get("signals", [])
+            if item.get("name") == signal_name
+        ),
+        None,
+    )
+    rep.check(signal is not None, f"{context}: unsupported OTLP signal")
+    if signal is None:
+        return
+
+    request = fixture.get("request", {})
+    expected = fixture.get("expected", {})
+    rep.check(
+        request.get("method") == "POST"
+        and request.get("path") == signal.get("path"),
+        f"{context}: request route does not match the profile signal",
+    )
+    request_headers = request.get("headers", {})
+    expected_headers = expected.get("headers", {})
+    content_type = request_headers.get("Content-Type")
+    supported_types = {
+        item.get("contentType") for item in profile.get("encodings", [])
+    }
+    rep.check(
+        content_type in supported_types,
+        f"{context}: request Content-Type is absent from the profile",
+    )
+    content_encoding = request_headers.get("Content-Encoding", "identity")
+    rep.check(
+        content_encoding in profile.get("compression", []),
+        f"{context}: request Content-Encoding is absent from the profile",
+    )
+    rep.check(
+        expected.get("status") == profile.get("success", {}).get("status"),
+        f"{context}: success status does not match the profile",
+    )
+    rep.check(
+        expected_headers.get("Content-Type") == content_type,
+        f"{context}: response Content-Type must match the request",
+    )
+
+    protocol = fixture.get("protocol", "json")
+    if protocol == "json":
+        rep.check(
+            content_type == "application/json",
+            f"{context}: JSON fixture must use application/json",
+        )
+        body = request.get("body")
+        json_root = signal.get("jsonRoot")
+        rep.check(
+            isinstance(body, dict) and isinstance(body.get(json_root), list),
+            f"{context}: JSON body must contain {json_root}[]",
+        )
+        rep.check(
+            expected.get("body") == {},
+            f"{context}: full-success JSON response must be an empty message",
+        )
+        return
+
+    rep.check(
+        protocol == "base64" and content_type == "application/x-protobuf",
+        f"{context}: binary fixture must use base64 and application/x-protobuf",
+    )
+    request_bytes = decode_base64(
+        request.get("bodyBase64"),
+        rep,
+        f"{context} request",
+    )
+    decode_base64(
+        expected.get("bodyBase64"),
+        rep,
+        f"{context} expected",
+    )
+    if request_bytes is None:
+        return
+    if content_encoding == "gzip":
+        try:
+            request_bytes = gzip.decompress(request_bytes)
+        except (OSError, EOFError, zlib.error) as exc:
+            rep.fail(f"{context}: invalid gzip request: {exc}")
+            return
+    try:
+        valid_envelope = has_length_delimited_field_one(request_bytes)
+    except ValueError as exc:
+        rep.fail(f"{context}: invalid protobuf request: {exc}")
+        return
+    rep.check(
+        valid_envelope,
+        f"{context}: protobuf request lacks an export envelope",
+    )
 
 
 def build_registry(rep: Report) -> Registry:
@@ -469,6 +796,7 @@ def validate_fixture(
     path: Path,
     registry: Registry,
     operations: list[dict],
+    otlp_profile: dict,
     rep: Report,
 ) -> dict | None:
     context = f"fixture:{path.relative_to(CONTRACTS)}"
@@ -491,6 +819,7 @@ def validate_fixture(
         isinstance(request.get("headers", {}), dict),
         f"{context}: request.headers must be an object",
     )
+    is_otlp = bool(fixture.get("otlpProfile"))
     if not fixture.get("sdkLocal"):
         rep.check(
             isinstance(expected.get("status"), int),
@@ -500,7 +829,7 @@ def validate_fixture(
             isinstance(expected.get("headers", {}), dict),
             f"{context}: expected.headers must be an object",
         )
-        if not fixture.get("schemaNegative"):
+        if not fixture.get("schemaNegative") and not is_otlp:
             correlation_id = expected.get("headers", {}).get(
                 "X-Flaggo-Correlation-Id"
             )
@@ -517,7 +846,11 @@ def validate_fixture(
                     "X-Flaggo-Correlation-Id",
                 )
 
-    if not fixture.get("sdkLocal") and not fixture.get("schemaNegative"):
+    if (
+        not fixture.get("sdkLocal")
+        and not fixture.get("schemaNegative")
+        and not is_otlp
+    ):
         operation = match_operation(
             request.get("method"),
             request.get("path"),
@@ -536,8 +869,9 @@ def validate_fixture(
                 f"{operation['method']} {operation['route']}",
             )
 
+    protocol = fixture.get("protocol", "json")
     rep.check(
-        fixture.get("protocol", "json") == "json",
+        protocol == "json" or (is_otlp and protocol == "base64"),
         f"{context}: unsupported fixture protocol",
     )
 
@@ -550,6 +884,8 @@ def validate_fixture(
             rep,
             f"{context} request",
         )
+        if request_schema.startswith("telemetry-events-v1.schema.json"):
+            validate_flaggo_event(request["body"], rep, f"{context} request")
 
     response_schema = fixture.get("responseSchema")
     if response_schema and "body" in expected:
@@ -620,6 +956,30 @@ def validate_fixture(
                 f"{context} acceptedFixtureMutations[{index}]",
             )
 
+        for index, sample in enumerate(
+            fixture.get("semanticRejectedSamples", [])
+        ):
+            schema_ref = sample.get("schemaRef")
+            body = sample.get("body")
+            rep.check(
+                bool(schema_ref),
+                f"{context}: semanticRejectedSamples[{index}] needs schemaRef",
+            )
+            if not schema_ref:
+                continue
+            validate_body(
+                body,
+                schema_ref,
+                registry,
+                rep,
+                f"{context} semanticRejectedSamples[{index}] structure",
+            )
+            rep.check(
+                bool(flaggo_event_semantic_errors(body)),
+                f"{context}: semanticRejectedSamples[{index}] was "
+                "semantically accepted",
+            )
+
         for index, raw_json in enumerate(
             fixture.get("rejectedJsonDocuments", [])
         ):
@@ -632,6 +992,9 @@ def validate_fixture(
                     f"{context}: rejectedJsonDocuments[{index}] parsed as "
                     "strict JSON"
                 )
+
+    if is_otlp:
+        validate_otlp_fixture(fixture, otlp_profile, rep, context)
 
     validate_issue_paths(fixture, rep, context)
     return fixture
@@ -694,6 +1057,41 @@ def validate_v3_identities(fixtures: list[dict], rep: Report) -> None:
                 f"{context}: active executable digest is not canonical",
             )
 
+        if fixture.get("responseSchema", "").endswith(
+            "#/$defs/CurrentContractCatalog"
+        ):
+            entries = response_body.get("contracts", [])
+            ordering = []
+            digests = set()
+            for entry in entries:
+                contract = entry["contract"]
+                authority = contract["authority"]
+                digest = entry["contractDigest"]
+                rep.check(
+                    digest == contract_digest(contract),
+                    f"{context}: catalog digest does not identify its "
+                    "canonical authority-bound DecisionContract",
+                )
+                rep.check(
+                    digest not in digests,
+                    f"{context}: catalog repeats contract digest '{digest}'",
+                )
+                digests.add(digest)
+                ordering.append(
+                    (
+                        authority["tenant"],
+                        authority["application"],
+                        authority["environment"],
+                        contract["name"],
+                        digest,
+                    )
+                )
+            rep.check(
+                ordering == sorted(ordering),
+                f"{context}: catalog entries are not in deterministic "
+                "authority/name/digest order",
+            )
+
         runtime_match = RUNTIME_PATH_PATTERN.fullmatch(
             request.get("path", "")
         )
@@ -746,6 +1144,8 @@ def main() -> int:
     document_paths = (
         list(SCHEMAS_DIR.glob("*.json"))
         + list(OPENAPI_DIR.glob("*.yaml"))
+        + list(OTEL_DIR.glob("*.json"))
+        + list(OTEL_DIR.glob("*.yaml"))
         + list(FIXTURES_DIR.rglob("*.json"))
         + [MANIFEST, CANONICALIZATION_VECTORS, STRICT_JSON_VECTORS]
     )
@@ -757,12 +1157,21 @@ def main() -> int:
             rep.fail(f"parse error: {path}: {exc}")
 
     registry = build_registry(rep)
+    validate_telemetry_schema(rep)
     validate_canonicalization_vectors(rep)
     validate_strict_json_vectors(rep)
 
     for name in OPENAPI_FILES:
         validate_openapi(OPENAPI_DIR / name, rep)
     operations = load_openapi_operations()
+
+    try:
+        otlp_profile = load_json(OTLP_PROFILE)
+    except Exception as exc:  # noqa: BLE001
+        rep.fail(f"OTLP profile does not parse: {exc}")
+        otlp_profile = {}
+    if otlp_profile:
+        validate_otlp_profile(otlp_profile, registry, rep)
 
     try:
         manifest = load_json(MANIFEST)
@@ -833,7 +1242,13 @@ def main() -> int:
 
     loaded_fixtures: list[dict] = []
     for path in sorted(on_disk):
-        fixture = validate_fixture(path, registry, operations, rep)
+        fixture = validate_fixture(
+            path,
+            registry,
+            operations,
+            otlp_profile,
+            rep,
+        )
         if fixture is None:
             continue
         loaded_fixtures.append(fixture)
@@ -875,6 +1290,7 @@ def main() -> int:
         {
             "schemas": len(SCHEMA_FILES),
             "openapi_docs": len(OPENAPI_FILES),
+            "otel_profiles": 1,
             "fixtures": len(on_disk),
             "manifest_cases": len(cases),
             "scenarios_covered": len(covered & required),
@@ -885,7 +1301,7 @@ def main() -> int:
 
 def print_report(rep: Report, extra: dict | None = None) -> None:
     print("=" * 68)
-    print("Flaggo v3 contract validation")
+    print("Flaggo contract validation")
     print("=" * 68)
     if extra:
         for key, value in extra.items():

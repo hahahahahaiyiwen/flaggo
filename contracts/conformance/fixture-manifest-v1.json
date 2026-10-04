@@ -1,8 +1,8 @@
 {
   "$schema-note": "Index of contract conformance fixtures. Generated from contracts/fixtures metadata.",
   "version": "1",
-  "generatedFor": "DecisionContract management v3 and stateless runtime evaluation v3",
-  "totalCases": 24,
+  "generatedFor": "DecisionContract management v3, stateless runtime evaluation v3, deployment v2, runtime configuration v1, and Phase 4 telemetry contracts",
+  "totalCases": 34,
   "requiredScenarioCount": 17,
   "coveredScenarios": [
     1,
@@ -24,6 +24,32 @@
     51
   ],
   "cases": [
+    {
+      "name": "deployment-generate-runtime-configuration",
+      "scenarios": [],
+      "group": "deployment",
+      "file": "fixtures/deployment/01-generate-runtime-configuration.json",
+      "method": "GENERATE",
+      "httpPath": "flaggo://deployment",
+      "status": 0,
+      "requestSchema": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "responseSchema": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "sdkLocal": true,
+      "schemaNegative": false,
+      "invariant": "One v2 deployment authority and deployed contract set produce one strict immutable runtime configuration."
+    },
+    {
+      "name": "deployment-configuration-schema-negative-cases",
+      "scenarios": [],
+      "group": "deployment",
+      "file": "fixtures/deployment/02-invalid-configurations.json",
+      "method": "GENERATE",
+      "httpPath": "flaggo://deployment",
+      "status": 0,
+      "sdkLocal": true,
+      "schemaNegative": true,
+      "invariant": "Obsolete manifests, unstable authority, unsafe service URLs, malformed bindings, and unknown members are rejected."
+    },
     {
       "name": "runtime-authentication-required",
       "scenarios": [
@@ -104,6 +130,21 @@
       "invariant": "Current contract lookup without flaggo.contracts:read returns 403 insufficient-scope."
     },
     {
+      "name": "get-contract-catalog-insufficient-scope",
+      "scenarios": [
+        49
+      ],
+      "group": "errors",
+      "file": "fixtures/errors/auth-13-get-contract-catalog-insufficient-scope.json",
+      "method": "GET",
+      "httpPath": "/v3/decision-contract-catalog/current",
+      "status": 403,
+      "responseSchema": "problem-details-v3.schema.json",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Cross-authority contract catalog lookup without flaggo.contracts:materialize returns 403 insufficient-scope."
+    },
+    {
       "name": "list-contract-versions-insufficient-scope",
       "scenarios": [
         49
@@ -126,7 +167,7 @@
       "group": "errors",
       "file": "fixtures/errors/auth-12-get-contract-version-insufficient-scope.json",
       "method": "GET",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f",
+      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
       "status": 403,
       "responseSchema": "problem-details-v3.schema.json",
       "sdkLocal": false,
@@ -273,6 +314,19 @@
       "invariant": "An immutable historical version is addressable by its digest within the named contract resource."
     },
     {
+      "name": "get-current-contract-catalog",
+      "scenarios": [],
+      "group": "management/decision-contract",
+      "file": "fixtures/management/decision-contract/08-get-current-catalog.json",
+      "method": "GET",
+      "httpPath": "/v3/decision-contract-catalog/current",
+      "status": 200,
+      "responseSchema": "management-models-v3.schema.json#/$defs/CurrentContractCatalog",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "The materializer catalog returns every current authority-bound contract without creating a snapshot identity."
+    },
+    {
       "name": "runtime-rule-result",
       "scenarios": [
         1
@@ -396,6 +450,83 @@
       "sdkLocal": false,
       "schemaNegative": false,
       "invariant": "Any required check that is not up produces 503 not-ready."
+    },
+    {
+      "name": "telemetry-decision-received",
+      "scenarios": [],
+      "group": "telemetry",
+      "file": "fixtures/telemetry/01-decision-received.json",
+      "method": "EMIT",
+      "httpPath": "otel://logs/flaggo.decision.received",
+      "status": 0,
+      "requestSchema": "telemetry-events-v1.schema.json#/$defs/DecisionReceivedEvent",
+      "sdkLocal": true,
+      "schemaNegative": false,
+      "invariant": "A successful runtime evaluation emits one independently meaningful Flaggo decision event through the OpenTelemetry Logs signal."
+    },
+    {
+      "name": "telemetry-event-schema-negative-cases",
+      "scenarios": [],
+      "group": "telemetry",
+      "file": "fixtures/telemetry/03-invalid-events.json",
+      "method": "EMIT",
+      "httpPath": "otel://logs",
+      "status": 0,
+      "sdkLocal": true,
+      "schemaNegative": true,
+      "invariant": "Flaggo events reject missing identities, inconsistent evaluation provenance, unknown attributes, and malformed values."
+    },
+    {
+      "name": "otlp-http-logs-json",
+      "scenarios": [],
+      "group": "otlp",
+      "file": "fixtures/otlp/01-logs-json.json",
+      "method": "POST",
+      "httpPath": "/v1/logs",
+      "status": 200,
+      "otlpProfile": "flaggo.otlp-http",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Flaggo accepts a standard OTLP/HTTP JSON logs export and returns the matching empty OTLP success response."
+    },
+    {
+      "name": "otlp-http-metrics-json",
+      "scenarios": [],
+      "group": "otlp",
+      "file": "fixtures/otlp/02-metrics-json.json",
+      "method": "POST",
+      "httpPath": "/v1/metrics",
+      "status": 200,
+      "otlpProfile": "flaggo.otlp-http",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Flaggo accepts a standard OTLP/HTTP JSON metrics export and returns the matching empty OTLP success response."
+    },
+    {
+      "name": "otlp-http-traces-json",
+      "scenarios": [],
+      "group": "otlp",
+      "file": "fixtures/otlp/03-traces-json.json",
+      "method": "POST",
+      "httpPath": "/v1/traces",
+      "status": 200,
+      "otlpProfile": "flaggo.otlp-http",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Flaggo accepts a standard OTLP/HTTP JSON traces export and returns the matching empty OTLP success response."
+    },
+    {
+      "name": "otlp-http-logs-protobuf-gzip",
+      "scenarios": [],
+      "group": "otlp",
+      "file": "fixtures/otlp/04-logs-protobuf-gzip.json",
+      "method": "POST",
+      "httpPath": "/v1/logs",
+      "status": 200,
+      "otlpProfile": "flaggo.otlp-http",
+      "sdkLocal": false,
+      "schemaNegative": false,
+      "invariant": "Flaggo accepts a gzip-compressed binary OTLP/HTTP logs export and returns the matching empty binary OTLP success response."
     }
   ]
 }

@@ -32,7 +32,7 @@ export function assertInputSchema(
 ): void {
   if (!validator(value)) {
     throw new InvalidFlaggoInputError(
-      `${description} does not satisfy the Flaggo v3 schema.`,
+      `${description} does not satisfy its Flaggo schema.`,
       issues(validator.errors),
     );
   }

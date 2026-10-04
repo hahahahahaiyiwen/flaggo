@@ -10,7 +10,7 @@ namespace Flaggo.ExecutableStore;
 public sealed class SqliteExecutableStore : IExecutableStore
 {
     private const string ComponentName = "executable-store";
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly string _connectionString;
     private readonly IExpressionCanonicalizer? _expressionCanonicalizer;
     private readonly TimeProvider _timeProvider;
@@ -29,19 +29,43 @@ public sealed class SqliteExecutableStore : IExecutableStore
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await using (var versionTable = connection.CreateCommand())
+        {
+            versionTable.CommandText =
             """
             CREATE TABLE IF NOT EXISTS flaggo_schema_versions (
                 component TEXT PRIMARY KEY,
                 version INTEGER NOT NULL
             );
+            """;
+            await versionTable.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var readVersion = connection.CreateCommand())
+        {
+            readVersion.CommandText =
+                "SELECT version FROM flaggo_schema_versions WHERE component = $component;";
+            readVersion.Parameters.AddWithValue("$component", ComponentName);
+            var storedVersion = await readVersion.ExecuteScalarAsync(cancellationToken);
+            if (storedVersion is not null
+                && Convert.ToInt32(storedVersion, CultureInfo.InvariantCulture) != SchemaVersion)
+            {
+                throw new InvalidOperationException(
+                    $"Unsupported {ComponentName} schema version {storedVersion}; "
+                    + $"expected {SchemaVersion}.");
+            }
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
 
             INSERT INTO flaggo_schema_versions(component, version)
             VALUES ($component, $version)
             ON CONFLICT(component) DO NOTHING;
 
             CREATE TABLE IF NOT EXISTS decision_executables (
+                tenant TEXT NOT NULL,
                 application TEXT NOT NULL,
                 environment TEXT NOT NULL,
                 executable_digest TEXT NOT NULL,
@@ -54,32 +78,29 @@ public sealed class SqliteExecutableStore : IExecutableStore
                 state_version INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 activated_at TEXT NULL,
-                PRIMARY KEY(application, environment, executable_digest)
+                PRIMARY KEY(tenant, application, environment, executable_digest)
             );
 
             CREATE INDEX IF NOT EXISTS ix_executables_contract
-            ON decision_executables(application, environment, contract_digest);
+            ON decision_executables(
+                tenant,
+                application,
+                environment,
+                contract_digest
+            );
 
             CREATE UNIQUE INDEX IF NOT EXISTS ux_executables_one_active
-            ON decision_executables(application, environment, contract_digest)
+            ON decision_executables(
+                tenant,
+                application,
+                environment,
+                contract_digest
+            )
             WHERE lifecycle_state = 'active';
             """;
         command.Parameters.AddWithValue("$component", ComponentName);
         command.Parameters.AddWithValue("$version", SchemaVersion);
         await command.ExecuteNonQueryAsync(cancellationToken);
-
-        await using var versionCommand = connection.CreateCommand();
-        versionCommand.CommandText =
-            "SELECT version FROM flaggo_schema_versions WHERE component = $component;";
-        versionCommand.Parameters.AddWithValue("$component", ComponentName);
-        var version = Convert.ToInt32(
-            await versionCommand.ExecuteScalarAsync(cancellationToken),
-            CultureInfo.InvariantCulture);
-        if (version != SchemaVersion)
-        {
-            throw new InvalidOperationException(
-                $"Unsupported {ComponentName} schema version {version}; expected {SchemaVersion}.");
-        }
     }
 
     public async Task<ExecutableStoreWriteResult> PutCandidateAsync(
@@ -92,6 +113,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
         command.CommandText =
             """
             INSERT INTO decision_executables(
+                tenant,
                 application,
                 environment,
                 executable_digest,
@@ -105,6 +127,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
                 activated_at
             )
             VALUES (
+                $tenant,
                 $application,
                 $environment,
                 $executableDigest,
@@ -117,7 +140,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
                 $createdAt,
                 NULL
             )
-            ON CONFLICT(application, environment, executable_digest)
+            ON CONFLICT(tenant, application, environment, executable_digest)
             DO NOTHING;
             """;
         AddScope(command, executable.Scope);
@@ -141,7 +164,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
     }
 
     public async Task<StoredExecutable?> GetAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string executableDigest,
         CancellationToken cancellationToken = default)
     {
@@ -153,7 +176,8 @@ public sealed class SqliteExecutableStore : IExecutableStore
             SELECT contract_digest, executable_json, checked_executable_json,
                    provenance_json, lifecycle_state, state_version, created_at, activated_at
             FROM decision_executables
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND executable_digest = $executableDigest;
             """;
@@ -166,7 +190,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
     }
 
     public async Task<StoredExecutable?> GetActiveAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         CancellationToken cancellationToken = default)
     {
@@ -179,7 +203,8 @@ public sealed class SqliteExecutableStore : IExecutableStore
                    checked_executable_json, provenance_json, lifecycle_state,
                    state_version, created_at, activated_at
             FROM decision_executables
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND contract_digest = $contractDigest
               AND lifecycle_state = 'active';
@@ -193,7 +218,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
     }
 
     public async Task<ActivationResult> ActivateAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         string executableDigest,
         string? expectedActiveExecutableDigest = null,
@@ -207,7 +232,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
             cancellationToken: cancellationToken);
 
     public async Task<ActivationResult> ActivateIfNoneAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         string executableDigest,
         CancellationToken cancellationToken = default) =>
@@ -220,7 +245,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
             cancellationToken: cancellationToken);
 
     private async Task<ActivationResult> ActivateCoreAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         string executableDigest,
         bool enforceExpectedActive,
@@ -287,7 +312,8 @@ public sealed class SqliteExecutableStore : IExecutableStore
             UPDATE decision_executables
             SET lifecycle_state = 'inactive',
                 state_version = state_version + 1
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND contract_digest = $contractDigest
               AND lifecycle_state = 'active';
@@ -305,7 +331,8 @@ public sealed class SqliteExecutableStore : IExecutableStore
             SET lifecycle_state = 'active',
                 state_version = $stateVersion,
                 activated_at = $activatedAt
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND executable_digest = $executableDigest;
             """;
@@ -339,7 +366,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
             await using var command = connection.CreateCommand();
             command.CommandText =
                 """
-                SELECT application, environment, executable_digest, contract_digest,
+                SELECT tenant, application, environment, executable_digest, contract_digest,
                        executable_json, checked_executable_json, provenance_json,
                        lifecycle_state, state_version, created_at, activated_at
                 FROM decision_executables
@@ -428,7 +455,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
     private static async Task<string?> ReadSelectedContractDigest(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        DecisionScope scope,
+        AuthorityScope scope,
         string executableDigest,
         CancellationToken cancellationToken)
     {
@@ -438,7 +465,8 @@ public sealed class SqliteExecutableStore : IExecutableStore
             """
             SELECT contract_digest
             FROM decision_executables
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND executable_digest = $executableDigest;
             """;
@@ -450,7 +478,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
     private static async Task<(string ExecutableDigest, long StateVersion)?> ReadActiveIdentity(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractDigest,
         CancellationToken cancellationToken)
     {
@@ -460,7 +488,8 @@ public sealed class SqliteExecutableStore : IExecutableStore
             """
             SELECT executable_digest, state_version
             FROM decision_executables
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND contract_digest = $contractDigest
               AND lifecycle_state = 'active';
@@ -475,7 +504,7 @@ public sealed class SqliteExecutableStore : IExecutableStore
 
     private StoredExecutable ReadExecutable(
         SqliteDataReader reader,
-        DecisionScope scope,
+        AuthorityScope scope,
         string executableDigest,
         int columnOffset = 0)
     {
@@ -546,14 +575,16 @@ public sealed class SqliteExecutableStore : IExecutableStore
             provenance);
     }
 
-    private static void ValidateScope(DecisionScope scope)
+    private static void ValidateScope(AuthorityScope scope)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scope.Tenant);
         ArgumentException.ThrowIfNullOrWhiteSpace(scope.Application);
         ArgumentException.ThrowIfNullOrWhiteSpace(scope.Environment);
     }
 
-    private static void AddScope(SqliteCommand command, DecisionScope scope)
+    private static void AddScope(SqliteCommand command, AuthorityScope scope)
     {
+        command.Parameters.AddWithValue("$tenant", scope.Tenant);
         command.Parameters.AddWithValue("$application", scope.Application);
         command.Parameters.AddWithValue("$environment", scope.Environment);
     }

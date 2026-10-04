@@ -147,16 +147,34 @@ learning:
     - name: placement_time
       description: Placement latency observed after a runtime decision.
       attribute: placement_time_mean_ms_5s
-      binding: tetris.placement_time
       correlateBy:
         - session_id
+      source:
+        kind: metric
+        scope: tetris.engine
+        name: tetris.placement_time
+        metricKind: histogram
+        unit: ms
+        correlation:
+          session_id:
+            location: signal
+            attribute: tetris.session.id
 
     - name: recovery_failure
       description: Recovery failures observed after a runtime decision.
       attribute: recovery_failures_5s
-      binding: tetris.recovery_failure
       correlateBy:
         - session_id
+      source:
+        kind: metric
+        scope: tetris.engine
+        name: tetris.recovery_failure
+        metricKind: sum
+        unit: "{failure}"
+        correlation:
+          session_id:
+            location: signal
+            attribute: tetris.session.id
 
   objective:
     primary:
@@ -403,40 +421,39 @@ When present:
   analysis attempts;
 - `evidence` declares one or more logical observed values;
 - each evidence declaration maps one observed value to one contract attribute;
-- `binding` names the logical SDK-to-OpenTelemetry evidence binding;
 - `correlateBy` names additional contract attributes used for correlation;
+- `source` selects exactly one application-owned OpenTelemetry metric, log,
+  span, or span event and maps every `correlateBy` name to an exact OTel
+  attribute location and key;
 - `objective.primary` identifies the evidence value and optimization
   direction; and
 - optional guardrails are expressions over collected evidence.
 
 The contract does not name an observability backend table or database field.
-The SDK maps each logical binding to OpenTelemetry and emits the binding name,
-observed value, exposure ID, and declared correlation attributes. The exact
-span, metric, log, scope, field projection, and multi-match model is deferred
-to a later OpenTelemetry evidence profile.
+Applications emit normal OpenTelemetry telemetry. Metric sources match exact
+instrumentation scope, metric name, metric kind, and unit. Log and span sources
+match exact instrumentation scope and signal name. Span-event sources also
+match the exact parent span name. Source matching is case-sensitive.
 
-One evidence declaration represents one logical observed value. Runtime
-attributes used to make the decision accompany SDK-managed exposure evidence
-and are not repeated as a list beneath every evidence declaration. If one
+One evidence declaration represents one logical observed value. If one
 OpenTelemetry activity supplies multiple observed values, the contract
-declares multiple evidence entries. Their SDK bindings may share the same
-underlying activity.
+declares multiple evidence entries with distinct source selectors.
 
 Returning a `RuntimeDecision` does not prove that the application used it.
-When the application reports an exposure through the SDK, the SDK emits
-standard Flaggo exposure evidence through OpenTelemetry. That internal
-evidence carries the SDK-managed exposure ID, contract and executable digests,
-the applied decision facts, and configured correlation attributes.
+After a successful response, the SDK emits the built-in
+`flaggo.decision.received` observation through OpenTelemetry. That observation
+carries the decision ID, contract and executable digests, result, evaluation
+facts, and configured correlation attributes. It records receipt, not proof of
+application.
 
-User-declared evidence correlates through both:
+Selected application telemetry may correlate through both:
 
-1. the Flaggo exposure ID, which identifies the exact applied decision; and
+1. the Flaggo decision ID, when the application includes it; and
 2. every contract attribute listed by `correlateBy`, which associates and
    validates the surrounding application activity.
 
-Exposure identity is implicit and does not need to be repeated in each evidence
-declaration. Evidence binding and correlation are decision data semantics, not
-authentication or authorization.
+Evidence source and correlation semantics are decision data, not authentication
+or authorization.
 
 The initial policy supports one mode:
 
@@ -448,11 +465,11 @@ policy:
 ```
 
 `auto-activation` instructs the Contract Service to attempt atomic activation
-when analysis produces a valid candidate for the current learning head. It
-does not bypass candidate validation, contract conformance, learning-head
-checks, or activation conflict handling. It also does not make runtime search
-for the latest generated executable. If validation or activation fails, the
-existing active executable remains unchanged.
+when analysis produces a valid candidate for the current contract. It does not
+bypass candidate validation, contract conformance, current-contract checks, or
+activation conflict handling. It also does not make runtime search for the
+latest generated executable. If validation or activation fails, the existing
+active executable remains unchanged.
 
 `evaluate.interval` is an ISO 8601 duration and represents a minimum delay, not
 an execution-time guarantee. The first analysis attempt becomes eligible one
@@ -711,11 +728,11 @@ explicitly deferred:
    requirements for condition-only rules.
 2. **Internal randomness.** Define the random source, distribution tests, and
    whether future stable bucketing uses another internal attribute.
-3. **OpenTelemetry evidence profile.** Later define supported signal selectors,
-   instrumentation scope matching, value projections, attribute paths, and
-   behavior when multiple signals match.
+3. **Evidence interpretation.** Define analysis-owned metric temporality,
+   distribution interpretation, rates, aggregation, and value derivation from
+   complete materialized candidates.
 4. **Evidence correlation failures.** Define behavior for a missing or unknown
-   exposure ID, missing correlation attributes, attribute mismatch, or
+   decision ID, missing correlation attributes, attribute mismatch, or
    ambiguous evidence.
 
 Activation actor roles, retention, and operational scheduling remain lifecycle

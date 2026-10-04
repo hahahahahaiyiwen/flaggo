@@ -15,6 +15,33 @@
       "maxLength": 128,
       "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
     },
+    "AuthorityIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "AuthorityScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant",
+        "application",
+        "environment"
+      ],
+      "properties": {
+        "tenant": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        },
+        "application": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        },
+        "environment": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        }
+      },
+      "description": "Declared tenant, application, and environment scope bound into an immutable deployed DecisionContract."
+    },
     "AttributeName": {
       "type": "string",
       "minLength": 1,
@@ -448,12 +475,210 @@
       "properties": {
         "mode": {
           "const": "auto-activation",
-          "description": "Automatically attempt atomic activation after an evidence-generated candidate passes validation and current-learning-head checks."
+          "description": "Automatically attempt atomic activation after an evidence-generated candidate passes validation and a current-contract check."
         },
         "evaluate": {
           "$ref": "#/$defs/LearningEvaluationPolicy"
         }
       }
+    },
+    "EvidenceCorrelationAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location",
+        "attribute"
+      ],
+      "properties": {
+        "location": {
+          "type": "string",
+          "enum": [
+            "resource",
+            "scope",
+            "signal",
+            "parentSpan"
+          ],
+          "description": "The OTLP envelope level containing the correlation attribute. parentSpan is valid only for spanEvent sources."
+        },
+        "attribute": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive OpenTelemetry attribute key."
+        }
+      }
+    },
+    "EvidenceCorrelationMap": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/AttributeName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/EvidenceCorrelationAttribute"
+      },
+      "maxProperties": 128,
+      "description": "Maps every correlateBy contract attribute to one exact OpenTelemetry attribute location and key."
+    },
+    "MetricEvidenceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "name",
+        "metricKind",
+        "unit",
+        "correlation"
+      ],
+      "properties": {
+        "kind": {
+          "const": "metric"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive InstrumentationScope name."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive metric name."
+        },
+        "metricKind": {
+          "type": "string",
+          "enum": [
+            "gauge",
+            "sum",
+            "histogram",
+            "exponentialHistogram",
+            "summary"
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Exact case-sensitive metric unit. Use an empty string for a metric with no unit."
+        },
+        "correlation": {
+          "$ref": "#/$defs/EvidenceCorrelationMap"
+        }
+      }
+    },
+    "LogEvidenceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "name",
+        "correlation"
+      ],
+      "properties": {
+        "kind": {
+          "const": "log"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive InstrumentationScope name."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive LogRecord event name."
+        },
+        "correlation": {
+          "$ref": "#/$defs/EvidenceCorrelationMap"
+        }
+      }
+    },
+    "SpanEvidenceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "name",
+        "correlation"
+      ],
+      "properties": {
+        "kind": {
+          "const": "span"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive InstrumentationScope name."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive span name."
+        },
+        "correlation": {
+          "$ref": "#/$defs/EvidenceCorrelationMap"
+        }
+      }
+    },
+    "SpanEventEvidenceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope",
+        "spanName",
+        "name",
+        "correlation"
+      ],
+      "properties": {
+        "kind": {
+          "const": "spanEvent"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive InstrumentationScope name."
+        },
+        "spanName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive parent span name."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact case-sensitive span-event name."
+        },
+        "correlation": {
+          "$ref": "#/$defs/EvidenceCorrelationMap"
+        }
+      }
+    },
+    "EvidenceSource": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/MetricEvidenceSource"
+        },
+        {
+          "$ref": "#/$defs/LogEvidenceSource"
+        },
+        {
+          "$ref": "#/$defs/SpanEvidenceSource"
+        },
+        {
+          "$ref": "#/$defs/SpanEventEvidenceSource"
+        }
+      ],
+      "description": "The one application-owned OpenTelemetry signal selected for this evidence declaration."
     },
     "Evidence": {
       "type": "object",
@@ -461,8 +686,8 @@
       "required": [
         "name",
         "attribute",
-        "binding",
-        "correlateBy"
+        "correlateBy",
+        "source"
       ],
       "properties": {
         "name": {
@@ -475,20 +700,17 @@
           "$ref": "#/$defs/AttributeName",
           "description": "The contract attribute whose value semantics this observed evidence shares."
         },
-        "binding": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256,
-          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$",
-          "description": "Logical SDK-to-OpenTelemetry evidence binding."
-        },
         "correlateBy": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AttributeName"
           },
+          "maxItems": 128,
           "uniqueItems": true,
-          "description": "Unordered set of additional contract attributes used with the implicit exposure ID to correlate evidence."
+          "description": "Unordered set of contract attributes whose OpenTelemetry locations are declared by source.correlation."
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
         }
       }
     },
@@ -579,12 +801,16 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "authority",
         "name",
         "expression_syntax",
         "attributes",
         "result"
       ],
       "properties": {
+        "authority": {
+          "$ref": "#/$defs/AuthorityScope"
+        },
         "name": {
           "$ref": "#/$defs/DecisionName"
         },
@@ -830,6 +1056,40 @@
           "description": "The immutable accepted contract document. Its name must equal the enclosing resource name."
         }
       }
+    },
+    "CurrentContractCatalogEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractDigest",
+        "contract"
+      ],
+      "properties": {
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "contract": {
+          "$ref": "#/$defs/DecisionContract",
+          "description": "The complete immutable current deployed contract whose authority and semantic content are covered by contractDigest."
+        }
+      }
+    },
+    "CurrentContractCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contracts"
+      ],
+      "properties": {
+        "contracts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentContractCatalogEntry"
+          },
+          "description": "Current deployed contracts ordered by authority tenant, application, environment, contract name, and contractDigest."
+        }
+      },
+      "description": "Cross-authority materializer catalog. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity."
     },
     "DecisionContractVersionList": {
       "type": "object",

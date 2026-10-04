@@ -110,7 +110,7 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("valid", result.GetProperty("status").GetString());
         Assert.Equal(
-            "sha256:76837952bcc85c474be3f721cb6236a7e610ecdc38672e0149fc4c347816a7ae",
+            "sha256:7394e6ec3d9eee8d559c4e5b44b15fb5ab7827e5307d5877f369ba0c9ded8098",
             result.GetProperty("contractDigest").GetString());
         Assert.Empty(result.GetProperty("issues").EnumerateArray());
         Assert.Equal(
@@ -142,10 +142,10 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.NotNull(created);
         Assert.Equal(
-            "sha256:5ac7477d55d7dfb1b4993e87118182b55a848fdc36fa5617196f27f1400e2ab1",
+            "sha256:aa59121ed2dfcf519654df1d3f9c60fa141aa4ddb199c207bd9d12b3a515714a",
             created.ContractDigest);
         Assert.Equal(
-            "sha256:bf693713abb032d7257141839c38f8b3943d463d464f1b4dc2dba356e3902398",
+            "sha256:cb0a6cfab31c66e0c34b7d321e3c94dc4004a793a2ad2642a72d8001d12380b4",
             created.ActiveExecutableDigest);
         Assert.Equal(ContractServiceFactory.Now, created.AcceptedAt);
         Assert.Equal(
@@ -176,6 +176,56 @@ public sealed class ContractServiceEndpointTests
     }
 
     [Fact]
+    public async Task CurrentCatalogReturnsAllAuthoritiesAndSupportsConditionalPolling()
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        using var fixture = await ReadFixtureDocumentAsync("01-validate-valid.json");
+        var learningContract = fixture.RootElement
+            .GetProperty("request")
+            .GetProperty("body")
+            .GetRawText();
+        using (var learningRequest = AuthorizedRequest(
+            HttpMethod.Put,
+            "/v3/decision-contracts/tetris.dropInterval",
+            learningContract))
+        using (var learningResponse = await client.SendAsync(learningRequest))
+        {
+            learningResponse.EnsureSuccessStatusCode();
+        }
+        var otherScope = new AuthorityScope("acme", "worker", "production");
+        await PutDefaultAsync(client, 3, otherScope);
+
+        using var request = AuthorizedRequest(
+            HttpMethod.Get,
+            "/v3/decision-contract-catalog/current");
+        using var response = await client.SendAsync(request);
+        var catalog = await response.Content.ReadFromJsonAsync<CurrentContractCatalog>(
+            StrictJson.Options);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(catalog);
+        Assert.Collection(
+            catalog.Contracts,
+            entry => Assert.Equal(otherScope, entry.Contract.Authority),
+            entry => Assert.Equal(ContractServiceFactory.Scope, entry.Contract.Authority));
+        var etag = response.Headers.ETag?.Tag;
+        Assert.StartsWith("\"catalog:", etag, StringComparison.Ordinal);
+
+        using var conditional = AuthorizedRequest(
+            HttpMethod.Get,
+            "/v3/decision-contract-catalog/current");
+        conditional.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        using var unchanged = await client.SendAsync(conditional);
+
+        Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+        Assert.Equal(0, unchanged.Content.Headers.ContentLength);
+        Assert.Equal(
+            etag,
+            unchanged.Headers.ETag?.Tag);
+    }
+
+    [Fact]
     public async Task AuthoredExpressionsReplaceDefaultAuthority()
     {
         using var factory = new ContractServiceFactory();
@@ -183,6 +233,11 @@ public sealed class ContractServiceEndpointTests
         var body =
             """
             {
+              "authority": {
+                "tenant": "local",
+                "application": "tetris",
+                "environment": "integration"
+              },
               "name": "worker.batchSize",
               "expression_syntax": "flaggo.cel/v1",
               "attributes": [
@@ -343,7 +398,7 @@ public sealed class ContractServiceEndpointTests
         using var mismatchRequest = AuthorizedRequest(
             HttpMethod.Post,
             "/v3/decision-contracts/other.name/validate",
-            """{"name":"actual.name","expression_syntax":"flaggo.cel/v1","attributes":[],"result":{"schema":{"type":"boolean"},"default":false}}""");
+            """{"authority":{"tenant":"local","application":"tetris","environment":"integration"},"name":"actual.name","expression_syntax":"flaggo.cel/v1","attributes":[],"result":{"schema":{"type":"boolean"},"default":false}}""");
         using var mismatchResponse = await client.SendAsync(mismatchRequest);
         await AssertProblemAsync(
             mismatchResponse,
@@ -353,7 +408,7 @@ public sealed class ContractServiceEndpointTests
         using var nullMemberRequest = AuthorizedRequest(
             HttpMethod.Post,
             "/v3/decision-contracts/actual.name/validate",
-            """{"name":"actual.name","expression_syntax":"flaggo.cel/v1","attributes":null,"result":{"schema":{"type":"boolean"},"default":false}}""");
+            """{"authority":{"tenant":"local","application":"tetris","environment":"integration"},"name":"actual.name","expression_syntax":"flaggo.cel/v1","attributes":null,"result":{"schema":{"type":"boolean"},"default":false}}""");
         using var nullMemberResponse = await client.SendAsync(nullMemberRequest);
         await AssertProblemAsync(
             nullMemberResponse,
@@ -365,6 +420,11 @@ public sealed class ContractServiceEndpointTests
             "/v3/decision-contracts/schema.parity",
             """
             {
+              "authority": {
+                "tenant": "local",
+                "application": "tetris",
+                "environment": "integration"
+              },
               "name": "schema.parity",
               "expression_syntax": "flaggo.cel/v1",
               "attributes": [
@@ -383,8 +443,13 @@ public sealed class ContractServiceEndpointTests
                   {
                     "name": "outcome",
                     "attribute": "outcome",
-                    "binding": "not a valid binding",
-                    "correlateBy": []
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
                   }
                 ],
                 "objective": {
@@ -453,11 +518,18 @@ public sealed class ContractServiceEndpointTests
 
     private static async Task<DecisionContractVersion> PutDefaultAsync(
         HttpClient client,
-        int defaultValue)
+        int defaultValue,
+        AuthorityScope? authority = null)
     {
+        var scope = authority ?? ContractServiceFactory.Scope;
         var body =
             $$"""
             {
+              "authority": {
+                "tenant": "{{scope.Tenant}}",
+                "application": "{{scope.Application}}",
+                "environment": "{{scope.Environment}}"
+              },
               "name": "worker.batchSize",
               "expression_syntax": "flaggo.cel/v1",
               "attributes": [],
@@ -531,8 +603,8 @@ public sealed class ContractServiceEndpointTests
 
 public sealed class ContractServiceFactory : WebApplicationFactory<Program>
 {
-    public static readonly DecisionScope Scope =
-        new("test-application", "test-environment");
+    public static readonly AuthorityScope Scope =
+        new("local", "tetris", "integration");
     public static readonly DateTimeOffset Now =
         new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
 
@@ -609,13 +681,15 @@ public sealed class TestContractAuthenticationHandler(
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, "test"),
+            new(FlaggoClaimTypes.Tenant, ContractServiceFactory.Scope.Tenant),
             new(FlaggoClaimTypes.Application, ContractServiceFactory.Scope.Application),
             new(FlaggoClaimTypes.Environment, ContractServiceFactory.Scope.Environment)
         };
         claims.Add(new Claim(
             "scope",
             value == "authorized"
-                ? "flaggo.contracts:validate flaggo.contracts:accept flaggo.contracts:read"
+                ? "flaggo.contracts:validate flaggo.contracts:accept "
+                    + "flaggo.contracts:read flaggo.contracts:materialize"
                 : "flaggo.contracts:read"));
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
         return Task.FromResult(AuthenticateResult.Success(

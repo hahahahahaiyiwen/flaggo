@@ -1,5 +1,5 @@
 /*
- * Generated from Flaggo v3 JSON Schemas. Do not edit by hand.
+ * Generated from Flaggo JSON Schemas. Do not edit by hand.
  * Run `npm run generate --workspace @flaggo/sdk` after schema changes.
  */
 
@@ -13,6 +13,11 @@ export type Sha256Digest = string;
  * via the `definition` "DecisionName".
  */
 export type DecisionName = string;
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "AuthorityIdentifier".
+ */
+export type AuthorityIdentifier = string;
 /**
  * A user-declared attribute name. Names beginning with '_' are reserved for Flaggo internal attributes.
  *
@@ -70,6 +75,14 @@ export type AuthoredWhen = NaturalLanguageWhen | ExpressionWhen;
  */
 export type RuleReturn = LiteralReturn | ExpressionReturn;
 /**
+ * The one application-owned OpenTelemetry signal selected for this evidence declaration.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "EvidenceSource".
+ */
+export type EvidenceSource =
+  MetricEvidenceSource | LogEvidenceSource | SpanEvidenceSource | SpanEventEvidenceSource;
+/**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
  * via the `definition` "WarningIssue".
  */
@@ -93,6 +106,17 @@ export type DecisionContractValidationResult = ValidDecisionContract | InvalidDe
  * DecisionContract acceptance and status models for the Flaggo Management API v3.
  */
 export interface FlaggoManagementModelsV3 {}
+/**
+ * Declared tenant, application, and environment scope bound into an immutable deployed DecisionContract.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "AuthorityScope".
+ */
+export interface AuthorityScope {
+  tenant: AuthorityIdentifier;
+  application: AuthorityIdentifier;
+  environment: AuthorityIdentifier;
+}
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
  * via the `definition` "NullValueSchema".
@@ -270,10 +294,106 @@ export interface LearningEvaluationPolicy {
  */
 export interface LearningPolicy {
   /**
-   * Automatically attempt atomic activation after an evidence-generated candidate passes validation and current-learning-head checks.
+   * Automatically attempt atomic activation after an evidence-generated candidate passes validation and a current-contract check.
    */
   mode: "auto-activation";
   evaluate: LearningEvaluationPolicy;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "EvidenceCorrelationAttribute".
+ */
+export interface EvidenceCorrelationAttribute {
+  /**
+   * The OTLP envelope level containing the correlation attribute. parentSpan is valid only for spanEvent sources.
+   */
+  location: "resource" | "scope" | "signal" | "parentSpan";
+  /**
+   * Exact case-sensitive OpenTelemetry attribute key.
+   */
+  attribute: string;
+}
+/**
+ * Maps every correlateBy contract attribute to one exact OpenTelemetry attribute location and key.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "EvidenceCorrelationMap".
+ */
+export interface EvidenceCorrelationMap {
+  [k: string]: EvidenceCorrelationAttribute;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "MetricEvidenceSource".
+ */
+export interface MetricEvidenceSource {
+  kind: "metric";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive metric name.
+   */
+  name: string;
+  metricKind: "gauge" | "sum" | "histogram" | "exponentialHistogram" | "summary";
+  /**
+   * Exact case-sensitive metric unit. Use an empty string for a metric with no unit.
+   */
+  unit: string;
+  correlation: EvidenceCorrelationMap;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "LogEvidenceSource".
+ */
+export interface LogEvidenceSource {
+  kind: "log";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive LogRecord event name.
+   */
+  name: string;
+  correlation: EvidenceCorrelationMap;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "SpanEvidenceSource".
+ */
+export interface SpanEvidenceSource {
+  kind: "span";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive span name.
+   */
+  name: string;
+  correlation: EvidenceCorrelationMap;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "SpanEventEvidenceSource".
+ */
+export interface SpanEventEvidenceSource {
+  kind: "spanEvent";
+  /**
+   * Exact case-sensitive InstrumentationScope name.
+   */
+  scope: string;
+  /**
+   * Exact case-sensitive parent span name.
+   */
+  spanName: string;
+  /**
+   * Exact case-sensitive span-event name.
+   */
+  name: string;
+  correlation: EvidenceCorrelationMap;
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
@@ -287,13 +407,12 @@ export interface Evidence {
    */
   attribute: string;
   /**
-   * Logical SDK-to-OpenTelemetry evidence binding.
-   */
-  binding: string;
-  /**
-   * Unordered set of additional contract attributes used with the implicit exposure ID to correlate evidence.
+   * Unordered set of contract attributes whose OpenTelemetry locations are declared by source.correlation.
+   *
+   * @maxItems 128
    */
   correlateBy: AttributeName[];
+  source: EvidenceSource;
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
@@ -342,6 +461,7 @@ export interface Learning {
  * via the `definition` "DecisionContract".
  */
 export interface DecisionContract {
+  authority: AuthorityScope;
   name: DecisionName;
   expression_syntax: "flaggo.cel/v1";
   /**
@@ -440,6 +560,7 @@ export interface DecisionContractVersion {
  * The immutable accepted contract document. Its name must equal the enclosing resource name.
  */
 export interface DecisionContract1 {
+  authority: AuthorityScope;
   name: DecisionName;
   expression_syntax: "flaggo.cel/v1";
   /**
@@ -451,6 +572,43 @@ export interface DecisionContract1 {
   result: Result;
   authoredExecutable?: AuthoredExecutable;
   learning?: Learning;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "CurrentContractCatalogEntry".
+ */
+export interface CurrentContractCatalogEntry {
+  contractDigest: Sha256Digest;
+  contract: DecisionContract2;
+}
+/**
+ * The complete immutable current deployed contract whose authority and semantic content are covered by contractDigest.
+ */
+export interface DecisionContract2 {
+  authority: AuthorityScope;
+  name: DecisionName;
+  expression_syntax: "flaggo.cel/v1";
+  /**
+   * User-declared runtime attributes. Attribute names must be unique; order is non-semantic.
+   *
+   * @maxItems 128
+   */
+  attributes: Attribute[];
+  result: Result;
+  authoredExecutable?: AuthoredExecutable;
+  learning?: Learning;
+}
+/**
+ * Cross-authority materializer catalog. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "CurrentContractCatalog".
+ */
+export interface CurrentContractCatalog {
+  /**
+   * Current deployed contracts ordered by authority tenant, application, environment, contract name, and contractDigest.
+   */
+  contracts: CurrentContractCatalogEntry[];
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema

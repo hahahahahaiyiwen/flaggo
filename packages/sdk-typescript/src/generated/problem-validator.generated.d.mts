@@ -1,5 +1,5 @@
 /*
- * Generated from Flaggo v3 JSON Schemas. Do not edit by hand.
+ * Generated from Flaggo JSON Schemas. Do not edit by hand.
  * Run `npm run generate --workspace @flaggo/sdk` after schema changes.
  */
 

@@ -5,6 +5,7 @@ namespace Flaggo.ServiceHosting;
 
 public static class FlaggoClaimTypes
 {
+    public const string Tenant = "flaggo_tenant";
     public const string Application = "flaggo_application";
     public const string Environment = "flaggo_environment";
 }
@@ -26,19 +27,20 @@ public static class FlaggoClaims
 
     public static bool TryGetAuthorityScope(
         ClaimsPrincipal principal,
-        out DecisionScope scope)
+        out AuthorityScope scope)
     {
         ArgumentNullException.ThrowIfNull(principal);
 
+        var tenant = SingleNonEmptyClaim(principal, FlaggoClaimTypes.Tenant);
         var application = SingleNonEmptyClaim(principal, FlaggoClaimTypes.Application);
         var environment = SingleNonEmptyClaim(principal, FlaggoClaimTypes.Environment);
-        if (application is null || environment is null)
+        if (tenant is null || application is null || environment is null)
         {
             scope = default;
             return false;
         }
 
-        scope = new DecisionScope(application, environment);
+        scope = new AuthorityScope(tenant, application, environment);
         return true;
     }
 

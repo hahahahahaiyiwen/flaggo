@@ -18,7 +18,8 @@ API v3 OpenAPI document is the wire-level authority.
 
 ```text
 contract author
-  -> source-controlled DecisionContract
+  -> source-controlled DecisionContract definition
+  -> deployment authority binding
   -> management client or CI
   -> Management API v3
   -> Contract Service
@@ -28,31 +29,37 @@ contract author
        -> learning scheduler
 ```
 
-The management client supplies desired contract content. The Contract Service
-establishes accepted identity and runtime readiness. During deployment, a
-client does not assert a `contractDigest`, `executableDigest`, or activation
-record as trusted authority; it may use server-returned digests for later exact
-reads and application configuration.
+The management client supplies the complete authority-bound deployed contract.
+The Contract Service establishes accepted identity and runtime readiness.
+During deployment, a client does not assert a `contractDigest`,
+`executableDigest`, or activation record as trusted authority; it may use
+server-returned digests for later exact reads and application configuration.
 
 ## Contract source and deployment files
 
-A `DecisionContract` is contract-as-code rather than environment
-configuration. Keep one independently versioned contract per file using:
+An authored `DecisionContract` definition is contract-as-code rather than
+environment configuration. Keep one independently versioned definition per
+file using:
 
 ```text
 flaggo/contracts/<decision-name>.decision-contract.json
 ```
 
-The file name must preserve the exact embedded `DecisionContract.name`.
-Service URLs, credentials, application identity, and environment identity do
-not belong in the contract file.
+The file name must preserve the exact embedded contract `name`. Service URLs,
+credentials, and deployment authority do not belong in the authored contract
+file.
 
-When a project deploys multiple contracts, it may use `flaggo.deploy.json` as
-a deployment inventory:
+Projects declare one deployment authority and their contract inventory in
+`flaggo.deploy.json`:
 
 ```json
 {
-  "format": "flaggo.deploy/v1",
+  "format": "flaggo.deploy/v2",
+  "authority": {
+    "tenant": "local",
+    "application": "checkout",
+    "environment": "production"
+  },
   "contracts": [
     "flaggo/contracts/checkout.shippingMethod.decision-contract.json",
     "flaggo/contracts/search.pageSize.decision-contract.json"
@@ -63,25 +70,32 @@ a deployment inventory:
 Paths are portable forward-slash relative paths contained within the
 manifest's directory. The manifest does not embed contracts and is not an
 atomic multi-contract API payload. Deployment tooling processes each referenced
-contract independently through the name-keyed `PUT`.
+contract independently. It injects the manifest authority before validation,
+digest calculation, and the name-keyed `PUT`. Authority is therefore part of
+the complete deployed contract and `contractDigest`, while the authored
+definition remains portable. Until authenticated ingress exists, authority is
+declared rather than security-derived.
 
 ## Client responsibilities
 
 A contract author or CI client:
 
-- maintains the complete `DecisionContract` as source-controlled input;
+- maintains an authority-free contract definition as source-controlled input;
+- binds manifest authority into the complete deployed `DecisionContract`;
 - addresses the logical management resource by `contractName`;
 - may use dry-run validation independently when early feedback is useful;
 - submits the complete desired contract rather than an incremental mutation;
-- records the returned `contractDigest` for exact runtime configuration;
+- records each returned `contractDigest` in generated runtime configuration;
 - uses exact-version reads for audit or reconstruction; and
 - treats the name-level current version as management discovery, never as a
   runtime selection mechanism.
 
-The mechanism that distributes `{ contractName, contractDigest }` into an
-application artifact or deployment is outside the initial Management API.
-Whatever mechanism is used must preserve the exact digest rather than defer
-version selection to runtime.
+After all contracts are accepted, deployment tooling generates one immutable
+`flaggo.runtime-config/v1` document containing the manifest authority, Contract
+Service, Decision Service, and OTel Ingestion URLs, and exact
+`{ contractName, contractDigest }` bindings. Decision and telemetry SDK
+composition consume that same artifact; runtime never resolves a moving
+name-level version.
 
 Build and deployment are separate:
 
@@ -92,11 +106,12 @@ Build
   -> perform no service mutation
 
 Deploy
-  -> load one DecisionContract artifact
+  -> load one authored DecisionContract definition
+  -> bind manifest AuthorityScope
   -> validate its wire shape locally
   -> PUT it to Contract Service
   -> receive contractDigest and activeExecutableDigest
-  -> distribute the exact runtime binding
+  -> generate and distribute the immutable runtime configuration
 ```
 
 The SDK validates the wire shape before sending `PUT`. Contract Service then
@@ -119,6 +134,7 @@ PUT  /v3/decision-contracts/{contractName}
 GET  /v3/decision-contracts/{contractName}
 GET  /v3/decision-contracts/{contractName}/versions
 GET  /v3/decision-contracts/{contractName}/versions/{contractDigest}
+GET  /v3/decision-contract-catalog/current
 ```
 
 ### Dry-run validation
@@ -151,6 +167,7 @@ runtime-ready:
 
 ```text
 authenticate and authorize acceptance
+  -> read AuthorityScope from the complete contract
   -> verify route name equals payload name
   -> validate and canonicalize DecisionContract
   -> compute contractDigest
@@ -159,7 +176,6 @@ authenticate and authorize acceptance
   -> persist immutable executable
   -> atomically activate default through IExecutableStore
   -> move ManagementCurrent[scope, contractName]
-  -> move LearningHead when learning is present
   -> return ready DecisionContractVersion
 ```
 
@@ -186,6 +202,10 @@ Neither `ManagementCurrent` nor version-list ordering grants runtime
 authority. The Decision Service accepts an exact digest and reads
 `RuntimeActivation` instead.
 
+The cross-authority current-contract catalog returns every complete current
+deployed contract for Evidence Materializer route compilation. Its ETag is
+opaque conditional-fetch state, not contract or evidence identity.
+
 ## Contract Service responsibilities
 
 The Contract Service owns:
@@ -198,7 +218,7 @@ The Contract Service owns:
 - default and authored executable generation orchestration;
 - candidate validation and immutable executable persistence;
 - atomic activation;
-- management current-version and learning-head transitions;
+- management current-version transitions;
 - triggering or scheduling evidence-based generation; and
 - management response and Problem Details mapping.
 
@@ -212,8 +232,7 @@ across digests.
 | --- | --- |
 | Contract Store | Persist and read immutable accepted versions by scope, name, and digest |
 | Executable Store | Persist immutable generated executables and provenance; atomically manage scoped Candidate, Active, and Inactive lifecycle state |
-| Management current pointer | Select the version returned by the name-level management read |
-| Learning head | Select the digest eligible for new evidence-based analysis |
+| Management current pointer | Select the version returned by the name-level management read and eligible for new evidence-based analysis |
 | Generation capability | Produce default, authored, or evidence-based candidates without granting runtime authority |
 
 The physical database layout is an implementation choice. These records have
@@ -240,12 +259,12 @@ same candidate-validation and activation boundary.
 
 ### Evidence-generated executable
 
-The learning scheduler uses the accepted contract's interval and current
-learning head. A learning worker may return an immutable candidate and
-provenance, but it cannot write runtime authority.
+The learning scheduler uses the current accepted contract and its interval. A
+learning worker may return an immutable candidate and provenance, but it cannot
+write runtime authority.
 
 The initial policy is `mode: auto-activation`. After validating a candidate
-and confirming that its learning head is still current, the Contract Service
+and confirming that its contract is still current, the Contract Service
 immediately attempts atomic activation. Failure or supersession preserves the
 existing executable.
 
@@ -267,10 +286,9 @@ The Contract Service must preserve these ordering guarantees:
 - accepted contract and executable content are immutable by digest;
 - deployment of identical semantic content converges on one version;
 - a ready response is impossible before default activation succeeds;
-- current-version and learning-head movement occurs only after the new digest
-  is ready;
+- current-version movement occurs only after the new digest is ready;
 - accepting a new digest does not change older digest activations;
-- a superseded learning run cannot activate after its learning head moves;
+- a superseded learning run cannot activate after the current contract changes;
 - only one complete executable digest occupies an activation slot;
 - duplicate activation of the same executable is idempotent; and
 - a failed replacement leaves the prior activation intact.
@@ -304,8 +322,8 @@ executable from another contract digest.
    authority.
 7. `auto-activation` performs a checked atomic activation rather than
    deploying by generation recency.
-8. Management current-version and learning-head pointers never select a
-   runtime contract version.
+8. The management current-version pointer never selects a runtime contract
+   version.
 9. Older digest activations survive acceptance of a newer version.
 10. Runtime evaluation and exposure reporting remain outside Contract Service.
 

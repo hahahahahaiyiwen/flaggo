@@ -228,7 +228,15 @@ test("policy refresh pauses and retains the latest successful result", async () 
 });
 
 test("standalone build has no Flaggo SDK dependency", async () => {
-  for (const file of ["drop-interval.js", "game.js", "main.js", "terminal.js"]) {
+  for (
+    const file of [
+      "drop-interval.js",
+      "game.js",
+      "main.js",
+      "session.js",
+      "terminal.js",
+    ]
+  ) {
     const source = await readFile(
       new URL(`../dist/standalone/${file}`, import.meta.url),
       "utf8",

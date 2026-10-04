@@ -25,14 +25,14 @@ application
        -> Executable Store active lookup
        -> bounded evaluator
   -> RuntimeDecision
+  -> SDK emits flaggo.decision.received through OpenTelemetry
   -> application applies result
-  -> SDK emits exposure evidence through OpenTelemetry
 ```
 
 The SDK and Decision Service form one runtime integration boundary, but they
-have different responsibilities. The SDK constructs complete input and
-observes application use. The service resolves authority and evaluates one
-immutable executable.
+have different responsibilities. The SDK constructs complete input and records
+that a decision response was received. The service resolves authority and
+evaluates one immutable executable.
 
 ## Application and SDK responsibilities
 
@@ -58,12 +58,13 @@ The SDK:
 - carries the previous applied exposure when available;
 - authenticates and sends the exact-version request;
 - does not reinterpret server failures as successful decisions; and
-- emits exposure evidence only after the application applies the result.
+- emits a raw decision-received observation after a successful decision when
+  SDK telemetry is configured.
 
 The current TypeScript SDK phase implements this flow through the returned
-`RuntimeDecision`. Its exposure API and OpenTelemetry emission are deferred
-until the Flaggo OpenTelemetry ingestion profile is defined; the exposure
-steps in this document describe that future ownership boundary.
+`RuntimeDecision`. The decision-received observation is not proof that the
+application applied the result. Application outcome telemetry and async
+analysis own later interpretation and correlation.
 
 Future SDK-local fallback to a contract default or cached prior decision is a
 separate policy. It does not change the Decision Service response or create a
@@ -79,7 +80,7 @@ POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 
 The route identifies the logical decision and one exact immutable contract
 version. The body carries only the complete `RuntimeInput`; authenticated
-credentials establish application and environment scope.
+credentials establish tenant, application, and environment scope.
 
 Contract attributes, user identifiers, and exposure context are decision data.
 They cannot authenticate a caller, authorize another scope, or select a
@@ -187,18 +188,21 @@ Runtime never scans candidate generation history or chooses the latest
 `createdAt`. Automatic activation remains a Contract Service operation that
 updates the single authoritative mapping.
 
-## Decision and exposure boundary
+## Decision observation boundary
 
 A `RuntimeDecision` proves that one active executable produced a contract-valid
 result. It does not prove that the application used the result.
 
 ```text
 RuntimeDecision
-  -> application applies or renders result
-  -> SDK creates or updates exposure context
-  -> SDK emits Flaggo exposure evidence
-  -> later outcome evidence may correlate to that exposure
+  -> SDK emits flaggo.decision.received through OpenTelemetry
+  -> application may apply or render result
+  -> selected application telemetry may correlate to that decision
 ```
+
+The built-in observation records receipt, not application. It carries the
+decision, contract, executable, result, and evaluation identities needed by
+later analysis, but it does not prove that the application used the result.
 
 The optional current-exposure input describes a previous applied decision in
 the SDK's current activity context. It does not select the new executable and
@@ -223,7 +227,7 @@ SDK-local outage fallback remains a separate deferred concern.
 
 1. Application deployment supplies an exact contract name and digest.
 2. The SDK constructs and retries one complete logical input.
-3. Authentication establishes application/environment scope.
+3. Authentication establishes tenant/application/environment scope.
 4. The service resolves exactly one active immutable executable per request.
 5. Management current-version and candidate-generation order never select
    runtime authority.

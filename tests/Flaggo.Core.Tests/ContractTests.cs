@@ -20,7 +20,7 @@ public sealed class ContractTests
         Assert.Equal("valid", validation.Status);
         Assert.Empty(validation.Issues);
         Assert.Equal(
-            "sha256:76837952bcc85c474be3f721cb6236a7e610ecdc38672e0149fc4c347816a7ae",
+            "sha256:7394e6ec3d9eee8d559c4e5b44b15fb5ab7827e5307d5877f369ba0c9ded8098",
             validation.ContractDigest);
     }
 
@@ -45,8 +45,33 @@ public sealed class ContractTests
                   "evaluate": { "interval": "PT1M" }
                 },
                 "evidence": [
-                  { "name": "z", "attribute": "z", "binding": "demo.z", "correlateBy": ["z", "a"] },
-                  { "name": "a", "attribute": "a", "binding": "demo.a", "correlateBy": ["a"] }
+                  {
+                    "name": "z",
+                    "attribute": "z",
+                    "correlateBy": ["z", "a"],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.z",
+                      "correlation": {
+                        "z": { "location": "signal", "attribute": "demo.z" },
+                        "a": { "location": "signal", "attribute": "demo.a" }
+                      }
+                    }
+                  },
+                  {
+                    "name": "a",
+                    "attribute": "a",
+                    "correlateBy": ["a"],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.a",
+                      "correlation": {
+                        "a": { "location": "signal", "attribute": "demo.a" }
+                      }
+                    }
+                  }
                 ],
                 "objective": {
                   "primary": { "evidence": "z", "direction": "minimize" }
@@ -128,8 +153,13 @@ public sealed class ContractTests
                   {
                     "name": "outcome",
                     "attribute": "outcome",
-                    "binding": "demo.outcome",
-                    "correlateBy": []
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
                   }
                 ],
                 "objective": {
@@ -185,8 +215,13 @@ public sealed class ContractTests
                   {
                     "name": "outcome",
                     "attribute": "outcome",
-                    "binding": "demo.outcome",
-                    "correlateBy": []
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
                   }
                 ],
                 "objective": {
@@ -417,8 +452,13 @@ public sealed class ContractTests
                   {
                     "name": "failure",
                     "attribute": "failures",
-                    "binding": "demo.failure",
-                    "correlateBy": []
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.failure",
+                      "correlation": {}
+                    }
                   }
                 ],
                 "objective": {
@@ -512,7 +552,7 @@ public sealed class ContractTests
     }
 
     [Fact]
-    public void LearningEvidenceBindingMustSatisfyTheWireSchema()
+    public void LearningEvidenceSourceMustSatisfyTheWireSchema()
     {
         var contract = ParseContract("""
             {
@@ -534,8 +574,13 @@ public sealed class ContractTests
                   {
                     "name": "outcome",
                     "attribute": "outcome",
-                    "binding": "not a valid binding",
-                    "correlateBy": []
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
                   }
                 ],
                 "objective": {
@@ -553,8 +598,341 @@ public sealed class ContractTests
         Assert.Equal("invalid", validation.Status);
         Assert.Contains(
             validation.Issues,
-            issue => issue.Code == "invalid-evidence-binding"
-                && issue.Path == "/learning/evidence/0/binding");
+            issue => issue.Code == "invalid-otel-name"
+                && issue.Path == "/learning/evidence/0/source/scope");
+    }
+
+    [Fact]
+    public void EveryEvidenceSourceKindIsStrictlyDeserialized()
+    {
+        var contract = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "metric_value", "schema": { "type": "number" } },
+                { "name": "log_value", "schema": { "type": "number" } },
+                { "name": "span_value", "schema": { "type": "number" } },
+                { "name": "event_value", "schema": { "type": "number" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "metric",
+                    "attribute": "metric_value",
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "metric",
+                      "scope": "demo",
+                      "name": "demo.metric",
+                      "metricKind": "histogram",
+                      "unit": "ms",
+                      "correlation": {}
+                    }
+                  },
+                  {
+                    "name": "log",
+                    "attribute": "log_value",
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.log",
+                      "correlation": {}
+                    }
+                  },
+                  {
+                    "name": "span",
+                    "attribute": "span_value",
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "span",
+                      "scope": "demo",
+                      "name": "demo.span",
+                      "correlation": {}
+                    }
+                  },
+                  {
+                    "name": "event",
+                    "attribute": "event_value",
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "spanEvent",
+                      "scope": "demo",
+                      "spanName": "demo.span",
+                      "name": "demo.event",
+                      "correlation": {}
+                    }
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "metric",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """);
+
+        Assert.Collection(
+            contract.Learning!.Evidence,
+            evidence => Assert.IsType<MetricEvidenceSource>(evidence.Source),
+            evidence => Assert.IsType<LogEvidenceSource>(evidence.Source),
+            evidence => Assert.IsType<SpanEvidenceSource>(evidence.Source),
+            evidence => Assert.IsType<SpanEventEvidenceSource>(evidence.Source));
+        Assert.Equal("valid", ContractValidator.Validate(contract).Status);
+    }
+
+    [Fact]
+    public void EvidenceRequiresOneKnownSource()
+    {
+        const string missingSource = """
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "outcome", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "correlateBy": []
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """;
+        var unknownSource = missingSource.Replace(
+            "\"correlateBy\": []",
+            """
+            "correlateBy": [],
+                    "source": {
+                      "kind": "unknown",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
+            """,
+            StringComparison.Ordinal);
+
+        Assert.Throws<JsonException>(() => ParseContract(missingSource));
+        Assert.Throws<JsonException>(() => ParseContract(unknownSource));
+    }
+
+    [Fact]
+    public void EvidenceSourceCorrelationMustExactlyMatchCorrelateBy()
+    {
+        var contract = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "outcome", "schema": { "type": "integer" } },
+                { "name": "session_id", "schema": { "type": "string" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "correlateBy": ["session_id"],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {
+                        "unexpected": {
+                          "location": "parentSpan",
+                          "attribute": "demo.session.id"
+                        }
+                      }
+                    }
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """);
+
+        var validation = ContractValidator.Validate(contract);
+
+        Assert.Equal("invalid", validation.Status);
+        Assert.Contains(
+            validation.Issues,
+            issue => issue.Code == "missing-evidence-correlation");
+        Assert.Contains(
+            validation.Issues,
+            issue => issue.Code == "unexpected-evidence-correlation");
+        Assert.Contains(
+            validation.Issues,
+            issue => issue.Code == "invalid-evidence-correlation-location");
+    }
+
+    [Fact]
+    public void DuplicateEvidenceSourcesAreRejected()
+    {
+        var contract = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "first", "schema": { "type": "integer" } },
+                { "name": "second", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "first",
+                    "attribute": "first",
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
+                  },
+                  {
+                    "name": "second",
+                    "attribute": "second",
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "first",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """);
+
+        var validation = ContractValidator.Validate(contract);
+
+        Assert.Equal("invalid", validation.Status);
+        Assert.Contains(
+            validation.Issues,
+            issue => issue.Code == "duplicate-evidence-source"
+                && issue.Path == "/learning/evidence/1/source");
+    }
+
+    [Fact]
+    public void EvidenceSourceSemanticsContributeToTheContractDigest()
+    {
+        var contract = ParseContract("""
+            {
+              "name": "demo.choice",
+              "expression_syntax": "flaggo.cel/v1",
+              "attributes": [
+                { "name": "outcome", "schema": { "type": "integer" } }
+              ],
+              "result": {
+                "schema": { "type": "boolean" },
+                "default": false
+              },
+              "learning": {
+                "policy": {
+                  "mode": "auto-activation",
+                  "evaluate": { "interval": "PT1M" }
+                },
+                "evidence": [
+                  {
+                    "name": "outcome",
+                    "attribute": "outcome",
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
+                  }
+                ],
+                "objective": {
+                  "primary": {
+                    "evidence": "outcome",
+                    "direction": "maximize"
+                  }
+                }
+              }
+            }
+            """);
+        var evidence = Assert.Single(contract.Learning!.Evidence);
+        var changed = contract with
+        {
+            Learning = contract.Learning with
+            {
+                Evidence =
+                [
+                    evidence with
+                    {
+                        Source = new SpanEvidenceSource
+                        {
+                            Scope = evidence.Source.Scope,
+                            Name = evidence.Source.Name,
+                            Correlation = evidence.Source.Correlation
+                        }
+                    }
+                ]
+            }
+        };
+
+        Assert.NotEqual(
+            ContractDigests.ComputeContractDigest(contract),
+            ContractDigests.ComputeContractDigest(changed));
     }
 
     [Fact]
@@ -633,8 +1011,13 @@ public sealed class ContractTests
                   {
                     "name": "outcome",
                     "attribute": "outcome",
-                    "binding": "demo.outcome",
-                    "correlateBy": []
+                    "correlateBy": [],
+                    "source": {
+                      "kind": "log",
+                      "scope": "demo",
+                      "name": "demo.outcome",
+                      "correlation": {}
+                    }
                   }
                 ],
                 "objective": {
@@ -700,6 +1083,21 @@ public sealed class ContractTests
         Assert.Contains(undeclaredIssues, issue => issue.Code == "undeclared-attribute");
     }
 
-    private static DecisionContract ParseContract(string json) =>
-        StrictJson.Deserialize<DecisionContract>(Encoding.UTF8.GetBytes(json));
+    private static DecisionContract ParseContract(string json)
+    {
+        var objectStart = json.IndexOf('{', StringComparison.Ordinal);
+        Assert.True(objectStart >= 0);
+        var scopedJson = json.Insert(
+            objectStart + 1,
+            """
+
+              "authority": {
+                "tenant": "local",
+                "application": "test",
+                "environment": "test"
+              },
+            """);
+        return StrictJson.Deserialize<DecisionContract>(
+            Encoding.UTF8.GetBytes(scopedJson));
+    }
 }

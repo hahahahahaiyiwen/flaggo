@@ -3,6 +3,8 @@ import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const dynamicLoopbackUrl = "http://127.0.0.1:0";
 const signalExitCodes = new Map([
@@ -368,9 +370,11 @@ export function parseListeningUrl(line) {
   } catch {
     return undefined;
   }
-  const address = entry?.Category === "Microsoft.Hosting.Lifetime"
-    ? entry?.State?.address
-    : undefined;
+  const address = entry?.event === "server.listening"
+    ? entry?.address
+    : entry?.Category === "Microsoft.Hosting.Lifetime"
+      ? entry?.State?.address
+      : undefined;
   if (typeof address !== "string") return undefined;
 
   let url;
@@ -396,12 +400,23 @@ export function parseListeningUrl(line) {
   return url.origin;
 }
 
-export function createStructuredLogObserver(onListening) {
+export function createStructuredLogObserver(onListening, onEntry = () => {}) {
   let buffer = "";
 
   function processLine(line) {
-    const url = parseListeningUrl(line.endsWith("\r") ? line.slice(0, -1) : line);
+    const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
+    const url = parseListeningUrl(normalized);
     if (url !== undefined) onListening(url);
+    let entry;
+    try {
+      entry = JSON.parse(normalized);
+    } catch {
+      // Non-JSON process output remains available in the host log file.
+      return;
+    }
+    if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+      onEntry(entry);
+    }
   }
 
   return {
@@ -433,6 +448,59 @@ export function startHost(
   );
 }
 
+export function startRustHost(
+  name,
+  binaryName,
+  logPath,
+  repositoryRoot,
+  configuration,
+  {
+    reportsListeningUrl = true,
+    ...binaryOptions
+  } = {},
+) {
+  return startManagedProcess(
+    name,
+    rustBinaryPath(repositoryRoot, binaryName, binaryOptions),
+    [],
+    logPath,
+    repositoryRoot,
+    createRustHostEnvironment(configuration),
+    reportsListeningUrl ? undefined : null,
+  );
+}
+
+export function rustBinaryPath(
+  repositoryRoot,
+  binaryName,
+  {
+    platform = process.platform,
+    profile = "debug",
+  } = {},
+) {
+  if (!/^[A-Za-z0-9_-]+$/u.test(binaryName)) {
+    throw new TypeError("Rust binary name contains invalid characters.");
+  }
+  if (profile !== "debug" && profile !== "release") {
+    throw new TypeError("Rust build profile must be 'debug' or 'release'.");
+  }
+  const executable = platform === "win32"
+    ? `${binaryName}.exe`
+    : binaryName;
+  return resolve(repositoryRoot, "target", profile, executable);
+}
+
+export function sqliteDatabaseUrl(databasePath) {
+  const fileUrl = pathToFileURL(resolve(databasePath));
+  if (fileUrl.host !== "") {
+    throw new TypeError("SQLite database path must be local.");
+  }
+  const pathname = process.platform === "win32"
+    ? fileUrl.pathname.replace(/^\/(?=[A-Za-z]:\/)/u, "")
+    : fileUrl.pathname;
+  return `sqlite:${pathname}`;
+}
+
 export function startManagedProcess(
   name,
   executable,
@@ -459,6 +527,26 @@ export function startManagedProcess(
   });
   child.stdout.pipe(log, { end: false });
   child.stderr.pipe(log, { end: false });
+  let recentStderr = "";
+  child.stderr.on("data", (chunk) => {
+    recentStderr = `${recentStderr}${String(chunk)}`.slice(-8192);
+  });
+  const structuredLogs = [];
+  const structuredLogWaiters = new Set();
+
+  function recordStructuredLog(entry) {
+    structuredLogs.push(entry);
+    for (const waiter of [...structuredLogWaiters]) {
+      try {
+        if (!waiter.predicate(entry)) continue;
+        structuredLogWaiters.delete(waiter);
+        waiter.resolve(entry);
+      } catch (error) {
+        structuredLogWaiters.delete(waiter);
+        waiter.reject(error);
+      }
+    }
+  }
 
   let listeningSettled = false;
   let resolveListening;
@@ -468,15 +556,18 @@ export function startManagedProcess(
     rejectListening = reject;
     if (knownUrl !== undefined) {
       listeningSettled = true;
-      resolvePromise(knownUrl);
+      if (knownUrl !== null) resolvePromise(knownUrl);
     }
   });
-  const observer = createStructuredLogObserver((url) => {
-    if (!listeningSettled) {
-      listeningSettled = true;
-      resolveListening(url);
-    }
-  });
+  const observer = createStructuredLogObserver(
+    (url) => {
+      if (!listeningSettled) {
+        listeningSettled = true;
+        resolveListening(url);
+      }
+    },
+    recordStructuredLog,
+  );
   child.stdout.on("data", (chunk) => observer.write(chunk));
   child.stdout.once("end", () => observer.end());
 
@@ -522,6 +613,16 @@ export function startManagedProcess(
           ),
         );
       }
+      for (const waiter of structuredLogWaiters) {
+        waiter.reject(
+          new Error(
+            `${name} exited before emitting the expected log entry.${
+              recentStderr.trim() === "" ? "" : `\n${recentStderr.trim()}`
+            }`,
+          ),
+        );
+      }
+      structuredLogWaiters.clear();
       log.end();
       resolvePromise();
     });
@@ -538,6 +639,64 @@ export function startManagedProcess(
     },
     get unexpectedExit() {
       return unexpectedExit;
+    },
+    get structuredLogs() {
+      return [...structuredLogs];
+    },
+    async waitForStructuredLog(
+      predicate,
+      {
+        timeoutMilliseconds = 30000,
+        signal,
+      } = {},
+    ) {
+      if (typeof predicate !== "function") {
+        throw new TypeError("Structured log predicate must be a function.");
+      }
+      for (const entry of structuredLogs) {
+        if (predicate(entry)) return entry;
+      }
+      if (closed) {
+        throw new Error(
+          `${name} already exited without the expected log entry.${
+            recentStderr.trim() === "" ? "" : `\n${recentStderr.trim()}`
+          }`,
+        );
+      }
+
+      let timer;
+      let abortHandler;
+      let waiter;
+      try {
+        return await new Promise((resolvePromise, reject) => {
+          waiter = {
+            predicate,
+            resolve: resolvePromise,
+            reject,
+          };
+          structuredLogWaiters.add(waiter);
+          timer = setTimeout(
+            () => reject(
+              new Error(
+                `${name} did not emit the expected log entry within `
+                + `${timeoutMilliseconds}ms.`,
+              ),
+            ),
+            timeoutMilliseconds,
+          );
+          if (signal !== undefined) {
+            signal.throwIfAborted();
+            abortHandler = () => reject(signal.reason);
+            signal.addEventListener("abort", abortHandler, { once: true });
+          }
+        });
+      } finally {
+        clearTimeout(timer);
+        if (waiter !== undefined) structuredLogWaiters.delete(waiter);
+        if (abortHandler !== undefined) {
+          signal.removeEventListener("abort", abortHandler);
+        }
+      }
     },
     async waitForListening({
       timeoutMilliseconds = 30000,
@@ -610,6 +769,17 @@ export function createHostEnvironment(
     ASPNETCORE_URLS: dynamicLoopbackUrl,
     Logging__Console__FormatterName: "json",
     Flaggo__Authentication__LocalDevelopmentBypass: "true",
+  };
+}
+
+export function createRustHostEnvironment(
+  configuration,
+  parentEnvironment = process.env,
+) {
+  return {
+    ...parentEnvironment,
+    ...configuration,
+    FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS: "127.0.0.1:0",
   };
 }
 

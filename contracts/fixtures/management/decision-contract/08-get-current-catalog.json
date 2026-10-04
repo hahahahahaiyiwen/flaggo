@@ -1,0 +1,67 @@
+{
+  "name": "get-current-contract-catalog",
+  "scenarios": [],
+  "invariant": "The materializer catalog returns every current authority-bound contract without creating a snapshot identity.",
+  "responseSchema": "management-models-v3.schema.json#/$defs/CurrentContractCatalog",
+  "request": {
+    "method": "GET",
+    "path": "/v3/decision-contract-catalog/current",
+    "headers": {
+      "Authorization": "******"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "ETag": "\"catalog-7\"",
+      "X-Flaggo-Correlation-Id": "srv-contract-catalog-current"
+    },
+    "body": {
+      "contracts": [
+        {
+          "contractDigest": "sha256:6b2e83d4ca52686a089351aa0250f2f7919e260d8b85061f8e8f4662ff57991e",
+          "contract": {
+            "authority": {
+              "tenant": "acme",
+              "application": "tetris",
+              "environment": "production"
+            },
+            "name": "tetris.dropInterval",
+            "expression_syntax": "flaggo.cel/v1",
+            "attributes": [],
+            "result": {
+              "schema": {
+                "type": "number",
+                "minimum": 100,
+                "maximum": 1000
+              },
+              "default": 500
+            }
+          }
+        },
+        {
+          "contractDigest": "sha256:aa59121ed2dfcf519654df1d3f9c60fa141aa4ddb199c207bd9d12b3a515714a",
+          "contract": {
+            "authority": {
+              "tenant": "local",
+              "application": "tetris",
+              "environment": "integration"
+            },
+            "name": "tetris.dropInterval",
+            "expression_syntax": "flaggo.cel/v1",
+            "attributes": [],
+            "result": {
+              "schema": {
+                "type": "number",
+                "minimum": 100,
+                "maximum": 1000
+              },
+              "default": 500
+            }
+          }
+        }
+      ]
+    }
+  }
+}

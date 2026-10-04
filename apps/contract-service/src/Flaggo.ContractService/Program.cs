@@ -10,9 +10,11 @@ using Microsoft.Data.Sqlite;
 const string validatePolicy = "ValidateContract";
 const string acceptPolicy = "AcceptContract";
 const string readPolicy = "ReadContract";
+const string materializePolicy = "MaterializeContract";
 const string validateScope = "flaggo.contracts:validate";
 const string acceptScope = "flaggo.contracts:accept";
 const string readScope = "flaggo.contracts:read";
+const string materializeScope = "flaggo.contracts:materialize";
 const string serviceName = "flaggo-contract-service";
 
 var builder = WebApplication.CreateBuilder(args);
@@ -37,12 +39,14 @@ builder.Services.AddFlaggoAuthentication(
     builder.Environment,
     validateScope,
     acceptScope,
-    readScope);
+    readScope,
+    materializeScope);
 builder.Services.AddAuthorization(options =>
 {
     AddPolicy(options, validatePolicy, validateScope);
     AddPolicy(options, acceptPolicy, acceptScope);
     AddPolicy(options, readPolicy, readScope);
+    AddPolicy(options, materializePolicy, materializeScope);
 });
 builder.Services.AddFlaggoAuthorizationProblemResults();
 
@@ -83,12 +87,10 @@ app.MapPut(
             IContractLifecycle lifecycle,
             CancellationToken cancellationToken) =>
         {
-            var scope = AuthorityScope(context);
             var contract = await HttpJson.ReadAsync<DecisionContract>(
                 context.Request,
                 cancellationToken);
             var deployment = await lifecycle.DeployAsync(
-                scope,
                 contractName,
                 contract,
                 cancellationToken);
@@ -125,6 +127,21 @@ app.MapGet(
                 : Results.Json(version, StrictJson.Options);
         })
     .RequireAuthorization(readPolicy);
+
+app.MapGet(
+        "/v3/decision-contract-catalog/current",
+        async (
+            HttpContext context,
+            IContractLifecycle lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var catalog = await lifecycle.GetCurrentCatalogAsync(cancellationToken);
+            context.Response.Headers.ETag = catalog.Etag;
+            return MatchesEtag(context.Request.Headers.IfNoneMatch, catalog.Etag)
+                ? Results.StatusCode(StatusCodes.Status304NotModified)
+                : Results.Json(catalog.Catalog, StrictJson.Options);
+        })
+    .RequireAuthorization(materializePolicy);
 
 app.MapGet(
         "/v3/decision-contracts/{contractName}/versions",
@@ -235,7 +252,7 @@ static void AddPolicy(
             .RequireAssertion(context => FlaggoClaims.HasScope(context.User, scope)));
 }
 
-static DecisionScope AuthorityScope(HttpContext context)
+static AuthorityScope AuthorityScope(HttpContext context)
 {
     if (FlaggoClaims.TryGetAuthorityScope(context.User, out var scope))
     {
@@ -243,7 +260,7 @@ static DecisionScope AuthorityScope(HttpContext context)
     }
 
     throw new UnauthorizedAccessException(
-        "The credential must identify exactly one application and environment.");
+        "The credential must identify exactly one tenant, application, and environment.");
 }
 
 static IResult NotFound(HttpContext context) =>
@@ -253,6 +270,14 @@ static IResult NotFound(HttpContext context) =>
         ProblemTypes.ContractVersionNotFound,
         "Decision contract not found",
         "The requested DecisionContract resource does not exist in this scope.");
+
+static bool MatchesEtag(
+    Microsoft.Extensions.Primitives.StringValues values,
+    string expected) =>
+    values
+        .SelectMany(value => value?.Split(',') ?? [])
+        .Select(value => value.Trim())
+        .Any(value => value is "*" || string.Equals(value, expected, StringComparison.Ordinal));
 
 static async Task InitializeStoresAsync(IServiceProvider services)
 {

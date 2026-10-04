@@ -2,14 +2,13 @@ import {
   InvalidServerResponseError,
   MissingDecisionBindingError,
 } from "../errors.js";
+import { parseFlaggoRuntimeConfiguration } from "../configuration/configuration.js";
 import type { RuntimeDecision as GeneratedRuntimeDecision } from "../generated/runtime-models.generated.js";
 import {
   validateRuntimeDecision,
   validateRuntimeInput,
 } from "../generated/runtime-validators.generated.mjs";
 import {
-  assertDecisionName,
-  assertSha256Digest,
   hasOnlyKeys,
   inputError,
   record,
@@ -20,7 +19,8 @@ import {
   assertInputSchema,
   assertResponseSchema,
 } from "../internal/validators.js";
-import type { JsonValue, Sha256Digest } from "../shared/types.js";
+import type { JsonValue, RequestOptions, Sha256Digest } from "../shared/types.js";
+import type { CorrelationAttributes } from "./telemetry.js";
 import type {
   DecisionBinding,
   DecisionCatalog,
@@ -30,25 +30,37 @@ import type {
   DecisionSpec,
   RuntimeDecision,
 } from "./types.js";
+import {
+  createFlaggoTelemetry,
+  emitDecisionReceived,
+} from "./telemetry.js";
 
 const attributeNamePattern = /^[A-Za-z][A-Za-z0-9_]{0,127}$/u;
 
+type ResultOf<TSpec> =
+  TSpec extends DecisionSpec<Readonly<Record<string, JsonValue>>, infer TResult>
+    ? TResult
+    : never;
+
 function validateConfiguration<TCatalog extends DecisionCatalog>(
   configuration: DecisionClientConfiguration<TCatalog>,
-): Readonly<Record<string, DecisionBinding>> {
+): {
+  readonly baseUrl: string;
+  readonly bindings: Readonly<Record<string, DecisionBinding>>;
+} {
   const raw = record(configuration);
   if (
     raw === undefined
     || !hasOnlyKeys(
       raw,
       new Set([
-        "baseUrl",
-        "bindings",
+        "runtimeConfig",
         "credential",
         "fetch",
         "timeoutMs",
         "retry",
         "random",
+        "telemetry",
       ]),
     )
   ) {
@@ -58,32 +70,13 @@ function validateConfiguration<TCatalog extends DecisionCatalog>(
     inputError("/random", "Random must be a function.");
   }
 
-  const bindings = record(configuration.bindings);
-  if (bindings === undefined || Object.keys(bindings).length === 0) {
-    inputError("/bindings", "At least one decision binding is required.");
-  }
-  const clone: Record<string, DecisionBinding> = Object.create(null);
-  for (const [contractName, rawBinding] of Object.entries(bindings)) {
-    assertDecisionName(contractName, `/bindings/${contractName}`);
-    const binding = record(rawBinding);
-    if (
-      binding === undefined
-      || !hasOnlyKeys(binding, new Set(["contractDigest"]))
-    ) {
-      inputError(
-        `/bindings/${contractName}`,
-        "Each decision binding must contain only contractDigest.",
-      );
-    }
-    assertSha256Digest(
-      binding.contractDigest,
-      `/bindings/${contractName}/contractDigest`,
-    );
-    clone[contractName] = {
-      contractDigest: binding.contractDigest,
-    };
-  }
-  return clone;
+  const runtimeConfig = parseFlaggoRuntimeConfiguration<
+    Readonly<Record<string, DecisionBinding>>
+  >(configuration.runtimeConfig);
+  return {
+    baseUrl: runtimeConfig.services.decisionServiceUrl,
+    bindings: runtimeConfig.bindings,
+  };
 }
 
 function completeInput<TSpec extends DecisionSpec<
@@ -174,20 +167,39 @@ function decisionOrThrow<TResult extends JsonValue>(
 export function createDecisionClient<TCatalog extends DecisionCatalog>(
   configuration: DecisionClientConfiguration<TCatalog>,
 ): DecisionClient<TCatalog> {
-  const bindings = validateConfiguration(configuration);
+  const validated = validateConfiguration(configuration);
   const random = configuration.random ?? Math.random;
-  const transport = createTransport(configuration);
+  const transport = createTransport({
+    baseUrl: validated.baseUrl,
+    ...(configuration.credential === undefined
+      ? {}
+      : { credential: configuration.credential }),
+    ...(configuration.fetch === undefined
+      ? {}
+      : { fetch: configuration.fetch }),
+    ...(configuration.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: configuration.timeoutMs }),
+    ...(configuration.retry === undefined
+      ? {}
+      : { retry: configuration.retry }),
+  });
+  const telemetry = createFlaggoTelemetry(configuration.telemetry);
 
   return {
-    async decide(contractName, request = {}, options = {}) {
-      const binding = bindings[contractName];
-      if (binding === undefined) {
+    async decide<TName extends Extract<keyof TCatalog, string>>(
+      contractName: TName,
+      request: DecisionRequest<TCatalog[TName]> = {},
+      options: RequestOptions = {},
+    ) {
+      if (!Object.hasOwn(validated.bindings, contractName)) {
         throw new MissingDecisionBindingError(contractName);
       }
+      const binding = validated.bindings[contractName]!;
       const input = completeInput(request, random);
       const encodedName = encodeURIComponent(contractName);
       const encodedDigest = encodeURIComponent(binding.contractDigest);
-      return transport.request({
+      const response = await transport.request({
         method: "POST",
         path: `/v3/decision-contracts/${encodedName}/versions/${encodedDigest}/decisions`,
         body: input,
@@ -198,9 +210,39 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
           assertInputSchema(validateRuntimeInput, value, "RuntimeInput");
         },
         parse(value) {
-          return decisionOrThrow(value, binding.contractDigest);
+          return decisionOrThrow<ResultOf<TCatalog[TName]>>(
+            value,
+            binding.contractDigest,
+          );
         },
       });
+      const correlation = scalarCorrelationAttributes(request.attributes);
+      emitDecisionReceived(telemetry, {
+        contractName,
+        decision: response.value,
+        metadata: response.metadata,
+        ...(correlation === undefined ? {} : { correlation }),
+      });
+      return response;
     },
   };
+}
+
+function scalarCorrelationAttributes(
+  attributes: unknown,
+): CorrelationAttributes | undefined {
+  if (attributes === undefined) return undefined;
+  const raw = record(attributes);
+  if (raw === undefined) return undefined;
+  const correlation: Record<string, string | number | boolean> = Object.create(null);
+  for (const [name, value] of Object.entries(raw)) {
+    if (
+      typeof value === "string"
+      || typeof value === "boolean"
+      || (typeof value === "number" && Number.isFinite(value))
+    ) {
+      correlation[name] = value;
+    }
+  }
+  return Object.keys(correlation).length === 0 ? undefined : correlation;
 }

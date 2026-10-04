@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/deployment-models-v2.schema.json",
+  "title": "Flaggo Deployment Models v2",
+  "description": "Authored deployment manifest and generated immutable runtime configuration.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/DeploymentManifest"
+    },
+    {
+      "$ref": "#/$defs/RuntimeConfiguration"
+    }
+  ],
+  "$defs": {
+    "AuthorityIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "DecisionName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "ServiceUrl": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048,
+      "pattern": "^https?://(?:\\[[0-9A-Fa-f:.]+\\]|[^\\s/:?#@]+)(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:/[^\\s?#]*)?$",
+      "description": "Absolute HTTP(S) service base URL with an optional port from 1 through 65535 and without credentials, query, or fragment."
+    },
+    "AuthorityScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant",
+        "application",
+        "environment"
+      ],
+      "properties": {
+        "tenant": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        },
+        "application": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        },
+        "environment": {
+          "$ref": "#/$defs/AuthorityIdentifier"
+        }
+      },
+      "description": "Declared routing authority injected into every deployed DecisionContract and application telemetry signal in one deployment."
+    },
+    "DecisionContractPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?:(?:[A-Za-z0-9_-]|[A-Za-z0-9._-]*[A-Za-z0-9_-])/)*[A-Za-z][A-Za-z0-9._-]*\\.decision-contract\\.json$",
+      "description": "Portable ASCII forward-slash relative path contained by the deployment manifest directory."
+    },
+    "DeploymentManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "authority",
+        "contracts"
+      ],
+      "properties": {
+        "format": {
+          "const": "flaggo.deploy/v2"
+        },
+        "authority": {
+          "$ref": "#/$defs/AuthorityScope"
+        },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecisionContractPath"
+          },
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "description": "Authority-free authored DecisionContracts that deployment binds to the manifest authority before validation, digesting, and persistence."
+        }
+      }
+    },
+    "ServiceEndpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractServiceUrl",
+        "decisionServiceUrl",
+        "otlpIngestionUrl"
+      ],
+      "properties": {
+        "contractServiceUrl": {
+          "$ref": "#/$defs/ServiceUrl"
+        },
+        "decisionServiceUrl": {
+          "$ref": "#/$defs/ServiceUrl"
+        },
+        "otlpIngestionUrl": {
+          "$ref": "#/$defs/ServiceUrl"
+        }
+      }
+    },
+    "ContractBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractDigest"
+      ],
+      "properties": {
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      }
+    },
+    "RuntimeConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "authority",
+        "services",
+        "bindings"
+      ],
+      "properties": {
+        "format": {
+          "const": "flaggo.runtime-config/v1"
+        },
+        "authority": {
+          "$ref": "#/$defs/AuthorityScope"
+        },
+        "services": {
+          "$ref": "#/$defs/ServiceEndpoints"
+        },
+        "bindings": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/DecisionName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/ContractBinding"
+          },
+          "minProperties": 1,
+          "maxProperties": 128
+        }
+      },
+      "description": "Generated immutable application configuration containing the same authority bound into every deployed DecisionContract."
+    }
+  }
+}

@@ -23,7 +23,7 @@ DecisionContract
   -> optionally compile and activate deterministic authored expressions
 
 exact contract name + contractDigest + complete RuntimeInput
-  -> resolve ActiveExecutable in authenticated application/environment scope
+  -> resolve ActiveExecutable in authenticated tenant/application/environment scope
   -> bounded deterministic evaluation
   -> validate and return RuntimeDecision
 ```
@@ -74,8 +74,8 @@ candidate through the same candidate-validation-activation boundary.
 
 ### Learning declarations
 
-Contract Acceptance validates and stores `learning` declarations and may move
-the management learning head to the newly accepted digest. Phase 3 has no
+Contract Acceptance validates and stores `learning` declarations and moves the
+management current pointer to the newly accepted ready digest. Phase 3 has no
 learning scheduler, evidence reader, analysis worker, or evidence-generated
 candidate producer.
 

@@ -3,7 +3,7 @@
   "info": {
     "title": "Flaggo Management API",
     "version": "3.0.0",
-    "description": "Management API for named, versioned DecisionContract resources. A contract name identifies the logical resource and contractDigest identifies one immutable accepted version. Strict management wire models live in ../schemas/management-models-v3.schema.json, shared health models live in ../schemas/runtime-models-v3.schema.json, and errors use ../schemas/problem-details-v3.schema.json.",
+    "description": "Management API for authority-bound, named, versioned DecisionContract resources. A contract name identifies the logical resource within its declared authority and contractDigest identifies one immutable scoped version. Strict management wire models live in ../schemas/management-models-v3.schema.json, shared health models live in ../schemas/runtime-models-v3.schema.json, and errors use ../schemas/problem-details-v3.schema.json.",
     "license": {
       "name": "Apache-2.0"
     }
@@ -34,6 +34,56 @@
     }
   ],
   "paths": {
+    "/v3/decision-contract-catalog/current": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "getCurrentContractCatalog",
+        "summary": "Get the cross-authority current-contract catalog.",
+        "description": "Returns every current deployed DecisionContract in deterministic authority/name/digest order for Evidence Materializer. The response ETag is opaque transport change-detection metadata only; it is not a contract, evidence, provenance, or checkpoint identity.",
+        "security": [
+          {
+            "oauth2": [
+              "flaggo.contracts:materialize"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfNoneMatchHeader"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CurrentContractCatalog"
+          },
+          "304": {
+            "description": "The current contract catalog matches If-None-Match.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ContractCatalogEtag"
+              },
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/v3/decision-contracts/{contractName}": {
       "put": {
         "tags": [
@@ -41,7 +91,7 @@
         ],
         "operationId": "deployDecisionContract",
         "summary": "Deploy a named DecisionContract.",
-        "description": "Validates the payload, requires its name to equal contractName, computes its semantic contractDigest, durably creates the immutable version when new, generates and activates its default executable, and then moves the named resource's current-version and learning-head pointers. Older digest activations remain available. Repeating the same semantic payload is idempotent and returns the existing version; non-semantic-only changes do not create a version.",
+        "description": "Validates the authority-bound payload, requires its name to equal contractName, computes contractDigest over its authority and semantic content, durably creates the immutable scoped version when new, generates and activates its default executable, and then moves that authority's named current-version pointer. Older digest activations remain available. Repeating the same scoped semantic payload is idempotent and returns the existing version; non-semantic-only changes do not create a version.",
         "security": [
           {
             "oauth2": [
@@ -135,7 +185,7 @@
         ],
         "operationId": "validateDecisionContract",
         "summary": "Dry-run validation for one named DecisionContract.",
-        "description": "Requires the payload name to equal contractName, then parses and type-checks the contract, validates supported JSON Schema and CEL profiles, verifies cross-references and defaults, canonicalizes semantic content, and computes the proposed contractDigest without mutation. Well-formed but semantically invalid content returns 200 with status invalid.",
+        "description": "Requires the payload name to equal contractName, then parses and type-checks the authority-bound contract, validates supported JSON Schema and CEL profiles, verifies cross-references and defaults, canonicalizes authority and semantic content, and computes the proposed scoped contractDigest without mutation. Well-formed but semantically invalid content returns 200 with status invalid.",
         "security": [
           {
             "oauth2": [
@@ -353,14 +403,15 @@
     "securitySchemes": {
       "oauth2": {
         "type": "oauth2",
-        "description": "OAuth 2.0/OIDC bearer access tokens. Tokens carry non-empty flaggo_application and flaggo_environment claims; authorization scopes are read from scope and scp. DecisionContract attributes never establish authority scope. Local development may explicitly enable an insecure bypass, disabled by default.",
+        "description": "OAuth 2.0/OIDC bearer access tokens. Authorization scopes are read from scope and scp. Every deployed DecisionContract declares the authority covered by its digest; a future credential-derived authority may constrain that declaration. Local development may explicitly enable an insecure bypass, disabled by default.",
         "flows": {
           "clientCredentials": {
             "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
             "scopes": {
               "flaggo.contracts:validate": "Dry-run validation for named DecisionContracts",
               "flaggo.contracts:accept": "Create immutable DecisionContract versions and move the named current pointer",
-              "flaggo.contracts:read": "Read current and historical DecisionContract versions"
+              "flaggo.contracts:read": "Read current and historical DecisionContract versions",
+              "flaggo.contracts:materialize": "Read the cross-authority current-contract catalog"
             }
           }
         }
@@ -380,7 +431,7 @@
         "name": "contractDigest",
         "in": "path",
         "required": true,
-        "description": "Exact immutable version digest within the named DecisionContract resource.",
+        "description": "Exact immutable version digest covering the declared authority and semantic DecisionContract content.",
         "schema": {
           "$ref": "../schemas/management-models-v3.schema.json#/$defs/Sha256Digest"
         }
@@ -415,6 +466,15 @@
         "schema": {
           "type": "string"
         }
+      },
+      "IfNoneMatchHeader": {
+        "name": "If-None-Match",
+        "in": "header",
+        "required": false,
+        "description": "Previously observed quoted opaque contract-catalog ETag.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "headers": {
@@ -429,6 +489,12 @@
         "schema": {
           "type": "string",
           "format": "uri-reference"
+        }
+      },
+      "ContractCatalogEtag": {
+        "description": "Quoted opaque current-contract catalog revision used only for conditional retrieval.",
+        "schema": {
+          "type": "string"
         }
       }
     },
@@ -489,6 +555,24 @@
           "application/json": {
             "schema": {
               "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionContractVersionList"
+            }
+          }
+        }
+      },
+      "CurrentContractCatalog": {
+        "description": "Deterministic cross-authority current deployed-contract catalog.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ContractCatalogEtag"
+          },
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/CurrentContractCatalog"
             }
           }
         }

@@ -100,18 +100,42 @@
       {
         "name": "placement_time",
         "attribute": "placement_time_mean_ms_5s",
-        "binding": "tetris.placement_time",
         "correlateBy": [
           "session_id"
-        ]
+        ],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.engine",
+          "name": "tetris.placement_time",
+          "metricKind": "histogram",
+          "unit": "ms",
+          "correlation": {
+            "session_id": {
+              "location": "signal",
+              "attribute": "tetris.session.id"
+            }
+          }
+        }
       },
       {
         "name": "recovery_failure",
         "attribute": "recovery_failures_5s",
-        "binding": "tetris.recovery_failure",
         "correlateBy": [
           "session_id"
-        ]
+        ],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.engine",
+          "name": "tetris.recovery_failure",
+          "metricKind": "sum",
+          "unit": "{failure}",
+          "correlation": {
+            "session_id": {
+              "location": "signal",
+              "attribute": "tetris.session.id"
+            }
+          }
+        }
       }
     ],
     "objective": {

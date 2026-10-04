@@ -1,6 +1,6 @@
 # Domain and store modules
 
-Phase 3 uses explicit service and store boundaries:
+Flaggo uses explicit service and store boundaries:
 
 ```text
 contract
@@ -8,6 +8,8 @@ expression
 decision
 contract-store
 executable-store
+evidence-store
+raw-otlp-inbox
 hosting
 ```
 
@@ -23,6 +25,12 @@ not depend on an app composition root or on the legacy
   projections.
 - Executable Store persists immutable executable artifacts and atomically owns
   scoped Candidate, Active, and Inactive lifecycle state.
+- Evidence Store is a Rust storage-neutral contract with a SQLx/SQLite adapter.
+  It atomically persists selected query-ready telemetry observations,
+  materialization provenance, selector associations, diagnostics, versioned
+  checkpoints, and logical-source conflicts for asynchronous analysis.
+- Raw OTLP Inbox persists complete validated OTLP export requests as a bounded,
+  replayable work log without depending on its SQLx/SQLite adapter contract.
 - Hosting owns reusable strict HTTP, authentication, correlation, Problem
   Details, and health mechanics without domain routes.
 
@@ -33,8 +41,8 @@ dual registrations, migration readers, or compatibility fixtures.
 Contract Store and Executable Store use direct
 `Microsoft.Data.Sqlite` dependencies and store-owned SQL. They share one
 configured local database but no custom storage-infrastructure package.
-
-Future OTel Ingestion, Evidence Store, and Async Analysis Pipeline modules
-require a separately accepted design.
+Raw OTLP Inbox and Evidence Store use direct SQLx/SQLite adapters and own
+separate schema components in that database; neither exposes its tables as a
+cross-module contract.
 
 The `-service` suffix is reserved for executable projects under `apps`.

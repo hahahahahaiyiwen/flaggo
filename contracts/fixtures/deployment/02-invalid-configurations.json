@@ -1,0 +1,210 @@
+{
+  "name": "deployment-configuration-schema-negative-cases",
+  "invariant": "Obsolete manifests, unstable authority, unsafe service URLs, malformed bindings, and unknown members are rejected.",
+  "scenarios": [],
+  "sdkLocal": true,
+  "schemaNegative": true,
+  "request": {
+    "method": "GENERATE",
+    "path": "flaggo://deployment"
+  },
+  "expected": {},
+  "rejectedSamples": [
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "body": {
+        "format": "flaggo.deploy/v1",
+        "contracts": [
+          "flaggo/contracts/tetris.dropInterval.decision-contract.json"
+        ]
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "body": {
+        "format": "flaggo.deploy/v2",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "contracts": [
+          "flaggo/CON/tetris.dropInterval.decision-contract.json"
+        ]
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "body": {
+        "format": "flaggo.deploy/v2",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "contracts": [
+          "C:relative.decision-contract.json"
+        ]
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "body": {
+        "format": "flaggo.deploy/v2",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "contracts": [
+          "flaggo/contracts/bad\u0000name.decision-contract.json"
+        ]
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "body": {
+        "format": "flaggo.deploy/v2",
+        "authority": {
+          "tenant": "",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "contracts": [
+          "flaggo/contracts/tetris.dropInterval.decision-contract.json"
+        ]
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "body": {
+        "format": "flaggo.deploy/v2",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration",
+          "region": "west"
+        },
+        "contracts": [
+          "flaggo/contracts/tetris.dropInterval.decision-contract.json"
+        ]
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "body": {
+        "format": "flaggo.deploy/v2",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "contracts": [
+          "..\\outside.decision-contract.json"
+        ]
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "body": {
+        "format": "flaggo.runtime-config/v2",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "services": {
+          "contractServiceUrl": "http://127.0.0.1:5101",
+          "decisionServiceUrl": "http://127.0.0.1:5102",
+          "otlpIngestionUrl": "http://127.0.0.1:5103"
+        },
+        "bindings": {
+          "tetris.dropInterval": {
+            "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f"
+          }
+        }
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "body": {
+        "format": "flaggo.runtime-config/v1",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "services": {
+          "contractServiceUrl": "http://127.0.0.1:5101",
+          "decisionServiceUrl": "https://decisions.test?",
+          "otlpIngestionUrl": "http://127.0.0.1:65536"
+        },
+        "bindings": {
+          "tetris.dropInterval": {
+            "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f"
+          }
+        }
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "body": {
+        "format": "flaggo.runtime-config/v1",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "services": {
+          "contractServiceUrl": "http://user:secret@127.0.0.1:5101",
+          "decisionServiceUrl": "http://127.0.0.1:5102?scope=wrong",
+          "otlpIngestionUrl": "ftp://127.0.0.1:5103"
+        },
+        "bindings": {
+          "tetris.dropInterval": {
+            "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f"
+          }
+        }
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "body": {
+        "format": "flaggo.runtime-config/v1",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "services": {
+          "contractServiceUrl": "http://127.0.0.1:5101",
+          "decisionServiceUrl": "http://127.0.0.1:5102",
+          "otlpIngestionUrl": "http://127.0.0.1:5103"
+        },
+        "bindings": {}
+      }
+    },
+    {
+      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "body": {
+        "format": "flaggo.runtime-config/v1",
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
+        "services": {
+          "contractServiceUrl": "http://127.0.0.1:5101",
+          "decisionServiceUrl": "http://127.0.0.1:5102",
+          "otlpIngestionUrl": "http://127.0.0.1:5103"
+        },
+        "bindings": {
+          "tetris.dropInterval": {
+            "contractDigest": "not-a-digest",
+            "fallback": true
+          }
+        }
+      }
+    }
+  ]
+}

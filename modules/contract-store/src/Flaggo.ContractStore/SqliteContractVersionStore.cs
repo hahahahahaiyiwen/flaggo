@@ -8,7 +8,7 @@ namespace Flaggo.ContractStore;
 public sealed class SqliteContractVersionStore : IContractVersionStore
 {
     private const string ComponentName = "contract-store";
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly string _connectionString;
     private readonly IExpressionCanonicalizer? _expressionCanonicalizer;
 
@@ -24,30 +24,60 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await using (var versionTable = connection.CreateCommand())
+        {
+            versionTable.CommandText =
             """
             CREATE TABLE IF NOT EXISTS flaggo_schema_versions (
                 component TEXT PRIMARY KEY,
                 version INTEGER NOT NULL
             );
+            """;
+            await versionTable.ExecuteNonQueryAsync(cancellationToken);
+        }
 
+        await using (var readVersion = connection.CreateCommand())
+        {
+            readVersion.CommandText =
+                "SELECT version FROM flaggo_schema_versions WHERE component = $component;";
+            readVersion.Parameters.AddWithValue("$component", ComponentName);
+            var storedVersion = await readVersion.ExecuteScalarAsync(cancellationToken);
+            if (storedVersion is not null
+                && Convert.ToInt32(storedVersion, CultureInfo.InvariantCulture) != SchemaVersion)
+            {
+                throw new InvalidOperationException(
+                    $"Unsupported {ComponentName} schema version {storedVersion}; "
+                    + $"expected {SchemaVersion}.");
+            }
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
             INSERT INTO flaggo_schema_versions(component, version)
             VALUES ($component, $version)
             ON CONFLICT(component) DO NOTHING;
 
             CREATE TABLE IF NOT EXISTS decision_contract_versions (
+                tenant TEXT NOT NULL,
                 application TEXT NOT NULL,
                 environment TEXT NOT NULL,
                 contract_name TEXT NOT NULL,
                 contract_digest TEXT NOT NULL,
                 accepted_at TEXT NOT NULL,
                 contract_json BLOB NOT NULL,
-                PRIMARY KEY(application, environment, contract_name, contract_digest)
+                PRIMARY KEY(
+                    tenant,
+                    application,
+                    environment,
+                    contract_name,
+                    contract_digest
+                )
             );
 
             CREATE INDEX IF NOT EXISTS ix_contract_versions_history
             ON decision_contract_versions(
+                tenant,
                 application,
                 environment,
                 contract_name,
@@ -56,13 +86,21 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             );
 
             CREATE TABLE IF NOT EXISTS decision_contract_current (
+                tenant TEXT NOT NULL,
                 application TEXT NOT NULL,
                 environment TEXT NOT NULL,
                 contract_name TEXT NOT NULL,
                 contract_digest TEXT NOT NULL,
-                PRIMARY KEY(application, environment, contract_name),
-                FOREIGN KEY(application, environment, contract_name, contract_digest)
+                PRIMARY KEY(tenant, application, environment, contract_name),
+                FOREIGN KEY(
+                    tenant,
+                    application,
+                    environment,
+                    contract_name,
+                    contract_digest
+                )
                     REFERENCES decision_contract_versions(
+                        tenant,
                         application,
                         environment,
                         contract_name,
@@ -73,19 +111,6 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
         command.Parameters.AddWithValue("$component", ComponentName);
         command.Parameters.AddWithValue("$version", SchemaVersion);
         await command.ExecuteNonQueryAsync(cancellationToken);
-
-        await using var versionCommand = connection.CreateCommand();
-        versionCommand.CommandText =
-            "SELECT version FROM flaggo_schema_versions WHERE component = $component;";
-        versionCommand.Parameters.AddWithValue("$component", ComponentName);
-        var version = Convert.ToInt32(
-            await versionCommand.ExecuteScalarAsync(cancellationToken),
-            CultureInfo.InvariantCulture);
-        if (version != SchemaVersion)
-        {
-            throw new InvalidOperationException(
-                $"Unsupported {ComponentName} schema version {version}; expected {SchemaVersion}.");
-        }
     }
 
     public async Task<ContractStoreWriteResult> PutAsync(
@@ -98,6 +123,7 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
         command.CommandText =
             """
             INSERT INTO decision_contract_versions(
+                tenant,
                 application,
                 environment,
                 contract_name,
@@ -106,6 +132,7 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
                 contract_json
             )
             VALUES (
+                $tenant,
                 $application,
                 $environment,
                 $contractName,
@@ -113,7 +140,13 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
                 $acceptedAt,
                 $contractJson
             )
-            ON CONFLICT(application, environment, contract_name, contract_digest)
+            ON CONFLICT(
+                tenant,
+                application,
+                environment,
+                contract_name,
+                contract_digest
+            )
             DO NOTHING;
             """;
         AddScope(command, version.Scope);
@@ -127,7 +160,7 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
     }
 
     public async Task<AcceptedContractVersion?> GetAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default)
@@ -139,7 +172,8 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             """
             SELECT accepted_at, contract_json
             FROM decision_contract_versions
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND contract_name = $contractName
               AND contract_digest = $contractDigest;
@@ -154,7 +188,7 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
     }
 
     public async Task<AcceptedContractVersion?> GetCurrentAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         CancellationToken cancellationToken = default)
     {
@@ -166,11 +200,13 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             SELECT versions.contract_digest, versions.accepted_at, versions.contract_json
             FROM decision_contract_current AS current
             JOIN decision_contract_versions AS versions
-              ON versions.application = current.application
+              ON versions.tenant = current.tenant
+             AND versions.application = current.application
              AND versions.environment = current.environment
              AND versions.contract_name = current.contract_name
              AND versions.contract_digest = current.contract_digest
-            WHERE current.application = $application
+            WHERE current.tenant = $tenant
+              AND current.application = $application
               AND current.environment = $environment
               AND current.contract_name = $contractName;
             """;
@@ -187,8 +223,95 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             : null;
     }
 
+    public async Task<IReadOnlyList<AcceptedContractVersion>> ListCurrentAsync(
+        AuthorityScope scope,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateScope(scope);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT versions.contract_name,
+                   versions.contract_digest,
+                   versions.accepted_at,
+                   versions.contract_json
+            FROM decision_contract_current AS current
+            JOIN decision_contract_versions AS versions
+              ON versions.tenant = current.tenant
+             AND versions.application = current.application
+             AND versions.environment = current.environment
+             AND versions.contract_name = current.contract_name
+             AND versions.contract_digest = current.contract_digest
+            WHERE current.tenant = $tenant
+              AND current.application = $application
+              AND current.environment = $environment
+            ORDER BY versions.contract_name ASC, versions.contract_digest ASC;
+            """;
+        AddScope(command, scope);
+        var versions = new List<AcceptedContractVersion>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            versions.Add(ReadVersion(
+                reader,
+                scope,
+                reader.GetString(0),
+                reader.GetString(1),
+                digestColumnOffset: 2));
+        }
+
+        return versions;
+    }
+
+    public async Task<IReadOnlyList<AcceptedContractVersion>> ListAllCurrentAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT versions.tenant,
+                   versions.application,
+                   versions.environment,
+                   versions.contract_name,
+                   versions.contract_digest,
+                   versions.accepted_at,
+                   versions.contract_json
+            FROM decision_contract_current AS current
+            JOIN decision_contract_versions AS versions
+              ON versions.tenant = current.tenant
+             AND versions.application = current.application
+             AND versions.environment = current.environment
+             AND versions.contract_name = current.contract_name
+             AND versions.contract_digest = current.contract_digest
+            ORDER BY versions.tenant ASC,
+                     versions.application ASC,
+                     versions.environment ASC,
+                     versions.contract_name ASC,
+                     versions.contract_digest ASC;
+            """;
+        var versions = new List<AcceptedContractVersion>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var scope = new AuthorityScope(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2));
+            versions.Add(ReadVersion(
+                reader,
+                scope,
+                reader.GetString(3),
+                reader.GetString(4),
+                digestColumnOffset: 5));
+        }
+
+        return versions;
+    }
+
     public async Task<ContractVersionPage> ListAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         int pageSize,
         string? cursor,
@@ -208,7 +331,8 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             """
             SELECT contract_digest, accepted_at, contract_json
             FROM decision_contract_versions
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND contract_name = $contractName
               AND (
@@ -253,7 +377,7 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
     }
 
     public async Task SetCurrentAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default)
@@ -267,7 +391,8 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             """
             SELECT 1
             FROM decision_contract_versions
-            WHERE application = $application
+            WHERE tenant = $tenant
+              AND application = $application
               AND environment = $environment
               AND contract_name = $contractName
               AND contract_digest = $contractDigest;
@@ -285,13 +410,20 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
         update.CommandText =
             """
             INSERT INTO decision_contract_current(
+                tenant,
                 application,
                 environment,
                 contract_name,
                 contract_digest
             )
-            VALUES ($application, $environment, $contractName, $contractDigest)
-            ON CONFLICT(application, environment, contract_name)
+            VALUES (
+                $tenant,
+                $application,
+                $environment,
+                $contractName,
+                $contractDigest
+            )
+            ON CONFLICT(tenant, application, environment, contract_name)
             DO UPDATE SET contract_digest = excluded.contract_digest;
             """;
         AddScope(update, scope);
@@ -314,7 +446,7 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             await ProbeTableAsync(
                 connection,
                 """
-                SELECT application, environment, contract_name, contract_digest,
+                SELECT tenant, application, environment, contract_name, contract_digest,
                        accepted_at, contract_json
                 FROM decision_contract_versions
                 LIMIT 0;
@@ -323,7 +455,7 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
             await ProbeTableAsync(
                 connection,
                 """
-                SELECT application, environment, contract_name, contract_digest
+                SELECT tenant, application, environment, contract_name, contract_digest
                 FROM decision_contract_current
                 LIMIT 0;
                 """,
@@ -372,6 +504,13 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
     private DecisionContract ValidateVersion(AcceptedContractVersion version)
     {
         ValidateScope(version.Scope);
+        if (version.Contract.Authority != version.Scope)
+        {
+            throw new ArgumentException(
+                "Contract authority must equal its store scope.",
+                nameof(version));
+        }
+
         if (!string.Equals(version.Contract.Name, version.Contract.Name.Trim(), StringComparison.Ordinal))
         {
             throw new ArgumentException("Contract name cannot contain surrounding whitespace.", nameof(version));
@@ -394,21 +533,23 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
                 _expressionCanonicalizer);
     }
 
-    private static void ValidateScope(DecisionScope scope)
+    private static void ValidateScope(AuthorityScope scope)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scope.Tenant);
         ArgumentException.ThrowIfNullOrWhiteSpace(scope.Application);
         ArgumentException.ThrowIfNullOrWhiteSpace(scope.Environment);
     }
 
-    private static void AddScope(SqliteCommand command, DecisionScope scope)
+    private static void AddScope(SqliteCommand command, AuthorityScope scope)
     {
+        command.Parameters.AddWithValue("$tenant", scope.Tenant);
         command.Parameters.AddWithValue("$application", scope.Application);
         command.Parameters.AddWithValue("$environment", scope.Environment);
     }
 
     private AcceptedContractVersion ReadVersion(
         SqliteDataReader reader,
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         int digestColumnOffset = 0)
@@ -424,6 +565,12 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
         {
             throw new InvalidDataException(
                 $"Stored contract name '{contract.Name}' does not match key '{contractName}'.");
+        }
+
+        if (contract.Authority != scope)
+        {
+            throw new InvalidDataException(
+                $"Stored contract authority '{contract.Authority}' does not match key '{scope}'.");
         }
 
         var computedDigest = ContractDigests.ComputeContractDigest(contract);

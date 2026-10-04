@@ -37,6 +37,15 @@ jobs:
       - run: npm test
       - run: npm run check:package
 
+  rust-services:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.99.0 --profile minimal --component clippy,rustfmt
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
   dotnet-services:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -84,6 +93,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - run: rustup toolchain install 1.99.0 --profile minimal
       - run: npm ci
       - run: dotnet restore Flaggo.slnx --configfile NuGet.config
       - run: npm run test:tetris-app
@@ -101,6 +111,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - run: rustup toolchain install 1.99.0 --profile minimal
       - run: npm ci
       - run: dotnet restore Flaggo.slnx --configfile NuGet.config
       - run: npm run test:adaptive-worker

@@ -1,27 +1,27 @@
 import { emitKeypressEvents, type Key } from "node:readline";
 
 import {
-  dropIntervalObservationWindowMs,
   dropIntervalRefreshIntervalMs,
-  LocalDropIntervalProvider,
-  localDropInterval,
-  RollingDropIntervalContext,
   type DropIntervalProvider,
   type DropIntervalSelection,
 } from "./drop-interval.js";
+import type { GameSnapshot } from "./game.js";
 import {
-  TetrisGame,
-  type GameSnapshot,
-  type GameUpdate,
-  type TetrisGameOptions,
-} from "./game.js";
+  TetrisSession,
+  type TetrisSessionCommand,
+  type TetrisSessionGameOptions,
+  type TetrisSessionInstrumentation,
+  type TetrisSessionState,
+  type TetrisSessionTransition,
+} from "./session.js";
 
 export interface TerminalTetrisOptions {
   readonly provider?: DropIntervalProvider;
   readonly signal?: AbortSignal;
   readonly input?: NodeJS.ReadStream;
   readonly output?: NodeJS.WriteStream;
-  readonly game?: TetrisGameOptions;
+  readonly game?: TetrisSessionGameOptions;
+  readonly instrumentation?: TetrisSessionInstrumentation;
   readonly now?: () => number;
   readonly policyRefreshIntervalMs?: number;
 }
@@ -29,34 +29,6 @@ export interface TerminalTetrisOptions {
 const clearScreen = "\u001b[2J\u001b[H";
 const hideCursor = "\u001b[?25l";
 const showCursor = "\u001b[?25h";
-
-function localSelection(currentLevel: number): DropIntervalSelection {
-  return {
-    intervalMs: localDropInterval(currentLevel),
-    source: "local",
-    status: "local gravity policy",
-  };
-}
-
-function updatedSelection(
-  current: DropIntervalSelection,
-  refreshed: DropIntervalSelection,
-): DropIntervalSelection {
-  if (
-    refreshed.source !== "local-fallback"
-    || (
-      current.source !== "flaggo"
-      && current.source !== "flaggo-cached"
-    )
-  ) {
-    return refreshed;
-  }
-  return {
-    intervalMs: current.intervalMs,
-    source: "flaggo-cached",
-    status: `retained after refresh failure: ${refreshed.status}`,
-  };
-}
 
 function statusLine(selection: DropIntervalSelection): string {
   const source = selection.source === "flaggo"
@@ -116,39 +88,32 @@ export async function runTerminalTetris(
   }
   options.signal?.throwIfAborted();
 
-  const provider = options.provider ?? new LocalDropIntervalProvider();
-  const now = options.now ?? Date.now;
   const policyRefreshIntervalMs = positiveDuration(
     options.policyRefreshIntervalMs,
     dropIntervalRefreshIntervalMs,
     "policy refresh interval",
   );
-  let game = new TetrisGame(options.game);
-  let observationWindow = new RollingDropIntervalContext(
-    game.snapshot().dropObservation,
-    now(),
-    dropIntervalObservationWindowMs,
-  );
-  let selection = localSelection(game.level);
+  const session = new TetrisSession({
+    ...(options.provider === undefined ? {} : { provider: options.provider }),
+    ...(options.game === undefined ? {} : { game: options.game }),
+    ...(options.instrumentation === undefined
+      ? {}
+      : { instrumentation: options.instrumentation }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
   let gravityTimer: ReturnType<typeof setTimeout> | undefined;
   let policyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let resolveStopped: (() => void) | undefined;
-  let policyGeneration = 0;
-  let policyRequestInFlight = false;
-  let refreshController: AbortController | undefined;
 
-  const render = (): void => {
-    output.write(renderTerminal(game.snapshot(), selection));
+  const render = (state: TetrisSessionState = session.snapshot()): void => {
+    output.write(renderTerminal(state, state.dropInterval));
   };
 
   const stopPolicyRefresh = (): void => {
-    policyGeneration += 1;
     if (policyTimer !== undefined) clearTimeout(policyTimer);
     policyTimer = undefined;
-    refreshController?.abort();
-    refreshController = undefined;
-    policyRequestInFlight = false;
+    session.cancelPolicyRefresh();
   };
 
   const stop = (): void => {
@@ -156,6 +121,7 @@ export async function runTerminalTetris(
     stopped = true;
     if (gravityTimer !== undefined) clearTimeout(gravityTimer);
     stopPolicyRefresh();
+    session.close();
     input.removeListener("keypress", onKeypress);
     options.signal?.removeEventListener("abort", stop);
     input.setRawMode?.(false);
@@ -166,77 +132,26 @@ export async function runTerminalTetris(
 
   const scheduleGravity = (): void => {
     if (gravityTimer !== undefined) clearTimeout(gravityTimer);
-    if (stopped || game.paused || game.gameOver) return;
+    const state = session.snapshot();
+    if (stopped || state.status !== "playing") return;
     gravityTimer = setTimeout(() => {
       gravityTimer = undefined;
-      const update = game.tick();
-      afterUpdate(update);
+      afterTransition(session.dispatch("gravity-tick"));
       scheduleGravity();
-    }, selection.intervalMs);
-  };
-
-  const applyRefreshedSelection = (
-    refreshed: DropIntervalSelection,
-  ): void => {
-    selection = updatedSelection(selection, refreshed);
-    render();
+    }, state.dropInterval.intervalMs);
   };
 
   const refreshPolicy = (): void => {
-    if (
-      stopped
-      || game.paused
-      || game.gameOver
-      || policyRequestInFlight
-    ) {
-      return;
-    }
-    policyRequestInFlight = true;
-    const generation = policyGeneration;
-    const controller = new AbortController();
-    refreshController = controller;
-    const signal = options.signal === undefined
-      ? controller.signal
-      : AbortSignal.any([options.signal, controller.signal]);
-    const context = observationWindow.snapshot(
-      game.snapshot().dropObservation,
-      now(),
-    );
-    void provider.select(context, signal).then(
-      (refreshed) => {
-        if (
-          stopped
-          || signal.aborted
-          || generation !== policyGeneration
-        ) {
-          return;
-        }
-        applyRefreshedSelection(refreshed);
-      },
-      (error: unknown) => {
-        if (
-          stopped
-          || signal.aborted
-          || generation !== policyGeneration
-        ) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        applyRefreshedSelection({
-          intervalMs: localDropInterval(game.level),
-          source: "local-fallback",
-          status: `provider error: ${message}`,
-        });
-      },
-    ).finally(() => {
-      if (generation !== policyGeneration) return;
-      policyRequestInFlight = false;
-      refreshController = undefined;
+    const state = session.snapshot();
+    if (stopped || state.status !== "playing") return;
+    void session.refreshPolicy(options.signal).then((transition) => {
+      if (!stopped && transition.changed) render(transition.state);
     });
   };
 
   const schedulePolicyRefresh = (): void => {
-    if (stopped || game.paused || game.gameOver) return;
+    const state = session.snapshot();
+    if (stopped || state.status !== "playing") return;
     policyTimer = setTimeout(() => {
       policyTimer = undefined;
       refreshPolicy();
@@ -246,50 +161,34 @@ export async function runTerminalTetris(
 
   const startPolicyRefresh = (): void => {
     stopPolicyRefresh();
-    if (stopped || game.paused || game.gameOver) return;
+    if (stopped || session.snapshot().status !== "playing") return;
     refreshPolicy();
     schedulePolicyRefresh();
   };
 
-  const resetObservationWindow = (): void => {
-    observationWindow = new RollingDropIntervalContext(
-      game.snapshot().dropObservation,
-      now(),
-      dropIntervalObservationWindowMs,
-    );
-  };
-
-  const afterUpdate = (update: GameUpdate): void => {
-    const snapshot = game.snapshot();
-    observationWindow.record(
-      snapshot.dropObservation,
-      now(),
-      update.locked,
-    );
-    if (
-      update.locked
-      && (
-        selection.source === "local"
-        || selection.source === "local-fallback"
-      )
-    ) {
-      selection = {
-        ...selection,
-        intervalMs: localDropInterval(snapshot.level),
-      };
-    }
-    if (update.gameOver) stopPolicyRefresh();
-    if (update.changed) render();
+  const afterTransition = (transition: TetrisSessionTransition): void => {
+    if (transition.state.gameOver) stopPolicyRefresh();
+    if (transition.changed) render(transition.state);
   };
 
   const restart = (): void => {
     stopPolicyRefresh();
-    game = new TetrisGame(options.game);
-    selection = localSelection(game.level);
-    resetObservationWindow();
-    render();
+    const transition = session.dispatch("restart");
+    render(transition.state);
     scheduleGravity();
     startPolicyRefresh();
+  };
+
+  const togglePaused = (): void => {
+    const command = session.snapshot().paused ? "resume" : "pause";
+    const transition = session.dispatch(command);
+    if (transition.state.paused) {
+      stopPolicyRefresh();
+    } else {
+      startPolicyRefresh();
+    }
+    render(transition.state);
+    scheduleGravity();
   };
 
   const onKeypress = (_text: string, key: Key): void => {
@@ -306,43 +205,15 @@ export async function runTerminalTetris(
       return;
     }
     if (key.name === "p") {
-      game.setPaused(!game.paused);
-      if (game.paused) {
-        stopPolicyRefresh();
-      } else {
-        resetObservationWindow();
-        startPolicyRefresh();
-      }
-      render();
-      scheduleGravity();
+      togglePaused();
       return;
     }
-    if (game.paused || game.gameOver) return;
 
-    let update: GameUpdate | undefined;
-    switch (key.name) {
-      case "left":
-      case "a":
-        update = game.moveLeft();
-        break;
-      case "right":
-      case "d":
-        update = game.moveRight();
-        break;
-      case "up":
-      case "w":
-        update = game.rotateClockwise();
-        break;
-      case "down":
-      case "s":
-        update = game.softDrop();
-        break;
-      case "space":
-        update = game.hardDrop();
-        break;
-    }
-    if (update !== undefined) {
-      afterUpdate(update);
+    const state = session.snapshot();
+    if (state.status !== "playing") return;
+    const command = gameCommand(key);
+    if (command !== undefined) {
+      afterTransition(session.dispatch(command));
       scheduleGravity();
     }
   };
@@ -361,6 +232,27 @@ export async function runTerminalTetris(
     resolveStopped = resolve;
     if (stopped) resolve();
   });
+}
+
+function gameCommand(key: Key): TetrisSessionCommand | undefined {
+  switch (key.name) {
+    case "left":
+    case "a":
+      return "move-left";
+    case "right":
+    case "d":
+      return "move-right";
+    case "up":
+    case "w":
+      return "rotate-clockwise";
+    case "down":
+    case "s":
+      return "soft-drop";
+    case "space":
+      return "hard-drop";
+    default:
+      return undefined;
+  }
 }
 
 function positiveDuration(

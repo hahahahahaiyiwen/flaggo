@@ -11,25 +11,32 @@ public interface IContractVersionStore
         CancellationToken cancellationToken = default);
 
     Task<AcceptedContractVersion?> GetAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default);
 
     Task<AcceptedContractVersion?> GetCurrentAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<AcceptedContractVersion>> ListCurrentAsync(
+        AuthorityScope scope,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<AcceptedContractVersion>> ListAllCurrentAsync(
+        CancellationToken cancellationToken = default);
+
     Task<ContractVersionPage> ListAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         int pageSize,
         string? cursor,
         CancellationToken cancellationToken = default);
 
     Task SetCurrentAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default);
@@ -38,7 +45,7 @@ public interface IContractVersionStore
 }
 
 public sealed record AcceptedContractVersion(
-    DecisionScope Scope,
+    AuthorityScope Scope,
     string ContractDigest,
     DateTimeOffset AcceptedAt,
     DecisionContract Contract);
@@ -54,7 +61,7 @@ public enum ContractStoreWriteResult
 }
 
 public sealed class ContractVersionNotFoundException(
-    DecisionScope scope,
+    AuthorityScope scope,
     string contractName,
     string contractDigest)
     : Exception(

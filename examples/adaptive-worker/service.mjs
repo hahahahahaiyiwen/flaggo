@@ -7,8 +7,10 @@ import {
   createHostLifecycle,
   installSignalHandlers,
   runWithCleanup,
+  sqliteDatabaseUrl,
   startContractAndDecisionHosts,
   startHost,
+  startRustHost,
   waitForReady,
 } from "../tetris-integration/host-process.mjs";
 import { waitForServiceShutdown } from "./service-health.mjs";
@@ -20,16 +22,16 @@ const deploymentManifestPath = resolve(exampleDirectory, "flaggo.deploy.json");
 export async function startAdaptiveWorkerService({
   lifecycle,
   runDirectory,
-  writeConnection = true,
+  writeRuntimeConfig = true,
 }) {
   await mkdir(runDirectory, { recursive: true });
   lifecycle.signal.throwIfAborted();
   const paths = {
     database: resolve(runDirectory, "flaggo.db"),
-    telemetry: resolve(runDirectory, "telemetry.jsonl"),
-    connection: resolve(runDirectory, "service.json"),
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
+    otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
+    runtimeConfig: resolve(runDirectory, "flaggo.runtime.json"),
   };
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
@@ -40,6 +42,7 @@ export async function startAdaptiveWorkerService({
     });
   const commonConfiguration = {
     ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
+    Flaggo__Authentication__Tenant: "local",
     Flaggo__Authentication__Application: "adaptive-worker",
     Flaggo__Authentication__Environment: "development",
   };
@@ -78,9 +81,32 @@ export async function startAdaptiveWorkerService({
         signal,
       ),
   });
+  const otelIngestion = lifecycle.startHost(() => startRustHost(
+    "adaptive-worker-otel-ingestion",
+    "flaggo-otel-ingestion",
+    paths.otelIngestionLog,
+    repositoryRoot,
+    {
+      FLAGGO_DATABASE_URL: sqliteDatabaseUrl(paths.database),
+    },
+  ));
+  const otelIngestionUrl = await otelIngestion.waitForListening({
+    signal: lifecycle.signal,
+  });
+  lifecycle.assertHealthy();
+  await waitForReady(
+    (probeSignal) => ready(otelIngestionUrl, fetchWithAbort, probeSignal),
+    otelIngestion,
+    lifecycle.signal,
+  );
+  lifecycle.assertHealthy();
   const deployedContracts = await deployContracts({
     manifestPath: deploymentManifestPath,
-    baseUrl: hosts.contractUrl,
+    services: {
+      contractServiceUrl: hosts.contractUrl,
+      decisionServiceUrl: hosts.decisionUrl,
+      otlpIngestionUrl: otelIngestionUrl,
+    },
     credential: { mode: "local-development" },
     fetch: fetchWithAbort,
     signal: lifecycle.signal,
@@ -92,26 +118,19 @@ export async function startAdaptiveWorkerService({
     );
   }
   const deployment = deployed.deployment;
-  const connection = {
-    contractServiceUrl: hosts.contractUrl,
-    decisionServiceUrl: hosts.decisionUrl,
-    bindings: {
-      [deployment.name]: {
-        contractDigest: deployment.contractDigest,
-      },
-    },
-    telemetryPath: paths.telemetry,
-  };
-  if (writeConnection) {
+  const runtimeConfig = deployedContracts.runtimeConfig;
+  if (writeRuntimeConfig) {
     await writeFile(
-      paths.connection,
-      `${JSON.stringify(connection, null, 2)}\n`,
+      paths.runtimeConfig,
+      `${JSON.stringify(runtimeConfig, null, 2)}\n`,
       "utf8",
     );
   }
   return {
     ...hosts,
-    connection,
+    otelIngestion,
+    otelIngestionUrl,
+    runtimeConfig,
     contract: deployed.contract,
     deployment,
     paths,
@@ -140,9 +159,9 @@ async function runService(lifecycle, runDirectory) {
     status: "ready",
     contractServiceUrl: service.contractUrl,
     decisionServiceUrl: service.decisionUrl,
+    otelIngestionUrl: service.otelIngestionUrl,
     contractDigest: service.deployment.contractDigest,
-    connectionPath: service.paths.connection,
-    telemetryPath: service.paths.telemetry,
+    runtimeConfigPath: service.paths.runtimeConfig,
   }, null, 2)}\n`);
   await waitForServiceShutdown(lifecycle);
 }

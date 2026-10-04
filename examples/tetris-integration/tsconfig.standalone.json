@@ -12,6 +12,7 @@
     "src/drop-interval.ts",
     "src/game.ts",
     "src/main.ts",
+    "src/session.ts",
     "src/terminal.ts"
   ],
   "exclude": [

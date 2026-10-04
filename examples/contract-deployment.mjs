@@ -8,22 +8,29 @@ import {
   sep,
 } from "node:path";
 
-import { createContractClient } from "@flaggo/sdk/management";
-
-const deploymentFormat = "flaggo.deploy/v1";
-const maximumContracts = 128;
+import {
+  parseFlaggoDeploymentManifest,
+  parseFlaggoRuntimeConfiguration,
+  parseFlaggoServiceEndpoints,
+} from "@flaggo/sdk/configuration";
+import {
+  bindDecisionContract,
+  createContractClient,
+} from "@flaggo/sdk/management";
 
 export async function deployContracts({
   manifestPath,
-  baseUrl,
+  services,
   credential,
   fetch,
   signal,
 }) {
   const absoluteManifestPath = resolve(manifestPath);
   const manifestDirectory = dirname(absoluteManifestPath);
-  const manifest = await readJson(absoluteManifestPath, signal);
-  validateManifest(manifest, absoluteManifestPath);
+  const manifest = parseFlaggoDeploymentManifest(
+    await readJson(absoluteManifestPath, signal),
+  );
+  const serviceUrls = parseFlaggoServiceEndpoints(services);
 
   const paths = new Set();
   const names = new Set();
@@ -63,65 +70,43 @@ export async function deployContracts({
   }
 
   const client = createContractClient({
-    baseUrl,
+    baseUrl: serviceUrls.contractServiceUrl,
     ...(credential === undefined ? {} : { credential }),
     ...(fetch === undefined ? {} : { fetch }),
   });
   const contracts = [];
   for (const source of sources) {
-    const response = await client.deploy(
+    const contract = bindDecisionContract(
       source.contract,
+      manifest.authority,
+    );
+    const response = await client.deploy(
+      contract,
       signal === undefined ? {} : { signal },
     );
     contracts.push({
       ...source,
+      contract,
       deployment: response.value,
     });
   }
 
-  return {
-    format: deploymentFormat,
-    contracts,
-  };
-}
+  const bindings = Object.fromEntries(contracts.map(({ deployment }) => [
+    deployment.name,
+    { contractDigest: deployment.contractDigest },
+  ]));
+  const runtimeConfig = parseFlaggoRuntimeConfiguration({
+    format: "flaggo.runtime-config/v1",
+    authority: manifest.authority,
+    services: serviceUrls,
+    bindings,
+  });
 
-function validateManifest(manifest, manifestPath) {
-  if (
-    manifest === null
-    || typeof manifest !== "object"
-    || Array.isArray(manifest)
-  ) {
-    throw new Error(`Flaggo deployment manifest '${manifestPath}' must be an object.`);
-  }
-  const keys = Object.keys(manifest);
-  if (
-    keys.length !== 2
-    || !keys.includes("format")
-    || !keys.includes("contracts")
-  ) {
-    throw new Error(
-      `Flaggo deployment manifest '${manifestPath}' must contain only `
-      + "'format' and 'contracts'.",
-    );
-  }
-  if (manifest.format !== deploymentFormat) {
-    throw new Error(
-      `Flaggo deployment manifest '${manifestPath}' must use `
-      + `format '${deploymentFormat}'.`,
-    );
-  }
-  if (
-    !Array.isArray(manifest.contracts)
-    || manifest.contracts.length === 0
-    || manifest.contracts.length > maximumContracts
-    || manifest.contracts.some((entry) =>
-      typeof entry !== "string" || entry.length === 0)
-  ) {
-    throw new Error(
-      `Flaggo deployment manifest '${manifestPath}' must contain 1-`
-      + `${maximumContracts} non-empty contract paths.`,
-    );
-  }
+  return {
+    manifest,
+    contracts,
+    runtimeConfig,
+  };
 }
 
 function resolveContractPath(manifestDirectory, contractReference) {

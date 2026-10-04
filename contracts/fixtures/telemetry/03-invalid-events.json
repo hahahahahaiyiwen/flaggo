@@ -1,0 +1,111 @@
+{
+  "name": "telemetry-event-schema-negative-cases",
+  "scenarios": [],
+  "invariant": "Flaggo events reject missing identities, inconsistent evaluation provenance, unknown attributes, and malformed values.",
+  "sdkLocal": true,
+  "schemaNegative": true,
+  "request": {
+    "method": "EMIT",
+    "path": "otel://logs",
+    "headers": {}
+  },
+  "expected": {
+    "status": 0,
+    "headers": {},
+    "note": "Schema-negative semantic event fixture; not an HTTP exchange."
+  },
+  "rejectedSamples": [
+    {
+      "why": "decision events require the exact executable digest",
+      "schemaRef": "telemetry-events-v1.schema.json#/$defs/DecisionReceivedEvent",
+      "body": {
+        "eventName": "flaggo.decision.received",
+        "timeUnixNano": "1790802000000000000",
+        "attributes": {
+          "flaggo.signal": "decision.received",
+          "flaggo.decision.id": "018f5f9e-768f-4f86-8f79-79f83285c95f",
+          "flaggo.contract.name": "tetris.dropInterval",
+          "flaggo.contract.digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "flaggo.result.json": "4",
+          "flaggo.result.hash": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+          "flaggo.evaluation.source": "default"
+        }
+      }
+    },
+    {
+      "why": "default evaluation cannot identify a rule",
+      "schemaRef": "telemetry-events-v1.schema.json#/$defs/DecisionReceivedEvent",
+      "body": {
+        "eventName": "flaggo.decision.received",
+        "timeUnixNano": "1790802000000000000",
+        "attributes": {
+          "flaggo.signal": "decision.received",
+          "flaggo.decision.id": "018f5f9e-768f-4f86-8f79-79f83285c95f",
+          "flaggo.contract.name": "tetris.dropInterval",
+          "flaggo.contract.digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "flaggo.executable.digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "flaggo.result.json": "4",
+          "flaggo.result.hash": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+          "flaggo.evaluation.source": "default",
+          "flaggo.evaluation.rule": "impossible"
+        }
+      }
+    },
+    {
+      "why": "rule evaluation requires a rule name",
+      "schemaRef": "telemetry-events-v1.schema.json#/$defs/DecisionReceivedEvent",
+      "body": {
+        "eventName": "flaggo.decision.received",
+        "timeUnixNano": "1790802000000000000",
+        "attributes": {
+          "flaggo.signal": "decision.received",
+          "flaggo.decision.id": "018f5f9e-768f-4f86-8f79-79f83285c95f",
+          "flaggo.contract.name": "tetris.dropInterval",
+          "flaggo.contract.digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "flaggo.executable.digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "flaggo.result.json": "4",
+          "flaggo.result.hash": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+          "flaggo.evaluation.source": "rule"
+        }
+      }
+    }
+  ],
+  "semanticRejectedSamples": [
+    {
+      "why": "decision result JSON must be strict JSON",
+      "schemaRef": "telemetry-events-v1.schema.json#/$defs/DecisionReceivedEvent",
+      "body": {
+        "eventName": "flaggo.decision.received",
+        "timeUnixNano": "1790802000000000000",
+        "attributes": {
+          "flaggo.signal": "decision.received",
+          "flaggo.decision.id": "018f5f9e-768f-4f86-8f79-79f83285c95f",
+          "flaggo.contract.name": "tetris.dropInterval",
+          "flaggo.contract.digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "flaggo.executable.digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "flaggo.result.json": "{\"invalid\":NaN}",
+          "flaggo.result.hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "flaggo.evaluation.source": "default"
+        }
+      }
+    },
+    {
+      "why": "decision result hash must cover the exact serialized JSON bytes",
+      "schemaRef": "telemetry-events-v1.schema.json#/$defs/DecisionReceivedEvent",
+      "body": {
+        "eventName": "flaggo.decision.received",
+        "timeUnixNano": "1790802000000000000",
+        "attributes": {
+          "flaggo.signal": "decision.received",
+          "flaggo.decision.id": "018f5f9e-768f-4f86-8f79-79f83285c95f",
+          "flaggo.contract.name": "tetris.dropInterval",
+          "flaggo.contract.digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "flaggo.executable.digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "flaggo.result.json": "4",
+          "flaggo.result.hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "flaggo.evaluation.source": "default"
+        }
+      }
+    }
+  ]
+}

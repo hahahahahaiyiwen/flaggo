@@ -38,7 +38,7 @@ The v3 management and runtime contracts are implemented by Contract Service,
 Decision Service, their shared modules, and the TypeScript SDK. Management
 addresses a logical decision by name and immutable versions by
 `contractDigest`. Runtime requests one exact name/digest pair and resolves the
-executable active for that digest in the authenticated application/environment
+executable active for that digest in the authenticated tenant/application/environment
 scope.
 
 The pre-v3 implementation has been removed. Evidence ingestion and
@@ -62,6 +62,6 @@ roadmap and status source. This page is orientation, not a second roadmap.
 | How does exact-version stateless evaluation work? | [Runtime evaluation model](design/contracts/RUNTIME_EVALUATION.md) |
 | What are the executable wire contracts? | [`contracts/`](../contracts/README.md) |
 
-OpenAPI documents, JSON Schemas, fixtures, and conformance tests are
-authoritative for v3 wire behavior. Architecture documents define ownership
-and invariants.
+OpenAPI documents, JSON Schemas, OTel profiles, fixtures, and conformance tests
+are authoritative for supported wire and telemetry behavior. Architecture
+documents define ownership and invariants.

@@ -2,8 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
+  sqliteDatabaseUrl,
   startContractAndDecisionHosts,
   startHost,
+  startRustHost,
   waitForReady,
 } from "./host-process.mjs";
 
@@ -18,12 +20,16 @@ export async function startLocalFlaggoHosts({
     database: resolve(runDirectory, "flaggo.db"),
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
+    evidenceMaterializerLog: resolve(runDirectory, "evidence-materializer.log"),
+    otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
   };
   const commonConfiguration = {
     ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
+    Flaggo__Authentication__Tenant: "local",
     Flaggo__Authentication__Application: "tetris",
     Flaggo__Authentication__Environment: "integration",
   };
+  const databaseUrl = sqliteDatabaseUrl(paths.database);
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
@@ -67,10 +73,56 @@ export async function startLocalFlaggoHosts({
         signal,
       ),
   });
+  const otelIngestion = lifecycle.startHost(() => startRustHost(
+    "tetris-otel-ingestion",
+    "flaggo-otel-ingestion",
+    paths.otelIngestionLog,
+    repositoryRoot,
+    {
+      FLAGGO_DATABASE_URL: databaseUrl,
+    },
+  ));
+  const otelIngestionUrl = await otelIngestion.waitForListening({
+    signal: lifecycle.signal,
+  });
+  lifecycle.assertHealthy();
+  await waitForReady(
+    (probeSignal) => ready(otelIngestionUrl, fetchWithAbort, probeSignal),
+    otelIngestion,
+    lifecycle.signal,
+  );
+  lifecycle.assertHealthy();
+
+  async function startEvidenceMaterializer() {
+    const host = lifecycle.startHost(() => startRustHost(
+      "tetris-evidence-materializer",
+      "flaggo-evidence-materializer",
+      paths.evidenceMaterializerLog,
+      repositoryRoot,
+      {
+        FLAGGO_CONTRACT_CATALOG_URL:
+          `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
+        FLAGGO_DATABASE_URL: databaseUrl,
+        FLAGGO_MATERIALIZER_CATALOG_INTERVAL_SECONDS: "1",
+        FLAGGO_MATERIALIZER_POLL_INTERVAL_MS: "25",
+      },
+      { reportsListeningUrl: false },
+    ));
+    const startup = await host.waitForStructuredLog(
+      (entry) => entry.event === "materializer.started",
+      { signal: lifecycle.signal },
+    );
+    lifecycle.assertHealthy();
+    return { host, startup };
+  }
 
   return {
     ...hosts,
+    databaseUrl,
     fetch: fetchWithAbort,
+    otelIngestion,
+    otelIngestionUrl,
+    startEvidenceMaterializer,
   };
 }
 

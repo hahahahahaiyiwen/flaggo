@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  bindDecisionContract,
   createContractClient,
   FlaggoHttpError,
   InvalidFlaggoInputError,
@@ -13,7 +14,7 @@ const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 const executableDigest =
   "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-const contract = {
+const contractDefinition = {
   name: "worker.batchSize",
   expression_syntax: "flaggo.cel/v1",
   attributes: [
@@ -26,7 +27,12 @@ const contract = {
     schema: { type: "integer", minimum: 1, maximum: 10 },
     default: 3,
   },
-} as const satisfies DecisionContract<number>;
+} as const;
+const contract = bindDecisionContract(contractDefinition, {
+  tenant: "local",
+  application: "worker",
+  environment: "test",
+}) satisfies DecisionContract<number>;
 
 const version = {
   name: contract.name,
@@ -192,6 +198,8 @@ describe("v3 Contract Service client", () => {
       ...contract,
       attributes: [{ name: "_reserved", schema: { type: "number" } }],
     } as never)).rejects.toBeInstanceOf(InvalidFlaggoInputError);
+    await expect(client.deploy(contractDefinition as never))
+      .rejects.toBeInstanceOf(InvalidFlaggoInputError);
     expect(fetch).not.toHaveBeenCalled();
   });
 

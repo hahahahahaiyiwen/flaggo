@@ -1,19 +1,19 @@
 # Executable Contracts
 
-This directory is the executable projection of the current service-owned API
-designs: [Contract Service](../docs/design/architecture/CONTRACT_SERVICE.md)
-and [Decision Service](../docs/design/architecture/RUNTIME.md). Evidence
-ingestion remains a future design and has no executable Phase 3 API. The
-OpenAPI documents and JSON Schemas are the authority for current wire behavior.
-Their conformance gate must remain green for every change.
+This directory is the executable projection of the service-owned APIs and
+telemetry contracts. The OpenAPI documents and JSON Schemas are the authority
+for Flaggo-owned wire and event behavior. The OTLP profile selects required
+capabilities from the upstream OpenTelemetry Protocol without redefining its
+payload messages. The conformance gate must remain green for every change.
 
 ## Layout
 
 ```text
 contracts/
   openapi/       Runtime and management OpenAPI 3.1 documents
-  schemas/       Draft 2020-12 JSON Schemas
+  schemas/       Draft 2020-12 API, deployment, and runtime-config schemas
   fixtures/      Golden HTTP, SDK-local, and schema-negative cases
+  otel/          Flaggo telemetry schema and OTLP/HTTP capability profile
   conformance/   Fixture manifest and offline validation
   mock/          Fixture-backed development server
 ```
@@ -21,16 +21,51 @@ contracts/
 The fixture manifest indexes the current conformance scenarios. SDK and service
 implementations use these artifacts as the shared wire authority.
 
+## Deployment and runtime configuration
+
+[`deployment-models-v2.schema.json`](schemas/deployment-models-v2.schema.json)
+defines the authored `flaggo.deploy/v2` manifest and generated
+`flaggo.runtime-config/v1` application configuration.
+
+One deployment manifest declares:
+
+- exactly one `AuthorityScope` containing `tenant`, `application`, and
+  `environment`;
+- one or more portable ASCII, forward-slash relative DecisionContract paths;
+  and
+- no per-contract authority overrides.
+
+Deployment tooling injects the manifest authority into every authored
+DecisionContract before validation and deployment. The complete scoped
+DecisionContract is canonicalized, digested, and persisted as one immutable
+version. The resulting runtime configuration contains that same authority, the
+Contract Service, Decision Service, and OTLP Ingestion base URLs, and a
+contract-name-to-digest binding map. Applications and SDK OpenTelemetry
+integrations consume this generated configuration rather than maintaining
+duplicate authority, endpoint, or binding settings.
+Service URLs are bounded absolute HTTP(S) base URLs with an optional usable
+port and no credentials, query, or fragment. Deployment tooling validates all
+three endpoints before sending the first contract mutation.
+
+Changing manifest authority creates a different scoped deployment and a
+different `contractDigest`, even when the authored decision logic is identical.
+One digest therefore resolves to exactly one authority and one immutable
+DecisionContract. The declared authority is a Phase 4 routing boundary, not
+authenticated security authority.
+
 The current management contract is
 [`flaggo-management-v3.yaml`](openapi/flaggo-management-v3.yaml). A decision
 name identifies a versioned `DecisionContract` resource, while
 `contractDigest` identifies one immutable accepted version. The API exposes
 dry-run validation, idempotent create-or-update by name, current-version lookup,
-and cursor-paginated historical-version lookup. A newly created version is
-returned only after its generated default executable is active. The API has no
-bundle, numeric server revision, compatibility classification, or manual
-bundle-approval resource. Unauthenticated liveness and readiness probes use the
-shared health models from `runtime-models-v3.schema.json`.
+cursor-paginated historical-version lookup, and a cross-authority current
+contract catalog for Evidence Materializer. The catalog ETag is change
+detection metadata only; it is not persisted in evidence identity, provenance,
+or checkpoints. A newly created version is returned only after its generated
+default executable is active. The API has no bundle, numeric server revision,
+compatibility classification, or manual bundle-approval resource.
+Unauthenticated liveness and readiness probes use the shared health models from
+`runtime-models-v3.schema.json`.
 
 [`management-models-v3.schema.json`](schemas/management-models-v3.schema.json)
 contains the strict `DecisionContract`, `DecisionExecutable`, validation-result,
@@ -59,8 +94,41 @@ The route never resolves the named resource's current version. Every successful
 response identifies the exact contract and executable digests. The obsolete v2
 definition-bundle contract and its consumers have been removed.
 
-The Phase 3 runtime fixture surface is JSON-only. It covers runtime decisions
-and health; there are no executable Evidence or OTLP routes.
+## Telemetry contracts
+
+[`telemetry-events-v1.schema.json`](schemas/telemetry-events-v1.schema.json)
+defines the strict logical projection of Flaggo-owned OpenTelemetry log events.
+It currently covers the built-in `flaggo.decision.received` observation. The
+schema validates its event name, attributes, evaluation provenance, identities,
+and result representation without duplicating the surrounding OTLP envelope.
+Application evidence remains normal OpenTelemetry telemetry selected by each
+DecisionContract's required singular evidence source.
+
+The source for the immutable OpenTelemetry Schema File is
+[`flaggo-telemetry-schema-1.0.0.yaml`](otel/flaggo-telemetry-schema-1.0.0.yaml).
+Its reserved publication URL is:
+
+```text
+https://flaggo.dev/schemas/telemetry/1.0.0
+```
+
+The SDK must leave its instrumentation-scope `schemaUrl` unset until that URL
+is published and retrievable. Publishing the file and then enabling SDK
+emission are deployment work, not part of this contract-only change.
+
+[`flaggo-otlp-http-profile-v1.json`](otel/flaggo-otlp-http-profile-v1.json)
+selects the Phase 4 OTLP/HTTP surface: logs, metrics, and traces; Protobuf and
+Protobuf JSON encodings; identity and gzip compression; the 64 MiB decompressed
+request limit; full-request OTLP success after durable inbox enqueue; standard
+OTLP failure responses; and no Phase 4 ingestion authentication. Upstream
+`opentelemetry-proto` definitions remain the payload authority. Flaggo defines
+no custom OTLP request model or OTLP OpenAPI operation.
+
+The fixture surface contains logical event cases plus OTLP/HTTP JSON and
+gzip-compressed Protobuf exchanges. The offline gate validates the profile,
+schema files, fixture/profile agreement, strict event JSON, event hashes, and
+the binary export envelope. Real-host OTLP profile dispatch remains a separate
+implementation conformance check.
 
 ## Validate
 
@@ -71,10 +139,10 @@ python contracts\conformance\validate.py
 
 Validation checks registered schemas, OpenAPI structure and local references,
 fixture-manifest coverage, positive request/response bodies, negative schema
-cases, semantic value contracts, the v3 DecisionContract management surface,
-and the v3 runtime evaluation surface. The Tetris consumer and host harness use
-the v3 management and runtime APIs; the deleted v2 bundle schema is no longer
-part of their validation path.
+cases, semantic value contracts, Flaggo event semantics, the OTLP/HTTP profile,
+the v3 DecisionContract management surface, and the v3 runtime evaluation
+surface. The Tetris consumer and host harness use the v3 management and runtime
+APIs; the deleted v2 bundle schema is no longer part of their validation path.
 It does not start network services or access remote schema registries.
 
 The `Contracts` GitHub Actions workflow runs the local Tetris and Adaptive

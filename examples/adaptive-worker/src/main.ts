@@ -6,14 +6,12 @@ import {
   createDecisionClient,
   type DecisionBindings,
 } from "@flaggo/sdk/runtime";
+import {
+  parseFlaggoRuntimeConfiguration,
+} from "@flaggo/sdk/configuration";
 
 import { AdaptiveWorker, type WorkerDecisions } from "./adaptive-worker.js";
-import { LocalOtelLogs } from "./telemetry.js";
-interface ServiceConnection {
-  decisionServiceUrl: string;
-  telemetryPath: string;
-  bindings: DecisionBindings<WorkerDecisions>;
-}
+import { AdaptiveWorkerTelemetry } from "./telemetry.js";
 
 function argumentValue(name: string): string | undefined {
   const index = process.argv.slice(2).indexOf(name);
@@ -23,17 +21,19 @@ function argumentValue(name: string): string | undefined {
 export async function runMain(): Promise<void> {
   const exampleRoot = resolve(import.meta.dirname, "..");
   const repositoryRoot = resolve(exampleRoot, "../..");
-  const serviceFile = argumentValue("--service-file") ??
-    resolve(repositoryRoot, ".flaggo/adaptive-worker/service.json");
-  const service = JSON.parse(
-    await readFile(serviceFile, "utf8"),
-  ) as ServiceConnection;
-  const client = createDecisionClient<WorkerDecisions>({
-    bindings: service.bindings,
-    baseUrl: service.decisionServiceUrl,
-    credential: { mode: "local-development" },
+  const runtimeConfigFile = argumentValue("--runtime-config") ??
+    resolve(repositoryRoot, ".flaggo/adaptive-worker/flaggo.runtime.json");
+  const runtimeConfig = parseFlaggoRuntimeConfiguration<
+    DecisionBindings<WorkerDecisions>
+  >(JSON.parse(await readFile(runtimeConfigFile, "utf8")));
+  const telemetry = new AdaptiveWorkerTelemetry({
+    runtimeConfig,
   });
-  const telemetry = new LocalOtelLogs(service.telemetryPath);
+  const client = createDecisionClient<WorkerDecisions>({
+    runtimeConfig,
+    credential: { mode: "local-development" },
+    telemetry: { logger: telemetry.flaggoLogger },
+  });
   try {
     const worker = new AdaptiveWorker(client, telemetry);
     const results = await worker.runProfiles([
@@ -55,8 +55,6 @@ export async function runMain(): Promise<void> {
         evaluation: result.decision.evaluation,
         executableDigest: result.decision.executableDigest,
       })),
-      telemetryEvents: telemetry.events.length,
-      telemetryPath: service.telemetryPath,
     }, null, 2)}\n`);
   } finally {
     await telemetry.shutdown();

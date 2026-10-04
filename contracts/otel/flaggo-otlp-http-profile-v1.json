@@ -1,0 +1,75 @@
+{
+  "$schema": "https://flaggo.dev/contracts/schemas/otlp-http-profile-v1.schema.json",
+  "profile": "flaggo.otlp-http",
+  "version": "1.0.0",
+  "upstream": {
+    "otlpSpecification": "https://opentelemetry.io/docs/specs/otlp/",
+    "otlpSpecificationVersion": "1.11.0",
+    "protobufDefinitions": "https://github.com/open-telemetry/opentelemetry-proto/tree/v1.11.0/opentelemetry/proto"
+  },
+  "transport": {
+    "protocol": "http",
+    "defaultPort": 5090
+  },
+  "signals": [
+    {
+      "name": "logs",
+      "path": "/v1/logs",
+      "requestType": "opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest",
+      "responseType": "opentelemetry.proto.collector.logs.v1.ExportLogsServiceResponse",
+      "jsonRoot": "resourceLogs"
+    },
+    {
+      "name": "metrics",
+      "path": "/v1/metrics",
+      "requestType": "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest",
+      "responseType": "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceResponse",
+      "jsonRoot": "resourceMetrics"
+    },
+    {
+      "name": "traces",
+      "path": "/v1/traces",
+      "requestType": "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest",
+      "responseType": "opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse",
+      "jsonRoot": "resourceSpans"
+    }
+  ],
+  "encodings": [
+    {
+      "contentType": "application/x-protobuf",
+      "wireEncoding": "protobuf"
+    },
+    {
+      "contentType": "application/json",
+      "wireEncoding": "protobuf-json"
+    }
+  ],
+  "compression": [
+    "identity",
+    "gzip"
+  ],
+  "limits": {
+    "maximumDecompressedRequestBytes": 67108864
+  },
+  "success": {
+    "status": 200,
+    "responseContentType": "match-request",
+    "partialSuccess": false
+  },
+  "failure": {
+    "bodyType": "google.rpc.Status",
+    "retryableStatuses": [
+      429,
+      502,
+      503,
+      504
+    ]
+  },
+  "authentication": {
+    "required": false,
+    "phase": 4
+  },
+  "unsupportedTransports": [
+    "grpc"
+  ]
+}

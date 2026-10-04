@@ -29,28 +29,47 @@ async function play(lifecycle) {
   lifecycle.assertHealthy();
   const deployed = await deployTetrisContract({
     exampleDirectory,
-    contractUrl: hosts.contractUrl,
+    services: {
+      contractServiceUrl: hosts.contractUrl,
+      decisionServiceUrl: hosts.decisionUrl,
+      otlpIngestionUrl: hosts.otelIngestionUrl,
+    },
     fetch: hosts.fetch,
     signal: lifecycle.signal,
   });
+  await hosts.startEvidenceMaterializer();
 
   const [
     { createFlaggoDropIntervalProvider },
+    { TetrisTelemetryProviders },
     { runTerminalTetris },
   ] = await Promise.all([
     import("./dist/flaggo/flaggo-provider.js"),
+    import("./dist/flaggo/otel.js"),
     import("./dist/flaggo/terminal.js"),
   ]);
-  const provider = createFlaggoDropIntervalProvider({
-    baseUrl: hosts.decisionUrl,
-    contractDigest: deployed.deployment.contractDigest,
-    credential: { mode: "local-development" },
-    fetch: hosts.fetch,
+  const telemetry = new TetrisTelemetryProviders({
+    runtimeConfig: deployed.runtimeConfig,
   });
-  await runTerminalTetris({
-    provider,
-    signal: lifecycle.signal,
-  });
+  try {
+    const provider = createFlaggoDropIntervalProvider({
+      runtimeConfig: deployed.runtimeConfig,
+      credential: { mode: "local-development" },
+      fetch: hosts.fetch,
+      telemetry: telemetry.policyInstrumentation,
+    });
+    await runTerminalTetris({
+      instrumentation: telemetry.sessionInstrumentation,
+      provider,
+      signal: lifecycle.signal,
+    });
+  } finally {
+    try {
+      await telemetry.forceFlush();
+    } finally {
+      await telemetry.shutdown();
+    }
+  }
 }
 
 async function main() {

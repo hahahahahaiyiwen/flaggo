@@ -1,6 +1,7 @@
 import { expectTypeOf, it } from "vitest";
 
 import {
+  bindDecisionContract,
   defineDecisionContract,
   type ContractClient,
   type DecisionContractVersion,
@@ -8,7 +9,7 @@ import {
 } from "../src/management/index.js";
 
 it("infers deployment result types from the submitted contract", () => {
-  const contract = defineDecisionContract<number>({
+  const definition = defineDecisionContract<number>({
     name: "worker.batchSize",
     expression_syntax: "flaggo.cel/v1",
     attributes: [
@@ -22,8 +23,15 @@ it("infers deployment result types from the submitted contract", () => {
       default: 3,
     },
   });
+  const contract = bindDecisionContract(definition, {
+    tenant: "local",
+    application: "worker",
+    environment: "test",
+  });
   const client = {} as ContractClient;
 
+  expectTypeOf(definition).not.toHaveProperty("authority");
+  expectTypeOf(contract.authority.tenant).toEqualTypeOf<string>();
   if (false) {
     expectTypeOf(client.deploy(contract)).toEqualTypeOf<
       Promise<FlaggoResponse<DecisionContractVersion<number>>>

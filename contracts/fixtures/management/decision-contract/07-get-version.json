@@ -5,7 +5,7 @@
   "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersion",
   "request": {
     "method": "GET",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f",
+    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
     "headers": {
       "Authorization": "******"
     }
@@ -18,11 +18,16 @@
     },
     "body": {
       "name": "tetris.dropInterval",
-      "contractDigest": "sha256:d9e35162729d28aee5525b2c64db45ab060515d14296ab9aa57e9f446c21cd4f",
+      "contractDigest": "sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
       "status": "ready",
       "acceptedAt": "2026-07-15T10:00:00Z",
-      "activeExecutableDigest": "sha256:1cbf2d048b3d8c2f0339623466ef521e411bb531247d337230d05256536b4db3",
+      "activeExecutableDigest": "sha256:1d5156e683e6bbeb3280849c1f1039eb11301151d5f7000aec8a4e88d906e4b9",
       "contract": {
+        "authority": {
+          "tenant": "local",
+          "application": "tetris",
+          "environment": "integration"
+        },
         "name": "tetris.dropInterval",
         "expression_syntax": "flaggo.cel/v1",
         "attributes": [],

@@ -11,13 +11,14 @@ public sealed class HostingTests
     public void ReadsAuthorityScopeAndBothStandardScopeClaims()
     {
         var principal = Principal(
+            new Claim(FlaggoClaimTypes.Tenant, "acme"),
             new Claim(FlaggoClaimTypes.Application, "tetris"),
             new Claim(FlaggoClaimTypes.Environment, "production"),
             new Claim("scope", "flaggo.contracts:read"),
             new Claim("scp", "flaggo.decisions:decide"));
 
         Assert.True(FlaggoClaims.TryGetAuthorityScope(principal, out var scope));
-        Assert.Equal(new DecisionScope("tetris", "production"), scope);
+        Assert.Equal(new AuthorityScope("acme", "tetris", "production"), scope);
         Assert.True(FlaggoClaims.HasScope(principal, "flaggo.contracts:read"));
         Assert.True(FlaggoClaims.HasScope(principal, "flaggo.decisions:decide"));
     }
@@ -26,6 +27,7 @@ public sealed class HostingTests
     public void RejectsAmbiguousAuthorityScope()
     {
         var principal = Principal(
+            new Claim(FlaggoClaimTypes.Tenant, "acme"),
             new Claim(FlaggoClaimTypes.Application, "one"),
             new Claim(FlaggoClaimTypes.Application, "two"),
             new Claim(FlaggoClaimTypes.Environment, "production"));

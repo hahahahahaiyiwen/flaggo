@@ -13,24 +13,26 @@ public interface IContractLifecycle
         DecisionContract contract);
 
     Task<ContractDeploymentResult> DeployAsync(
-        DecisionScope scope,
         string contractName,
         DecisionContract contract,
         CancellationToken cancellationToken = default);
 
     Task<DecisionContractVersion?> GetCurrentAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         CancellationToken cancellationToken = default);
 
+    Task<CurrentContractCatalogResult> GetCurrentCatalogAsync(
+        CancellationToken cancellationToken = default);
+
     Task<DecisionContractVersion?> GetAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default);
 
     Task<DecisionContractVersionList?> ListAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         int pageSize,
         string? cursor,
@@ -58,7 +60,6 @@ public sealed class ContractLifecycle(
     }
 
     public async Task<ContractDeploymentResult> DeployAsync(
-        DecisionScope scope,
         string contractName,
         DecisionContract contract,
         CancellationToken cancellationToken = default)
@@ -69,6 +70,7 @@ public sealed class ContractLifecycle(
             throw new InvalidDecisionContractException(validation.Issues);
         }
 
+        var scope = contract.Authority;
         var contractDigest = validation.ContractDigest;
         var acceptedAt = timeProvider.GetUtcNow();
         var pendingVersion = new AcceptedContractVersion(
@@ -107,7 +109,7 @@ public sealed class ContractLifecycle(
     }
 
     public async Task<DecisionContractVersion?> GetCurrentAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         CancellationToken cancellationToken = default)
     {
@@ -121,8 +123,27 @@ public sealed class ContractLifecycle(
             : await ProjectReadyAsync(scope, accepted, cancellationToken);
     }
 
+    public async Task<CurrentContractCatalogResult> GetCurrentCatalogAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var current = await contractStore.ListAllCurrentAsync(cancellationToken);
+        foreach (var version in current)
+        {
+            if (await executableStore.GetActiveAsync(
+                version.Scope,
+                version.ContractDigest,
+                cancellationToken) is null)
+            {
+                throw new InvalidDataException(
+                    $"Current contract '{version.ContractDigest}' has no active executable.");
+            }
+        }
+
+        return CurrentContractCatalogs.Project(current);
+    }
+
     public async Task<DecisionContractVersion?> GetAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default)
@@ -140,7 +161,7 @@ public sealed class ContractLifecycle(
     }
 
     public async Task<DecisionContractVersionList?> ListAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         string contractName,
         int pageSize,
         string? cursor,
@@ -200,7 +221,7 @@ public sealed class ContractLifecycle(
     }
 
     private async Task<StoredExecutable> EnsureRuntimeReadyAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         AcceptedContractVersion accepted,
         ExecutableCompilation defaultCompilation,
         ExecutableCompilation? authoredCompilation,
@@ -276,7 +297,7 @@ public sealed class ContractLifecycle(
     }
 
     private async Task PutCandidateAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         ExecutableCompilation compilation,
         string source,
         CancellationToken cancellationToken)
@@ -330,7 +351,7 @@ public sealed class ContractLifecycle(
     }
 
     private async Task<DecisionContractVersion?> ProjectReadyAsync(
-        DecisionScope scope,
+        AuthorityScope scope,
         AcceptedContractVersion accepted,
         CancellationToken cancellationToken)
     {

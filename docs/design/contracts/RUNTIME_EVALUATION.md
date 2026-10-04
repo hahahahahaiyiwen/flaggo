@@ -24,7 +24,7 @@ application attributes
   -> SDK internal attributes + current exposure context
   -> complete RuntimeInput
 
-authenticated application/environment scope
+authenticated tenant/application/environment scope
   + contractDigest
   + complete RuntimeInput
   -> find ActiveExecutable
@@ -40,7 +40,7 @@ stores an evaluation session.
 
 ## Identity and authority
 
-The authenticated principal establishes application and environment scope.
+The authenticated principal establishes tenant, application, and environment scope.
 Contract attributes and exposure context never establish that scope and are
 never authentication or authorization data.
 
@@ -48,7 +48,7 @@ Runtime authority is:
 
 ```text
 RuntimeActivation[
-  authenticated application/environment scope,
+  authenticated tenant/application/environment scope,
   contractDigest
 ] = executableDigest
 ```
@@ -96,7 +96,8 @@ The route selects runtime authority. The request body is the complete
 - `attributes` contains application-bound and SDK-generated internal values;
 - optional `currentExposure` identifies the previous decision that the
   application actually applied; and
-- application and environment come from authentication rather than the body.
+- tenant, application, and environment come from authentication rather than
+  the body.
 
 `currentExposure` is absent when no previous decision has been applied in the
 SDK's current activity context. It is exposure context, not proof that the new
@@ -163,7 +164,7 @@ It is not identical results for application attributes alone.
 
 The runtime server handles each request independently:
 
-1. Authenticate application and environment scope.
+1. Authenticate tenant, application, and environment scope.
 2. Validate `contractDigest` and the complete `RuntimeInput`.
 3. Read the active `executableDigest` for that exact digest and scope.
 4. Load the immutable `DecisionExecutable`.
@@ -258,26 +259,24 @@ Whether to expose evaluation time or a decision/exposure correlation identity
 in a future version remains open. The stateless runtime does not require those
 fields to evaluate a request.
 
-## SDK exposure flow
+## SDK decision observation flow
 
 A returned `RuntimeDecision` proves only that Flaggo evaluated a result. It does
 not prove that the application used it.
 
 ```text
 RuntimeDecision
-  -> application applies or renders result
-  -> SDK creates or updates exposure context
-  -> SDK emits Flaggo exposure evidence through OpenTelemetry
-  -> next RuntimeInput may carry that exposure as currentExposure
+  -> SDK emits flaggo.decision.received through OpenTelemetry
+  -> application may apply or render result
+  -> next RuntimeInput may carry a previous applied exposure as currentExposure
 ```
 
-The SDK owns the transition from returned decision to applied exposure. The
-runtime server does not maintain an exposure session. Receiving
-`currentExposure` lets a request carry the previous applied-decision context
-without requiring affinity to an earlier server instance.
+The built-in observation records receipt, not application. The runtime server
+does not maintain an exposure session. Receiving `currentExposure` lets a
+request carry previous applied-decision context without requiring affinity to
+an earlier server instance.
 
-The exact exposure identity, current-exposure fields, OpenTelemetry
-representation, and retry behavior remain deferred.
+The exact current-exposure fields and retry behavior remain deferred.
 
 ## Retry behavior
 
@@ -335,7 +334,7 @@ a successful `RuntimeDecision` and must not be conflated with a client fallback.
 
 ## Invariants
 
-1. Authentication establishes application and environment scope.
+1. Authentication establishes tenant, application, and environment scope.
 2. `contractName` identifies the logical DecisionContract resource.
 3. `contractDigest` selects one exact accepted version belonging to that name.
 4. Runtime never resolves the management resource's current version.

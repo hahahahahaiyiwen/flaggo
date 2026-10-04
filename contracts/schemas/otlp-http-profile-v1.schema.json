@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/otlp-http-profile-v1.schema.json",
+  "title": "Flaggo OTLP HTTP profile v1",
+  "description": "Capabilities selected by Flaggo from the upstream OTLP/HTTP specification. This profile does not redefine OTLP payload messages.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "profile",
+    "version",
+    "upstream",
+    "transport",
+    "signals",
+    "encodings",
+    "compression",
+    "limits",
+    "success",
+    "failure",
+    "authentication",
+    "unsupportedTransports"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://flaggo.dev/contracts/schemas/otlp-http-profile-v1.schema.json"
+    },
+    "profile": {
+      "const": "flaggo.otlp-http"
+    },
+    "version": {
+      "const": "1.0.0"
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "otlpSpecification",
+        "otlpSpecificationVersion",
+        "protobufDefinitions"
+      ],
+      "properties": {
+        "otlpSpecification": {
+          "type": "string",
+          "format": "uri"
+        },
+        "otlpSpecificationVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "protobufDefinitions": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "defaultPort"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "http"
+        },
+        "defaultPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "signals": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path",
+          "requestType",
+          "responseType",
+          "jsonRoot"
+        ],
+        "properties": {
+          "name": {
+            "enum": [
+              "logs",
+              "metrics",
+              "traces"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/v1/(logs|metrics|traces)$"
+          },
+          "requestType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "responseType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "jsonRoot": {
+            "enum": [
+              "resourceLogs",
+              "resourceMetrics",
+              "resourceSpans"
+            ]
+          }
+        }
+      }
+    },
+    "encodings": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contentType",
+          "wireEncoding"
+        ],
+        "properties": {
+          "contentType": {
+            "enum": [
+              "application/x-protobuf",
+              "application/json"
+            ]
+          },
+          "wireEncoding": {
+            "enum": [
+              "protobuf",
+              "protobuf-json"
+            ]
+          }
+        }
+      }
+    },
+    "compression": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "identity",
+          "gzip"
+        ]
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximumDecompressedRequestBytes"
+      ],
+      "properties": {
+        "maximumDecompressedRequestBytes": {
+          "const": 67108864
+        }
+      }
+    },
+    "success": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "responseContentType",
+        "partialSuccess"
+      ],
+      "properties": {
+        "status": {
+          "const": 200
+        },
+        "responseContentType": {
+          "const": "match-request"
+        },
+        "partialSuccess": {
+          "const": false
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bodyType",
+        "retryableStatuses"
+      ],
+      "properties": {
+        "bodyType": {
+          "const": "google.rpc.Status"
+        },
+        "retryableStatuses": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              429,
+              502,
+              503,
+              504
+            ]
+          }
+        }
+      }
+    },
+    "authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "phase"
+      ],
+      "properties": {
+        "required": {
+          "const": false
+        },
+        "phase": {
+          "const": 4
+        }
+      }
+    },
+    "unsupportedTransports": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "grpc"
+        ]
+      }
+    }
+  }
+}

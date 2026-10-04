@@ -1,11 +1,15 @@
 import {
+  SpanStatusCode,
+  type Gauge,
+  type Histogram,
+  type Span,
+} from "@opentelemetry/api";
+import {
   type DecisionClient,
   type DecisionSpec,
   type RuntimeDecision,
 } from "@flaggo/sdk/runtime";
-import type {
-  ApplicationLogger,
-} from "./telemetry.js";
+import type { ApplicationTelemetry } from "./telemetry.js";
 export interface WorkItem {
   id: string;
   processingMs: number;
@@ -50,6 +54,7 @@ export interface WorkerTickResult {
   decision: RuntimeDecision<number>;
   operations: string[];
   appliedAt?: string;
+  processingLatencyMs: number;
 }
 
 export type WorkerDecisions = {
@@ -57,6 +62,7 @@ export type WorkerDecisions = {
     readonly workerId: string;
     readonly cohort: string;
     readonly queuePressure: number;
+    readonly processingLatencyMs: number;
   }, number>;
 };
 
@@ -71,65 +77,158 @@ const profileDefinitions: Record<WorkloadProfile, ProfileDefinition> = {
   "slow-downstream": { count: 3, processingMs: 40 },
   recovery: { count: 1, processingMs: 10 },
 };
-
 export class AdaptiveWorker {
   private readonly queue: QueuedWorkItem[] = [];
+  private readonly queueDepthMetric: Gauge;
+  private readonly queuePressureMetric: Gauge;
+  private readonly processingLatencyMetric: Histogram;
+  private readonly batchSizeMetric: Gauge;
   private tickNumber = 0;
 
   constructor(
     private readonly flaggo: DecisionClient<WorkerDecisions>,
-    private readonly telemetry: ApplicationLogger,
+    private readonly telemetry: ApplicationTelemetry,
     private readonly clock: WorkerClock = new DeterministicWorkerClock(),
     private readonly queueCapacity = 8,
     private readonly targetLatencyMs = 100,
     private readonly workerId = "adaptive-worker-1",
     private readonly claimedCohort = "worker-canary",
-  ) {}
+  ) {
+    this.queueDepthMetric = telemetry.meter.createGauge("worker.queue.depth", {
+      description: "Current queued work items.",
+      unit: "{item}",
+    });
+    this.queuePressureMetric = telemetry.meter.createGauge(
+      "worker.queue.pressure",
+      {
+        description: "Normalized worker queue pressure.",
+        unit: "1",
+      },
+    );
+    this.processingLatencyMetric = telemetry.meter.createHistogram(
+      "worker.processing.latency",
+      {
+        description: "End-to-end work item processing latency.",
+        unit: "ms",
+      },
+    );
+    this.batchSizeMetric = telemetry.meter.createGauge("worker.batch.size", {
+      description: "Batch size selected for the current worker tick.",
+      unit: "{item}",
+    });
+  }
 
   get queueDepth(): number {
     return this.queue.length;
   }
 
   async runTick(profile: WorkloadProfile): Promise<WorkerTickResult> {
-    this.enqueue(profile);
-    const queueDepthBefore = this.queue.length;
-    this.telemetry.emit({ eventName: "worker.queue.depth", body: queueDepthBefore });
-    const queuePressure = this.calculateQueuePressure();
-    this.telemetry.emit({ eventName: "worker.queue.pressure", body: queuePressure });
-    const flaggo = this.flaggo;
-
-    const { value: decision } = await flaggo.decide(
-      "demo.workerBatchSize",
+    return this.telemetry.tracer.startActiveSpan(
+      "worker.tick",
       {
         attributes: {
-          workerId: this.workerId,
-          cohort: this.claimedCohort,
-          queuePressure,
+          "worker.id": this.workerId,
+          "worker.cohort": this.claimedCohort,
+          "worker.profile": profile,
         },
       },
+      async (span) => this.runTickInSpan(profile, span),
     );
+  }
 
-    const operations = [`decision-received:${decision.result}`];
-    const processedItemIds = this.applyBatch(decision.result);
-    operations.push(`batch-applied:${decision.result}`);
-    const appliedAt = new Date().toISOString();
-    this.telemetry.emit({
-      eventName: "worker.batch.applied",
-      body: { batchSize: decision.result, processedCount: processedItemIds.length },
-    });
+  private async runTickInSpan(
+    profile: WorkloadProfile,
+    span: Span,
+  ): Promise<WorkerTickResult> {
+    try {
+      this.enqueue(profile);
+      const queueDepthBefore = this.queue.length;
+      this.queueDepthMetric.record(queueDepthBefore, {
+        "worker.id": this.workerId,
+        "worker.profile": profile,
+      });
+      const queuePressure = this.calculateQueuePressure();
+      this.queuePressureMetric.record(queuePressure, {
+        "worker.id": this.workerId,
+        "worker.profile": profile,
+      });
+      span.setAttributes({
+        "worker.queue.depth.before": queueDepthBefore,
+        "worker.queue.pressure": queuePressure,
+      });
+      const flaggo = this.flaggo;
 
-    this.telemetry.emit({ eventName: "worker.queue.depth", body: this.queue.length });
-    return {
-      profile,
-      queuePressure,
-      queueDepthBefore,
-      queueDepthAfter: this.queue.length,
-      appliedBatchSize: decision.result,
-      processedItemIds,
-      decision,
-      operations,
-      appliedAt,
-    };
+      const { value: decision } = await flaggo.decide(
+        "demo.workerBatchSize",
+        {
+          attributes: {
+            workerId: this.workerId,
+            cohort: this.claimedCohort,
+            queuePressure,
+          },
+        },
+      );
+
+      const operations = [`decision-received:${decision.result}`];
+      const processed = this.applyBatch(decision.result);
+      const processedItemIds = processed.itemIds;
+      operations.push(`batch-applied:${decision.result}`);
+      const appliedAt = new Date().toISOString();
+      this.telemetry.logger.emit({
+        eventName: "worker.batch.applied",
+        attributes: {
+          "worker.batch.size": decision.result,
+          "worker.batch.processed_count": processedItemIds.length,
+          "worker.id": this.workerId,
+          "worker.profile": profile,
+        },
+      });
+      this.batchSizeMetric.record(decision.result, {
+        "worker.id": this.workerId,
+        "worker.profile": profile,
+      });
+      this.telemetry.logger.emit({
+        eventName: "worker.processing_latency",
+        body: processed.processingLatencyMs,
+        attributes: {
+          "worker.id": this.workerId,
+          "worker.cohort": this.claimedCohort,
+          "worker.queue.pressure": queuePressure,
+          "worker.profile": profile,
+        },
+      });
+
+      this.queueDepthMetric.record(this.queue.length, {
+        "worker.id": this.workerId,
+        "worker.profile": profile,
+      });
+      span.setAttributes({
+        "worker.queue.depth.after": this.queue.length,
+        "worker.batch.size": decision.result,
+        "worker.batch.processed_count": processedItemIds.length,
+      });
+      return {
+        profile,
+        queuePressure,
+        queueDepthBefore,
+        queueDepthAfter: this.queue.length,
+        appliedBatchSize: decision.result,
+        processedItemIds,
+        decision,
+        operations,
+        appliedAt,
+        processingLatencyMs: processed.processingLatencyMs,
+      };
+    } catch (error) {
+      span.recordException(error instanceof Error ? error : String(error));
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      span.end();
+    }
   }
 
   async runProfiles(
@@ -155,9 +254,13 @@ export class AdaptiveWorker {
         item,
         enqueuedAtMs: this.clock.now(),
       });
-      this.telemetry.emit({
+      this.telemetry.logger.emit({
         eventName: "worker.item.enqueued",
-        body: { itemId: item.id, processingMs: item.processingMs, shouldFail: item.shouldFail },
+        attributes: {
+          "worker.item.id": item.id,
+          "worker.item.processing_ms": item.processingMs,
+          "worker.item.should_fail": item.shouldFail,
+        },
       });
     }
   }
@@ -177,21 +280,38 @@ export class AdaptiveWorker {
     );
   }
 
-  private applyBatch(batchSize: number): string[] {
-    const processed: string[] = [];
+  private applyBatch(batchSize: number): {
+    itemIds: string[];
+    processingLatencyMs: number;
+  } {
+    const itemIds: string[] = [];
+    const latencies: number[] = [];
     for (let index = 0; index < batchSize; index += 1) {
       const queued = this.queue.shift();
       if (queued === undefined) break;
       this.clock.advance(queued.item.processingMs);
       const processingLatencyMs =
         this.clock.now() - queued.enqueuedAtMs;
-      this.telemetry.emit({ eventName: "worker.processing.latency", body: processingLatencyMs });
-      this.telemetry.emit({
-        eventName: "worker.item.completed",
-        body: { itemId: queued.item.id, succeeded: !queued.item.shouldFail },
+      latencies.push(processingLatencyMs);
+      this.processingLatencyMetric.record(processingLatencyMs, {
+        "worker.id": this.workerId,
+        "worker.item.succeeded": !queued.item.shouldFail,
       });
-      processed.push(queued.item.id);
+      this.telemetry.logger.emit({
+        eventName: "worker.item.completed",
+        attributes: {
+          "worker.item.id": queued.item.id,
+          "worker.item.succeeded": !queued.item.shouldFail,
+          "worker.processing.latency_ms": processingLatencyMs,
+        },
+      });
+      itemIds.push(queued.item.id);
     }
-    return processed;
+    return {
+      itemIds,
+      processingLatencyMs: latencies.length === 0
+        ? 0
+        : latencies.reduce((sum, value) => sum + value, 0) / latencies.length,
+    };
   }
 }

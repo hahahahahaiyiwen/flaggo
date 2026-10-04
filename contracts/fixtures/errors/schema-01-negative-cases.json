@@ -113,9 +113,29 @@
       }
     },
     {
+      "why": "a deployed DecisionContract must declare the authority covered by its digest",
+      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContract",
+      "body": {
+        "name": "example.decision",
+        "expression_syntax": "flaggo.cel/v1",
+        "attributes": [],
+        "result": {
+          "schema": {
+            "type": "boolean"
+          },
+          "default": false
+        }
+      }
+    },
+    {
       "why": "user-declared attribute names cannot use the reserved internal prefix",
       "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContract",
       "body": {
+        "authority": {
+          "tenant": "local",
+          "application": "example",
+          "environment": "integration"
+        },
         "name": "example.decision",
         "expression_syntax": "flaggo.cel/v1",
         "attributes": [
@@ -155,6 +175,43 @@
         "evaluate": {
           "interval": "PT15M"
         }
+      }
+    },
+    {
+      "why": "every evidence declaration requires exactly one OpenTelemetry source",
+      "schemaRef": "management-models-v3.schema.json#/$defs/Evidence",
+      "body": {
+        "name": "processing_latency",
+        "attribute": "processingLatencyMs",
+        "correlateBy": []
+      }
+    },
+    {
+      "why": "the retired evidence binding is not a source",
+      "schemaRef": "management-models-v3.schema.json#/$defs/Evidence",
+      "body": {
+        "name": "processing_latency",
+        "attribute": "processingLatencyMs",
+        "binding": "worker.processing_latency",
+        "correlateBy": [],
+        "source": {
+          "kind": "log",
+          "scope": "adaptive-worker.app",
+          "name": "worker.processing_latency",
+          "correlation": {}
+        }
+      }
+    },
+    {
+      "why": "source variants cannot mix fields from different OpenTelemetry signal kinds",
+      "schemaRef": "management-models-v3.schema.json#/$defs/EvidenceSource",
+      "body": {
+        "kind": "log",
+        "scope": "adaptive-worker.app",
+        "name": "worker.processing_latency",
+        "metricKind": "gauge",
+        "unit": "ms",
+        "correlation": {}
       }
     },
     {
