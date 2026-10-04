@@ -3,9 +3,10 @@
 ## Purpose
 
 This document describes the runtime path from application code through the
-Flaggo SDK and Decision Service to an applied result and exposure observation.
-It defines client and service responsibilities, online dependencies,
-statelessness, concurrency, and failure boundaries.
+Flaggo SDK and Decision Service to a returned decision, application-controlled
+result use, and a decision-received observation. It defines client and service
+responsibilities, online dependencies, statelessness, concurrency, and failure
+boundaries.
 
 It does not redefine `RuntimeInput`, `RuntimeDecision`, rule evaluation, or
 fallback semantics. Those belong to

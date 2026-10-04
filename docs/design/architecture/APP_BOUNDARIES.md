@@ -157,7 +157,7 @@ store tables directly.
 | Executable Store | Contract Service | Decision Service reads active lifecycle state and immutable artifacts | Artifacts are immutable; only Contract Service candidate admission and activation change lifecycle authority |
 | Raw OTLP Inbox | OTel Ingestion | Evidence Materializer reads retained batches | Receiver appends; inbox retention expires by receipt age independently of materialization |
 | Materializer checkpoint and catalog cache | Evidence Materializer | No other app mutates them | One active materializer advances one versioned forward checkpoint per database; catalog changes do not backfill completed batches |
-| Evidence Store observations and materialization provenance | Evidence Materializer | Planned Async Analysis reads through the Evidence Store contract | Observations outlive raw inbox retention and remain contract-agnostic until analysis |
+| Evidence Store observations and materialization provenance | Evidence Materializer | Planned Async Analysis reads through the Evidence Store contract | Observations outlive raw inbox retention; decision observations preserve an emitted contract digest, while ordinary application observations have no eager contract association |
 | Analysis run state and evidence/method provenance | Async Analysis, planned | Contract Service receives candidate provenance at admission | A run is scoped to an exact contract digest; superseded work cannot activate |
 
 The current local implementation physically co-locates several schemas in
@@ -169,8 +169,10 @@ project.
 
 | Transition | Authority holder | Result |
 | --- | --- | --- |
-| Authenticate management or runtime caller | Receiving Contract or Decision Service | Tenant, application, and environment scope for that request |
-| Accept contract | Contract Service | Server-computed immutable `contractDigest` and management current pointer |
+| Establish validation or deployment scope | Contract Service | Tenant, application, and environment declared by the submitted contract |
+| Authenticate scoped management read or runtime caller | Receiving Contract or Decision Service | Tenant, application, and environment selected from current credential claims |
+| Authorize current-catalog read | Contract Service | One materialization-scoped caller may read current contracts across declared authorities |
+| Accept contract | Contract Service | Server-computed immutable `contractDigest` containing declared authority and a scoped management current pointer |
 | Generate candidate | Contract Service for default/authored paths; planned Async Analysis for learned paths | Immutable proposal bound to one exact digest; no runtime authority |
 | Validate and admit candidate | Contract Service | Contract-conformant immutable executable and provenance |
 | Activate executable | Contract Service | Atomic `RuntimeActivation[scope, contractDigest]` mapping |
@@ -181,6 +183,10 @@ project.
 Authentication for OTel writes is not implemented. OTel Ingestion therefore
 does not establish authority from credentials; Evidence Materializer derives
 the current declared evidence scope from `flaggo.*` Resource attributes.
+Decision observations preserve the exact contract digest emitted by the SDK as
+a source fact. That fact does not eagerly associate ordinary application
+observations with a contract; Async Analysis still interprets which
+observations are usable for each exact contract.
 
 ## Dependency and failure isolation
 

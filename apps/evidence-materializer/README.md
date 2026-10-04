@@ -21,8 +21,9 @@ The canonical cross-app lifecycle is documented in
 - Compile ordinary application-telemetry routes from that catalog.
 - Derive logical observation identity and canonical content digests.
 - Deduplicate exact repeats and record conflicting content explicitly.
-- Atomically persist observations, inbox provenance, diagnostics, conflicts,
-  catalog state, and the forward checkpoint.
+- Atomically commit each processed batch page's observations, inbox provenance,
+  diagnostics, conflicts, and forward checkpoint.
+- Persist each validated catalog update independently from batch projection.
 - Emit structured progress, backlog, freshness, and fatal-failure events.
 
 ## Boundaries
@@ -41,6 +42,11 @@ Evidence Materializer does not:
 Catalog unavailability retains the last valid durable catalog. With no catalog,
 the worker still recognizes supported built-in Flaggo observations and uses an
 empty route map for ordinary application telemetry.
+
+Catalog activation and batch projection are separate durable writes. A catalog
+may be cached while the forward checkpoint remains unchanged; the next batch
+transaction applies the currently active catalog and advances the checkpoint
+only with its complete projection.
 
 ## State and dependencies
 
