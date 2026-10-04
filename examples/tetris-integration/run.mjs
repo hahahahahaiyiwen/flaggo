@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import {
   createHostLifecycle,
@@ -14,6 +16,7 @@ import { startLocalFlaggoHosts } from "./local-flaggo.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleDirectory, "../..");
+const execFileAsync = promisify(execFile);
 const runDirectory = resolve(
   repositoryRoot,
   ".flaggo",
@@ -238,6 +241,12 @@ async function runIntegration(lifecycle) {
   );
   await hosts.contract.stop();
   await hosts.otelIngestion.stop();
+  await assertPersistedTetrisEvidence({
+    contractDigest: deployed.deployment.contractDigest,
+    databaseUrl: hosts.databaseUrl,
+    executableDigest: deployed.deployment.activeExecutableDigest,
+    signal: lifecycle.signal,
+  });
 
   const restartedHosts = await startLocalFlaggoHosts({
     lifecycle,
@@ -306,6 +315,7 @@ async function runIntegration(lifecycle) {
       ...reopenedEvidence.evidenceStore,
       batchesMaterialized: materializedEvidence.batchesRead,
       duplicateObservations: materializedEvidence.duplicateObservations,
+      semanticValidation: true,
       survivedRestart: true,
     },
     restParity: {
@@ -534,7 +544,57 @@ async function waitForEvidenceMaterialization({
   assert.ok(summary.observationsCreated > 0);
   assert.equal(summary.provenanceCreated, summary.observationsCreated);
   assert.equal(summary.conflictsCreated, 0);
+  assert.equal(summary.diagnosticsCreated, 0);
+  assert.equal(summary.duplicateObservations, 0);
   return summary;
+}
+
+async function assertPersistedTetrisEvidence({
+  contractDigest,
+  databaseUrl,
+  executableDigest,
+  signal,
+}) {
+  try {
+    await execFileAsync(
+      "cargo",
+      [
+        "test",
+        "--quiet",
+        "--locked",
+        "-p",
+        "flaggo-evidence-materializer",
+        "--test",
+        "tetris_evidence_store",
+        "persisted_tetris_evidence_is_semantically_correct",
+        "--",
+        "--exact",
+        "--ignored",
+      ],
+      {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          FLAGGO_TETRIS_CONTRACT_DIGEST: contractDigest,
+          FLAGGO_TETRIS_EVIDENCE_DATABASE_URL: databaseUrl,
+          FLAGGO_TETRIS_EXECUTABLE_DIGEST: executableDigest,
+        },
+        maxBuffer: 10 * 1024 * 1024,
+        signal,
+        windowsHide: true,
+      },
+    );
+  } catch (error) {
+    const output = [error?.stdout, error?.stderr]
+      .filter((value) => typeof value === "string" && value.trim() !== "")
+      .join("\n");
+    throw new Error(
+      `Persisted Tetris evidence failed semantic validation.${
+        output === "" ? "" : `\n${output}`
+      }`,
+      { cause: error },
+    );
+  }
 }
 
 async function assertRawOtlpInboxStorage({ initial, hosts, requests }) {

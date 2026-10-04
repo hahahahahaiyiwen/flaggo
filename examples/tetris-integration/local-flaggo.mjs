@@ -29,6 +29,7 @@ export async function startLocalFlaggoHosts({
     Flaggo__Authentication__Application: "tetris",
     Flaggo__Authentication__Environment: "integration",
   };
+  const databaseUrl = sqliteDatabaseUrl(paths.database);
   const fetchWithAbort = (input, init = {}) =>
     fetch(input, {
       ...init,
@@ -78,7 +79,7 @@ export async function startLocalFlaggoHosts({
     paths.otelIngestionLog,
     repositoryRoot,
     {
-      FLAGGO_DATABASE_URL: sqliteDatabaseUrl(paths.database),
+      FLAGGO_DATABASE_URL: databaseUrl,
     },
   ));
   const otelIngestionUrl = await otelIngestion.waitForListening({
@@ -101,7 +102,7 @@ export async function startLocalFlaggoHosts({
       {
         FLAGGO_CONTRACT_CATALOG_URL:
           `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
-        FLAGGO_DATABASE_URL: sqliteDatabaseUrl(paths.database),
+        FLAGGO_DATABASE_URL: databaseUrl,
         FLAGGO_MATERIALIZER_CATALOG_INTERVAL_SECONDS: "1",
         FLAGGO_MATERIALIZER_POLL_INTERVAL_MS: "25",
       },
@@ -117,6 +118,7 @@ export async function startLocalFlaggoHosts({
 
   return {
     ...hosts,
+    databaseUrl,
     fetch: fetchWithAbort,
     otelIngestion,
     otelIngestionUrl,
