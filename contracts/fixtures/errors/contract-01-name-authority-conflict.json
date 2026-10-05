@@ -1,0 +1,45 @@
+{
+  "name": "put-contract-name-authority-conflict",
+  "scenarios": [],
+  "invariant": "A globally owned contract name cannot be deployed under a different declared authority.",
+  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
+  "responseSchema": "problem-details-v3.schema.json",
+  "request": {
+    "method": "PUT",
+    "path": "/v3/decision-contracts/tetris.dropInterval",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Flaggo-Correlation-Id": "contract-name-authority-conflict"
+    },
+    "body": {
+      "authority": {
+        "tenant": "acme",
+        "application": "tetris",
+        "environment": "integration"
+      },
+      "name": "tetris.dropInterval",
+      "expression_syntax": "flaggo.cel/v1",
+      "attributes": [],
+      "result": {
+        "schema": {
+          "type": "number"
+        },
+        "default": 500
+      }
+    }
+  },
+  "expected": {
+    "status": 409,
+    "headers": {
+      "Content-Type": "application/problem+json",
+      "X-Flaggo-Correlation-Id": "contract-name-authority-conflict"
+    },
+    "body": {
+      "type": "https://flaggo.dev/problems/contract-name-authority-conflict",
+      "title": "Contract name authority conflict",
+      "status": 409,
+      "detail": "Contract name 'tetris.dropInterval' is already owned by authority 'local/tetris/integration'.",
+      "instance": "/v3/decision-contracts/tetris.dropInterval"
+    }
+  }
+}

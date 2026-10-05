@@ -170,7 +170,7 @@ The core online authority data is:
 | Accepted `DecisionContract` version | Contract Service / Contract Store | Immutable by `contractDigest` | Validates input and result for the requested digest |
 | Management current-version pointer | Contract Service | Mutable by name | Selects the version for management reads and new evidence analysis; runtime never resolves it |
 | `DecisionExecutable` and provenance | Contract Service / Executable Store | Immutable by `executableDigest` | Supplies bounded behavior |
-| Executable lifecycle state | Contract Service / Executable Store | Atomic Candidate/Active/Inactive transition per scope and `contractDigest` | Selects the only executable with runtime authority |
+| Executable lifecycle state | Contract Service / Executable Store | Atomic Candidate/Active/Inactive transition per `contractDigest` | Selects the only executable with runtime authority |
 | Runtime input | Application and SDK | Per logical evaluation | Complete explicit evaluator input |
 | Runtime decision | Decision Service | Response value; not retained by the semantic runtime contract | Returned to the caller |
 | Decision observations and selected application telemetry | SDK, application, and evidence pipeline | Append-oriented observations | Asynchronous learning only |
@@ -179,7 +179,6 @@ The core online authority data is:
 
 The online decision path depends only on:
 
-- authenticated scope;
 - the requested accepted contract version;
 - its current activation;
 - the referenced immutable executable; and
@@ -199,10 +198,10 @@ mutating the old one:
 ```text
 name = tetris.dropInterval
 
-D1 -> RuntimeActivation[scope, D1] = E1
-D2 -> RuntimeActivation[scope, D2] = DefaultExecutable(D2)
+D1 -> RuntimeActivation[D1] = E1
+D2 -> RuntimeActivation[D2] = DefaultExecutable(D2)
 
-ManagementCurrent[scope, name] = D2
+ManagementCurrent[name] = D2
 ```
 
 Applications carrying `D1` continue to evaluate `E1`. Applications carrying
@@ -221,8 +220,8 @@ authority across digests.
    input and retains no semantic request state.
 6. Evidence-based generation never runs in the decision request path.
 7. A newer digest does not deactivate or reinterpret an older digest.
-8. Authentication establishes tenant/application/environment scope; contract
-   attributes never do.
+8. Declared authority is contract, telemetry-routing, and evidence identity
+   data; it is not a runtime lookup selector.
 9. A returned decision and the built-in decision-received observation do not
    prove that the application applied the result.
 

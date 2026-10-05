@@ -8,7 +8,6 @@
     "method": "PUT",
     "path": "/v3/decision-contracts/tetris.dropInterval",
     "headers": {
-      "Authorization": "******",
       "Content-Type": "application/json"
     },
     "body": {

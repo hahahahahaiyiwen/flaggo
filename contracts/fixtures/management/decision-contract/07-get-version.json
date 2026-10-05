@@ -7,7 +7,6 @@
     "method": "GET",
     "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
     "headers": {
-      "Authorization": "******"
     }
   },
   "expected": {

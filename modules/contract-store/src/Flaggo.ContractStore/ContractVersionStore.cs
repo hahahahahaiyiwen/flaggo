@@ -11,32 +11,24 @@ public interface IContractVersionStore
         CancellationToken cancellationToken = default);
 
     Task<AcceptedContractVersion?> GetAsync(
-        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default);
 
     Task<AcceptedContractVersion?> GetCurrentAsync(
-        AuthorityScope scope,
         string contractName,
-        CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<AcceptedContractVersion>> ListCurrentAsync(
-        AuthorityScope scope,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<AcceptedContractVersion>> ListAllCurrentAsync(
         CancellationToken cancellationToken = default);
 
     Task<ContractVersionPage> ListAsync(
-        AuthorityScope scope,
         string contractName,
         int pageSize,
         string? cursor,
         CancellationToken cancellationToken = default);
 
     Task SetCurrentAsync(
-        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default);
@@ -45,7 +37,6 @@ public interface IContractVersionStore
 }
 
 public sealed record AcceptedContractVersion(
-    AuthorityScope Scope,
     string ContractDigest,
     DateTimeOffset AcceptedAt,
     DecisionContract Contract);
@@ -61,8 +52,22 @@ public enum ContractStoreWriteResult
 }
 
 public sealed class ContractVersionNotFoundException(
-    AuthorityScope scope,
     string contractName,
     string contractDigest)
     : Exception(
-        $"Contract version '{contractName}' at '{contractDigest}' does not exist in scope '{scope}'.");
+        $"Contract version '{contractName}' at '{contractDigest}' does not exist.");
+
+public sealed class ContractNameAuthorityConflictException(
+    string contractName,
+    AuthorityScope existingAuthority,
+    AuthorityScope requestedAuthority)
+    : Exception(
+        $"Contract name '{contractName}' belongs to authority '{existingAuthority}', "
+        + $"not '{requestedAuthority}'.")
+{
+    public string ContractName { get; } = contractName;
+
+    public AuthorityScope ExistingAuthority { get; } = existingAuthority;
+
+    public AuthorityScope RequestedAuthority { get; } = requestedAuthority;
+}

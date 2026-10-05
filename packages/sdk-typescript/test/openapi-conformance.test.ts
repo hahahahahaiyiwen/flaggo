@@ -23,7 +23,7 @@ type Response = {
 
 type Operation = {
   operationId: string;
-  security: Array<Record<string, string[]>>;
+  security?: Array<Record<string, string[]>>;
   parameters?: Reference[];
   requestBody?: RequestBody;
   responses: Record<string, Response>;
@@ -37,7 +37,7 @@ type OpenApiDocument = {
     requestBodies: Record<string, RequestBody>;
     responses: Record<string, Response>;
     headers: Record<string, Record<string, unknown>>;
-    securitySchemes: Record<string, Record<string, unknown>>;
+    securitySchemes?: Record<string, Record<string, unknown>>;
   };
 };
 
@@ -71,10 +71,6 @@ function operation(
   const value = document.paths[path]?.[method];
   expect(value, `${method.toUpperCase()} ${path} must exist`).toBeDefined();
   return value!;
-}
-
-function expectSecurity(operationValue: Operation, scope: string): void {
-  expect(operationValue.security).toEqual([{ oauth2: [scope] }]);
 }
 
 function expectParameters(
@@ -134,7 +130,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "get",
     );
     expect(catalog.operationId).toBe("getCurrentContractCatalog");
-    expectSecurity(catalog, "flaggo.contracts:materialize");
+    expect(catalog.security).toBeUndefined();
     expectParameters(catalog, [
       "#/components/parameters/IfNoneMatchHeader",
       "#/components/parameters/CorrelationIdHeader",
@@ -150,7 +146,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "post",
     );
     expect(validate.operationId).toBe("validateDecisionContract");
-    expectSecurity(validate, "flaggo.contracts:validate");
+    expect(validate.security).toBeUndefined();
     expectParameters(validate, [
       "#/components/parameters/ContractNamePath",
       "#/components/parameters/CorrelationIdHeader",
@@ -170,7 +166,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "put",
     );
     expect(deployContract.operationId).toBe("deployDecisionContract");
-    expectSecurity(deployContract, "flaggo.contracts:accept");
+    expect(deployContract.security).toBeUndefined();
     expectParameters(deployContract, [
       "#/components/parameters/ContractNamePath",
       "#/components/parameters/CorrelationIdHeader",
@@ -191,7 +187,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "get",
     );
     expect(getCurrent.operationId).toBe("getCurrentDecisionContract");
-    expectSecurity(getCurrent, "flaggo.contracts:read");
+    expect(getCurrent.security).toBeUndefined();
     expectParameters(getCurrent, [
       "#/components/parameters/ContractNamePath",
       "#/components/parameters/CorrelationIdHeader",
@@ -206,7 +202,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "get",
     );
     expect(listVersions.operationId).toBe("listDecisionContractVersions");
-    expectSecurity(listVersions, "flaggo.contracts:read");
+    expect(listVersions.security).toBeUndefined();
     expectParameters(listVersions, [
       "#/components/parameters/ContractNamePath",
       "#/components/parameters/PageLimitQuery",
@@ -223,7 +219,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "get",
     );
     expect(getVersion.operationId).toBe("getDecisionContractVersion");
-    expectSecurity(getVersion, "flaggo.contracts:read");
+    expect(getVersion.security).toBeUndefined();
     expectParameters(getVersion, [
       "#/components/parameters/ContractNamePath",
       "#/components/parameters/ContractDigestPath",
@@ -240,11 +236,13 @@ describe("OpenAPI shared-contract alignment", () => {
     ).toBe(
       "../schemas/management-models-v3.schema.json#/$defs/DecisionContract",
     );
-    for (const status of ["401", "403", "409", "415", "422", "503"]) {
+    for (const status of ["409", "415", "422", "503"]) {
       expect(deployContract.responses[status]?.$ref).toBe(
         "#/components/responses/Problem",
       );
     }
+    expect(deployContract.responses["401"]).toBeUndefined();
+    expect(deployContract.responses["403"]).toBeUndefined();
 
     expectRequired(managementModels.$defs!.DecisionContract!, [
       "authority",
@@ -272,9 +270,9 @@ describe("OpenAPI shared-contract alignment", () => {
     ]);
   });
 
-  it("documents unauthenticated Contract Service health probes", () => {
+  it("documents Contract Service health probes", () => {
     const live = operation(management, "/health/live", "get");
-    expect(live.security).toEqual([]);
+    expect(live.security).toBeUndefined();
     expectResponseSchema(
       live,
       "200",
@@ -282,7 +280,7 @@ describe("OpenAPI shared-contract alignment", () => {
     );
 
     const ready = operation(management, "/health/ready", "get");
-    expect(ready.security).toEqual([]);
+    expect(ready.security).toBeUndefined();
     expectResponseSchema(
       ready,
       "200",
@@ -311,7 +309,7 @@ describe("OpenAPI shared-contract alignment", () => {
     );
 
     expect(createDecision.operationId).toBe("createRuntimeDecision");
-    expectSecurity(createDecision, "flaggo.decisions:decide");
+    expect(createDecision.security).toBeUndefined();
     expectParameters(createDecision, [
       "#/components/parameters/ContractNamePath",
       "#/components/parameters/ContractDigestPath",
@@ -382,13 +380,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "instance",
     ]);
 
-    const securityText = JSON.stringify({
-      runtime: runtime.components.securitySchemes.oauth2,
-      management: management.components.securitySchemes.oauth2,
-    });
-    expect(securityText).toContain("flaggo.decisions:decide");
-    expect(securityText).not.toContain("polari.exposures:confirm");
-    expect(securityText).toContain("flaggo.contracts:accept");
-    expect(securityText).not.toContain("polari.definitions:apply");
+    expect(runtime.components.securitySchemes).toBeUndefined();
+    expect(management.components.securitySchemes).toBeUndefined();
   });
 });

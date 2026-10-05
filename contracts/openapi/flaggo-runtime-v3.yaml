@@ -18,11 +18,6 @@
       "description": "Local development"
     }
   ],
-  "security": [
-    {
-      "oauth2": []
-    }
-  ],
   "tags": [
     {
       "name": "runtime-decisions",
@@ -41,14 +36,7 @@
         ],
         "operationId": "createRuntimeDecision",
         "summary": "Create a runtime decision from an exact DecisionContract version.",
-        "description": "The route addresses one immutable contract version: contractDigest must belong to contractName, and runtime never resolves the named resource's current version. The server validates the complete SDK-constructed RuntimeInput, resolves the executable active for the exact digest in the authenticated application and environment scope, evaluates it, validates the result, and returns without persisting a decision resource or request state. Each retry independently resolves the executable active at that request.",
-        "security": [
-          {
-            "oauth2": [
-              "flaggo.decisions:decide"
-            ]
-          }
-        ],
+        "description": "The route addresses one immutable contract version: contractDigest must belong to contractName, and runtime never resolves the named resource's current version. The server validates the complete SDK-constructed RuntimeInput, loads the exact persisted contract by name and digest, resolves the executable active for that contractDigest, evaluates it, validates the result, and returns without persisting a decision resource or request state. Each retry independently resolves the executable active at that request.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ContractNamePath"
@@ -89,12 +77,6 @@
           "400": {
             "$ref": "#/components/responses/Problem"
           },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
           "404": {
             "$ref": "#/components/responses/Problem"
           },
@@ -123,7 +105,6 @@
         ],
         "operationId": "healthLive",
         "summary": "Liveness probe. No external dependency checks.",
-        "security": [],
         "responses": {
           "200": {
             "description": "Process can serve the handler.",
@@ -151,7 +132,6 @@
         "operationId": "healthReady",
         "summary": "Readiness probe over required and optional dependencies.",
         "description": "200 ready requires every check up. 200 degraded is allowed when only optional checks are impaired. Any required check that is not up returns 503 not-ready.",
-        "security": [],
         "responses": {
           "200": {
             "description": "Ready or degraded readiness.",
@@ -188,20 +168,6 @@
     }
   },
   "components": {
-    "securitySchemes": {
-      "oauth2": {
-        "type": "oauth2",
-        "description": "OAuth 2.0/OIDC bearer access tokens. Tokens carry non-empty flaggo_application and flaggo_environment claims; authorization scopes are read from scope and scp. Local development may explicitly enable an insecure bypass, disabled by default.",
-        "flows": {
-          "clientCredentials": {
-            "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
-            "scopes": {
-              "flaggo.decisions:decide": "Create runtime decisions from exact DecisionContract versions"
-            }
-          }
-        }
-      }
-    },
     "parameters": {
       "ContractNamePath": {
         "name": "contractName",

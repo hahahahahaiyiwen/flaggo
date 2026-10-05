@@ -30,42 +30,45 @@ authored contract before validation and digest calculation. The resulting
 any authority member creates a different digest even when authored decision
 logic is unchanged.
 
-Management reads and runtime evaluation recover that same scope from three
-required claims:
+The first accepted contract claims global ownership of its `contractName` for
+that declared authority. Later versions of the same name must declare the same
+authority; a different authority receives
+`contract-name-authority-conflict`. Management reads and runtime evaluation
+use public resource identity, not credential-derived authority:
 
-| Claim | Meaning |
-| --- | --- |
-| `flaggo_tenant` | Stable tenant identifier |
-| `flaggo_application` | Stable application identifier |
-| `flaggo_environment` | Stable deployment-environment identifier |
+```text
+ExactContract[contractName, contractDigest]
+ManagementCurrent[contractName] = contractDigest
+RuntimeActivation[contractDigest] = executableDigest
+```
 
-All three claims must be non-empty strings. Authorization scopes are read from
-the standard space-delimited `scope` claim or the `scp` claim. If both are
-present, their values are combined. A token missing any Flaggo authority claim
-is not a valid management-read or runtime identity. The initial deployment API
-accepts declared authority; future credential-derived authority may constrain
-that declaration.
+The APIs currently have no authentication boundary. Future authentication must
+authorize an already loaded resource and must not use claims as hidden lookup
+selectors.
 
 The conceptual authority records are:
 
 ```text
-AcceptedContract[scope, contractName, contractDigest]
+ContractResource[contractName]
+  = declared AuthorityScope
+
+AcceptedContract[contractName, contractDigest]
   = immutable DecisionContract
 
-ExecutableArtifact[scope, executableDigest]
+ExecutableArtifact[executableDigest]
   = immutable DecisionExecutable bound to contractDigest
 
-ExecutableLifecycle[scope, contractDigest, executableDigest]
+ExecutableLifecycle[contractDigest, executableDigest]
   = Candidate | Active | Inactive
 ```
 
 `IExecutableStore` owns executable artifacts and their lifecycle state. The
-digest-bearing artifact never changes. Activation atomically changes scoped
-lifecycle rows so exactly one executable is `Active` for a scope and contract
-digest. The conceptual projection remains:
+digest-bearing artifact never changes. Activation atomically changes lifecycle
+rows so exactly one executable is `Active` for a contract digest. The
+conceptual projection remains:
 
 ```text
-RuntimeActivation[scope, contractDigest]
+RuntimeActivation[contractDigest]
   = the executableDigest whose lifecycle state is Active
 ```
 
@@ -78,7 +81,8 @@ contract version.
 Contract Acceptance validates, canonicalizes, hashes, and durably stores one
 exact `DecisionContract`. Acceptance establishes:
 
-- the named contract version exists in its declared authority scope;
+- the name is globally owned by the contract's declared authority;
+- the named contract version exists under its public name/digest identity;
 - its authority and semantic content are immutable under `contractDigest`;
 - generated executables must conform to that exact content; and
 - its required `result.default` may be used to generate the default
@@ -96,7 +100,7 @@ as accepted-ready runtime authority.
 The Contract Service also maintains:
 
 ```text
-ManagementCurrent[scope, contractName] = contractDigest
+ManagementCurrent[contractName] = contractDigest
 ```
 
 `ManagementCurrent` supports management `GET` operations and selects the
@@ -122,8 +126,8 @@ primitives:
 | --- | --- |
 | `AuthoredExecutable` | User-authored source contained in the contract; no direct runtime authority |
 | `DefaultExecutable` | Executable derived from the accepted literal default; activated automatically |
-| `CandidateExecutable` | Valid generated executable whose scoped lifecycle state is `Candidate` |
-| `ActiveExecutable` | Immutable executable whose scoped lifecycle state is `Active` |
+| `CandidateExecutable` | Valid generated executable whose lifecycle state is `Candidate` |
+| `ActiveExecutable` | Immutable executable whose lifecycle state is `Active` |
 
 Generation provenance does not alter executable identity. A candidate retains
 the same `executableDigest` when it is activated.
@@ -158,14 +162,14 @@ Contract Service performs the checked activation transition through
 Activation is the sole operation that grants runtime executable authority:
 
 ```text
-IExecutableStore.Activate(scope, contractDigest, executableDigest)
+IExecutableStore.Activate(contractDigest, executableDigest)
   -> prior Active becomes Inactive
   -> selected executable becomes Active
 ```
 
 Before writing the mapping, the Contract Service verifies:
 
-1. the contract digest is accepted in the same scope;
+1. the contract digest is accepted;
 2. the executable exists and binds that exact digest;
 3. the executable content matches its digest and conforms to the contract;
 4. an evidence-generated candidate still belongs to the current contract and
@@ -202,9 +206,9 @@ of the public decision model.
 For an exact-version request, the Decision Service resolves:
 
 ```text
-(authenticated scope, contractName, contractDigest)
+(contractName, contractDigest)
   -> accepted name/digest relationship
-  -> IExecutableStore.GetActive(scope, contractDigest)
+  -> IExecutableStore.GetActive(contractDigest)
   -> immutable ActiveExecutable
 ```
 
@@ -241,12 +245,13 @@ model.
 4. Authored source and generated candidates have no runtime authority by
    themselves.
 5. Generation never implies runtime authority; activation does.
-6. Activation is atomic and selects exactly one executable for a scope and
-   contract digest.
+6. Activation is atomic and selects exactly one executable for a contract
+   digest.
 7. The management current-version pointer never selects a runtime version.
 8. A failed replacement leaves the existing active executable unchanged.
 9. New contract versions preserve old-version activations.
-10. Authentication, not decision data, establishes authority scope.
+10. Declared authority remains contract, telemetry-routing, and evidence
+    identity data; it does not select management or runtime storage records.
 
 ## Related documents
 

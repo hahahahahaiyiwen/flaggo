@@ -7,14 +7,6 @@ using Flaggo.ServiceHosting;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Data.Sqlite;
 
-const string validatePolicy = "ValidateContract";
-const string acceptPolicy = "AcceptContract";
-const string readPolicy = "ReadContract";
-const string materializePolicy = "MaterializeContract";
-const string validateScope = "flaggo.contracts:validate";
-const string acceptScope = "flaggo.contracts:accept";
-const string readScope = "flaggo.contracts:read";
-const string materializeScope = "flaggo.contracts:materialize";
 const string serviceName = "flaggo-contract-service";
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,22 +26,6 @@ builder.Services.AddSingleton<IExecutableStore>(provider =>
         provider.GetRequiredService<FlaggoExpressionCompiler>(),
         provider.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<IContractLifecycle, ContractLifecycle>();
-builder.Services.AddFlaggoAuthentication(
-    builder.Configuration,
-    builder.Environment,
-    validateScope,
-    acceptScope,
-    readScope,
-    materializeScope);
-builder.Services.AddAuthorization(options =>
-{
-    AddPolicy(options, validatePolicy, validateScope);
-    AddPolicy(options, acceptPolicy, acceptScope);
-    AddPolicy(options, readPolicy, readScope);
-    AddPolicy(options, materializePolicy, materializeScope);
-});
-builder.Services.AddFlaggoAuthorizationProblemResults();
-
 var app = builder.Build();
 
 app.UseFlaggoCorrelationIds();
@@ -59,9 +35,6 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
     ExceptionHandler = WriteExceptionAsync
 });
 app.UseFlaggoProblemStatusPages();
-app.UseAuthentication();
-app.UseAuthorization();
-
 app.MapPost(
         "/v3/decision-contracts/{contractName}/validate",
         async (
@@ -76,8 +49,7 @@ app.MapPost(
             return Results.Json(
                 lifecycle.Validate(contractName, contract),
                 StrictJson.Options);
-        })
-    .RequireAuthorization(validatePolicy);
+        });
 
 app.MapPut(
         "/v3/decision-contracts/{contractName}",
@@ -107,8 +79,7 @@ app.MapPut(
                 statusCode: deployment.Created
                     ? StatusCodes.Status201Created
                     : StatusCodes.Status200OK);
-        })
-    .RequireAuthorization(acceptPolicy);
+        });
 
 app.MapGet(
         "/v3/decision-contracts/{contractName}",
@@ -119,14 +90,12 @@ app.MapGet(
             CancellationToken cancellationToken) =>
         {
             var version = await lifecycle.GetCurrentAsync(
-                AuthorityScope(context),
                 contractName,
                 cancellationToken);
             return version is null
                 ? NotFound(context)
                 : Results.Json(version, StrictJson.Options);
-        })
-    .RequireAuthorization(readPolicy);
+        });
 
 app.MapGet(
         "/v3/decision-contract-catalog/current",
@@ -140,8 +109,7 @@ app.MapGet(
             return MatchesEtag(context.Request.Headers.IfNoneMatch, catalog.Etag)
                 ? Results.StatusCode(StatusCodes.Status304NotModified)
                 : Results.Json(catalog.Catalog, StrictJson.Options);
-        })
-    .RequireAuthorization(materializePolicy);
+        });
 
 app.MapGet(
         "/v3/decision-contracts/{contractName}/versions",
@@ -154,7 +122,6 @@ app.MapGet(
             CancellationToken cancellationToken) =>
         {
             var page = await lifecycle.ListAsync(
-                AuthorityScope(context),
                 contractName,
                 limit ?? 50,
                 cursor,
@@ -162,8 +129,7 @@ app.MapGet(
             return page is null
                 ? NotFound(context)
                 : Results.Json(page, StrictJson.Options);
-        })
-    .RequireAuthorization(readPolicy);
+        });
 
 app.MapGet(
         "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
@@ -175,15 +141,13 @@ app.MapGet(
             CancellationToken cancellationToken) =>
         {
             var version = await lifecycle.GetAsync(
-                AuthorityScope(context),
                 contractName,
                 contractDigest,
                 cancellationToken);
             return version is null
                 ? NotFound(context)
                 : Results.Json(version, StrictJson.Options);
-        })
-    .RequireAuthorization(readPolicy);
+        });
 
 app.MapGet(
     "/health/live",
@@ -240,36 +204,13 @@ app.MapGet(
 await InitializeStoresAsync(app.Services);
 app.Run();
 
-static void AddPolicy(
-    Microsoft.AspNetCore.Authorization.AuthorizationOptions options,
-    string name,
-    string scope)
-{
-    options.AddPolicy(
-        name,
-        policy => policy
-            .RequireAuthenticatedUser()
-            .RequireAssertion(context => FlaggoClaims.HasScope(context.User, scope)));
-}
-
-static AuthorityScope AuthorityScope(HttpContext context)
-{
-    if (FlaggoClaims.TryGetAuthorityScope(context.User, out var scope))
-    {
-        return scope;
-    }
-
-    throw new UnauthorizedAccessException(
-        "The credential must identify exactly one tenant, application, and environment.");
-}
-
 static IResult NotFound(HttpContext context) =>
     ProblemResults.Create(
         context,
         StatusCodes.Status404NotFound,
         ProblemTypes.ContractVersionNotFound,
         "Decision contract not found",
-        "The requested DecisionContract resource does not exist in this scope.");
+        "The requested DecisionContract resource does not exist.");
 
 static bool MatchesEtag(
     Microsoft.Extensions.Primitives.StringValues values,
@@ -293,13 +234,16 @@ static async Task WriteExceptionAsync(HttpContext context)
     {
         HttpContractException contractException =>
             ProblemResults.FromException(context, contractException),
-        UnauthorizedAccessException =>
+        ContractNameAuthorityConflictException conflict =>
             ProblemResults.Create(
                 context,
-                StatusCodes.Status401Unauthorized,
-                ProblemTypes.AuthenticationRequired,
-                "Authentication required",
-                "The credential must identify exactly one application and environment."),
+                StatusCodes.Status409Conflict,
+                ProblemTypes.ContractNameAuthorityConflict,
+                "Contract name authority conflict",
+                $"Contract name '{conflict.ContractName}' is already owned by "
+                + $"authority '{conflict.ExistingAuthority.Tenant}/"
+                + $"{conflict.ExistingAuthority.Application}/"
+                + $"{conflict.ExistingAuthority.Environment}'."),
         ContractNameMismatchException =>
             ProblemResults.Create(
                 context,

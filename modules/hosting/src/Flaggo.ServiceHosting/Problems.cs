@@ -11,10 +11,9 @@ public static class ProblemTypes
     public const string InvalidRequest = Root + "invalid-request";
     public const string ResourceNotFound = Root + "resource-not-found";
     public const string MethodNotAllowed = Root + "method-not-allowed";
-    public const string AuthenticationRequired = Root + "authentication-required";
-    public const string InsufficientScope = Root + "insufficient-scope";
     public const string ContractVersionNotFound = Root + "contract-version-not-found";
     public const string ContractNameMismatch = Root + "contract-name-mismatch";
+    public const string ContractNameAuthorityConflict = Root + "contract-name-authority-conflict";
     public const string InvalidDecisionContract = Root + "invalid-decision-contract";
     public const string ActivationConflict = Root + "activation-conflict";
     public const string UnsupportedMediaType = Root + "unsupported-media-type";
@@ -79,14 +78,6 @@ public static class ProblemStatusPages
                     ProblemTypes.InvalidRequest,
                     "Invalid request",
                     "The request could not be processed."),
-                StatusCodes.Status401Unauthorized => (
-                    ProblemTypes.AuthenticationRequired,
-                    "Authentication required",
-                    "Authentication is required for this operation."),
-                StatusCodes.Status403Forbidden => (
-                    ProblemTypes.InsufficientScope,
-                    "Insufficient scope",
-                    "The credential is not authorized for this operation."),
                 StatusCodes.Status404NotFound => (
                     ProblemTypes.ResourceNotFound,
                     "Resource not found",

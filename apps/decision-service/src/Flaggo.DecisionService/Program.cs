@@ -7,8 +7,6 @@ using Flaggo.ServiceHosting;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Data.Sqlite;
 
-const string decidePolicy = "Decide";
-const string decideScope = "flaggo.decisions:decide";
 const string serviceName = "flaggo-decision-service";
 
 var builder = WebApplication.CreateBuilder(args);
@@ -29,20 +27,6 @@ builder.Services.AddSingleton<IExecutableStore>(provider =>
         provider.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<DecisionEvaluator>();
 builder.Services.AddSingleton<IDecisionRuntime, DecisionRuntime>();
-builder.Services.AddFlaggoAuthentication(
-    builder.Configuration,
-    builder.Environment,
-    decideScope);
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy(
-        decidePolicy,
-        policy => policy
-            .RequireAuthenticatedUser()
-            .RequireAssertion(context => FlaggoClaims.HasScope(context.User, decideScope)));
-});
-builder.Services.AddFlaggoAuthorizationProblemResults();
-
 var app = builder.Build();
 
 app.UseFlaggoCorrelationIds();
@@ -52,9 +36,6 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
     ExceptionHandler = WriteExceptionAsync
 });
 app.UseFlaggoProblemStatusPages();
-app.UseAuthentication();
-app.UseAuthorization();
-
 app.MapPost(
         "/v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions",
         async (
@@ -64,28 +45,16 @@ app.MapPost(
             IDecisionRuntime runtime,
             CancellationToken cancellationToken) =>
         {
-            if (!FlaggoClaims.TryGetAuthorityScope(context.User, out var scope))
-            {
-                return ProblemResults.Create(
-                    context,
-                    StatusCodes.Status401Unauthorized,
-                    ProblemTypes.AuthenticationRequired,
-                    "Authentication required",
-                    "The credential must identify exactly one application and environment.");
-            }
-
             var input = await HttpJson.ReadAsync<RuntimeInput>(
                 context.Request,
                 cancellationToken);
             var decision = await runtime.DecideAsync(
-                scope,
                 contractName,
                 contractDigest,
                 input,
                 cancellationToken);
             return Results.Json(decision, StrictJson.Options);
-        })
-    .RequireAuthorization(decidePolicy);
+        });
 
 app.MapGet(
     "/health/live",
@@ -169,7 +138,7 @@ static async Task WriteExceptionAsync(HttpContext context)
                 StatusCodes.Status404NotFound,
                 ProblemTypes.ContractVersionNotFound,
                 "Contract version not found",
-                "The requested contract version does not exist in this scope."),
+                "The requested contract version does not exist."),
         RuntimeInputValidationException inputException =>
             ProblemResults.Create(
                 context,

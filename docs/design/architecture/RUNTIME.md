@@ -86,23 +86,22 @@ POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
 The route identifies the logical decision and one exact immutable contract
-version. The body carries only the complete `RuntimeInput`; authenticated
-credentials establish tenant, application, and environment scope.
+version. The body carries only the complete `RuntimeInput`. Declared authority
+is already covered by the stored contract digest and is not supplied or derived
+from the caller.
 
 Contract attributes, user identifiers, and exposure context are decision data.
-They cannot authenticate a caller, authorize another scope, or select a
-different contract version.
+They cannot select a different contract version.
 
 ## Request handling
 
 Each request executes one independent sequence:
 
 ```text
-authenticate and authorize scope
-  -> verify contractName owns contractDigest
+verify contractName owns contractDigest
   -> load accepted contract version
   -> validate complete RuntimeInput
-  -> IExecutableStore.GetActive(scope, contractDigest)
+  -> IExecutableStore.GetActive(contractDigest)
   -> evaluate bounded behavior
   -> validate result against DecisionContract
   -> return RuntimeDecision
@@ -120,10 +119,9 @@ than repeated here.
 
 The Decision Service owns:
 
-- authentication and authorization for runtime requests;
 - route name/digest relationship validation;
 - complete input validation against the accepted contract;
-- active executable resolution for the authenticated scope and exact digest;
+- active executable resolution for the exact digest;
 - immutable executable integrity checks;
 - bounded deterministic evaluation;
 - result validation;
@@ -145,7 +143,7 @@ It does not own:
 | Dependency | Request-path use |
 | --- | --- |
 | Accepted Contract Store | Verify name/digest identity and validate input and result |
-| Executable Store | Atomically resolve the immutable executable whose scoped lifecycle state is Active for the exact digest |
+| Executable Store | Atomically resolve the immutable executable whose lifecycle state is Active for the exact digest |
 | Evaluator | Execute the already checked representation |
 
 Evidence storage, learning scheduling, executable generation, management
@@ -182,9 +180,9 @@ The Decision Service reads one activation and evaluates the referenced
 immutable executable:
 
 ```text
-attempt A: RuntimeActivation[scope, D] = E1 -> evaluate E1
-activation replacement:                    E1 -> E2
-attempt B: RuntimeActivation[scope, D] = E2 -> evaluate E2
+attempt A: RuntimeActivation[D] = E1 -> evaluate E1
+activation replacement:             E1 -> E2
+attempt B: RuntimeActivation[D] = E2 -> evaluate E2
 ```
 
 Attempt A completes with `E1` even if replacement occurs during evaluation.
@@ -234,16 +232,15 @@ SDK-local outage fallback remains a separate deferred concern.
 
 1. Application deployment supplies an exact contract name and digest.
 2. The SDK constructs and retries one complete logical input.
-3. Authentication establishes tenant/application/environment scope.
-4. The service resolves exactly one active immutable executable per request.
-5. Management current-version and candidate-generation order never select
+3. The service resolves exactly one active immutable executable per request.
+4. Management current-version and candidate-generation order never select
    runtime authority.
-6. Runtime generation, evidence analysis, and activation never occur in the
+5. Runtime generation, evidence analysis, and activation never occur in the
    request path.
-7. Evaluation depends only on the resolved executable and complete input.
-8. The service retains no semantic per-request state.
-9. A retry may observe a newly activated executable.
-10. Returning a decision does not imply exposure.
+6. Evaluation depends only on the resolved executable and complete input.
+7. The service retains no semantic per-request state.
+8. A retry may observe a newly activated executable.
+9. Returning a decision does not imply exposure.
 
 ## Related documents
 

@@ -2,15 +2,14 @@
   "$schema-note": "Index of contract conformance fixtures. Generated from contracts/fixtures metadata.",
   "version": "1",
   "generatedFor": "DecisionContract management v3, stateless runtime evaluation v3, deployment v2, runtime configuration v1, and Phase 4 telemetry contracts",
-  "totalCases": 34,
-  "requiredScenarioCount": 17,
+  "totalCases": 27,
+  "requiredScenarioCount": 15,
   "coveredScenarios": [
     1,
     2,
     3,
     4,
     5,
-    25,
     33,
     35,
     38,
@@ -19,7 +18,6 @@
     46,
     47,
     48,
-    49,
     50,
     51
   ],
@@ -51,128 +49,18 @@
       "invariant": "Obsolete manifests, unstable authority, unsafe service URLs, malformed bindings, and unknown members are rejected."
     },
     {
-      "name": "runtime-authentication-required",
-      "scenarios": [
-        35
-      ],
+      "name": "put-contract-name-authority-conflict",
+      "scenarios": [],
       "group": "errors",
-      "file": "fixtures/errors/auth-01-authentication-required.json",
-      "method": "POST",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
-      "status": 401,
-      "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
-      "responseSchema": "problem-details-v3.schema.json",
-      "sdkLocal": false,
-      "schemaNegative": false,
-      "invariant": "Runtime evaluation without valid credentials returns 401 authentication-required."
-    },
-    {
-      "name": "runtime-insufficient-scope",
-      "scenarios": [
-        25
-      ],
-      "group": "errors",
-      "file": "fixtures/errors/auth-02-runtime-decision-insufficient-scope.json",
-      "method": "POST",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
-      "status": 403,
-      "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
-      "responseSchema": "problem-details-v3.schema.json",
-      "sdkLocal": false,
-      "schemaNegative": false,
-      "invariant": "Runtime evaluation without flaggo.decisions:decide returns 403 insufficient-scope."
-    },
-    {
-      "name": "validate-contract-insufficient-scope",
-      "scenarios": [
-        49
-      ],
-      "group": "errors",
-      "file": "fixtures/errors/auth-04-validate-contract-insufficient-scope.json",
-      "method": "POST",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval/validate",
-      "status": 403,
-      "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
-      "responseSchema": "problem-details-v3.schema.json",
-      "sdkLocal": false,
-      "schemaNegative": false,
-      "invariant": "Contract validation without flaggo.contracts:validate returns 403 insufficient-scope."
-    },
-    {
-      "name": "put-contract-insufficient-scope",
-      "scenarios": [
-        49
-      ],
-      "group": "errors",
-      "file": "fixtures/errors/auth-05-put-contract-insufficient-scope.json",
+      "file": "fixtures/errors/contract-01-name-authority-conflict.json",
       "method": "PUT",
       "httpPath": "/v3/decision-contracts/tetris.dropInterval",
-      "status": 403,
+      "status": 409,
       "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
       "responseSchema": "problem-details-v3.schema.json",
       "sdkLocal": false,
       "schemaNegative": false,
-      "invariant": "Contract version creation without flaggo.contracts:accept returns 403 insufficient-scope."
-    },
-    {
-      "name": "get-current-contract-insufficient-scope",
-      "scenarios": [
-        49
-      ],
-      "group": "errors",
-      "file": "fixtures/errors/auth-06-get-current-contract-insufficient-scope.json",
-      "method": "GET",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval",
-      "status": 403,
-      "responseSchema": "problem-details-v3.schema.json",
-      "sdkLocal": false,
-      "schemaNegative": false,
-      "invariant": "Current contract lookup without flaggo.contracts:read returns 403 insufficient-scope."
-    },
-    {
-      "name": "get-contract-catalog-insufficient-scope",
-      "scenarios": [
-        49
-      ],
-      "group": "errors",
-      "file": "fixtures/errors/auth-13-get-contract-catalog-insufficient-scope.json",
-      "method": "GET",
-      "httpPath": "/v3/decision-contract-catalog/current",
-      "status": 403,
-      "responseSchema": "problem-details-v3.schema.json",
-      "sdkLocal": false,
-      "schemaNegative": false,
-      "invariant": "Cross-authority contract catalog lookup without flaggo.contracts:materialize returns 403 insufficient-scope."
-    },
-    {
-      "name": "list-contract-versions-insufficient-scope",
-      "scenarios": [
-        49
-      ],
-      "group": "errors",
-      "file": "fixtures/errors/auth-11-list-contract-versions-insufficient-scope.json",
-      "method": "GET",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions",
-      "status": 403,
-      "responseSchema": "problem-details-v3.schema.json",
-      "sdkLocal": false,
-      "schemaNegative": false,
-      "invariant": "Contract version history lookup without flaggo.contracts:read returns 403 insufficient-scope."
-    },
-    {
-      "name": "get-contract-version-insufficient-scope",
-      "scenarios": [
-        49
-      ],
-      "group": "errors",
-      "file": "fixtures/errors/auth-12-get-contract-version-insufficient-scope.json",
-      "method": "GET",
-      "httpPath": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
-      "status": 403,
-      "responseSchema": "problem-details-v3.schema.json",
-      "sdkLocal": false,
-      "schemaNegative": false,
-      "invariant": "Exact contract version lookup without flaggo.contracts:read returns 403 insufficient-scope."
+      "invariant": "A globally owned contract name cannot be deployed under a different declared authority."
     },
     {
       "name": "runtime-rate-limited",

@@ -9,7 +9,6 @@ namespace Flaggo.Decision;
 public interface IDecisionRuntime
 {
     Task<RuntimeDecision> DecideAsync(
-        AuthorityScope scope,
         string contractName,
         string contractDigest,
         RuntimeInput input,
@@ -33,20 +32,18 @@ public sealed class DecisionRuntime(
         _compiledExecutableOrder = new();
 
     public async Task<RuntimeDecision> DecideAsync(
-        AuthorityScope scope,
         string contractName,
         string contractDigest,
         RuntimeInput input,
         CancellationToken cancellationToken = default)
     {
-        ValidateIdentity(scope, contractName, contractDigest);
+        ValidateIdentity(contractName, contractDigest);
         ArgumentNullException.ThrowIfNull(input);
 
         AcceptedContractVersion? version;
         try
         {
             version = await contractStore.GetAsync(
-                scope,
                 contractName,
                 contractDigest,
                 cancellationToken);
@@ -61,7 +58,6 @@ public sealed class DecisionRuntime(
         if (version is null)
         {
             throw new DecisionContractVersionNotFoundException(
-                scope,
                 contractName,
                 contractDigest);
         }
@@ -77,7 +73,6 @@ public sealed class DecisionRuntime(
         try
         {
             active = await executableStore.GetActiveAsync(
-                scope,
                 contractDigest,
                 cancellationToken);
         }
@@ -90,7 +85,7 @@ public sealed class DecisionRuntime(
 
         if (active is null)
         {
-            throw new ActiveExecutableNotFoundException(scope, contractDigest);
+            throw new ActiveExecutableNotFoundException(contractDigest);
         }
 
         if (!string.Equals(
@@ -170,12 +165,9 @@ public sealed class DecisionRuntime(
         string CheckedRepresentation);
 
     private static void ValidateIdentity(
-        AuthorityScope scope,
         string contractName,
         string contractDigest)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope.Application);
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope.Environment);
         if (!ContractValidator.IsDecisionName(contractName))
         {
             throw new ArgumentException(
@@ -193,12 +185,10 @@ public sealed class DecisionRuntime(
 }
 
 public sealed class DecisionContractVersionNotFoundException(
-    AuthorityScope scope,
     string contractName,
     string contractDigest)
     : Exception(
-        $"Contract version '{contractName}' at '{contractDigest}' was not found "
-        + $"in scope '{scope}'.");
+        $"Contract version '{contractName}' at '{contractDigest}' was not found.");
 
 public sealed class RuntimeInputValidationException(
     IReadOnlyList<ValidationIssue> issues)
@@ -208,10 +198,8 @@ public sealed class RuntimeInputValidationException(
 }
 
 public sealed class ActiveExecutableNotFoundException(
-    AuthorityScope scope,
     string contractDigest)
-    : Exception(
-        $"No executable is active for contract '{contractDigest}' in scope '{scope}'.");
+    : Exception($"No executable is active for contract '{contractDigest}'.");
 
 public sealed class RuntimeIntegrityException : Exception
 {

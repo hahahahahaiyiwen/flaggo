@@ -34,7 +34,6 @@ export {
   MissingDecisionBindingError,
 } from "../errors.js";
 export type {
-  CredentialProvider,
   FetchLike,
   FlaggoResponse,
   FlaggoResponseMetadata,

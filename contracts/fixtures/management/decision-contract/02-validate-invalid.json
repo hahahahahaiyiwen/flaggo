@@ -8,7 +8,6 @@
     "method": "POST",
     "path": "/v3/decision-contracts/tetris.dropInterval/validate",
     "headers": {
-      "Authorization": "******",
       "Content-Type": "application/json"
     },
     "body": {

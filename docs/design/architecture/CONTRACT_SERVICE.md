@@ -151,7 +151,6 @@ calculation used by deployment but performs no durable mutation:
 
 ```text
 DecisionContract
-  -> authenticate and authorize validation
   -> verify route name equals payload name
   -> validate syntax and semantics
   -> canonicalize semantic content
@@ -161,8 +160,7 @@ DecisionContract
 
 A semantically invalid contract is a successful validation operation whose
 body reports `status: invalid`. Malformed transport input, unsupported media
-types, authentication failures, and other protocol failures use Problem
-Details instead.
+types, and other protocol failures use Problem Details instead.
 
 Validation does not reserve a digest, create a version, generate an
 executable, change a current pointer, or activate runtime authority.
@@ -173,8 +171,7 @@ executable, change a current pointer, or activate runtime authority.
 runtime-ready:
 
 ```text
-authenticate and authorize acceptance
-  -> read AuthorityScope from the complete contract
+read AuthorityScope from the complete contract
   -> verify route name equals payload name
   -> validate and canonicalize DecisionContract
   -> compute contractDigest
@@ -182,9 +179,14 @@ authenticate and authorize acceptance
   -> generate and validate DefaultExecutable
   -> persist immutable executable
   -> atomically activate default through IExecutableStore
-  -> move ManagementCurrent[scope, contractName]
+  -> move ManagementCurrent[contractName]
   -> return ready DecisionContractVersion
 ```
+
+The first accepted version also establishes
+`ContractResource[contractName] = declared AuthorityScope`. A later deployment
+of the same name with another declared authority fails with
+`contract-name-authority-conflict`.
 
 A newly created semantic version returns `201` and the exact-version
 `Location`. Repeating an already accepted semantic version returns `200` and
@@ -197,13 +199,12 @@ version as `ready` before its default executable is durable and active.
 ### Reads
 
 The name-level `GET` returns the version selected by
-`ManagementCurrent[scope, contractName]`. It is an authoring and discovery
+`ManagementCurrent[contractName]`. It is an authoring and discovery
 convenience.
 
 The versions collection returns immutable version summaries in stable
 cursor-paginated order. The exact-version operation returns one immutable
-version only when its digest belongs to the named resource in the
-authenticated scope.
+version only when its digest belongs to the named resource.
 
 Neither `ManagementCurrent` nor version-list ordering grants runtime
 authority. The Decision Service accepts an exact digest and reads
@@ -217,8 +218,8 @@ opaque conditional-fetch state, not contract or evidence identity.
 
 The Contract Service owns:
 
-- authentication and authorization for management operations;
 - route and payload identity validation;
+- global contract-name ownership by declared authority;
 - bounded contract syntax and semantic validation;
 - canonicalization and `contractDigest` computation;
 - immutable contract-version persistence;
@@ -284,7 +285,7 @@ Auto-activation is a Contract Service transition:
 ```text
 valid current candidate
   -> Contract Service activation command
-  -> IExecutableStore.Activate(scope, contractDigest, executableDigest)
+  -> IExecutableStore.Activate(contractDigest, executableDigest)
 ```
 
 It is not a rule telling the Decision Service to query the newest generated
@@ -310,11 +311,11 @@ contract.
 
 ## Failure boundary
 
-The service returns explicit failures for authentication or authorization
-failure, malformed requests, route/payload mismatch, unsupported contract
-features, persistence failure, default generation failure, and activation
-failure. Failure to generate a later authored or learned candidate is a
-recorded lifecycle outcome and leaves the current executable active.
+The service returns explicit failures for malformed requests, route/payload
+mismatch, contract-name authority conflict, unsupported contract features,
+persistence failure, default generation failure, and activation failure.
+Failure to generate a later authored or learned candidate is a recorded
+lifecycle outcome and leaves the current executable active.
 
 Dry-run semantic errors are returned as structured validation results.
 Protocol and service failures use RFC 9457 Problem Details. The service never

@@ -35,8 +35,8 @@ not depend on an app composition root or on the legacy
   analysis.
 - Raw OTLP Inbox persists complete validated OTLP export requests as a bounded,
   replayable work log without depending on its SQLx/SQLite adapter contract.
-- Hosting owns reusable strict HTTP, authentication, correlation, Problem
-  Details, and health mechanics without domain routes.
+- Hosting owns reusable strict HTTP, correlation, Problem Details, and health
+  mechanics without domain routes.
 
 The former Audit, Policy, Reasoning, Registry, Evidence, and State modules were
 removed by #49. Do not reintroduce forwarding projects, namespace aliases,

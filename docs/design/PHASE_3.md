@@ -40,9 +40,9 @@ The executable boundary includes:
   `result.default`;
 - bounded `flaggo.cel/v1` compilation for deterministic authored predicates
   and result expressions;
-- scoped Candidate, Active, and Inactive executable lifecycle state;
-- strict JSON, authentication, authorization, correlation, Problem Details,
-  and service health behavior;
+- Candidate, Active, and Inactive executable lifecycle state keyed by
+  contract digest;
+- strict JSON, correlation, Problem Details, and service health behavior;
 - generated TypeScript wire types and validators with hand-written management
   and runtime clients;
 - manifest-driven contract deployment separated from build and service

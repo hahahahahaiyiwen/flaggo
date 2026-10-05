@@ -38,7 +38,6 @@ export {
   InvalidServerResponseError,
 } from "../errors.js";
 export type {
-  CredentialProvider,
   FetchLike,
   FlaggoResponse,
   FlaggoResponseMetadata,

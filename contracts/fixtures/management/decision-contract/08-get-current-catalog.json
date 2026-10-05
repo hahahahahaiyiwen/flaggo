@@ -7,7 +7,6 @@
     "method": "GET",
     "path": "/v3/decision-contract-catalog/current",
     "headers": {
-      "Authorization": "******"
     }
   },
   "expected": {

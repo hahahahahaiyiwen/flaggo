@@ -51,7 +51,7 @@ tick.
 | Runtime identity | Exact `{ contractName, contractDigest }` |
 | Runtime attributes | `board_pressure_mean_5s`, `board_pressure_max_5s`, `placement_time_mean_ms_5s`, `recovery_failures_5s`, `pieces_locked_5s`, `current_level`, `session_id` |
 | Result | Number `200..1500ms`, multiple of `50ms`, default `800ms` |
-| Runtime authority | One active immutable executable for the authenticated scope and exact digest |
+| Runtime authority | One active immutable executable for the exact digest |
 | Learning | Auto-activation policy with placement-time objective and recovery-failure guardrail |
 
 ```text

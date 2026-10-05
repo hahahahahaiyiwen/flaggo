@@ -146,8 +146,9 @@ Async Analysis never writes Executable Store or runtime authority directly.
 | Async Analysis | Background worker, planned and collapsed | Exact current contracts and materialized Evidence Store observations | Analysis-run state, evidence selection and method provenance, and immutable candidate proposals | Read Raw OTLP as a fallback, write activation state, bypass candidate validation, or enter the runtime request path |
 
 Operator Console is a planned management client rather than a server authority.
-It must use authenticated APIs and cannot gain authority by reading or writing
-store tables directly.
+It must use service APIs and cannot gain authority by reading or writing store
+tables directly. Any future authentication authorizes loaded resources rather
+than selecting them by credential claims.
 
 ## Durable-state ownership
 
@@ -170,12 +171,11 @@ project.
 | Transition | Authority holder | Result |
 | --- | --- | --- |
 | Establish validation or deployment scope | Contract Service | Tenant, application, and environment declared by the submitted contract |
-| Authenticate scoped management read or runtime caller | Receiving Contract or Decision Service | Tenant, application, and environment selected from current credential claims |
-| Authorize current-catalog read | Contract Service | One materialization-scoped caller may read current contracts across declared authorities |
-| Accept contract | Contract Service | Server-computed immutable `contractDigest` containing declared authority and a scoped management current pointer |
+| Claim contract-name ownership | Contract Service | The first accepted declared authority owns the name globally |
+| Accept contract | Contract Service | Server-computed immutable `contractDigest` containing declared authority and a name-keyed management current pointer |
 | Generate candidate | Contract Service for default/authored paths; planned Async Analysis for learned paths | Immutable proposal bound to one exact digest; no runtime authority |
 | Validate and admit candidate | Contract Service | Contract-conformant immutable executable and provenance |
-| Activate executable | Contract Service | Atomic `RuntimeActivation[scope, contractDigest]` mapping |
+| Activate executable | Contract Service | Atomic `RuntimeActivation[contractDigest]` mapping |
 | Resolve runtime executable | Decision Service | One immutable active executable captured for the request |
 | Derive current telemetry scope | Evidence Materializer | Declared authority from required OTLP Resource attributes; not authentication authority |
 | Interpret evidence | Planned Async Analysis | Evidence scoped to an exact contract digest and recorded provenance |

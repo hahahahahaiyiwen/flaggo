@@ -107,7 +107,6 @@ async function runIntegration(lifecycle) {
   });
   const provider = createFlaggoDropIntervalProvider({
     runtimeConfig: deployed.runtimeConfig,
-    credential: { mode: "local-development" },
     fetch: forwardingFetch,
     telemetry: telemetry.policyInstrumentation,
   });
@@ -781,7 +780,6 @@ async function postDecisionRest({
     method: "POST",
     headers: {
       Accept: "application/json",
-      Authorization: "Flaggo-Local-Development",
       "Content-Type": "application/json",
     },
     body: JSON.stringify(request),

@@ -14,20 +14,16 @@ const MAXIMUM_CATALOG_BYTES: usize = 16 * 1024 * 1024;
 pub struct HttpContractCatalogProvider {
     client: Client,
     endpoint: Url,
-    bearer_token: Option<String>,
 }
 
 impl HttpContractCatalogProvider {
-    pub fn new(endpoint: &str, bearer_token: Option<String>) -> Result<Self, CatalogProviderError> {
+    pub fn new(endpoint: &str) -> Result<Self, CatalogProviderError> {
         let endpoint = Url::parse(endpoint)
             .map_err(|error| CatalogProviderError::InvalidUrl(error.to_string()))?;
         if !matches!(endpoint.scheme(), "http" | "https") {
             return Err(CatalogProviderError::UnsupportedScheme(
                 endpoint.scheme().to_owned(),
             ));
-        }
-        if bearer_token.as_ref().is_some_and(String::is_empty) {
-            return Err(CatalogProviderError::EmptyBearerToken);
         }
         Ok(Self {
             client: Client::builder()
@@ -37,7 +33,6 @@ impl HttpContractCatalogProvider {
                 .build()
                 .map_err(CatalogProviderError::Client)?,
             endpoint,
-            bearer_token,
         })
     }
 
@@ -48,9 +43,6 @@ impl HttpContractCatalogProvider {
         let mut request = self.client.get(self.endpoint.clone());
         if let Some(etag) = current_etag {
             request = request.header(IF_NONE_MATCH, etag);
-        }
-        if let Some(token) = &self.bearer_token {
-            request = request.bearer_auth(token);
         }
         let mut response = request
             .send()
@@ -115,8 +107,6 @@ pub enum CatalogProviderError {
     InvalidUrl(String),
     #[error("contract catalog URL scheme '{0}' is unsupported")]
     UnsupportedScheme(String),
-    #[error("contract catalog bearer token must not be empty")]
-    EmptyBearerToken,
     #[error("contract catalog HTTP client could not be created: {0}")]
     Client(#[source] reqwest::Error),
     #[error("contract catalog request failed: {0}")]
@@ -176,7 +166,7 @@ mod tests {
             axum::serve(listener, router).await.unwrap();
         });
         let provider =
-            HttpContractCatalogProvider::new(&format!("http://{address}/catalog"), None).unwrap();
+            HttpContractCatalogProvider::new(&format!("http://{address}/catalog")).unwrap();
 
         let CatalogFetch::Updated { etag, .. } = provider.fetch(None).await.unwrap() else {
             panic!("first request must return the catalog");
@@ -192,7 +182,7 @@ mod tests {
         );
 
         let oversized =
-            HttpContractCatalogProvider::new(&format!("http://{address}/oversized"), None).unwrap();
+            HttpContractCatalogProvider::new(&format!("http://{address}/oversized")).unwrap();
         assert!(matches!(
             oversized.fetch(None).await,
             Err(CatalogProviderError::TooLarge)

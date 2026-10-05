@@ -11,7 +11,6 @@ export async function deployTetrisContract({
   const result = await deployContracts({
     manifestPath: resolve(exampleDirectory, "flaggo.deploy.json"),
     services,
-    credential: { mode: "local-development" },
     fetch,
     signal,
   });

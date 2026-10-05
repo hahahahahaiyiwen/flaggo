@@ -1,21 +1,16 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Claims;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using Flaggo.Contract;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
 using Flaggo.ServiceHosting;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace Flaggo.ContractService.Tests;
 
@@ -34,7 +29,7 @@ public sealed class ContractServiceEndpointTests
             .GetRawText();
         factory.Clock.SetUtcNow(
             new DateTimeOffset(2026, 7, 15, 10, 0, 0, TimeSpan.Zero));
-        using (var seedRequest = AuthorizedRequest(
+        using (var seedRequest = JsonRequest(
             HttpMethod.Put,
             "/v3/decision-contracts/tetris.dropInterval",
             historicalContract))
@@ -62,7 +57,7 @@ public sealed class ContractServiceEndpointTests
             var body = requestModel.TryGetProperty("body", out var requestBody)
                 ? requestBody.GetRawText()
                 : null;
-            using var request = AuthorizedRequest(
+            using var request = JsonRequest(
                 method,
                 requestModel.GetProperty("path").GetString()!,
                 body);
@@ -98,7 +93,7 @@ public sealed class ContractServiceEndpointTests
         using var factory = new ContractServiceFactory();
         using var client = factory.CreateClient();
         var fixture = await ReadFixtureAsync("01-validate-valid.json");
-        using var request = AuthorizedRequest(
+        using var request = JsonRequest(
             HttpMethod.Post,
             fixture.Path,
             fixture.Body);
@@ -117,7 +112,7 @@ public sealed class ContractServiceEndpointTests
             "client-validation",
             Assert.Single(response.Headers.GetValues(CorrelationIds.HeaderName)));
 
-        using var get = AuthorizedRequest(
+        using var get = JsonRequest(
             HttpMethod.Get,
             "/v3/decision-contracts/tetris.dropInterval");
         using var getResponse = await client.SendAsync(get);
@@ -131,7 +126,7 @@ public sealed class ContractServiceEndpointTests
         using var client = factory.CreateClient();
         var fixture = await ReadFixtureAsync("03-put-ready.json");
 
-        using var firstRequest = AuthorizedRequest(
+        using var firstRequest = JsonRequest(
             HttpMethod.Put,
             fixture.Path,
             fixture.Body);
@@ -152,7 +147,7 @@ public sealed class ContractServiceEndpointTests
             $"/v3/decision-contracts/tetris.dropInterval/versions/{created.ContractDigest}",
             first.Headers.Location?.OriginalString);
 
-        using var retryRequest = AuthorizedRequest(
+        using var retryRequest = JsonRequest(
             HttpMethod.Put,
             fixture.Path,
             fixture.Body);
@@ -170,9 +165,49 @@ public sealed class ContractServiceEndpointTests
             StrictJson.SerializeToUtf8Bytes(existing.Contract));
         var active = await factory.Services
             .GetRequiredService<IExecutableStore>()
-            .GetActiveAsync(ContractServiceFactory.Scope, created.ContractDigest);
+            .GetActiveAsync(created.ContractDigest);
         Assert.Equal(created.ActiveExecutableDigest, active?.ExecutableDigest);
         Assert.Empty(active!.Executable.Rules);
+    }
+
+    [Fact]
+    public async Task ContractNameAuthorityConflictMatchesFixture()
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var seed = await ReadFixtureAsync("03-put-ready.json");
+        using (var seedRequest = JsonRequest(HttpMethod.Put, seed.Path, seed.Body))
+        using (var seedResponse = await client.SendAsync(seedRequest))
+        {
+            Assert.Equal(HttpStatusCode.Created, seedResponse.StatusCode);
+        }
+
+        using var fixture = await ReadFixtureDocumentAsync(
+            "contract-01-name-authority-conflict.json",
+            "errors");
+        var requestModel = fixture.RootElement.GetProperty("request");
+        var expected = fixture.RootElement.GetProperty("expected");
+        using var request = JsonRequest(
+            HttpMethod.Put,
+            requestModel.GetProperty("path").GetString()!,
+            requestModel.GetProperty("body").GetRawText());
+        var correlationId = requestModel
+            .GetProperty("headers")
+            .GetProperty(CorrelationIds.HeaderName)
+            .GetString()!;
+        request.Headers.Add(CorrelationIds.HeaderName, correlationId);
+
+        using var response = await client.SendAsync(request);
+        using var actualBody = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.True(JsonElement.DeepEquals(
+            expected.GetProperty("body"),
+            actualBody.RootElement));
+        Assert.Equal(
+            correlationId,
+            Assert.Single(response.Headers.GetValues(CorrelationIds.HeaderName)));
     }
 
     [Fact]
@@ -185,7 +220,7 @@ public sealed class ContractServiceEndpointTests
             .GetProperty("request")
             .GetProperty("body")
             .GetRawText();
-        using (var learningRequest = AuthorizedRequest(
+        using (var learningRequest = JsonRequest(
             HttpMethod.Put,
             "/v3/decision-contracts/tetris.dropInterval",
             learningContract))
@@ -196,7 +231,7 @@ public sealed class ContractServiceEndpointTests
         var otherScope = new AuthorityScope("acme", "worker", "production");
         await PutDefaultAsync(client, 3, otherScope);
 
-        using var request = AuthorizedRequest(
+        using var request = JsonRequest(
             HttpMethod.Get,
             "/v3/decision-contract-catalog/current");
         using var response = await client.SendAsync(request);
@@ -212,7 +247,7 @@ public sealed class ContractServiceEndpointTests
         var etag = response.Headers.ETag?.Tag;
         Assert.StartsWith("\"catalog:", etag, StringComparison.Ordinal);
 
-        using var conditional = AuthorizedRequest(
+        using var conditional = JsonRequest(
             HttpMethod.Get,
             "/v3/decision-contract-catalog/current");
         conditional.Headers.TryAddWithoutValidation("If-None-Match", etag);
@@ -261,7 +296,7 @@ public sealed class ContractServiceEndpointTests
               }
             }
             """;
-        using var request = AuthorizedRequest(
+        using var request = JsonRequest(
             HttpMethod.Put,
             "/v3/decision-contracts/worker.batchSize",
             body);
@@ -273,7 +308,7 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var active = await factory.Services
             .GetRequiredService<IExecutableStore>()
-            .GetActiveAsync(ContractServiceFactory.Scope, version!.ContractDigest);
+            .GetActiveAsync(version!.ContractDigest);
         Assert.Equal(version.ActiveExecutableDigest, active?.ExecutableDigest);
         Assert.Equal("high-pressure", Assert.Single(active!.Executable.Rules).Name);
     }
@@ -287,7 +322,7 @@ public sealed class ContractServiceEndpointTests
         var second = await PutDefaultAsync(client, 4);
 
         Assert.NotEqual(first.ContractDigest, second.ContractDigest);
-        using var currentRequest = AuthorizedRequest(
+        using var currentRequest = JsonRequest(
             HttpMethod.Get,
             "/v3/decision-contracts/worker.batchSize");
         using var currentResponse = await client.SendAsync(currentRequest);
@@ -295,14 +330,14 @@ public sealed class ContractServiceEndpointTests
             StrictJson.Options);
         Assert.Equal(second.ContractDigest, current?.ContractDigest);
 
-        using var oldRequest = AuthorizedRequest(
+        using var oldRequest = JsonRequest(
             HttpMethod.Get,
             $"/v3/decision-contracts/worker.batchSize/versions/{first.ContractDigest}");
         using var oldResponse = await client.SendAsync(oldRequest);
         Assert.Equal(HttpStatusCode.OK, oldResponse.StatusCode);
         Assert.NotNull(await factory.Services
             .GetRequiredService<IExecutableStore>()
-            .GetActiveAsync(ContractServiceFactory.Scope, first.ContractDigest));
+            .GetActiveAsync(first.ContractDigest));
     }
 
     [Fact]
@@ -314,7 +349,7 @@ public sealed class ContractServiceEndpointTests
         await PutDefaultAsync(client, 3);
         await PutDefaultAsync(client, 4);
 
-        using var firstRequest = AuthorizedRequest(
+        using var firstRequest = JsonRequest(
             HttpMethod.Get,
             "/v3/decision-contracts/worker.batchSize/versions?limit=2");
         using var firstResponse = await client.SendAsync(firstRequest);
@@ -325,7 +360,7 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(2, first!.Versions.Count);
         Assert.NotNull(first.NextCursor);
 
-        using var secondRequest = AuthorizedRequest(
+        using var secondRequest = JsonRequest(
             HttpMethod.Get,
             $"/v3/decision-contracts/worker.batchSize/versions?limit=2"
             + $"&cursor={Uri.EscapeDataString(first.NextCursor)}");
@@ -350,7 +385,7 @@ public sealed class ContractServiceEndpointTests
         var responses = await Task.WhenAll(
             Enumerable.Range(0, 8).Select(async _ =>
             {
-                using var request = AuthorizedRequest(
+                using var request = JsonRequest(
                     HttpMethod.Put,
                     fixture.Path,
                     fixture.Body);
@@ -385,7 +420,7 @@ public sealed class ContractServiceEndpointTests
         using var factory = new ContractServiceFactory();
         using var client = factory.CreateClient();
         var invalid = await ReadFixtureAsync("04-put-invalid.json");
-        using var invalidRequest = AuthorizedRequest(
+        using var invalidRequest = JsonRequest(
             HttpMethod.Put,
             invalid.Path,
             invalid.Body);
@@ -395,7 +430,7 @@ public sealed class ContractServiceEndpointTests
             HttpStatusCode.UnprocessableEntity,
             ProblemTypes.InvalidDecisionContract);
 
-        using var mismatchRequest = AuthorizedRequest(
+        using var mismatchRequest = JsonRequest(
             HttpMethod.Post,
             "/v3/decision-contracts/other.name/validate",
             """{"authority":{"tenant":"local","application":"tetris","environment":"integration"},"name":"actual.name","expression_syntax":"flaggo.cel/v1","attributes":[],"result":{"schema":{"type":"boolean"},"default":false}}""");
@@ -405,7 +440,7 @@ public sealed class ContractServiceEndpointTests
             HttpStatusCode.Conflict,
             ProblemTypes.ContractNameMismatch);
 
-        using var nullMemberRequest = AuthorizedRequest(
+        using var nullMemberRequest = JsonRequest(
             HttpMethod.Post,
             "/v3/decision-contracts/actual.name/validate",
             """{"authority":{"tenant":"local","application":"tetris","environment":"integration"},"name":"actual.name","expression_syntax":"flaggo.cel/v1","attributes":null,"result":{"schema":{"type":"boolean"},"default":false}}""");
@@ -415,7 +450,7 @@ public sealed class ContractServiceEndpointTests
             HttpStatusCode.BadRequest,
             ProblemTypes.InvalidRequest);
 
-        using var schemaMismatchRequest = AuthorizedRequest(
+        using var schemaMismatchRequest = JsonRequest(
             HttpMethod.Put,
             "/v3/decision-contracts/schema.parity",
             """
@@ -469,30 +504,10 @@ public sealed class ContractServiceEndpointTests
     }
 
     [Fact]
-    public async Task EnforcesOperationScopesAndReportsHealth()
+    public async Task ManagementOperationsAndHealthDoNotRequireAuthentication()
     {
         using var factory = new ContractServiceFactory();
         using var client = factory.CreateClient();
-        using var anonymous = new HttpRequestMessage(
-            HttpMethod.Get,
-            "/v3/decision-contracts/worker.batchSize");
-        using var anonymousResponse = await client.SendAsync(anonymous);
-        await AssertProblemAsync(
-            anonymousResponse,
-            HttpStatusCode.Unauthorized,
-            ProblemTypes.AuthenticationRequired);
-
-        using var forbidden = AuthorizedRequest(
-            HttpMethod.Put,
-            "/v3/decision-contracts/worker.batchSize",
-            """{"name":"worker.batchSize"}""",
-            "read-only");
-        using var forbiddenResponse = await client.SendAsync(forbidden);
-        await AssertProblemAsync(
-            forbiddenResponse,
-            HttpStatusCode.Forbidden,
-            ProblemTypes.InsufficientScope);
-
         using var live = await client.GetAsync("/health/live");
         using var ready = await client.GetAsync("/health/ready");
         Assert.Equal(HttpStatusCode.OK, live.StatusCode);
@@ -539,7 +554,7 @@ public sealed class ContractServiceEndpointTests
               }
             }
             """;
-        using var request = AuthorizedRequest(
+        using var request = JsonRequest(
             HttpMethod.Put,
             "/v3/decision-contracts/worker.batchSize",
             body);
@@ -549,14 +564,12 @@ public sealed class ContractServiceEndpointTests
             StrictJson.Options))!;
     }
 
-    private static HttpRequestMessage AuthorizedRequest(
+    private static HttpRequestMessage JsonRequest(
         HttpMethod method,
         string path,
-        string? body = null,
-        string authentication = "authorized")
+        string? body = null)
     {
         var request = new HttpRequestMessage(method, path);
-        request.Headers.Add(TestContractAuthenticationHandler.HeaderName, authentication);
         if (body is not null)
         {
             request.Content = new StringContent(body, Encoding.UTF8, "application/json");
@@ -574,12 +587,14 @@ public sealed class ContractServiceEndpointTests
             request.GetProperty("body").GetRawText());
     }
 
-    private static async Task<JsonDocument> ReadFixtureDocumentAsync(string fileName)
+    private static async Task<JsonDocument> ReadFixtureDocumentAsync(
+        string fileName,
+        string group = "management")
     {
         var path = Path.Combine(
             AppContext.BaseDirectory,
             "Fixtures",
-            "management",
+            group,
             fileName);
         return JsonDocument.Parse(await File.ReadAllTextAsync(path));
     }
@@ -617,30 +632,12 @@ public sealed class ContractServiceFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Development");
         builder.UseSetting(
-            "Flaggo:Authentication:LocalDevelopmentBypass",
-            "true");
-        builder.UseSetting(
             "ConnectionStrings:Flaggo",
             $"Data Source={_databasePath};Pooling=False");
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(Clock);
-            services
-                .AddAuthentication(options =>
-                {
-                    options.DefaultAuthenticateScheme =
-                        TestContractAuthenticationHandler.SchemeName;
-                    options.DefaultChallengeScheme =
-                        TestContractAuthenticationHandler.SchemeName;
-                    options.DefaultForbidScheme =
-                        TestContractAuthenticationHandler.SchemeName;
-                })
-                .AddScheme<
-                    AuthenticationSchemeOptions,
-                    TestContractAuthenticationHandler>(
-                    TestContractAuthenticationHandler.SchemeName,
-                    _ => { });
         });
     }
 
@@ -658,42 +655,6 @@ public sealed class ContractServiceFactory : WebApplicationFactory<Program>
         {
             File.Delete(path);
         }
-    }
-}
-
-public sealed class TestContractAuthenticationHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger,
-    UrlEncoder encoder)
-    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
-{
-    public const string SchemeName = "ContractTest";
-    public const string HeaderName = "X-Test-Authentication";
-
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-    {
-        var value = Request.Headers[HeaderName].FirstOrDefault();
-        if (value is null)
-        {
-            return Task.FromResult(AuthenticateResult.NoResult());
-        }
-
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.NameIdentifier, "test"),
-            new(FlaggoClaimTypes.Tenant, ContractServiceFactory.Scope.Tenant),
-            new(FlaggoClaimTypes.Application, ContractServiceFactory.Scope.Application),
-            new(FlaggoClaimTypes.Environment, ContractServiceFactory.Scope.Environment)
-        };
-        claims.Add(new Claim(
-            "scope",
-            value == "authorized"
-                ? "flaggo.contracts:validate flaggo.contracts:accept "
-                    + "flaggo.contracts:read flaggo.contracts:materialize"
-                : "flaggo.contracts:read"));
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
-        return Task.FromResult(AuthenticateResult.Success(
-            new AuthenticationTicket(principal, SchemeName)));
     }
 }
 

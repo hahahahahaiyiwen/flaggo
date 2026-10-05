@@ -7,7 +7,6 @@
     "method": "POST",
     "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
     "headers": {
-      "Authorization": "******",
       "Content-Type": "application/json"
     }
   },

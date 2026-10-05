@@ -31,13 +31,6 @@ export type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-export type CredentialProvider =
-  | { readonly mode: "local-development" }
-  | {
-      readonly mode: "bearer";
-      getToken(): Promise<string>;
-    };
-
 export interface RetryPolicy {
   readonly maxAttempts?: number;
   readonly baseDelayMs?: number;
@@ -53,7 +46,6 @@ export interface RequestOptions {
 
 export interface TransportConfiguration {
   readonly baseUrl: string | URL;
-  readonly credential?: CredentialProvider;
   readonly fetch?: FetchLike;
   readonly timeoutMs?: number;
   readonly retry?: RetryPolicy;

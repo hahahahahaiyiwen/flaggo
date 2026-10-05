@@ -28,6 +28,9 @@
     <Content Include="..\..\contracts\fixtures\management\decision-contract\*.json"
              Link="Fixtures\management\%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\contracts\fixtures\errors\contract-01-name-authority-conflict.json"
+             Link="Fixtures\errors\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

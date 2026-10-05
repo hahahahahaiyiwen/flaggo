@@ -53,7 +53,7 @@ Online evaluation remains deterministic, bounded, and tied to an exact
 contract digest:
 
 ```text
-RuntimeActivation[authenticated scope, contractDigest]
+RuntimeActivation[contractDigest]
   -> immutable DecisionExecutable
 
 DecisionExecutable + complete RuntimeInput

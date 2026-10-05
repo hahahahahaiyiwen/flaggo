@@ -21,7 +21,6 @@ import {
 export async function deployContracts({
   manifestPath,
   services,
-  credential,
   fetch,
   signal,
 }) {
@@ -71,7 +70,6 @@ export async function deployContracts({
 
   const client = createContractClient({
     baseUrl: serviceUrls.contractServiceUrl,
-    ...(credential === undefined ? {} : { credential }),
     ...(fetch === undefined ? {} : { fetch }),
   });
   const contracts = [];
