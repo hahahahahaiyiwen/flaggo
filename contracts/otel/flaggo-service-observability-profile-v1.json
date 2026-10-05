@@ -1,0 +1,1647 @@
+{
+  "$schema": "https://flaggo.dev/contracts/schemas/service-observability-profile-v1.schema.json",
+  "profile": "flaggo.service-observability",
+  "version": "1.0.0",
+  "schemaUrl": {
+    "reserved": "https://flaggo.dev/schemas/service-observability/1.0.0",
+    "emit": false
+  },
+  "export": {
+    "protocol": "http/protobuf",
+    "signals": [
+      "logs",
+      "metrics",
+      "traces"
+    ],
+    "consoleLogs": true,
+    "enablement": "configured-endpoint",
+    "endpointEnvironmentVariables": [
+      "OTEL_EXPORTER_OTLP_ENDPOINT",
+      "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+      "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    ],
+    "invalidConfiguration": "fail-startup",
+    "unavailableBackend": "degrade-without-domain-failure",
+    "queue": "bounded",
+    "shutdownFlush": "bounded",
+    "ingestionSelfExport": "reject-own-local-receiver"
+  },
+  "resource": {
+    "requiredAttributes": [
+      {
+        "name": "service.name",
+        "type": "string",
+        "source": "fixed-by-binary",
+        "cardinality": "fixed",
+        "description": "Stable executable identity such as flaggo-decision-service."
+      },
+      {
+        "name": "service.namespace",
+        "type": "string",
+        "source": "fixed-by-binary",
+        "cardinality": "fixed",
+        "description": "Always flaggo for Flaggo-owned service telemetry."
+      },
+      {
+        "name": "service.version",
+        "type": "string",
+        "source": "assembly-or-package",
+        "cardinality": "bounded",
+        "description": "Assembly or Cargo package version of the running service."
+      },
+      {
+        "name": "service.instance.id",
+        "type": "string",
+        "source": "configured-or-generated-per-process",
+        "cardinality": "unbounded",
+        "description": "One stable identifier for the lifetime of one service process."
+      }
+    ],
+    "optionalAttributes": [
+      {
+        "name": "deployment.environment.name",
+        "type": "string",
+        "source": "optional-standard-resource",
+        "cardinality": "bounded",
+        "description": "Operator-defined deployment environment using the standard OpenTelemetry Resource attribute."
+      }
+    ],
+    "forbiddenAttributes": [
+      "flaggo.tenant",
+      "flaggo.application",
+      "flaggo.environment"
+    ]
+  },
+  "scopes": [
+    {
+      "name": "flaggo.contract-service",
+      "signals": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "description": "Contract acceptance, reads, Candidate admission, and activation authority."
+    },
+    {
+      "name": "flaggo.decision-service",
+      "signals": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "description": "Exact-version runtime resolution and deterministic evaluation."
+    },
+    {
+      "name": "flaggo.otel-ingestion",
+      "signals": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "description": "OTLP request validation, durable append, health, and inbox retention."
+    },
+    {
+      "name": "flaggo.evidence-materializer",
+      "signals": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "description": "Forward materialization, catalog refresh, checkpoint, backlog, and freshness."
+    },
+    {
+      "name": "flaggo.async-analysis",
+      "signals": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "description": "Analysis scheduling, claims, evidence cutoffs, agent runs, and Candidate proposals."
+    }
+  ],
+  "attributes": [
+    {
+      "name": "flaggo.request.correlation_id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "correlation-identifier",
+      "metricDimension": false,
+      "description": "Validated X-Flaggo-Correlation-Id value recorded on request spans and logs."
+    },
+    {
+      "name": "flaggo.contract.name",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Logical DecisionContract name, recorded whenever an operation identifies a contract."
+    },
+    {
+      "name": "flaggo.contract.digest",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Exact immutable contract digest, recorded whenever an operation targets or resolves one version."
+    },
+    {
+      "name": "flaggo.executable.digest",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Exact immutable executable digest when runtime authority is resolved or changed."
+    },
+    {
+      "name": "flaggo.candidate.digest",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Exact Candidate digest when admission or activation identifies a Candidate."
+    },
+    {
+      "name": "flaggo.batch.id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Raw OTLP Inbox batch identity for one materialization page or diagnostic."
+    },
+    {
+      "name": "flaggo.analysis.cycle.id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Exact durable analysis-cycle identity."
+    },
+    {
+      "name": "flaggo.analysis.attempt.id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Exact analysis-agent attempt identity."
+    },
+    {
+      "name": "flaggo.operation.name",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "bounded-operation",
+      "metricDimension": true,
+      "allowedValues": [
+        "analysis.cycle",
+        "candidate.activate",
+        "candidate.submit",
+        "contract.catalog.read",
+        "contract.deploy",
+        "contract.read",
+        "contract.validate",
+        "decision.evaluate",
+        "inbox.retention",
+        "materializer.catalog.refresh",
+        "materializer.page",
+        "otlp.append"
+      ],
+      "description": "Bounded domain operation name used by operation metrics and spans."
+    },
+    {
+      "name": "flaggo.operation.outcome",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "bounded-outcome",
+      "metricDimension": true,
+      "allowedValues": [
+        "busy",
+        "cancelled",
+        "candidate",
+        "capacity_exhausted",
+        "conflict",
+        "failure",
+        "idle",
+        "invalid",
+        "no_candidate",
+        "not_eligible",
+        "not_found",
+        "recoverable",
+        "rejected",
+        "stale",
+        "success",
+        "superseded",
+        "unavailable"
+      ],
+      "description": "Bounded terminal classification for one operation."
+    },
+    {
+      "name": "flaggo.failure.category",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "failure-category",
+      "metricDimension": true,
+      "allowedValues": [
+        "cancelled",
+        "capacity",
+        "configuration",
+        "conflict",
+        "dependency",
+        "exporter",
+        "integrity",
+        "internal",
+        "not_found",
+        "timeout",
+        "validation"
+      ],
+      "description": "Bounded failure family. Exact exception messages remain log/span fields rather than metric dimensions."
+    },
+    {
+      "name": "flaggo.evaluation.source",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "bounded-outcome",
+      "metricDimension": true,
+      "allowedValues": [
+        "default",
+        "rule"
+      ],
+      "description": "Bounded source of a successful runtime decision evaluation."
+    },
+    {
+      "name": "flaggo.otlp.signal",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "transport",
+      "metricDimension": true,
+      "allowedValues": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "description": "OTLP signal selected by the receiver route."
+    },
+    {
+      "name": "flaggo.otlp.encoding",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "transport",
+      "metricDimension": true,
+      "allowedValues": [
+        "protobuf",
+        "protobuf-json",
+        "unknown"
+      ],
+      "description": "Validated OTLP wire encoding."
+    },
+    {
+      "name": "flaggo.otlp.compression",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "transport",
+      "metricDimension": true,
+      "allowedValues": [
+        "gzip",
+        "identity",
+        "unknown"
+      ],
+      "description": "Validated OTLP transport compression."
+    },
+    {
+      "name": "flaggo.materializer.item.outcome",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "bounded-outcome",
+      "metricDimension": true,
+      "allowedValues": [
+        "conflict_created",
+        "diagnostic_created",
+        "duplicate_observation",
+        "observation_created",
+        "provenance_created"
+      ],
+      "description": "Bounded classification for materializer output-item counters."
+    },
+    {
+      "name": "flaggo.inbox.expired.batch_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Number of Raw OTLP Inbox batches expired by one retention cycle."
+    },
+    {
+      "name": "flaggo.inbox.expired.payload_bytes",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Raw OTLP Inbox payload bytes expired by one retention cycle."
+    },
+    {
+      "name": "flaggo.materializer.active_route_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Active evidence-routing entries in the materializer catalog."
+    },
+    {
+      "name": "flaggo.materializer.current_contract_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Current contracts in the materializer catalog."
+    },
+    {
+      "name": "flaggo.materializer.evidence.conflict_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Durable evidence conflicts observed at a materializer health snapshot."
+    },
+    {
+      "name": "flaggo.materializer.evidence.diagnostic_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Durable evidence diagnostics observed at a materializer health snapshot."
+    },
+    {
+      "name": "flaggo.materializer.evidence.has_cached_catalog",
+      "type": "boolean",
+      "cardinality": "bounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Whether the evidence store has a durable cached contract catalog."
+    },
+    {
+      "name": "flaggo.materializer.evidence.observation_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Durable evidence observations at a materializer health snapshot."
+    },
+    {
+      "name": "flaggo.materializer.evidence.provenance_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Durable evidence provenance rows at a materializer health snapshot."
+    },
+    {
+      "name": "flaggo.materializer.checkpoint_batch_id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Latest Raw OTLP Inbox batch durably checkpointed by the materializer."
+    },
+    {
+      "name": "flaggo.materializer.pending_batch_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Raw OTLP Inbox batches pending after a materializer health snapshot."
+    },
+    {
+      "name": "flaggo.materializer.observed_at",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "RFC 3339 timestamp for the materializer health snapshot."
+    },
+    {
+      "name": "flaggo.materializer.oldest_pending_received_at",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "RFC 3339 receipt time of the oldest pending Raw OTLP Inbox batch."
+    },
+    {
+      "name": "flaggo.materializer.newest_pending_received_at",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "RFC 3339 receipt time of the newest pending Raw OTLP Inbox batch."
+    },
+    {
+      "name": "flaggo.materializer.oldest_pending_age_ms",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Age in milliseconds of the oldest pending Raw OTLP Inbox batch."
+    },
+    {
+      "name": "flaggo.materializer.newest_evidence_observed_at_unix_nano",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Unix nanosecond timestamp of the newest materialized evidence, encoded as a decimal string."
+    },
+    {
+      "name": "flaggo.materializer.evidence_freshness_ms",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Age in milliseconds of the newest materialized evidence."
+    },
+    {
+      "name": "flaggo.materializer.batches_read",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Raw OTLP Inbox batches read by one committed materializer page."
+    },
+    {
+      "name": "flaggo.materializer.conflicts_created",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Evidence conflicts created by one committed materializer page."
+    },
+    {
+      "name": "flaggo.materializer.diagnostics_created",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Evidence diagnostics created by one committed materializer page."
+    },
+    {
+      "name": "flaggo.materializer.duplicate_observations",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Duplicate evidence observations seen by one committed materializer page."
+    },
+    {
+      "name": "flaggo.materializer.observations_created",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Evidence observations created by one committed materializer page."
+    },
+    {
+      "name": "flaggo.materializer.provenance_created",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Evidence provenance rows created by one committed materializer page."
+    },
+    {
+      "name": "flaggo.materializer.catalog_retained",
+      "type": "boolean",
+      "cardinality": "bounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Whether a failed catalog refresh retained a prior valid catalog."
+    }
+  ],
+  "spans": [
+    {
+      "name": "flaggo.contract.validate",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Validate one named DecisionContract and compute an exact digest when valid.",
+      "requiredAttributes": [
+        "flaggo.contract.name",
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.contract.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        },
+        {
+          "name": "flaggo.request.correlation_id",
+          "when": "when-supplied"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "invalid",
+        "success"
+      ]
+    },
+    {
+      "name": "flaggo.contract.deploy",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Accept or resolve one immutable contract version and ensure its initial executable authority.",
+      "requiredAttributes": [
+        "flaggo.contract.name",
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.contract.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.executable.digest",
+          "when": "when-executable-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        },
+        {
+          "name": "flaggo.request.correlation_id",
+          "when": "when-supplied"
+        }
+      ],
+      "outcomes": [
+        "conflict",
+        "failure",
+        "invalid",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.contract.read",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Read current, historical, or exact contract management state.",
+      "requiredAttributes": [
+        "flaggo.contract.name",
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.contract.digest",
+          "when": "when-exact-contract-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        },
+        {
+          "name": "flaggo.request.correlation_id",
+          "when": "when-supplied"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "not_found",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.contract.catalog.read",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Read the cross-authority current-contract catalog.",
+      "requiredAttributes": [
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        },
+        {
+          "name": "flaggo.request.correlation_id",
+          "when": "when-supplied"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.candidate.submit",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Validate and admit one analysis-generated Candidate for an exact contract.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.candidate.digest",
+          "when": "when-candidate-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        },
+        {
+          "name": "flaggo.request.correlation_id",
+          "when": "when-supplied"
+        }
+      ],
+      "outcomes": [
+        "conflict",
+        "failure",
+        "invalid",
+        "stale",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.candidate.activate",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Check eligibility and atomically activate one admitted Candidate.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.candidate.digest",
+          "when": "when-candidate-known"
+        },
+        {
+          "name": "flaggo.executable.digest",
+          "when": "when-executable-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "conflict",
+        "failure",
+        "invalid",
+        "rejected",
+        "stale",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.decision.evaluate",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.decision-service"
+      ],
+      "purpose": "Resolve and evaluate the active executable for one exact contract version.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.evaluation.source",
+          "when": "when-success"
+        },
+        {
+          "name": "flaggo.executable.digest",
+          "when": "when-executable-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        },
+        {
+          "name": "flaggo.request.correlation_id",
+          "when": "when-supplied"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "invalid",
+        "not_found",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.otlp.append",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Validate one OTLP request and durably append it before acknowledgement.",
+      "requiredAttributes": [
+        "flaggo.operation.name",
+        "flaggo.operation.outcome",
+        "flaggo.otlp.compression",
+        "flaggo.otlp.encoding",
+        "flaggo.otlp.signal"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "capacity_exhausted",
+        "failure",
+        "invalid",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.inbox.retention",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Run one receipt-age and capacity retention maintenance cycle.",
+      "requiredAttributes": [
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "success"
+      ]
+    },
+    {
+      "name": "flaggo.materializer.page",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "purpose": "Read and transactionally commit one forward materialization page.",
+      "requiredAttributes": [
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.batch.id",
+          "when": "when-batch-read"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "idle",
+        "success"
+      ]
+    },
+    {
+      "name": "flaggo.materializer.catalog.refresh",
+      "kind": "client",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "purpose": "Fetch, validate, and activate one current-contract catalog update.",
+      "requiredAttributes": [
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "success",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "flaggo.analysis.cycle",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "purpose": "Claim and run one evidence-bound analysis cycle for an exact current contract.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.analysis.cycle.id",
+          "when": "when-cycle-created"
+        },
+        {
+          "name": "flaggo.analysis.attempt.id",
+          "when": "when-attempt-created"
+        },
+        {
+          "name": "flaggo.candidate.digest",
+          "when": "when-candidate-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "busy",
+        "candidate",
+        "failure",
+        "idle",
+        "no_candidate",
+        "not_eligible",
+        "recoverable",
+        "superseded"
+      ]
+    }
+  ],
+  "logEvents": [
+    {
+      "eventName": "flaggo.service.started",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.async-analysis",
+        "flaggo.contract-service",
+        "flaggo.decision-service",
+        "flaggo.evidence-materializer",
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Record successful composition-root initialization after required dependencies are ready.",
+      "requiredAttributes": [],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.service.stopping",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.async-analysis",
+        "flaggo.contract-service",
+        "flaggo.decision-service",
+        "flaggo.evidence-materializer",
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Record the start of graceful service shutdown.",
+      "requiredAttributes": [],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.service.stopped",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.async-analysis",
+        "flaggo.contract-service",
+        "flaggo.decision-service",
+        "flaggo.evidence-materializer",
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Record completed graceful shutdown immediately before the final bounded telemetry flush.",
+      "requiredAttributes": [],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.service.failed",
+      "minimumSeverity": "error",
+      "scopes": [
+        "flaggo.async-analysis",
+        "flaggo.contract-service",
+        "flaggo.decision-service",
+        "flaggo.evidence-materializer",
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Record a fatal composition-root failure before process exit.",
+      "requiredAttributes": [
+        "flaggo.failure.category"
+      ],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "failure"
+      ]
+    },
+    {
+      "eventName": "flaggo.otlp.request.rejected",
+      "minimumSeverity": "warn",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Record an OTLP request rejected for invalid transport, capacity, or dependency failure.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome",
+        "flaggo.otlp.signal"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        },
+        {
+          "name": "flaggo.otlp.compression",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.otlp.encoding",
+          "when": "when-known"
+        }
+      ],
+      "outcomes": [
+        "capacity_exhausted",
+        "invalid",
+        "unavailable"
+      ]
+    },
+    {
+      "eventName": "flaggo.inbox.retention.completed",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "purpose": "Record a retention cycle that expired at least one batch.",
+      "requiredAttributes": [
+        "flaggo.inbox.expired.batch_count",
+        "flaggo.inbox.expired.payload_bytes",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.materializer.page.committed",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "purpose": "Record a committed materialization page with aggregate result counts and health.",
+      "requiredAttributes": [
+        "flaggo.materializer.batches_read",
+        "flaggo.materializer.checkpoint_batch_id",
+        "flaggo.materializer.conflicts_created",
+        "flaggo.materializer.diagnostics_created",
+        "flaggo.materializer.duplicate_observations",
+        "flaggo.materializer.evidence_freshness_ms",
+        "flaggo.materializer.newest_evidence_observed_at_unix_nano",
+        "flaggo.materializer.newest_pending_received_at",
+        "flaggo.materializer.observations_created",
+        "flaggo.materializer.observed_at",
+        "flaggo.materializer.oldest_pending_age_ms",
+        "flaggo.materializer.oldest_pending_received_at",
+        "flaggo.materializer.pending_batch_count",
+        "flaggo.materializer.provenance_created",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.batch.id",
+          "when": "when-batch-read"
+        }
+      ],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.materializer.catalog.activated",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "purpose": "Record durable activation of a validated current-contract catalog.",
+      "requiredAttributes": [
+        "flaggo.materializer.active_route_count",
+        "flaggo.materializer.current_contract_count",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.materializer.catalog.refresh_failed",
+      "minimumSeverity": "warn",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "purpose": "Record a failed catalog refresh while retaining the last valid catalog.",
+      "requiredAttributes": [
+        "flaggo.failure.category",
+        "flaggo.materializer.catalog_retained",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "failure",
+        "unavailable"
+      ]
+    },
+    {
+      "eventName": "flaggo.analysis.cycle.completed",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "purpose": "Record candidate, no-candidate, superseded, busy, idle, or not-eligible cycle completion.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.analysis.cycle.id",
+          "when": "when-cycle-created"
+        },
+        {
+          "name": "flaggo.analysis.attempt.id",
+          "when": "when-attempt-created"
+        },
+        {
+          "name": "flaggo.candidate.digest",
+          "when": "when-candidate-known"
+        }
+      ],
+      "outcomes": [
+        "busy",
+        "candidate",
+        "idle",
+        "no_candidate",
+        "not_eligible",
+        "superseded"
+      ]
+    },
+    {
+      "eventName": "flaggo.analysis.cycle.failed",
+      "minimumSeverity": "warn",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "purpose": "Record recoverable or terminal analysis-cycle failure.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.failure.category",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.analysis.cycle.id",
+          "when": "when-cycle-created"
+        },
+        {
+          "name": "flaggo.analysis.attempt.id",
+          "when": "when-attempt-created"
+        }
+      ],
+      "outcomes": [
+        "failure",
+        "recoverable"
+      ]
+    },
+    {
+      "eventName": "flaggo.candidate.admitted",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Record successful admission of one validated Candidate.",
+      "requiredAttributes": [
+        "flaggo.candidate.digest",
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.candidate.rejected",
+      "minimumSeverity": "warn",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Record explicit invalid, stale, conflict, or failed Candidate admission.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.candidate.digest",
+          "when": "when-candidate-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "conflict",
+        "failure",
+        "invalid",
+        "stale"
+      ]
+    },
+    {
+      "eventName": "flaggo.activation.completed",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Record successful atomic activation of one executable for an exact contract.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.executable.digest",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.candidate.digest",
+          "when": "when-candidate-known"
+        }
+      ],
+      "outcomes": [
+        "success"
+      ]
+    },
+    {
+      "eventName": "flaggo.activation.rejected",
+      "minimumSeverity": "warn",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Record stale, invalid, conflicting, unavailable, or failed activation while retaining prior authority.",
+      "requiredAttributes": [
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.candidate.digest",
+          "when": "when-candidate-known"
+        },
+        {
+          "name": "flaggo.executable.digest",
+          "when": "when-executable-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "conflict",
+        "failure",
+        "invalid",
+        "rejected",
+        "stale",
+        "unavailable"
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "name": "flaggo.contract.operations",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "instrument": "counter",
+      "unit": "{operation}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count bounded Contract Service domain operations by operation and outcome.",
+      "requiredAttributes": [
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.contract.operation.duration",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "instrument": "histogram",
+      "unit": "s",
+      "valueType": "double",
+      "monotonic": false,
+      "purpose": "Measure Contract Service domain-operation latency.",
+      "requiredAttributes": [
+        "flaggo.operation.name",
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.decision.evaluations",
+      "scopes": [
+        "flaggo.decision-service"
+      ],
+      "instrument": "counter",
+      "unit": "{evaluation}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count runtime evaluations by bounded outcome.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.evaluation.source",
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.decision.evaluation.duration",
+      "scopes": [
+        "flaggo.decision-service"
+      ],
+      "instrument": "histogram",
+      "unit": "s",
+      "valueType": "double",
+      "monotonic": false,
+      "purpose": "Measure exact-version runtime evaluation latency.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.evaluation.source",
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.otlp.requests",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "instrument": "counter",
+      "unit": "{request}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count accepted and rejected OTLP requests by bounded transport facts and outcome.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome",
+        "flaggo.otlp.compression",
+        "flaggo.otlp.encoding",
+        "flaggo.otlp.signal"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.otlp.request.size",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "instrument": "histogram",
+      "unit": "By",
+      "valueType": "int64",
+      "monotonic": false,
+      "purpose": "Measure decompressed OTLP request payload size.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome",
+        "flaggo.otlp.compression",
+        "flaggo.otlp.encoding",
+        "flaggo.otlp.signal"
+      ],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.inbox.retained.batches",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "instrument": "observable-gauge",
+      "unit": "{batch}",
+      "valueType": "int64",
+      "monotonic": false,
+      "purpose": "Current retained Raw OTLP Inbox batch count.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.inbox.retained.bytes",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "instrument": "observable-gauge",
+      "unit": "By",
+      "valueType": "int64",
+      "monotonic": false,
+      "purpose": "Current retained Raw OTLP Inbox payload bytes.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.inbox.oldest.age",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "instrument": "observable-gauge",
+      "unit": "s",
+      "valueType": "double",
+      "monotonic": false,
+      "purpose": "Age of the oldest retained Raw OTLP Inbox batch.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.inbox.expired.batches",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "instrument": "counter",
+      "unit": "{batch}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Cumulative batches expired by inbox retention.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.inbox.expired.bytes",
+      "scopes": [
+        "flaggo.otel-ingestion"
+      ],
+      "instrument": "counter",
+      "unit": "By",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Cumulative payload bytes expired by inbox retention.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.materializer.pages",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "instrument": "counter",
+      "unit": "{page}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count materializer polling/page outcomes.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.materializer.page.duration",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "instrument": "histogram",
+      "unit": "s",
+      "valueType": "double",
+      "monotonic": false,
+      "purpose": "Measure one materializer page attempt.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.materializer.pending.batches",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "instrument": "observable-gauge",
+      "unit": "{batch}",
+      "valueType": "int64",
+      "monotonic": false,
+      "purpose": "Current Raw OTLP Inbox batches pending after the materializer checkpoint.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.materializer.oldest_pending.age",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "instrument": "observable-gauge",
+      "unit": "s",
+      "valueType": "double",
+      "monotonic": false,
+      "purpose": "Age of the oldest pending batch after the materializer checkpoint.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.materializer.evidence.freshness",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "instrument": "observable-gauge",
+      "unit": "s",
+      "valueType": "double",
+      "monotonic": false,
+      "purpose": "Age of the newest materialized Evidence Store observation.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.materializer.items",
+      "scopes": [
+        "flaggo.evidence-materializer"
+      ],
+      "instrument": "counter",
+      "unit": "{item}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count created, duplicate, conflict, diagnostic, and provenance results.",
+      "requiredAttributes": [
+        "flaggo.materializer.item.outcome"
+      ],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.analysis.cycles",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "instrument": "counter",
+      "unit": "{cycle}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count bounded analysis coordinator outcomes.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.analysis.cycle.duration",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "instrument": "histogram",
+      "unit": "s",
+      "valueType": "double",
+      "monotonic": false,
+      "purpose": "Measure active analysis-cycle duration.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.analysis.workers.active",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "instrument": "observable-gauge",
+      "unit": "{worker}",
+      "valueType": "int64",
+      "monotonic": false,
+      "purpose": "Current number of workers actively running an analysis attempt.",
+      "requiredAttributes": [],
+      "optionalAttributes": []
+    },
+    {
+      "name": "flaggo.candidate.submissions",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "instrument": "counter",
+      "unit": "{submission}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count Candidate submission outcomes without Candidate or contract identifiers.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    },
+    {
+      "name": "flaggo.activation.attempts",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "instrument": "counter",
+      "unit": "{attempt}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count Candidate activation outcomes without Candidate, executable, or contract identifiers.",
+      "requiredAttributes": [
+        "flaggo.operation.outcome"
+      ],
+      "optionalAttributes": [
+        "flaggo.failure.category"
+      ]
+    }
+  ],
+  "correlation": {
+    "traceContext": "w3c",
+    "requestCorrelationHeader": "X-Flaggo-Correlation-Id",
+    "requestCorrelationAttribute": "flaggo.request.correlation_id",
+    "contractIdentity": {
+      "nameAttribute": "flaggo.contract.name",
+      "digestAttribute": "flaggo.contract.digest",
+      "nameRule": "required-when-contract-known",
+      "digestRule": "required-when-exact-contract-known"
+    },
+    "exactIdentifiers": {
+      "signals": [
+        "logs",
+        "traces"
+      ],
+      "metricDimensions": "forbidden"
+    },
+    "asynchronousWork": "new-root-span-with-domain-identifiers"
+  },
+  "redaction": {
+    "forbiddenContent": [
+      "complete DecisionContract documents",
+      "complete RuntimeInput values",
+      "complete RuntimeDecision result values",
+      "OTLP request payloads",
+      "Evidence Store observation payloads",
+      "analysis prompts or model output",
+      "HTTP request or response bodies",
+      "HTTP header values",
+      "database statements",
+      "credentials, tokens, or secrets"
+    ]
+  },
+  "health": {
+    "existingHttpHealth": [
+      "flaggo-contract-service",
+      "flaggo-decision-service",
+      "flaggo-otel-ingestion"
+    ],
+    "backgroundWorkers": "process-and-telemetry-observed"
+  }
+}

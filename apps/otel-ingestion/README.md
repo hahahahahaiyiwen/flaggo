@@ -88,6 +88,20 @@ of retained decompressed payload bytes and 24 hours of hard retention.
 | `FLAGGO_OTLP_INBOX_MAX_PAYLOAD_BYTES` | Maximum retained payload-byte total |
 | `FLAGGO_OTLP_INBOX_HARD_RETENTION_SECONDS` | Hard raw-batch retention |
 
+## Operational observability
+
+The service uses instrumentation scope `flaggo.otel-ingestion`. OTLP append
+and inbox-retention boundaries emit profile-aligned spans, structured events,
+request and payload-size metrics, retention counters, and current inbox
+gauges. Incoming W3C `traceparent` is attached to the append span when valid.
+Rejected requests log bounded transport facts without recording payloads.
+
+Structured console logging is always enabled. Logs, metrics, and traces export
+as OTLP/HTTP binary Protobuf only when standard
+`OTEL_EXPORTER_OTLP_*_ENDPOINT` configuration is present. Configuration that
+would export back into the process's own local receiver is rejected to prevent
+recursive ingestion.
+
 ## Verify
 
 ```powershell
@@ -101,3 +115,4 @@ cargo test --workspace --locked
 - [Evidence and learning](../../docs/design/architecture/EVIDENCE.md)
 - [Raw OTLP Inbox module](../../modules/raw-otlp-inbox/README.md)
 - [Evidence Materializer](../evidence-materializer/README.md)
+- [Internal service observability](../../docs/design/architecture/OBSERVABILITY.md)

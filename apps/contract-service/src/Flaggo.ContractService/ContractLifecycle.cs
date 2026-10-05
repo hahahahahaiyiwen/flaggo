@@ -41,19 +41,38 @@ public sealed class ContractLifecycle(
     IExecutableStore executableStore,
     FlaggoExpressionCompiler expressionCompiler,
     FlaggoExecutableCompiler executableCompiler,
-    TimeProvider timeProvider) : IContractLifecycle
+    TimeProvider timeProvider,
+    ContractServiceObservability observability) : IContractLifecycle
 {
     public DecisionContractValidationResult Validate(
         string contractName,
         DecisionContract contract)
     {
-        ValidateRouteName(contractName);
-        if (!string.Equals(contractName, contract.Name, StringComparison.Ordinal))
+        using var operation = observability.StartContractOperation(
+            "flaggo.contract.validate",
+            "contract.validate",
+            contractName);
+        try
         {
-            throw new ContractNameMismatchException(contractName, contract.Name);
-        }
+            ValidateRouteName(contractName);
+            if (!string.Equals(contractName, contract.Name, StringComparison.Ordinal))
+            {
+                throw new ContractNameMismatchException(contractName, contract.Name);
+            }
 
-        return ContractValidator.Validate(contract, expressionCompiler);
+            var validation = ContractValidator.Validate(contract, expressionCompiler);
+            operation.Activity?.SetTag(
+                "flaggo.contract.digest",
+                validation.ContractDigest);
+            operation.Complete(validation.Status == "valid" ? "success" : "invalid");
+            return validation;
+        }
+        catch (Exception exception)
+        {
+            var (outcome, category) = ContractServiceObservability.Classify(exception);
+            operation.Fail(exception, outcome, category);
+            throw;
+        }
     }
 
     public async Task<ContractDeploymentResult> DeployAsync(
@@ -61,74 +80,124 @@ public sealed class ContractLifecycle(
         DecisionContract contract,
         CancellationToken cancellationToken = default)
     {
-        var validation = Validate(contractName, contract);
-        if (validation.Status != "valid" || validation.ContractDigest is null)
+        using var operation = observability.StartContractOperation(
+            "flaggo.contract.deploy",
+            "contract.deploy",
+            contractName);
+        try
         {
-            throw new InvalidDecisionContractException(validation.Issues);
-        }
+            var validation = Validate(contractName, contract);
+            if (validation.Status != "valid" || validation.ContractDigest is null)
+            {
+                throw new InvalidDecisionContractException(validation.Issues);
+            }
 
-        var contractDigest = validation.ContractDigest;
-        var acceptedAt = timeProvider.GetUtcNow();
-        var pendingVersion = new AcceptedContractVersion(
-            contractDigest,
-            acceptedAt,
-            contract);
-        var defaultCompilation = CompileDefault(pendingVersion);
-        var authoredCompilation = CompileAuthored(pendingVersion);
-        var writeResult = await contractStore.PutAsync(
-            pendingVersion,
-            cancellationToken);
-        var accepted = await contractStore.GetAsync(
+            var contractDigest = validation.ContractDigest;
+            operation.Activity?.SetTag("flaggo.contract.digest", contractDigest);
+            var acceptedAt = timeProvider.GetUtcNow();
+            var pendingVersion = new AcceptedContractVersion(
+                contractDigest,
+                acceptedAt,
+                contract);
+            var defaultCompilation = CompileDefault(pendingVersion);
+            var authoredCompilation = CompileAuthored(pendingVersion);
+            var writeResult = await contractStore.PutAsync(
+                pendingVersion,
+                cancellationToken);
+            var accepted = await contractStore.GetAsync(
+                    contractName,
+                    contractDigest,
+                    cancellationToken)
+                ?? throw new InvalidOperationException(
+                    "The accepted contract could not be read after persistence.");
+
+            var active = await EnsureRuntimeReadyAsync(
+                accepted,
+                defaultCompilation,
+                authoredCompilation,
+                cancellationToken);
+            await contractStore.SetCurrentAsync(
                 contractName,
                 contractDigest,
-                cancellationToken)
-            ?? throw new InvalidOperationException(
-                "The accepted contract could not be read after persistence.");
+                cancellationToken);
+            operation.Activity?.SetTag(
+                "flaggo.executable.digest",
+                active.ExecutableDigest);
+            operation.Complete("success");
 
-        var active = await EnsureRuntimeReadyAsync(
-            accepted,
-            defaultCompilation,
-            authoredCompilation,
-            cancellationToken);
-        await contractStore.SetCurrentAsync(
-            contractName,
-            contractDigest,
-            cancellationToken);
-
-        return new ContractDeploymentResult(
-            Project(accepted, active.ExecutableDigest),
-            writeResult == ContractStoreWriteResult.Created);
+            return new ContractDeploymentResult(
+                Project(accepted, active.ExecutableDigest),
+                writeResult == ContractStoreWriteResult.Created);
+        }
+        catch (Exception exception)
+        {
+            var (outcome, category) = ContractServiceObservability.Classify(exception);
+            operation.Fail(exception, outcome, category);
+            throw;
+        }
     }
 
     public async Task<DecisionContractVersion?> GetCurrentAsync(
         string contractName,
         CancellationToken cancellationToken = default)
     {
-        ValidateRouteName(contractName);
-        var accepted = await contractStore.GetCurrentAsync(
-            contractName,
-            cancellationToken);
-        return accepted is null
-            ? null
-            : await ProjectReadyAsync(accepted, cancellationToken);
+        using var operation = observability.StartContractOperation(
+            "flaggo.contract.read",
+            "contract.read",
+            contractName);
+        try
+        {
+            ValidateRouteName(contractName);
+            var accepted = await contractStore.GetCurrentAsync(
+                contractName,
+                cancellationToken);
+            var result = accepted is null
+                ? null
+                : await ProjectReadyAsync(accepted, cancellationToken);
+            operation.Activity?.SetTag(
+                "flaggo.contract.digest",
+                result?.ContractDigest);
+            operation.Complete(result is null ? "not_found" : "success");
+            return result;
+        }
+        catch (Exception exception)
+        {
+            var (outcome, category) = ContractServiceObservability.Classify(exception);
+            operation.Fail(exception, outcome, category);
+            throw;
+        }
     }
 
     public async Task<CurrentContractCatalogResult> GetCurrentCatalogAsync(
         CancellationToken cancellationToken = default)
     {
-        var current = await contractStore.ListAllCurrentAsync(cancellationToken);
-        foreach (var version in current)
+        using var operation = observability.StartContractOperation(
+            "flaggo.contract.catalog.read",
+            "contract.catalog.read");
+        try
         {
-            if (await executableStore.GetActiveAsync(
-                version.ContractDigest,
-                cancellationToken) is null)
+            var current = await contractStore.ListAllCurrentAsync(cancellationToken);
+            foreach (var version in current)
             {
-                throw new InvalidDataException(
-                    $"Current contract '{version.ContractDigest}' has no active executable.");
+                if (await executableStore.GetActiveAsync(
+                    version.ContractDigest,
+                    cancellationToken) is null)
+                {
+                    throw new InvalidDataException(
+                        $"Current contract '{version.ContractDigest}' has no active executable.");
+                }
             }
-        }
 
-        return CurrentContractCatalogs.Project(current);
+            var result = CurrentContractCatalogs.Project(current);
+            operation.Complete("success");
+            return result;
+        }
+        catch (Exception exception)
+        {
+            var (outcome, category) = ContractServiceObservability.Classify(exception);
+            operation.Fail(exception, outcome, category);
+            throw;
+        }
     }
 
     public async Task<DecisionContractVersion?> GetAsync(
@@ -136,15 +205,31 @@ public sealed class ContractLifecycle(
         string contractDigest,
         CancellationToken cancellationToken = default)
     {
-        ValidateRouteName(contractName);
-        ValidateDigest(contractDigest);
-        var accepted = await contractStore.GetAsync(
+        using var operation = observability.StartContractOperation(
+            "flaggo.contract.read",
+            "contract.read",
             contractName,
-            contractDigest,
-            cancellationToken);
-        return accepted is null
-            ? null
-            : await ProjectReadyAsync(accepted, cancellationToken);
+            contractDigest);
+        try
+        {
+            ValidateRouteName(contractName);
+            ValidateDigest(contractDigest);
+            var accepted = await contractStore.GetAsync(
+                contractName,
+                contractDigest,
+                cancellationToken);
+            var result = accepted is null
+                ? null
+                : await ProjectReadyAsync(accepted, cancellationToken);
+            operation.Complete(result is null ? "not_found" : "success");
+            return result;
+        }
+        catch (Exception exception)
+        {
+            var (outcome, category) = ContractServiceObservability.Classify(exception);
+            operation.Fail(exception, outcome, category);
+            throw;
+        }
     }
 
     public async Task<DecisionContractVersionList?> ListAsync(
@@ -153,54 +238,70 @@ public sealed class ContractLifecycle(
         string? cursor,
         CancellationToken cancellationToken = default)
     {
-        ValidateRouteName(contractName);
-        if (pageSize is < 1 or > 200)
+        using var operation = observability.StartContractOperation(
+            "flaggo.contract.read",
+            "contract.read",
+            contractName);
+        try
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(pageSize),
-                "Page size must be between 1 and 200.");
-        }
-
-        var current = await contractStore.GetCurrentAsync(
-            contractName,
-            cancellationToken);
-        if (current is null)
-        {
-            return null;
-        }
-
-        var page = await contractStore.ListAsync(
-            contractName,
-            pageSize,
-            cursor,
-            cancellationToken);
-        var versions = new List<DecisionContractVersionSummary>(page.Versions.Count);
-        foreach (var accepted in page.Versions)
-        {
-            var active = await executableStore.GetActiveAsync(
-                accepted.ContractDigest,
-                cancellationToken);
-            if (active is null)
+            ValidateRouteName(contractName);
+            if (pageSize is < 1 or > 200)
             {
-                throw new InvalidDataException(
-                    $"Deployed contract '{accepted.ContractDigest}' has no active executable.");
+                throw new ArgumentOutOfRangeException(
+                    nameof(pageSize),
+                    "Page size must be between 1 and 200.");
             }
 
-            versions.Add(new DecisionContractVersionSummary
+            var current = await contractStore.GetCurrentAsync(
+                contractName,
+                cancellationToken);
+            if (current is null)
             {
-                ContractDigest = accepted.ContractDigest,
-                AcceptedAt = accepted.AcceptedAt,
-                ActiveExecutableDigest = active.ExecutableDigest
-            });
-        }
+                operation.Complete("not_found");
+                return null;
+            }
 
-        return new DecisionContractVersionList
+            var page = await contractStore.ListAsync(
+                contractName,
+                pageSize,
+                cursor,
+                cancellationToken);
+            var versions = new List<DecisionContractVersionSummary>(page.Versions.Count);
+            foreach (var accepted in page.Versions)
+            {
+                var active = await executableStore.GetActiveAsync(
+                    accepted.ContractDigest,
+                    cancellationToken);
+                if (active is null)
+                {
+                    throw new InvalidDataException(
+                        $"Deployed contract '{accepted.ContractDigest}' has no active executable.");
+                }
+
+                versions.Add(new DecisionContractVersionSummary
+                {
+                    ContractDigest = accepted.ContractDigest,
+                    AcceptedAt = accepted.AcceptedAt,
+                    ActiveExecutableDigest = active.ExecutableDigest
+                });
+            }
+
+            var result = new DecisionContractVersionList
+            {
+                Name = contractName,
+                CurrentContractDigest = current.ContractDigest,
+                Versions = versions,
+                NextCursor = page.NextCursor
+            };
+            operation.Complete("success");
+            return result;
+        }
+        catch (Exception exception)
         {
-            Name = contractName,
-            CurrentContractDigest = current.ContractDigest,
-            Versions = versions,
-            NextCursor = page.NextCursor
-        };
+            var (outcome, category) = ContractServiceObservability.Classify(exception);
+            operation.Fail(exception, outcome, category);
+            throw;
+        }
     }
 
     private async Task<StoredExecutable> EnsureRuntimeReadyAsync(
@@ -215,19 +316,35 @@ public sealed class ContractLifecycle(
         if (active is null)
         {
             await PutCandidateAsync(
+                accepted.Contract.Name,
+                accepted.ContractDigest,
                 defaultCompilation,
                 "default",
                 cancellationToken);
+            using var activation = observability.StartActivation(
+                accepted.Contract.Name,
+                accepted.ContractDigest,
+                defaultCompilation.ExecutableDigest);
             try
             {
                 await executableStore.ActivateIfNoneAsync(
                     accepted.ContractDigest,
                     defaultCompilation.ExecutableDigest,
                     cancellationToken);
+                activation.Complete("success");
+                observability.ActivationCompleted(
+                    accepted.Contract.Name,
+                    accepted.ContractDigest,
+                    defaultCompilation.ExecutableDigest);
             }
-            catch (ActivationConflictException)
+            catch (ActivationConflictException exception)
             {
-                // Another deployer or generator established runtime authority.
+                activation.Fail(exception, "conflict", "conflict");
+                observability.ActivationRejected(
+                    accepted.Contract.Name,
+                    accepted.ContractDigest,
+                    defaultCompilation.ExecutableDigest,
+                    exception);
             }
 
             active = await executableStore.GetActiveAsync(
@@ -247,9 +364,15 @@ public sealed class ContractLifecycle(
         }
 
         await PutCandidateAsync(
+            accepted.Contract.Name,
+            accepted.ContractDigest,
             authoredCompilation,
             "authored",
             cancellationToken);
+        using var authoredActivation = observability.StartActivation(
+            accepted.Contract.Name,
+            accepted.ContractDigest,
+            authoredCompilation.ExecutableDigest);
         try
         {
             await executableStore.ActivateAsync(
@@ -257,11 +380,20 @@ public sealed class ContractLifecycle(
                 authoredCompilation.ExecutableDigest,
                 defaultCompilation.ExecutableDigest,
                 cancellationToken);
+            authoredActivation.Complete("success");
+            observability.ActivationCompleted(
+                accepted.Contract.Name,
+                accepted.ContractDigest,
+                authoredCompilation.ExecutableDigest);
         }
-        catch (ActivationConflictException)
+        catch (ActivationConflictException exception)
         {
-            // A concurrent activation won. Runtime authority remains valid and is
-            // projected below rather than being overwritten by generation order.
+            authoredActivation.Fail(exception, "conflict", "conflict");
+            observability.ActivationRejected(
+                accepted.Contract.Name,
+                accepted.ContractDigest,
+                authoredCompilation.ExecutableDigest,
+                exception);
         }
 
         return await executableStore.GetActiveAsync(
@@ -272,21 +404,46 @@ public sealed class ContractLifecycle(
     }
 
     private async Task PutCandidateAsync(
+        string contractName,
+        string contractDigest,
         ExecutableCompilation compilation,
         string source,
         CancellationToken cancellationToken)
     {
-        await executableStore.PutCandidateAsync(
-            new StoredExecutable(
+        using var operation = observability.StartCandidateSubmission(
+            contractName,
+            contractDigest,
+            compilation.ExecutableDigest);
+        try
+        {
+            await executableStore.PutCandidateAsync(
+                new StoredExecutable(
+                    compilation.ExecutableDigest,
+                    compilation.Executable,
+                    compilation.CheckedExecutable,
+                    ExecutableLifecycleState.Candidate,
+                    0,
+                    timeProvider.GetUtcNow(),
+                    null,
+                    JsonSerializer.SerializeToElement(new { source })),
+                cancellationToken);
+            operation.Complete("success");
+            observability.CandidateAdmitted(
+                contractName,
+                contractDigest,
+                compilation.ExecutableDigest);
+        }
+        catch (Exception exception)
+        {
+            var (outcome, category) = ContractServiceObservability.Classify(exception);
+            operation.Fail(exception, outcome, category);
+            observability.CandidateRejected(
+                contractName,
+                contractDigest,
                 compilation.ExecutableDigest,
-                compilation.Executable,
-                compilation.CheckedExecutable,
-                ExecutableLifecycleState.Candidate,
-                0,
-                timeProvider.GetUtcNow(),
-                null,
-                JsonSerializer.SerializeToElement(new { source })),
-            cancellationToken);
+                exception);
+            throw;
+        }
     }
 
     private ExecutableCompilation CompileDefault(

@@ -45,6 +45,7 @@ are the roadmap authority.
 | How do authoring clients and Contract Service manage versions and activation? | [Contract clients and Contract Service](architecture/CONTRACT_SERVICE.md) |
 | How do applications, SDKs, and Decision Service evaluate an exact version? | [Runtime client and Decision Service](architecture/RUNTIME.md) |
 | How do exposure, outcomes, and learning relate? | [Evidence and learning](architecture/EVIDENCE.md) |
+| How are Flaggo services observed without conflating operations with application evidence? | [Internal service observability](architecture/OBSERVABILITY.md) |
 
 These documents define logical ownership. An implementation may co-locate
 services or stores without changing those boundaries.

@@ -19,12 +19,16 @@ use flaggo_raw_otlp_inbox::{
 };
 use futures_util::TryStreamExt;
 use mime::Mime;
+use opentelemetry::global;
+use opentelemetry_http::HeaderExtractor;
 use prost::Message;
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::io::StreamReader;
+use tracing::{Instrument as _, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
-use crate::AppState;
+use crate::{AppState, INSTRUMENTATION_SCOPE};
 
 const INVALID_ARGUMENT: i32 = 3;
 const RESOURCE_EXHAUSTED: i32 = 8;
@@ -50,14 +54,69 @@ async fn ingest_traces(State(state): State<AppState>, headers: HeaderMap, body: 
 }
 
 async fn ingest(signal: OtlpSignal, state: AppState, headers: HeaderMap, body: Body) -> Response {
+    let span = tracing::info_span!(
+        target: INSTRUMENTATION_SCOPE,
+        "flaggo.otlp.append",
+        flaggo.operation.name = "otlp.append",
+        flaggo.operation.outcome = tracing::field::Empty,
+        flaggo.failure.category = tracing::field::Empty,
+        flaggo.otlp.signal = signal.as_str(),
+        flaggo.otlp.encoding = tracing::field::Empty,
+        flaggo.otlp.compression = tracing::field::Empty,
+    );
+    let parent = global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderExtractor(&headers))
+    });
+    if let Err(error) = span.set_parent(parent) {
+        tracing::debug!(
+            target: INSTRUMENTATION_SCOPE,
+            error = %error,
+            "OTLP request trace parent was not attached"
+        );
+    }
+    ingest_with_span(signal, state, headers, body)
+        .instrument(span)
+        .await
+}
+
+async fn ingest_with_span(
+    signal: OtlpSignal,
+    state: AppState,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
     let wire_encoding = match request_wire_encoding(&headers) {
         Ok(value) => value,
-        Err(error) => return error.into_response(),
+        Err(error) => {
+            return reject_request(
+                &state,
+                signal,
+                "unknown",
+                "unknown",
+                "invalid",
+                "validation",
+                None,
+                error,
+            );
+        }
     };
+    Span::current().record("flaggo.otlp.encoding", wire_encoding.as_str());
     let transport_compression = match request_compression(&headers, wire_encoding) {
         Ok(value) => value,
-        Err(error) => return error.into_response(),
+        Err(error) => {
+            return reject_request(
+                &state,
+                signal,
+                wire_encoding.as_str(),
+                "unknown",
+                "invalid",
+                "validation",
+                None,
+                error,
+            );
+        }
     };
+    Span::current().record("flaggo.otlp.compression", transport_compression.as_str());
     let payload = match read_decompressed_body(
         body,
         transport_compression,
@@ -67,32 +126,57 @@ async fn ingest(signal: OtlpSignal, state: AppState, headers: HeaderMap, body: B
     {
         Ok(value) => value,
         Err(BodyReadError::TooLarge) => {
-            return OtlpHttpError::new(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                RESOURCE_EXHAUSTED,
-                "OTLP request body exceeds the configured decompressed-size limit.",
-                wire_encoding,
-            )
-            .into_response();
+            return reject_request(
+                &state,
+                signal,
+                wire_encoding.as_str(),
+                transport_compression.as_str(),
+                "invalid",
+                "validation",
+                None,
+                OtlpHttpError::new(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    RESOURCE_EXHAUSTED,
+                    "OTLP request body exceeds the configured decompressed-size limit.",
+                    wire_encoding,
+                ),
+            );
         }
         Err(BodyReadError::Invalid) => {
-            return OtlpHttpError::new(
-                StatusCode::BAD_REQUEST,
-                INVALID_ARGUMENT,
-                "OTLP request body or compression is invalid.",
-                wire_encoding,
-            )
-            .into_response();
+            return reject_request(
+                &state,
+                signal,
+                wire_encoding.as_str(),
+                transport_compression.as_str(),
+                "invalid",
+                "validation",
+                None,
+                OtlpHttpError::new(
+                    StatusCode::BAD_REQUEST,
+                    INVALID_ARGUMENT,
+                    "OTLP request body or compression is invalid.",
+                    wire_encoding,
+                ),
+            );
         }
     };
+    let payload_size = u64::try_from(payload.len()).unwrap_or(u64::MAX);
     if !validate_export_request_shape(signal, wire_encoding, &payload) {
-        return OtlpHttpError::new(
-            StatusCode::BAD_REQUEST,
-            INVALID_ARGUMENT,
-            "Request body is not a valid export request for this OTLP signal.",
-            wire_encoding,
-        )
-        .into_response();
+        return reject_request(
+            &state,
+            signal,
+            wire_encoding.as_str(),
+            transport_compression.as_str(),
+            "invalid",
+            "validation",
+            Some(payload_size),
+            OtlpHttpError::new(
+                StatusCode::BAD_REQUEST,
+                INVALID_ARGUMENT,
+                "Request body is not a valid export request for this OTLP signal.",
+                wire_encoding,
+            ),
+        );
     }
 
     let profile_version = DEFAULT_OTLP_PROFILE_VERSION
@@ -106,30 +190,89 @@ async fn ingest(signal: OtlpSignal, state: AppState, headers: HeaderMap, body: B
         payload,
     );
     match state.inbox.append(batch).await {
-        Ok(_) => success_response(wire_encoding),
-        Err(error @ RawOtlpInboxError::CapacityExceeded { .. }) => {
-            eprintln!("Raw OTLP inbox rejected a request: {error:?}");
+        Ok(_) => {
+            Span::current().record("flaggo.operation.outcome", "success");
+            state.observability.record_request(
+                signal.as_str(),
+                wire_encoding.as_str(),
+                transport_compression.as_str(),
+                "success",
+                None,
+                Some(payload_size),
+            );
+            success_response(wire_encoding)
+        }
+        Err(RawOtlpInboxError::CapacityExceeded { .. }) => reject_request(
+            &state,
+            signal,
+            wire_encoding.as_str(),
+            transport_compression.as_str(),
+            "capacity_exhausted",
+            "capacity",
+            Some(payload_size),
             OtlpHttpError::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 RESOURCE_EXHAUSTED,
                 "Raw OTLP inbox capacity is exhausted.",
                 wire_encoding,
             )
-            .retry_after()
-            .into_response()
-        }
-        Err(error) => {
-            eprintln!("Raw OTLP inbox append failed: {error:?}");
+            .retry_after(),
+        ),
+        Err(_) => reject_request(
+            &state,
+            signal,
+            wire_encoding.as_str(),
+            transport_compression.as_str(),
+            "unavailable",
+            "dependency",
+            Some(payload_size),
             OtlpHttpError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 UNAVAILABLE,
                 "Raw OTLP inbox is unavailable.",
                 wire_encoding,
             )
-            .retry_after()
-            .into_response()
-        }
+            .retry_after(),
+        ),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reject_request(
+    state: &AppState,
+    signal: OtlpSignal,
+    encoding: &str,
+    compression: &str,
+    outcome: &str,
+    failure_category: &str,
+    payload_size: Option<u64>,
+    error: OtlpHttpError,
+) -> Response {
+    let span = Span::current();
+    span.record("flaggo.operation.outcome", outcome);
+    span.record("flaggo.failure.category", failure_category);
+    state.observability.record_request(
+        signal.as_str(),
+        encoding,
+        compression,
+        outcome,
+        Some(failure_category),
+        payload_size,
+    );
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::WARN,
+        {
+            "event.name" = "flaggo.otlp.request.rejected",
+            "flaggo.operation.outcome" = outcome,
+            "flaggo.failure.category" = failure_category,
+            "flaggo.otlp.signal" = signal.as_str(),
+            "flaggo.otlp.encoding" = encoding,
+            "flaggo.otlp.compression" = compression,
+        },
+        "OTLP request rejected"
+    );
+    error.into_response()
 }
 
 fn request_wire_encoding(headers: &HeaderMap) -> Result<OtlpWireEncoding, OtlpHttpError> {

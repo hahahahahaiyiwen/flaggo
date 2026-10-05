@@ -66,6 +66,20 @@ Readiness requires Contract Store and Executable Store only. It does not
 depend on Contract Service availability, OTel Ingestion, Evidence Materializer,
 Evidence Store, or Async Analysis.
 
+## Operational observability
+
+The service uses instrumentation scope `flaggo.decision-service`. Each
+exact-version evaluation emits `flaggo.decision.evaluate`, correlates the
+contract and executable digests on the span, and records bounded success,
+validation, not-found, dependency, integrity, and evaluation outcomes.
+Evaluation counters and duration histograms use only bounded outcome,
+evaluation-source, and failure-category dimensions.
+
+Console logging remains enabled, and structured JSON formatting can be selected
+through standard .NET logging configuration. Logs, metrics, and traces export
+as OTLP/HTTP binary Protobuf only when standard
+`OTEL_EXPORTER_OTLP_*_ENDPOINT` configuration is present.
+
 ## Execution model
 
 The architecture diagram represents Decision Service as a rectangle because it
@@ -93,3 +107,4 @@ dotnet build Flaggo.slnx -c Debug --no-restore
 - [Decision authority](../../docs/design/architecture/AUTHORITY.md)
 - [Runtime evaluation model](../../docs/design/contracts/RUNTIME_EVALUATION.md)
 - [Runtime API v3](../../contracts/openapi/flaggo-runtime-v3.yaml)
+- [Internal service observability](../../docs/design/architecture/OBSERVABILITY.md)

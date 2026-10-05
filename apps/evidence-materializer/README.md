@@ -24,7 +24,8 @@ The canonical cross-app lifecycle is documented in
 - Atomically commit each processed batch page's observations, inbox provenance,
   diagnostics, conflicts, and forward checkpoint.
 - Persist each validated catalog update independently from batch projection.
-- Emit structured progress, backlog, freshness, and fatal-failure events.
+- Emit structured lifecycle, committed-page, catalog, backlog, freshness, and
+  fatal-failure telemetry.
 
 ## Boundaries
 
@@ -68,10 +69,23 @@ conceptual worker boundary, not a promise that all future deployments use one
 process. The current persistence contract nevertheless requires one active
 materializer for each database.
 
-The process exposes operational state through structured events rather than an
-HTTP health endpoint. Startup and committed-page events include checkpoint,
-pending-batch count, oldest pending age, newest evidence time, and evidence
-freshness.
+The process exposes operational state through service telemetry rather than an
+HTTP health endpoint. `flaggo.service.started` and
+`flaggo.materializer.page.committed` include checkpoint, pending-batch count,
+oldest pending age, newest evidence time, and evidence freshness.
+
+## Operational observability
+
+The worker uses instrumentation scope `flaggo.evidence-materializer`. Every
+poll emits a `flaggo.materializer.page` root span with an idle, success, or
+failure outcome. Catalog refreshes use a separate client span. Bounded metrics
+cover page attempts and duration, pending work, oldest pending age, evidence
+freshness, and materialized item outcomes.
+
+Structured console logging is always enabled. Logs, metrics, and traces export
+as OTLP/HTTP binary Protobuf only when standard
+`OTEL_EXPORTER_OTLP_*_ENDPOINT` configuration is present. Exporter failure
+cannot alter checkpoint or Evidence Store commits.
 
 ## Configuration
 
@@ -104,3 +118,4 @@ cargo test --workspace --locked
 - [Domain and store modules](../../modules/README.md)
 - [Contract Service](../contract-service/README.md)
 - [OTel Ingestion](../otel-ingestion/README.md)
+- [Internal service observability](../../docs/design/architecture/OBSERVABILITY.md)

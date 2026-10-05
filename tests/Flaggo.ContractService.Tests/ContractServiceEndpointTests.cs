@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using Flaggo.Contract;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
@@ -90,6 +92,10 @@ public sealed class ContractServiceEndpointTests
     [Fact]
     public async Task ValidationComputesFixtureDigestWithoutPersistence()
     {
+        var activities = new ConcurrentBag<Activity>();
+        using var activityListener = Listen(
+            "flaggo.contract-service",
+            activities);
         using var factory = new ContractServiceFactory();
         using var client = factory.CreateClient();
         var fixture = await ReadFixtureAsync("01-validate-valid.json");
@@ -111,12 +117,40 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(
             "client-validation",
             Assert.Single(response.Headers.GetValues(CorrelationIds.HeaderName)));
+        var activity = Assert.Single(
+            activities,
+            candidate => candidate.DisplayName == "flaggo.contract.validate");
+        Assert.Equal(
+            "tetris.dropInterval",
+            activity.GetTagItem("flaggo.contract.name"));
+        Assert.Equal(
+            result.GetProperty("contractDigest").GetString(),
+            activity.GetTagItem("flaggo.contract.digest"));
+        Assert.Equal("success", activity.GetTagItem("flaggo.operation.outcome"));
+        Assert.Equal(
+            "client-validation",
+            activity.GetTagItem("flaggo.request.correlation_id"));
 
         using var get = JsonRequest(
             HttpMethod.Get,
             "/v3/decision-contracts/tetris.dropInterval");
         using var getResponse = await client.SendAsync(get);
         Assert.Equal(HttpStatusCode.NotFound, getResponse.StatusCode);
+    }
+
+    private static ActivityListener Listen(
+        string sourceName,
+        ConcurrentBag<Activity> activities)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activities.Add
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 
     [Fact]

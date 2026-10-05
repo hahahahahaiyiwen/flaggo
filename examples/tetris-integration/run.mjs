@@ -10,6 +10,7 @@ import { gzipSync } from "node:zlib";
 import {
   createHostLifecycle,
   installSignalHandlers,
+  parseMaterializationHealth,
   runWithCleanup,
 } from "./host-process.mjs";
 import { deployTetrisContract } from "./deploy-contract.mjs";
@@ -544,30 +545,38 @@ async function waitForEvidenceMaterialization({
   let observedBatches = 0;
   await host.waitForStructuredLog(
     (entry) => {
-      if (entry.event !== "materializer.batch_page_committed") return false;
-      observedBatches += entry.batchesRead;
+      if (entry["event.name"] !== "flaggo.materializer.page.committed") {
+        return false;
+      }
+      observedBatches += entry["flaggo.materializer.batches_read"];
       return observedBatches >= expectedBatches;
     },
     { signal },
   );
 
   const entries = host.structuredLogs.filter(
-    (entry) => entry.event === "materializer.batch_page_committed",
+    (entry) => entry["event.name"] === "flaggo.materializer.page.committed",
   );
-  const properties = [
-    "batchesRead",
-    "conflictsCreated",
-    "diagnosticsCreated",
-    "duplicateObservations",
-    "observationsCreated",
-    "provenanceCreated",
-  ];
+  const properties = new Map([
+    ["batchesRead", "flaggo.materializer.batches_read"],
+    ["conflictsCreated", "flaggo.materializer.conflicts_created"],
+    ["diagnosticsCreated", "flaggo.materializer.diagnostics_created"],
+    [
+      "duplicateObservations",
+      "flaggo.materializer.duplicate_observations",
+    ],
+    ["observationsCreated", "flaggo.materializer.observations_created"],
+    ["provenanceCreated", "flaggo.materializer.provenance_created"],
+  ]);
   const summary = Object.fromEntries(
-    properties.map((property) => [
+    [...properties].map(([property, telemetryAttribute]) => [
       property,
       entries.reduce((total, entry) => {
-        assert.equal(Number.isSafeInteger(entry[property]), true);
-        return total + entry[property];
+        assert.equal(
+          Number.isSafeInteger(entry[telemetryAttribute]),
+          true,
+        );
+        return total + entry[telemetryAttribute];
       }, 0),
     ]),
   );
@@ -577,7 +586,7 @@ async function waitForEvidenceMaterialization({
   assert.equal(summary.conflictsCreated, 0);
   assert.equal(summary.diagnosticsCreated, 0);
   assert.equal(summary.duplicateObservations, 0);
-  const materialization = entries.at(-1).materialization;
+  const materialization = parseMaterializationHealth(entries.at(-1));
   assertMaterializationHealth(materialization);
   assert.equal(materialization.checkpointBatchId, expectedBatches);
   assert.equal(materialization.pendingBatchCount, 0);
