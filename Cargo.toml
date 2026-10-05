@@ -5,6 +5,7 @@ members = [
     "modules/evidence-store",
     "modules/otlp-codec",
     "modules/raw-otlp-inbox",
+    "modules/service-observability",
 ]
 resolver = "3"
 
@@ -16,10 +17,20 @@ rust-version = "1.99.0"
 
 [workspace.dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+flaggo-service-observability = { version = "0.1.0", path = "modules/service-observability" }
+opentelemetry = { version = "0.33.0", features = ["logs", "metrics", "trace"] }
+opentelemetry-appender-tracing = "0.33.0"
+opentelemetry-http = "0.33.0"
+opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["http-proto", "logs", "metrics", "reqwest-blocking-client", "trace"] }
+opentelemetry_sdk = { version = "0.33.0", features = ["logs", "metrics", "trace"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
 tower = { version = "0.5.2", features = ["util"] }
+tracing = "0.1.41"
+tracing-opentelemetry = "0.34.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.7"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

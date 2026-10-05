@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
+  parseMaterializationHealth,
   sqliteDatabaseUrl,
   startContractAndDecisionHosts,
   startHost,
@@ -106,11 +107,32 @@ export async function startLocalFlaggoHosts({
       { reportsListeningUrl: false },
     ));
     const startup = await host.waitForStructuredLog(
-      (entry) => entry.event === "materializer.started",
+      (entry) => entry["event.name"] === "flaggo.service.started",
       { signal: lifecycle.signal },
     );
     lifecycle.assertHealthy();
-    return { host, startup };
+    return {
+      host,
+      startup: {
+        ...startup,
+        activeRoutes: startup["flaggo.materializer.active_route_count"],
+        currentContracts:
+          startup["flaggo.materializer.current_contract_count"],
+        evidenceStore: {
+          conflictCount:
+            startup["flaggo.materializer.evidence.conflict_count"],
+          diagnosticCount:
+            startup["flaggo.materializer.evidence.diagnostic_count"],
+          hasCachedCatalog:
+            startup["flaggo.materializer.evidence.has_cached_catalog"],
+          observationCount:
+            startup["flaggo.materializer.evidence.observation_count"],
+          provenanceCount:
+            startup["flaggo.materializer.evidence.provenance_count"],
+        },
+        materialization: parseMaterializationHealth(startup),
+      },
+    };
   }
 
   return {

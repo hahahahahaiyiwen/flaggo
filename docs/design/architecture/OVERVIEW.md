@@ -157,6 +157,26 @@ declared correlation attributes.
 The Evidence Store supports later analysis and provenance. It is not a
 synchronous operand store for Decision Service requests.
 
+### Internal service observability
+
+Flaggo service operations are a separate telemetry domain from application
+telemetry and evidence. Contract Service, Decision Service, OTel Ingestion,
+Evidence Materializer, and Async Analysis use one coherent operational profile
+for Resource identity, instrumentation scopes, domain spans, significant log
+events, bounded metrics, correlation, redaction, export, and health.
+
+Important service spans and logs may carry exact contract and workflow
+identifiers for diagnosis. Metrics use only explicitly bounded dimensions.
+Application authority Resource attributes remain exclusive to telemetry
+routing and evidence; they are forbidden on Flaggo service Resources.
+
+The normative registry is
+[`flaggo-service-observability-profile-v1.json`](../../../contracts/otel/flaggo-service-observability-profile-v1.json).
+[Internal service observability](OBSERVABILITY.md) defines the ownership and
+implementation rules. Operational telemetry improves diagnosis but never
+becomes a runtime, activation, ingestion-acknowledgement, materialization, or
+analysis dependency.
+
 ## Data ownership
 
 The complete ownership matrix, including Raw OTLP Inbox, materializer
@@ -232,6 +252,7 @@ authority across digests.
 - [Decision authority](AUTHORITY.md)
 - [Runtime client and Decision Service](RUNTIME.md)
 - [Evidence and learning](EVIDENCE.md)
+- [Internal service observability](OBSERVABILITY.md)
 - [Decision contracts and executables](../contracts/CONTRACTS.md)
 - [Decision contract lifecycle](../contracts/LIFECYCLE.md)
 - [Runtime evaluation model](../contracts/RUNTIME_EVALUATION.md)

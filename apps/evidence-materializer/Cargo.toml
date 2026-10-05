@@ -12,6 +12,8 @@ chrono = { version = "0.4.42", default-features = false, features = ["clock", "s
 flaggo-evidence-store = { version = "0.1.0", path = "../../modules/evidence-store" }
 flaggo-otlp-codec = { version = "0.1.0", path = "../../modules/otlp-codec" }
 flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../../modules/raw-otlp-inbox" }
+flaggo-service-observability.workspace = true
+opentelemetry.workspace = true
 opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace", "with-serde"] }
 prost = "0.14.1"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
@@ -20,6 +22,7 @@ serde_json.workspace = true
 sha2 = "0.10.9"
 thiserror = "2.0.18"
 tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

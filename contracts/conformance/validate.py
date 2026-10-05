@@ -26,6 +26,9 @@ FIXTURES_DIR = CONTRACTS / "fixtures"
 OTEL_DIR = CONTRACTS / "otel"
 MANIFEST = CONTRACTS / "conformance" / "fixture-manifest-v1.json"
 OTLP_PROFILE = OTEL_DIR / "flaggo-otlp-http-profile-v1.json"
+SERVICE_OBSERVABILITY_PROFILE = (
+    OTEL_DIR / "flaggo-service-observability-profile-v1.json"
+)
 TELEMETRY_SCHEMA = OTEL_DIR / "flaggo-telemetry-schema-1.0.0.yaml"
 CANONICALIZATION_VECTORS = (
     CONTRACTS / "conformance" / "canonicalization-vectors-v1.json"
@@ -40,6 +43,7 @@ SCHEMA_FILES = [
     "problem-details-v3.schema.json",
     "telemetry-events-v1.schema.json",
     "otlp-http-profile-v1.schema.json",
+    "service-observability-profile-v1.schema.json",
 ]
 OPENAPI_FILES = [
     "flaggo-runtime-v3.yaml",
@@ -215,6 +219,319 @@ def validate_otlp_profile(
     rep.check(
         profile.get("success", {}).get("partialSuccess") is False,
         f"{context}: durable inbox acknowledgement requires full-request success",
+    )
+
+
+def validate_service_observability_profile(
+    profile: dict,
+    registry: Registry,
+    rep: Report,
+) -> None:
+    context = (
+        "service-observability-profile:"
+        f"{SERVICE_OBSERVABILITY_PROFILE.name}"
+    )
+    validate_body(
+        profile,
+        "service-observability-profile-v1.schema.json",
+        registry,
+        rep,
+        context,
+    )
+
+    scopes = profile.get("scopes", [])
+    scope_names = [
+        scope.get("name")
+        for scope in scopes
+        if isinstance(scope, dict)
+    ]
+    expected_scopes = {
+        "flaggo.contract-service",
+        "flaggo.decision-service",
+        "flaggo.otel-ingestion",
+        "flaggo.evidence-materializer",
+        "flaggo.async-analysis",
+    }
+    rep.check(
+        set(scope_names) == expected_scopes
+        and len(scope_names) == len(expected_scopes),
+        f"{context}: each Phase 4 service scope must appear exactly once",
+    )
+    for scope in scopes:
+        if not isinstance(scope, dict):
+            continue
+        rep.check(
+            set(scope.get("signals", [])) == {"logs", "metrics", "traces"},
+            f"{context}: scope '{scope.get('name')}' must support all signals",
+        )
+
+    attributes = profile.get("attributes", [])
+    attribute_names = [
+        attribute.get("name")
+        for attribute in attributes
+        if isinstance(attribute, dict)
+    ]
+    rep.check(
+        len(attribute_names) == len(set(attribute_names)),
+        f"{context}: attribute names must be unique",
+    )
+    attributes_by_name = {
+        attribute.get("name"): attribute
+        for attribute in attributes
+        if isinstance(attribute, dict) and attribute.get("name")
+    }
+    exact_identifiers = {
+        "flaggo.request.correlation_id",
+        "flaggo.contract.name",
+        "flaggo.contract.digest",
+        "flaggo.executable.digest",
+        "flaggo.candidate.digest",
+        "flaggo.batch.id",
+        "flaggo.analysis.cycle.id",
+        "flaggo.analysis.attempt.id",
+    }
+    for name in exact_identifiers:
+        definition = attributes_by_name.get(name)
+        rep.check(
+            isinstance(definition, dict),
+            f"{context}: missing exact identifier '{name}'",
+        )
+        if isinstance(definition, dict):
+            rep.check(
+                definition.get("metricDimension") is False,
+                f"{context}: exact identifier '{name}' cannot be a metric dimension",
+            )
+            rep.check(
+                definition.get("cardinality") == "unbounded",
+                f"{context}: exact identifier '{name}' must be classified unbounded",
+            )
+
+    bounded_outcomes = set(
+        attributes_by_name.get("flaggo.operation.outcome", {}).get(
+            "allowedValues",
+            [],
+        )
+    )
+    rep.check(
+        bool(bounded_outcomes),
+        f"{context}: flaggo.operation.outcome must define bounded values",
+    )
+
+    def validate_signal_references(
+        definitions: list,
+        name_key: str,
+        signal_kind: str,
+    ) -> dict[str, dict]:
+        names = [
+            definition.get(name_key)
+            for definition in definitions
+            if isinstance(definition, dict)
+        ]
+        rep.check(
+            len(names) == len(set(names)),
+            f"{context}: {signal_kind} names must be unique",
+        )
+        by_name = {
+            definition.get(name_key): definition
+            for definition in definitions
+            if isinstance(definition, dict) and definition.get(name_key)
+        }
+        for name, definition in by_name.items():
+            unknown_scopes = set(definition.get("scopes", [])) - expected_scopes
+            rep.check(
+                not unknown_scopes,
+                f"{context}: {signal_kind} '{name}' references unknown scopes "
+                f"{sorted(unknown_scopes)}",
+            )
+            required = set(definition.get("requiredAttributes", []))
+            conditional = {
+                item.get("name")
+                for item in definition.get("conditionalAttributes", [])
+                if isinstance(item, dict)
+            }
+            rep.check(
+                not (required & conditional),
+                f"{context}: {signal_kind} '{name}' repeats required and "
+                "conditional attributes",
+            )
+            unknown_attributes = (
+                required | conditional
+            ) - set(attributes_by_name)
+            rep.check(
+                not unknown_attributes,
+                f"{context}: {signal_kind} '{name}' references unknown attributes "
+                f"{sorted(unknown_attributes)}",
+            )
+            unknown_outcomes = (
+                set(definition.get("outcomes", [])) - bounded_outcomes
+            )
+            rep.check(
+                not unknown_outcomes,
+                f"{context}: {signal_kind} '{name}' references unknown outcomes "
+                f"{sorted(unknown_outcomes)}",
+            )
+        return by_name
+
+    spans_by_name = validate_signal_references(
+        profile.get("spans", []),
+        "name",
+        "span",
+    )
+    logs_by_name = validate_signal_references(
+        profile.get("logEvents", []),
+        "eventName",
+        "log event",
+    )
+
+    for name in {
+        "flaggo.candidate.submit",
+        "flaggo.candidate.activate",
+        "flaggo.decision.evaluate",
+        "flaggo.analysis.cycle",
+    }:
+        required = set(spans_by_name.get(name, {}).get("requiredAttributes", []))
+        rep.check(
+            {
+                "flaggo.contract.name",
+                "flaggo.contract.digest",
+            }
+            <= required,
+            f"{context}: span '{name}' must require exact contract identity",
+        )
+
+    for name in {
+        "flaggo.analysis.cycle.completed",
+        "flaggo.analysis.cycle.failed",
+        "flaggo.candidate.admitted",
+        "flaggo.candidate.rejected",
+        "flaggo.activation.completed",
+        "flaggo.activation.rejected",
+    }:
+        required = set(logs_by_name.get(name, {}).get("requiredAttributes", []))
+        rep.check(
+            {
+                "flaggo.contract.name",
+                "flaggo.contract.digest",
+            }
+            <= required,
+            f"{context}: log event '{name}' must require exact contract identity",
+        )
+
+    metrics = profile.get("metrics", [])
+    metric_names = [
+        metric.get("name")
+        for metric in metrics
+        if isinstance(metric, dict)
+    ]
+    rep.check(
+        len(metric_names) == len(set(metric_names)),
+        f"{context}: metric names must be unique",
+    )
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            continue
+        name = metric.get("name")
+        unknown_scopes = set(metric.get("scopes", [])) - expected_scopes
+        rep.check(
+            not unknown_scopes,
+            f"{context}: metric '{name}' references unknown scopes "
+            f"{sorted(unknown_scopes)}",
+        )
+        required = set(metric.get("requiredAttributes", []))
+        optional = set(metric.get("optionalAttributes", []))
+        rep.check(
+            not (required & optional),
+            f"{context}: metric '{name}' repeats required and optional attributes",
+        )
+        metric_attributes = required | optional
+        unknown_attributes = metric_attributes - set(attributes_by_name)
+        rep.check(
+            not unknown_attributes,
+            f"{context}: metric '{name}' references unknown attributes "
+            f"{sorted(unknown_attributes)}",
+        )
+        for attribute_name in metric_attributes - unknown_attributes:
+            definition = attributes_by_name[attribute_name]
+            rep.check(
+                definition.get("metricDimension") is True
+                and definition.get("cardinality") in {"fixed", "bounded"},
+                f"{context}: metric '{name}' uses unsafe dimension "
+                f"'{attribute_name}'",
+            )
+        instrument = metric.get("instrument")
+        rep.check(
+            metric.get("monotonic") is (instrument == "counter"),
+            f"{context}: metric '{name}' monotonic does not match "
+            f"instrument '{instrument}'",
+        )
+
+    resource = profile.get("resource", {})
+    required_resource_names = {
+        item.get("name")
+        for item in resource.get("requiredAttributes", [])
+        if isinstance(item, dict)
+    }
+    rep.check(
+        required_resource_names
+        == {
+            "service.name",
+            "service.namespace",
+            "service.version",
+            "service.instance.id",
+        },
+        f"{context}: required Resource identity is incomplete",
+    )
+    rep.check(
+        set(resource.get("forbiddenAttributes", []))
+        == {
+            "flaggo.tenant",
+            "flaggo.application",
+            "flaggo.environment",
+        },
+        f"{context}: application routing authority must be forbidden",
+    )
+
+    export = profile.get("export", {})
+    rep.check(
+        set(export.get("signals", [])) == {"logs", "metrics", "traces"},
+        f"{context}: export must include logs, metrics, and traces",
+    )
+    rep.check(
+        export.get("protocol") == "http/protobuf",
+        f"{context}: export protocol must be OTLP HTTP/protobuf",
+    )
+    rep.check(
+        export.get("ingestionSelfExport") == "reject-own-local-receiver",
+        f"{context}: OTel Ingestion self-export must be rejected",
+    )
+
+    rep.check(
+        profile.get("schemaUrl", {}).get("emit") is False,
+        f"{context}: schemaUrl emission must remain disabled until publication",
+    )
+    rep.check(
+        profile.get("health", {}).get("backgroundWorkers")
+        == "process-and-telemetry-observed",
+        f"{context}: background workers must not gain implicit HTTP health",
+    )
+    required_redactions = {
+        "complete DecisionContract documents",
+        "complete RuntimeInput values",
+        "complete RuntimeDecision result values",
+        "OTLP request payloads",
+        "Evidence Store observation payloads",
+        "analysis prompts or model output",
+        "HTTP request or response bodies",
+        "HTTP header values",
+        "database statements",
+        "credentials, tokens, or secrets",
+    }
+    forbidden_content = set(
+        profile.get("redaction", {}).get("forbiddenContent", [])
+    )
+    rep.check(
+        required_redactions <= forbidden_content,
+        f"{context}: redaction contract is incomplete",
     )
 
 
@@ -1174,6 +1491,20 @@ def main() -> int:
         validate_otlp_profile(otlp_profile, registry, rep)
 
     try:
+        service_observability_profile = load_json(
+            SERVICE_OBSERVABILITY_PROFILE
+        )
+    except Exception as exc:  # noqa: BLE001
+        rep.fail(f"service observability profile does not parse: {exc}")
+        service_observability_profile = {}
+    if service_observability_profile:
+        validate_service_observability_profile(
+            service_observability_profile,
+            registry,
+            rep,
+        )
+
+    try:
         manifest = load_json(MANIFEST)
     except Exception as exc:  # noqa: BLE001
         rep.fail(f"manifest does not parse: {exc}")
@@ -1269,7 +1600,7 @@ def main() -> int:
         {
             "schemas": len(SCHEMA_FILES),
             "openapi_docs": len(OPENAPI_FILES),
-            "otel_profiles": 1,
+            "otel_profiles": 2,
             "fixtures": len(on_disk),
             "manifest_cases": len(cases),
             "scenarios_covered": len(covered & required),

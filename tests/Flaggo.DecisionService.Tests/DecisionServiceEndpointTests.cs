@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using Flaggo.Contract;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
@@ -21,6 +23,10 @@ public sealed class DecisionServiceEndpointTests
     [Fact]
     public async Task CreatesExactVersionDecisionAndPreservesCorrelationId()
     {
+        var activities = new ConcurrentBag<Activity>();
+        using var activityListener = Listen(
+            "flaggo.decision-service",
+            activities);
         using var factory = new DecisionServiceFactory();
         using var client = factory.CreateClient();
         var deployed = await DeployAsync(factory, activate: true);
@@ -44,6 +50,38 @@ public sealed class DecisionServiceEndpointTests
         Assert.Equal(
             "high-pressure",
             body.GetProperty("evaluation").GetProperty("rule").GetString());
+        var activity = Assert.Single(
+            activities,
+            candidate => candidate.DisplayName == "flaggo.decision.evaluate");
+        Assert.Equal(
+            deployed.Contract.Name,
+            activity.GetTagItem("flaggo.contract.name"));
+        Assert.Equal(
+            deployed.ContractDigest,
+            activity.GetTagItem("flaggo.contract.digest"));
+        Assert.Equal(
+            deployed.ExecutableDigest,
+            activity.GetTagItem("flaggo.executable.digest"));
+        Assert.Equal("rule", activity.GetTagItem("flaggo.evaluation.source"));
+        Assert.Equal("success", activity.GetTagItem("flaggo.operation.outcome"));
+        Assert.Equal(
+            "client-correlation",
+            activity.GetTagItem("flaggo.request.correlation_id"));
+    }
+
+    private static ActivityListener Listen(
+        string sourceName,
+        ConcurrentBag<Activity> activities)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activities.Add
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 
     [Fact]

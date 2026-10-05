@@ -21,6 +21,9 @@ public static class CorrelationIds
                 ? supplied!
                 : Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
             context.Items[ItemKey] = correlationId;
+            Activity.Current?.SetTag(
+                "flaggo.request.correlation_id",
+                correlationId);
             context.Response.OnStarting(() =>
             {
                 context.Response.Headers[HeaderName] = correlationId;

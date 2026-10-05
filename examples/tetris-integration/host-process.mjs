@@ -370,8 +370,8 @@ export function parseListeningUrl(line) {
   } catch {
     return undefined;
   }
-  const address = entry?.event === "server.listening"
-    ? entry?.address
+  const address = entry?.["event.name"] === "flaggo.service.started"
+    ? entry?.["server.address"]
     : entry?.Category === "Microsoft.Hosting.Lifetime"
       ? entry?.State?.address
       : undefined;
@@ -398,6 +398,38 @@ export function parseListeningUrl(line) {
     return undefined;
   }
   return url.origin;
+}
+
+export function parseMaterializationHealth(entry) {
+  const pendingBatchCount =
+    entry?.["flaggo.materializer.pending_batch_count"];
+  if (!Number.isSafeInteger(pendingBatchCount) || pendingBatchCount < 0) {
+    return undefined;
+  }
+  const checkpoint = entry["flaggo.materializer.checkpoint_batch_id"];
+  const newestEvidence =
+    entry["flaggo.materializer.newest_evidence_observed_at_unix_nano"];
+  const hasPending = pendingBatchCount > 0;
+  return {
+    checkpointBatchId: checkpoint === "" ? null : Number(checkpoint),
+    evidenceFreshnessMilliseconds: newestEvidence === ""
+      ? null
+      : entry["flaggo.materializer.evidence_freshness_ms"],
+    newestEvidenceObservedAtUnixNano: newestEvidence === ""
+      ? null
+      : newestEvidence,
+    newestPendingReceivedAt: hasPending
+      ? entry["flaggo.materializer.newest_pending_received_at"]
+      : null,
+    observedAt: entry["flaggo.materializer.observed_at"],
+    oldestPendingAgeMilliseconds: hasPending
+      ? entry["flaggo.materializer.oldest_pending_age_ms"]
+      : null,
+    oldestPendingReceivedAt: hasPending
+      ? entry["flaggo.materializer.oldest_pending_received_at"]
+      : null,
+    pendingBatchCount,
+  };
 }
 
 export function createStructuredLogObserver(onListening, onEntry = () => {}) {

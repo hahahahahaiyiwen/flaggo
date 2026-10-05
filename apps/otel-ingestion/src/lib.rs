@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 use axum::{
     Json, Router,
@@ -8,6 +8,10 @@ use axum::{
     routing::get,
 };
 use flaggo_raw_otlp_inbox::{RawOtlpInbox, RawOtlpInboxLimits};
+use opentelemetry::{
+    KeyValue,
+    metrics::{Counter, Gauge, Histogram},
+};
 use serde_json::{Value, json};
 
 mod config;
@@ -23,11 +27,13 @@ pub use config::{
 };
 
 pub const SERVICE_NAME: &str = "flaggo-otel-ingestion";
+pub const INSTRUMENTATION_SCOPE: &str = "flaggo.otel-ingestion";
 
 #[derive(Clone)]
 pub(crate) struct AppState {
     inbox: Arc<dyn RawOtlpInbox>,
     inbox_limits: RawOtlpInboxLimits,
+    observability: OtlpIngestionObservability,
     receiver: OtlpReceiverConfig,
 }
 
@@ -36,6 +42,20 @@ pub fn router(
     receiver: OtlpReceiverConfig,
     inbox_limits: RawOtlpInboxLimits,
 ) -> Router {
+    instrumented_router(
+        inbox,
+        receiver,
+        inbox_limits,
+        OtlpIngestionObservability::new(),
+    )
+}
+
+pub fn instrumented_router(
+    inbox: Arc<dyn RawOtlpInbox>,
+    receiver: OtlpReceiverConfig,
+    inbox_limits: RawOtlpInboxLimits,
+    observability: OtlpIngestionObservability,
+) -> Router {
     Router::new()
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness))
@@ -43,6 +63,7 @@ pub fn router(
         .with_state(AppState {
             inbox,
             inbox_limits,
+            observability,
             receiver,
         })
 }
@@ -57,36 +78,47 @@ async fn liveness() -> Json<Value> {
 
 async fn readiness(State(state): State<AppState>) -> Response {
     match state.inbox.inspect().await {
-        Ok(health) => (
-            StatusCode::OK,
-            Json(json!({
-                "inbox": {
-                    "earliestReplayAt": health
-                        .earliest_replay_at
-                        .map(|value| value.to_rfc3339()),
-                    "expiredBatchCount": health.expired_batch_count,
-                    "expiredPayloadBytes": health.expired_payload_bytes,
-                    "hardRetentionSeconds": state.inbox_limits.hard_retention().as_secs(),
-                    "maximumRetainedPayloadBytes": state
-                        .inbox_limits
-                        .max_retained_payload_bytes(),
-                    "newestRetainedAt": health
-                        .newest_retained_at
-                        .map(|value| value.to_rfc3339()),
-                    "oldestRetainedAt": health
-                        .oldest_retained_at
-                        .map(|value| value.to_rfc3339()),
-                    "retainedBatchCount": health.retained_batch_count,
-                    "retainedPayloadBytes": health.retained_payload_bytes
-                },
-                "service": SERVICE_NAME,
-                "status": "ready",
-                "version": env!("CARGO_PKG_VERSION")
-            })),
-        )
-            .into_response(),
+        Ok(health) => {
+            state.observability.record_health(&health);
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "inbox": {
+                        "earliestReplayAt": health
+                            .earliest_replay_at
+                            .map(|value| value.to_rfc3339()),
+                        "expiredBatchCount": health.expired_batch_count,
+                        "expiredPayloadBytes": health.expired_payload_bytes,
+                        "hardRetentionSeconds": state.inbox_limits.hard_retention().as_secs(),
+                        "maximumRetainedPayloadBytes": state
+                            .inbox_limits
+                            .max_retained_payload_bytes(),
+                        "newestRetainedAt": health
+                            .newest_retained_at
+                            .map(|value| value.to_rfc3339()),
+                        "oldestRetainedAt": health
+                            .oldest_retained_at
+                            .map(|value| value.to_rfc3339()),
+                        "retainedBatchCount": health.retained_batch_count,
+                        "retainedPayloadBytes": health.retained_payload_bytes
+                    },
+                    "service": SERVICE_NAME,
+                    "status": "ready",
+                    "version": env!("CARGO_PKG_VERSION")
+                })),
+            )
+                .into_response()
+        }
         Err(error) => {
-            eprintln!("Raw OTLP inbox readiness check failed: {error:?}");
+            tracing::event!(
+                target: INSTRUMENTATION_SCOPE,
+                tracing::Level::ERROR,
+                {
+                    "error.type" = std::any::type_name_of_val(&error),
+                    "flaggo.failure.category" = "dependency",
+                },
+                "Raw OTLP inbox readiness check failed"
+            );
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({
@@ -97,6 +129,109 @@ async fn readiness(State(state): State<AppState>) -> Response {
             )
                 .into_response()
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct OtlpIngestionObservability {
+    requests: Counter<u64>,
+    request_size: Histogram<u64>,
+    retained_batches: Gauge<u64>,
+    retained_bytes: Gauge<u64>,
+    oldest_age: Gauge<f64>,
+    expired_batches: Counter<u64>,
+    expired_bytes: Counter<u64>,
+}
+
+impl OtlpIngestionObservability {
+    #[must_use]
+    pub fn new() -> Self {
+        let meter = flaggo_service_observability::ServiceObservability::meter(
+            INSTRUMENTATION_SCOPE,
+            env!("CARGO_PKG_VERSION"),
+        );
+        Self {
+            requests: meter
+                .u64_counter("flaggo.otlp.requests")
+                .with_unit("{request}")
+                .build(),
+            request_size: meter
+                .u64_histogram("flaggo.otlp.request.size")
+                .with_unit("By")
+                .build(),
+            retained_batches: meter
+                .u64_gauge("flaggo.inbox.retained.batches")
+                .with_unit("{batch}")
+                .build(),
+            retained_bytes: meter
+                .u64_gauge("flaggo.inbox.retained.bytes")
+                .with_unit("By")
+                .build(),
+            oldest_age: meter
+                .f64_gauge("flaggo.inbox.oldest.age")
+                .with_unit("s")
+                .build(),
+            expired_batches: meter
+                .u64_counter("flaggo.inbox.expired.batches")
+                .with_unit("{batch}")
+                .build(),
+            expired_bytes: meter
+                .u64_counter("flaggo.inbox.expired.bytes")
+                .with_unit("By")
+                .build(),
+        }
+    }
+
+    pub(crate) fn record_request(
+        &self,
+        signal: &str,
+        encoding: &str,
+        compression: &str,
+        outcome: &str,
+        failure_category: Option<&str>,
+        payload_size: Option<u64>,
+    ) {
+        let mut attributes = vec![
+            KeyValue::new("flaggo.otlp.signal", signal.to_owned()),
+            KeyValue::new("flaggo.otlp.encoding", encoding.to_owned()),
+            KeyValue::new("flaggo.otlp.compression", compression.to_owned()),
+            KeyValue::new("flaggo.operation.outcome", outcome.to_owned()),
+        ];
+        if let Some(category) = failure_category {
+            attributes.push(KeyValue::new(
+                "flaggo.failure.category",
+                category.to_owned(),
+            ));
+        }
+        self.requests.add(1, &attributes);
+        if let Some(size) = payload_size {
+            self.request_size.record(size, &attributes);
+        }
+    }
+
+    pub fn record_health(&self, health: &flaggo_raw_otlp_inbox::RawOtlpInboxHealth) {
+        self.retained_batches
+            .record(health.retained_batch_count, &[]);
+        self.retained_bytes
+            .record(health.retained_payload_bytes, &[]);
+        let age = health.oldest_retained_at.map_or(0.0, |oldest| {
+            SystemTime::now()
+                .duration_since(oldest.into())
+                .unwrap_or_default()
+                .as_secs_f64()
+        });
+        self.oldest_age.record(age, &[]);
+    }
+
+    pub fn record_retention(&self, result: flaggo_raw_otlp_inbox::RawOtlpInboxRetentionResult) {
+        self.expired_batches.add(result.expired_batch_count, &[]);
+        self.expired_bytes.add(result.expired_payload_bytes, &[]);
+    }
+}
+
+impl Default for OtlpIngestionObservability {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

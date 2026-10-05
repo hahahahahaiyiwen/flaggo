@@ -5,12 +5,13 @@ import test from "node:test";
 import {
   createRustHostEnvironment,
   createStructuredLogObserver,
+  parseMaterializationHealth,
   parseListeningUrl,
   rustBinaryPath,
   sqliteDatabaseUrl,
 } from "../host-process.mjs";
 
-test("listening observer accepts .NET and Rust host events", () => {
+test("listening observer accepts .NET and Rust service telemetry", () => {
   assert.equal(
     parseListeningUrl(JSON.stringify({
       Category: "Microsoft.Hosting.Lifetime",
@@ -20,15 +21,15 @@ test("listening observer accepts .NET and Rust host events", () => {
   );
   assert.equal(
     parseListeningUrl(JSON.stringify({
-      event: "server.listening",
-      address: "http://127.0.0.1:5011",
+      "event.name": "flaggo.service.started",
+      "server.address": "http://127.0.0.1:5011",
     })),
     "http://127.0.0.1:5011",
   );
   assert.equal(
     parseListeningUrl(JSON.stringify({
-      event: "server.listening",
-      address: "http://0.0.0.0:5011",
+      "event.name": "flaggo.service.started",
+      "server.address": "http://0.0.0.0:5011",
     })),
     undefined,
   );
@@ -41,14 +42,41 @@ test("structured log observer captures complete JSON objects", () => {
     (entry) => entries.push(entry),
   );
 
-  observer.write("not json\n{\"event\":\"materializer.");
-  observer.write("started\",\"activeRoutes\":2}\n");
+  observer.write("not json\n{\"event.name\":\"flaggo.service.");
+  observer.write(
+    "started\",\"flaggo.materializer.active_route_count\":2}\n",
+  );
   observer.end();
 
   assert.deepEqual(entries, [{
-    event: "materializer.started",
-    activeRoutes: 2,
+    "event.name": "flaggo.service.started",
+    "flaggo.materializer.active_route_count": 2,
   }]);
+});
+
+test("materialization telemetry projects worker health", () => {
+  assert.deepEqual(
+    parseMaterializationHealth({
+      "flaggo.materializer.checkpoint_batch_id": "6",
+      "flaggo.materializer.pending_batch_count": 0,
+      "flaggo.materializer.observed_at": "2026-10-05T15:00:00Z",
+      "flaggo.materializer.oldest_pending_received_at": "",
+      "flaggo.materializer.newest_pending_received_at": "",
+      "flaggo.materializer.oldest_pending_age_ms": 0,
+      "flaggo.materializer.newest_evidence_observed_at_unix_nano": "1000",
+      "flaggo.materializer.evidence_freshness_ms": 10,
+    }),
+    {
+      checkpointBatchId: 6,
+      evidenceFreshnessMilliseconds: 10,
+      newestEvidenceObservedAtUnixNano: "1000",
+      newestPendingReceivedAt: null,
+      observedAt: "2026-10-05T15:00:00Z",
+      oldestPendingAgeMilliseconds: null,
+      oldestPendingReceivedAt: null,
+      pendingBatchCount: 0,
+    },
+  );
 });
 
 test("Rust binary paths are platform-specific", () => {
