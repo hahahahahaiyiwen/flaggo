@@ -10,7 +10,7 @@ namespace Flaggo.ExecutableStore;
 public sealed class SqliteExecutableStore : IExecutableStore
 {
     private const string ComponentName = "executable-store";
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 4;
     private readonly string _connectionString;
     private readonly IExpressionCanonicalizer? _expressionCanonicalizer;
     private readonly TimeProvider _timeProvider;
@@ -83,6 +83,25 @@ public sealed class SqliteExecutableStore : IExecutableStore
             CREATE UNIQUE INDEX IF NOT EXISTS ux_executables_one_active
             ON decision_executables(contract_digest)
             WHERE lifecycle_state = 'active';
+
+            CREATE TABLE IF NOT EXISTS analysis_candidate_admissions (
+                workspace_id TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                contract_name TEXT NOT NULL,
+                contract_digest TEXT NOT NULL,
+                executable_digest TEXT NOT NULL,
+                evidence_cutoff TEXT NOT NULL,
+                evidence_watermark INTEGER NOT NULL CHECK(evidence_watermark > 0),
+                analysis_manifest_digest TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(workspace_id, cycle_id),
+                FOREIGN KEY(executable_digest)
+                    REFERENCES decision_executables(executable_digest)
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_analysis_candidates_contract
+            ON analysis_candidate_admissions(contract_name, contract_digest, created_at);
             """;
         command.Parameters.AddWithValue("$component", ComponentName);
         command.Parameters.AddWithValue("$version", SchemaVersion);
@@ -95,7 +114,135 @@ public sealed class SqliteExecutableStore : IExecutableStore
     {
         ValidateStoredExecutable(executable);
         await using var connection = await OpenAsync(cancellationToken);
+        return await InsertCandidateAsync(
+            connection,
+            transaction: null,
+            executable,
+            cancellationToken);
+    }
+
+    public async Task<AnalysisCandidateStoreResult> PutAnalysisCandidateAsync(
+        StoredExecutable executable,
+        AnalysisCandidateAdmission admission,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateStoredExecutable(executable);
+        ValidateAdmission(executable, admission);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(
+            IsolationLevel.Serializable,
+            deferred: false);
+        var existing = await ReadAdmissionAsync(
+            connection,
+            (SqliteTransaction)transaction,
+            admission.WorkspaceId,
+            admission.CycleId,
+            cancellationToken);
+        if (existing is not null)
+        {
+            if (!AdmissionsMatch(existing, admission))
+            {
+                throw new CandidateAdmissionConflictException(
+                    admission.WorkspaceId,
+                    admission.CycleId);
+            }
+
+            var admittedState = await ReadLifecycleStateAsync(
+                connection,
+                (SqliteTransaction)transaction,
+                existing.ExecutableDigest,
+                cancellationToken);
+            if (admittedState is not ExecutableLifecycleState.Candidate)
+            {
+                throw new CandidateLifecycleConflictException(
+                    existing.ExecutableDigest,
+                    admittedState
+                        ?? throw new InvalidDataException(
+                            "Candidate admission references a missing executable."));
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return new AnalysisCandidateStoreResult(
+                existing.ExecutableDigest,
+                existing.CreatedAt,
+                false);
+        }
+
+        var existingState = await ReadLifecycleStateAsync(
+            connection,
+            (SqliteTransaction)transaction,
+            executable.ExecutableDigest,
+            cancellationToken);
+        if (existingState is not null
+            && existingState != ExecutableLifecycleState.Candidate)
+        {
+            throw new CandidateLifecycleConflictException(
+                executable.ExecutableDigest,
+                existingState.Value);
+        }
+
+        await InsertCandidateAsync(
+            connection,
+            (SqliteTransaction)transaction,
+            executable,
+            cancellationToken);
         await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText =
+            """
+            INSERT INTO analysis_candidate_admissions(
+                workspace_id,
+                cycle_id,
+                attempt_id,
+                contract_name,
+                contract_digest,
+                executable_digest,
+                evidence_cutoff,
+                evidence_watermark,
+                analysis_manifest_digest,
+                created_at
+            )
+            VALUES (
+                $workspaceId,
+                $cycleId,
+                $attemptId,
+                $contractName,
+                $contractDigest,
+                $executableDigest,
+                $evidenceCutoff,
+                $evidenceWatermark,
+                $analysisManifestDigest,
+                $createdAt
+            );
+            """;
+        command.Parameters.AddWithValue("$workspaceId", admission.WorkspaceId);
+        command.Parameters.AddWithValue("$cycleId", admission.CycleId);
+        command.Parameters.AddWithValue("$attemptId", admission.AttemptId);
+        command.Parameters.AddWithValue("$contractName", admission.ContractName);
+        command.Parameters.AddWithValue("$contractDigest", admission.ContractDigest);
+        command.Parameters.AddWithValue("$executableDigest", admission.ExecutableDigest);
+        command.Parameters.AddWithValue("$evidenceCutoff", FormatTime(admission.EvidenceCutoff));
+        command.Parameters.AddWithValue("$evidenceWatermark", admission.EvidenceWatermark);
+        command.Parameters.AddWithValue(
+            "$analysisManifestDigest",
+            admission.AnalysisManifestDigest);
+        command.Parameters.AddWithValue("$createdAt", FormatTime(admission.CreatedAt));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new AnalysisCandidateStoreResult(
+            admission.ExecutableDigest,
+            admission.CreatedAt,
+            true);
+    }
+
+    private async Task<ExecutableStoreWriteResult> InsertCandidateAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        StoredExecutable executable,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             """
             INSERT INTO decision_executables(
@@ -325,6 +472,20 @@ public sealed class SqliteExecutableStore : IExecutableStore
                 """;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             _ = await reader.ReadAsync(cancellationToken);
+            await reader.DisposeAsync();
+
+            await using var admissionCommand = connection.CreateCommand();
+            admissionCommand.CommandText =
+                """
+                SELECT workspace_id, cycle_id, attempt_id, contract_name,
+                       contract_digest, executable_digest, evidence_cutoff,
+                       evidence_watermark, analysis_manifest_digest, created_at
+                FROM analysis_candidate_admissions
+                LIMIT 0;
+                """;
+            await using var admissionReader =
+                await admissionCommand.ExecuteReaderAsync(cancellationToken);
+            _ = await admissionReader.ReadAsync(cancellationToken);
             return true;
         }
         catch (SqliteException)
@@ -400,6 +561,126 @@ public sealed class SqliteExecutableStore : IExecutableStore
                 "Executable expressions must use their canonical stored form.",
                 nameof(stored));
         }
+    }
+
+    private static void ValidateAdmission(
+        StoredExecutable executable,
+        AnalysisCandidateAdmission admission)
+    {
+        if (!string.Equals(
+                admission.ContractDigest,
+                executable.Executable.ContractDigest,
+                StringComparison.Ordinal)
+            || !string.Equals(
+                admission.ExecutableDigest,
+                executable.ExecutableDigest,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "Candidate admission identity must match the stored executable.",
+                nameof(admission));
+        }
+
+        if (string.IsNullOrWhiteSpace(admission.WorkspaceId)
+            || string.IsNullOrWhiteSpace(admission.CycleId)
+            || string.IsNullOrWhiteSpace(admission.AttemptId)
+            || string.IsNullOrWhiteSpace(admission.ContractName)
+            || admission.EvidenceWatermark <= 0)
+        {
+            throw new ArgumentException(
+                "Candidate admission identity and positive evidence watermark are required.",
+                nameof(admission));
+        }
+    }
+
+    private static bool AdmissionsMatch(
+        AnalysisCandidateAdmission existing,
+        AnalysisCandidateAdmission requested) =>
+        string.Equals(existing.WorkspaceId, requested.WorkspaceId, StringComparison.Ordinal)
+        && string.Equals(existing.CycleId, requested.CycleId, StringComparison.Ordinal)
+        && string.Equals(existing.AttemptId, requested.AttemptId, StringComparison.Ordinal)
+        && string.Equals(existing.ContractName, requested.ContractName, StringComparison.Ordinal)
+        && string.Equals(
+            existing.ContractDigest,
+            requested.ContractDigest,
+            StringComparison.Ordinal)
+        && string.Equals(
+            existing.ExecutableDigest,
+            requested.ExecutableDigest,
+            StringComparison.Ordinal)
+        && existing.EvidenceCutoff == requested.EvidenceCutoff
+        && existing.EvidenceWatermark == requested.EvidenceWatermark
+        && string.Equals(
+            existing.AnalysisManifestDigest,
+            requested.AnalysisManifestDigest,
+            StringComparison.Ordinal);
+
+    private static async Task<AnalysisCandidateAdmission?> ReadAdmissionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string workspaceId,
+        string cycleId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            SELECT attempt_id, contract_name, contract_digest, executable_digest,
+                   evidence_cutoff, evidence_watermark, analysis_manifest_digest, created_at
+            FROM analysis_candidate_admissions
+            WHERE workspace_id = $workspaceId
+              AND cycle_id = $cycleId;
+            """;
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+        command.Parameters.AddWithValue("$cycleId", cycleId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new AnalysisCandidateAdmission(
+            workspaceId,
+            cycleId,
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            DateTimeOffset.Parse(
+                reader.GetString(4),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind),
+            reader.GetInt64(5),
+            reader.GetString(6),
+            DateTimeOffset.Parse(
+                reader.GetString(7),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind));
+    }
+
+    private static async Task<ExecutableLifecycleState?> ReadLifecycleStateAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string executableDigest,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "SELECT lifecycle_state FROM decision_executables "
+            + "WHERE executable_digest = $executableDigest;";
+        command.Parameters.AddWithValue("$executableDigest", executableDigest);
+        var value = await command.ExecuteScalarAsync(cancellationToken) as string;
+        return value switch
+        {
+            null => null,
+            "candidate" => ExecutableLifecycleState.Candidate,
+            "active" => ExecutableLifecycleState.Active,
+            "inactive" => ExecutableLifecycleState.Inactive,
+            var invalid => throw new InvalidDataException(
+                $"Unknown executable lifecycle state '{invalid}'.")
+        };
     }
 
     private static async Task<string?> ReadSelectedContractDigest(

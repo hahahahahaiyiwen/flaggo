@@ -34,6 +34,12 @@ public interface IContractLifecycle
         int pageSize,
         string? cursor,
         CancellationToken cancellationToken = default);
+
+    Task<AnalysisCandidateResult> SubmitAnalysisCandidateAsync(
+        string contractName,
+        string contractDigest,
+        AnalysisCandidateSubmission submission,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class ContractLifecycle(
@@ -43,6 +49,8 @@ public sealed class ContractLifecycle(
     FlaggoExecutableCompiler executableCompiler,
     TimeProvider timeProvider) : IContractLifecycle
 {
+    private readonly SemaphoreSlim currentMutation = new(1, 1);
+
     public DecisionContractValidationResult Validate(
         string contractName,
         DecisionContract contract)
@@ -90,10 +98,18 @@ public sealed class ContractLifecycle(
             defaultCompilation,
             authoredCompilation,
             cancellationToken);
-        await contractStore.SetCurrentAsync(
-            contractName,
-            contractDigest,
-            cancellationToken);
+        await currentMutation.WaitAsync(cancellationToken);
+        try
+        {
+            await contractStore.SetCurrentAsync(
+                contractName,
+                contractDigest,
+                cancellationToken);
+        }
+        finally
+        {
+            currentMutation.Release();
+        }
 
         return new ContractDeploymentResult(
             Project(accepted, active.ExecutableDigest),
@@ -201,6 +217,97 @@ public sealed class ContractLifecycle(
             Versions = versions,
             NextCursor = page.NextCursor
         };
+    }
+
+    public async Task<AnalysisCandidateResult> SubmitAnalysisCandidateAsync(
+        string contractName,
+        string contractDigest,
+        AnalysisCandidateSubmission submission,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRouteName(contractName);
+        ValidateDigest(contractDigest);
+        ArgumentNullException.ThrowIfNull(submission);
+        ValidateProvenance(submission.Provenance, timeProvider.GetUtcNow());
+        var accepted = await contractStore.GetAsync(
+            contractName,
+            contractDigest,
+            cancellationToken)
+            ?? throw new ContractVersionNotFoundException(contractName, contractDigest);
+        var compilation = executableCompiler.Compile(
+            accepted.Contract,
+            new DecisionExecutable
+            {
+                ContractDigest = contractDigest,
+                Rules = submission.Rules
+            });
+        var createdAt = timeProvider.GetUtcNow();
+        var stored = new StoredExecutable(
+            compilation.ExecutableDigest,
+            compilation.Executable,
+            compilation.CheckedExecutable,
+            ExecutableLifecycleState.Candidate,
+            0,
+            createdAt,
+            null,
+            JsonSerializer.SerializeToElement(new
+            {
+                source = "async-analysis",
+                workspaceId = submission.Provenance.WorkspaceId,
+                cycleId = submission.Provenance.CycleId,
+                attemptId = submission.Provenance.AttemptId,
+                evidenceCutoff = submission.Provenance.EvidenceCutoff,
+                evidenceWatermark = submission.Provenance.EvidenceWatermark,
+                analysisManifestDigest = submission.Provenance.AnalysisManifestDigest
+            }));
+        var admission = new AnalysisCandidateAdmission(
+            submission.Provenance.WorkspaceId,
+            submission.Provenance.CycleId,
+            submission.Provenance.AttemptId,
+            contractName,
+            contractDigest,
+            compilation.ExecutableDigest,
+            submission.Provenance.EvidenceCutoff,
+            submission.Provenance.EvidenceWatermark,
+            submission.Provenance.AnalysisManifestDigest,
+            createdAt);
+
+        await currentMutation.WaitAsync(cancellationToken);
+        try
+        {
+            var current = await contractStore.GetCurrentAsync(
+                contractName,
+                cancellationToken);
+            if (current is null
+                || !string.Equals(
+                    current.ContractDigest,
+                    contractDigest,
+                    StringComparison.Ordinal))
+            {
+                throw new StaleContractDigestException(
+                    contractName,
+                    contractDigest,
+                    current?.ContractDigest);
+            }
+
+            var result = await executableStore.PutAnalysisCandidateAsync(
+                stored,
+                admission,
+                cancellationToken);
+            return new AnalysisCandidateResult
+            {
+                ContractName = contractName,
+                ContractDigest = contractDigest,
+                ExecutableDigest = result.ExecutableDigest,
+                LifecycleState = "candidate",
+                CreatedAt = result.CreatedAt,
+                Created = result.Created
+            };
+        }
+        finally
+        {
+            currentMutation.Release();
+        }
     }
 
     private async Task<StoredExecutable> EnsureRuntimeReadyAsync(
@@ -363,6 +470,46 @@ public sealed class ContractLifecycle(
                 "The contract digest is invalid.",
                 nameof(contractDigest));
         }
+
+    }
+
+    private static void ValidateProvenance(
+        AnalysisCandidateProvenance provenance,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(provenance);
+        foreach (var (name, value) in new[]
+                 {
+                     ("workspaceId", provenance.WorkspaceId),
+                     ("cycleId", provenance.CycleId),
+                     ("attemptId", provenance.AttemptId)
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(value)
+                || value.Length > 256
+                || value.Any(char.IsControl))
+            {
+                throw new ArgumentException(
+                    $"{name} must contain 1-256 non-control characters.");
+            }
+        }
+
+        if (!ContractDigests.IsSha256Digest(provenance.WorkspaceId)
+            || !ContractDigests.IsSha256Digest(provenance.AnalysisManifestDigest))
+        {
+            throw new ArgumentException(
+                "workspaceId and analysisManifestDigest must be lowercase sha256 digests.");
+        }
+
+        if (provenance.EvidenceWatermark <= 0)
+        {
+            throw new ArgumentException("evidenceWatermark must be positive.");
+        }
+
+        if (provenance.EvidenceCutoff > now)
+        {
+            throw new ArgumentException("evidenceCutoff cannot be in the future.");
+        }
     }
 }
 
@@ -382,3 +529,11 @@ public sealed class InvalidDecisionContractException(
 {
     public IReadOnlyList<ValidationIssue> Issues { get; } = issues;
 }
+
+public sealed class StaleContractDigestException(
+    string contractName,
+    string requestedDigest,
+    string? currentDigest)
+    : Exception(
+        $"Contract '{contractName}' current digest is '{currentDigest ?? "<none>"}', "
+        + $"not '{requestedDigest}'.");

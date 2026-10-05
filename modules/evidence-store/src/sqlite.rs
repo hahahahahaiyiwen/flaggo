@@ -16,7 +16,7 @@ use crate::{
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const CREATE_SCHEMA_VERSIONS: &str = "
@@ -53,7 +53,8 @@ const CREATE_CHECKPOINTS: &str = "
 ";
 const CREATE_OBSERVATIONS: &str = "
     CREATE TABLE IF NOT EXISTS evidence_observations (
-        observation_id TEXT PRIMARY KEY,
+        observation_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        observation_id TEXT NOT NULL UNIQUE,
         logical_source_id TEXT NOT NULL,
         content_digest TEXT NOT NULL,
         tenant TEXT NOT NULL,
@@ -87,6 +88,7 @@ const CREATE_OBSERVATION_INDEXES: &str = "
         application,
         environment,
         observed_at_unix_nano,
+        observation_sequence,
         observation_id
     );
 

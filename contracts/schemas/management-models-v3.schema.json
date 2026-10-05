@@ -880,6 +880,103 @@
         }
       }
     },
+    "AnalysisCandidateProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "cycleId",
+        "attemptId",
+        "evidenceCutoff",
+        "evidenceWatermark",
+        "analysisManifestDigest"
+      ],
+      "properties": {
+        "workspaceId": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Stable digest identity of the contract-name workspace."
+        },
+        "cycleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "attemptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "evidenceCutoff": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Inclusive event-time cutoff frozen by the analysis cycle."
+        },
+        "evidenceWatermark": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Opaque Evidence Store observation watermark frozen by the analysis cycle."
+        },
+        "analysisManifestDigest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Digest of the immutable analysis manifest persisted in the workspace."
+        }
+      }
+    },
+    "AnalysisCandidateSubmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rules",
+        "provenance"
+      ],
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExecutableRule"
+          },
+          "description": "Ordered deterministic rules proposed for the exact contract digest."
+        },
+        "provenance": {
+          "$ref": "#/$defs/AnalysisCandidateProvenance"
+        }
+      }
+    },
+    "AnalysisCandidateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractName",
+        "contractDigest",
+        "executableDigest",
+        "lifecycleState",
+        "createdAt",
+        "created"
+      ],
+      "properties": {
+        "contractName": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "executableDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "lifecycleState": {
+          "const": "candidate",
+          "description": "The persisted executable is inactive and has no runtime authority."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created": {
+          "type": "boolean",
+          "description": "True for first admission of the workspace cycle; false for an exact retry."
+        }
+      }
+    },
     "ValidationIssue": {
       "type": "object",
       "additionalProperties": false,

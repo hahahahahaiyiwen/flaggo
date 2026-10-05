@@ -15,6 +15,9 @@ public static class ProblemTypes
     public const string ContractNameMismatch = Root + "contract-name-mismatch";
     public const string ContractNameAuthorityConflict = Root + "contract-name-authority-conflict";
     public const string InvalidDecisionContract = Root + "invalid-decision-contract";
+    public const string InvalidDecisionExecutable = Root + "invalid-decision-executable";
+    public const string StaleContractDigest = Root + "stale-contract-digest";
+    public const string CandidateAdmissionConflict = Root + "candidate-admission-conflict";
     public const string ActivationConflict = Root + "activation-conflict";
     public const string UnsupportedMediaType = Root + "unsupported-media-type";
     public const string InvalidRuntimeInput = Root + "invalid-runtime-input";

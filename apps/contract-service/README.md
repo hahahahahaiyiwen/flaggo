@@ -19,8 +19,9 @@ The canonical cross-app lifecycle is documented in
 - Generate and activate the required default executable before reporting a
   version ready.
 - Generate deterministic authored executables.
-- Validate immutable candidates against their exact accepted contract.
-- Persist executable artifacts and generation provenance.
+- Validate analysis Candidates against their exact current accepted contract.
+- Persist inactive Candidate artifacts and durable workspace-cycle provenance
+  idempotently.
 - Atomically activate one executable for each contract digest.
 - Publish the current contract catalog used by Evidence Materializer.
 
@@ -35,9 +36,11 @@ Contract Service does not:
 - schedule or perform asynchronous evidence analysis; or
 - allow a candidate producer to write activation state directly.
 
-The planned Async Analysis app will submit immutable candidates and provenance
-through a Contract Service boundary. That boundary is not implemented yet.
-Contract Service will retain candidate validation and activation authority.
+Async Analysis submits immutable Candidate rules and trusted cycle provenance
+through Contract Service. Contract Service derives contract identity from the
+route, recompiles the rules, rejects stale current digests, and persists only
+`Candidate` lifecycle state. Candidate activation is a separate Contract
+Service operation and is not part of this boundary.
 
 ## Interfaces
 
@@ -49,6 +52,7 @@ PUT  /v3/decision-contracts/{contractName}
 GET  /v3/decision-contracts/{contractName}
 GET  /v3/decision-contracts/{contractName}/versions
 GET  /v3/decision-contracts/{contractName}/versions/{contractDigest}
+POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates
 GET  /v3/decision-contract-catalog/current
 GET  /health/live
 GET  /health/ready

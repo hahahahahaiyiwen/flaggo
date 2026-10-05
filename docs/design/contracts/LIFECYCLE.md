@@ -156,15 +156,19 @@ It remains outside the request path. Its output is an immutable candidate that
 must satisfy the same contract as an authored candidate.
 
 Evidence-based analysis is scoped to the current contract. If the current
-pointer moves before a run completes, the result may be retained for
-reconstruction, but it is superseded and cannot activate. This check fences
-late analysis results from restoring obsolete authority.
+pointer moves before a run completes, the cycle checkpoints and becomes
+superseded. Candidate admission performs its own current-digest check, which
+fences late analysis results from persisting obsolete authority even before
+the worker observes the pointer change.
 
-Only one analysis run may be active for a contract digest. The first run
-becomes eligible one `learning.policy.evaluate.interval` after accepted
-readiness. Each later interval starts when the previous attempt completes.
-Completion may activate a candidate, produce no candidate, or record failure;
-runtime evaluation continues in every case.
+Only one analysis cycle may claim the name-keyed workspace at a time, and each
+cycle binds one exact current digest. The first cycle becomes eligible one
+`learning.policy.evaluate.interval` after accepted readiness. Each later
+interval starts when the previous cycle reaches a terminal outcome.
+Recoverable agent attempts resume without advancing cadence. Completion may
+persist an inactive Candidate, produce no candidate, or record failure;
+runtime evaluation continues in every case. A separate Contract Service
+activator owns any later `auto-activation` transition.
 
 ### Common generated output
 

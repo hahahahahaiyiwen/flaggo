@@ -583,7 +583,11 @@ fn exemplar_json(value: &Exemplar) -> Value {
 }
 
 fn double_json(value: f64) -> Value {
-    json!({ "doubleBits": format!("{:016x}", value.to_bits()) })
+    let mut encoded = json!({ "doubleBits": format!("{:016x}", value.to_bits()) });
+    if value.is_finite() {
+        encoded["value"] = json!(value);
+    }
+    encoded
 }
 
 #[cfg(test)]
@@ -594,6 +598,23 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn finite_doubles_keep_exact_bits_and_expose_queryable_values() {
+        let finite = double_json(0.749);
+        assert_eq!(
+            finite["doubleBits"],
+            format!("{:016x}", 0.749_f64.to_bits())
+        );
+        assert_eq!(finite["value"], json!(0.749));
+
+        let non_finite = double_json(f64::NAN);
+        assert_eq!(
+            non_finite["doubleBits"],
+            format!("{:016x}", f64::NAN.to_bits())
+        );
+        assert!(non_finite.get("value").is_none());
+    }
 
     #[test]
     fn span_identity_uses_only_trace_and_span_ids() {

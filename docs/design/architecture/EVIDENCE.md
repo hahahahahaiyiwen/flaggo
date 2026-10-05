@@ -338,30 +338,40 @@ accepted-ready contract digest
   -> wait learning.policy.evaluate.interval
   -> read correlated evidence for current contract
   -> run one bounded asynchronous analysis
-  -> produce no candidate, failure, or CandidateExecutable
+  -> produce no candidate, failure, or proposed executable rules
   -> validate candidate against exact contractDigest
+  -> persist one immutable inactive Candidate
+
+separate Contract Service activator
   -> apply auto-activation policy
-  -> atomically activate if still current and valid
+  -> atomically activate if still current and eligible
 ```
 
-Only one analysis run may be active for a contract digest. The next interval
-starts after the previous attempt completes. Runtime continues using the
-existing active executable throughout evidence delay, analysis, failure, and
+Only one analysis cycle may claim a contract-name workspace at a time. Each
+cycle binds one exact current digest, immutable evidence cutoff, and opaque
+Evidence Store watermark. The next interval starts after the previous cycle
+reaches a terminal outcome. Recoverable attempts resume the same cycle without
+advancing cadence. Runtime continues using the existing active executable
+throughout evidence delay, analysis, failure, Candidate persistence, and
 activation attempts.
 
-`auto-activation` means the Contract Service attempts to replace the
-activation mapping after validation. Runtime never scans the Evidence Store or
-Executable Store for the latest generated artifact.
+`auto-activation` means a separate Contract Service activator may attempt to
+replace the activation mapping after Async Analysis persists a validated
+inactive Candidate. Candidate persistence does not imply activation. Runtime
+never scans the Evidence Store or Executable Store for the latest generated
+artifact.
 
 Async Analysis chooses aggregation windows, populations, primary objective
 aggregation, and analysis method. It records those choices and the evidence
 references in generation provenance rather than adding them to the initial
 contract syntax.
 
-When a newer digest becomes current, an older run may finish for reconstruction
-but cannot activate. Analysis results and generation provenance remain attached
-to the digest that produced them. Immutable source observations may be reused
-only when a later analysis explicitly selects and interprets them.
+When a newer digest becomes current, the older cycle receives a bounded
+checkpoint period and becomes superseded. Candidate admission independently
+rechecks current identity, so catalog-detection delay cannot persist a stale
+proposal. Analysis results and generation provenance remain attached to the
+digest that produced them. Immutable source observations may be reused only
+when a later analysis explicitly selects and interprets them.
 
 ## Phase 4 Flaggo OTLP logs mapping
 

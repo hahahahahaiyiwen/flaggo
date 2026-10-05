@@ -221,7 +221,7 @@ async fn rejects_version_two_schema_without_migration() {
         Err(EvidenceStoreError::UnsupportedSchemaVersion {
             component: "evidence-store",
             found: 2,
-            expected: 3
+            expected: 4
         })
     ));
 }

@@ -120,6 +120,7 @@ describe("OpenAPI shared-contract alignment", () => {
       "/v3/decision-contracts/{contractName}/validate",
       "/v3/decision-contracts/{contractName}/versions",
       "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
       "/health/live",
       "/health/ready",
     ]);
@@ -229,6 +230,33 @@ describe("OpenAPI shared-contract alignment", () => {
       "#/components/responses/DecisionContractVersion",
     );
 
+    const submitCandidate = operation(
+      management,
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
+      "post",
+    );
+    expect(submitCandidate.operationId).toBe("submitAnalysisCandidate");
+    expect(submitCandidate.security).toBeUndefined();
+    expectParameters(submitCandidate, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/ContractDigestPath",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(submitCandidate.requestBody?.$ref).toBe(
+      "#/components/requestBodies/AnalysisCandidateSubmission",
+    );
+    expect(submitCandidate.responses["200"]?.$ref).toBe(
+      "#/components/responses/AnalysisCandidate",
+    );
+    expect(submitCandidate.responses["201"]?.$ref).toBe(
+      "#/components/responses/CreatedAnalysisCandidate",
+    );
+    for (const status of ["400", "404", "409", "415", "422", "503"]) {
+      expect(submitCandidate.responses[status]?.$ref).toBe(
+        "#/components/responses/Problem",
+      );
+    }
+
     expect(
       management.components.requestBodies.DecisionContract!.content?.[
         "application/json"
@@ -267,6 +295,26 @@ describe("OpenAPI shared-contract alignment", () => {
     ]);
     expectRequired(managementModels.$defs!.CurrentContractCatalog!, [
       "contracts",
+    ]);
+    expectRequired(managementModels.$defs!.AnalysisCandidateSubmission!, [
+      "rules",
+      "provenance",
+    ]);
+    expectRequired(managementModels.$defs!.AnalysisCandidateProvenance!, [
+      "workspaceId",
+      "cycleId",
+      "attemptId",
+      "evidenceCutoff",
+      "evidenceWatermark",
+      "analysisManifestDigest",
+    ]);
+    expectRequired(managementModels.$defs!.AnalysisCandidateResult!, [
+      "contractName",
+      "contractDigest",
+      "executableDigest",
+      "lifecycleState",
+      "createdAt",
+      "created",
     ]);
   });
 

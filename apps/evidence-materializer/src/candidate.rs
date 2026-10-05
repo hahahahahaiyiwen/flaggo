@@ -125,10 +125,14 @@ pub(crate) fn any_value_json(value: &AnyValue) -> Value {
             json!({ "type": "int64", "value": value.to_string() })
         }
         Some(any_value::Value::DoubleValue(value)) => {
-            json!({
+            let mut encoded = json!({
                 "bits": format!("{:016x}", value.to_bits()),
                 "type": "double"
-            })
+            });
+            if value.is_finite() {
+                encoded["value"] = json!(value);
+            }
+            encoded
         }
         Some(any_value::Value::ArrayValue(value)) => {
             json!({
@@ -276,7 +280,11 @@ mod tests {
                                 { "type": "string", "value": "value" },
                                 { "type": "bool", "value": true },
                                 { "type": "int64", "value": "-9223372036854775808" },
-                                { "bits": "8000000000000000", "type": "double" },
+                                {
+                                    "bits": "8000000000000000",
+                                    "type": "double",
+                                    "value": -0.0
+                                },
                                 { "type": "bytes", "value": "00ff" }
                             ]
                         }

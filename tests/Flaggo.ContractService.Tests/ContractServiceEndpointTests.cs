@@ -415,6 +415,151 @@ public sealed class ContractServiceEndpointTests
     }
 
     [Fact]
+    public async Task AnalysisCandidateSubmissionPersistsInactiveAndRetriesIdempotently()
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var version = await PutDefaultAsync(client, 3);
+        var activeDigest = version.ActiveExecutableDigest;
+        var submission = CreateCandidateSubmission(
+            cycleId: "cycle-1",
+            returnValue: 5);
+        var path =
+            $"/v3/decision-contracts/worker.batchSize/versions/{version.ContractDigest}"
+            + "/candidates";
+
+        using var firstRequest = JsonRequest(
+            HttpMethod.Post,
+            path,
+            JsonSerializer.Serialize(submission, StrictJson.Options));
+        using var firstResponse = await client.SendAsync(firstRequest);
+        var created = await firstResponse.Content
+            .ReadFromJsonAsync<AnalysisCandidateResult>(StrictJson.Options);
+
+        Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+        Assert.NotNull(created);
+        Assert.True(created.Created);
+        Assert.Equal("candidate", created.LifecycleState);
+        Assert.Equal(version.ContractDigest, created.ContractDigest);
+        Assert.Equal(ContractServiceFactory.Now, created.CreatedAt);
+        var store = factory.Services.GetRequiredService<IExecutableStore>();
+        var persisted = await store.GetAsync(created.ExecutableDigest);
+        Assert.Equal(ExecutableLifecycleState.Candidate, persisted?.State);
+        Assert.Equal(
+            activeDigest,
+            (await store.GetActiveAsync(version.ContractDigest))?.ExecutableDigest);
+        Assert.Equal(
+            submission.Provenance.CycleId,
+            persisted?.Provenance?.GetProperty("cycleId").GetString());
+
+        factory.Clock.SetUtcNow(ContractServiceFactory.Now.AddMinutes(5));
+        using var retryRequest = JsonRequest(
+            HttpMethod.Post,
+            path,
+            JsonSerializer.Serialize(submission, StrictJson.Options));
+        using var retryResponse = await client.SendAsync(retryRequest);
+        var retry = await retryResponse.Content
+            .ReadFromJsonAsync<AnalysisCandidateResult>(StrictJson.Options);
+
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        Assert.NotNull(retry);
+        Assert.False(retry.Created);
+        Assert.Equal(created.ExecutableDigest, retry.ExecutableDigest);
+        Assert.Equal(created.CreatedAt, retry.CreatedAt);
+        Assert.Equal(
+            activeDigest,
+            (await store.GetActiveAsync(version.ContractDigest))?.ExecutableDigest);
+    }
+
+    [Fact]
+    public async Task AnalysisCandidateSubmissionRejectsConflictsAndInvalidExecutables()
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var version = await PutDefaultAsync(client, 3);
+        var path =
+            $"/v3/decision-contracts/worker.batchSize/versions/{version.ContractDigest}"
+            + "/candidates";
+        var first = CreateCandidateSubmission("cycle-1", returnValue: 5);
+        using (var request = JsonRequest(
+            HttpMethod.Post,
+            path,
+            JsonSerializer.Serialize(first, StrictJson.Options)))
+        using (var response = await client.SendAsync(request))
+        {
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        var conflicting = CreateCandidateSubmission("cycle-1", returnValue: 6);
+        using (var request = JsonRequest(
+            HttpMethod.Post,
+            path,
+            JsonSerializer.Serialize(conflicting, StrictJson.Options)))
+        using (var response = await client.SendAsync(request))
+        {
+            await AssertProblemAsync(
+                response,
+                HttpStatusCode.Conflict,
+                ProblemTypes.CandidateAdmissionConflict);
+        }
+
+        var invalid = CreateCandidateSubmission("cycle-2", returnValue: 20);
+        using (var request = JsonRequest(
+            HttpMethod.Post,
+            path,
+            JsonSerializer.Serialize(invalid, StrictJson.Options)))
+        using (var response = await client.SendAsync(request))
+        {
+            await AssertProblemAsync(
+                response,
+                HttpStatusCode.UnprocessableEntity,
+                ProblemTypes.InvalidDecisionExecutable);
+        }
+    }
+
+    [Fact]
+    public async Task AnalysisCandidateSubmissionRequiresTheExactCurrentContractDigest()
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var previous = await PutDefaultAsync(client, 3);
+        var current = await PutDefaultAsync(client, 4);
+        var submission = CreateCandidateSubmission("cycle-1", returnValue: 5);
+        using var staleRequest = JsonRequest(
+            HttpMethod.Post,
+            $"/v3/decision-contracts/worker.batchSize/versions/{previous.ContractDigest}"
+            + "/candidates",
+            JsonSerializer.Serialize(submission, StrictJson.Options));
+        using var staleResponse = await client.SendAsync(staleRequest);
+        await AssertProblemAsync(
+            staleResponse,
+            HttpStatusCode.Conflict,
+            ProblemTypes.StaleContractDigest);
+
+        const string missingDigest =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        using var missingRequest = JsonRequest(
+            HttpMethod.Post,
+            $"/v3/decision-contracts/worker.batchSize/versions/{missingDigest}/candidates",
+            JsonSerializer.Serialize(
+                CreateCandidateSubmission("cycle-2", returnValue: 5),
+                StrictJson.Options));
+        using var missingResponse = await client.SendAsync(missingRequest);
+        await AssertProblemAsync(
+            missingResponse,
+            HttpStatusCode.NotFound,
+            ProblemTypes.ContractVersionNotFound);
+
+        var store = factory.Services.GetRequiredService<IExecutableStore>();
+        Assert.Equal(
+            previous.ActiveExecutableDigest,
+            (await store.GetActiveAsync(previous.ContractDigest))?.ExecutableDigest);
+        Assert.Equal(
+            current.ActiveExecutableDigest,
+            (await store.GetActiveAsync(current.ContractDigest))?.ExecutableDigest);
+    }
+
+    [Fact]
     public async Task ReturnsStandardProblemsForInvalidContractsAndIdentity()
     {
         using var factory = new ContractServiceFactory();
@@ -563,6 +708,34 @@ public sealed class ContractServiceEndpointTests
         return (await response.Content.ReadFromJsonAsync<DecisionContractVersion>(
             StrictJson.Options))!;
     }
+
+    private static AnalysisCandidateSubmission CreateCandidateSubmission(
+        string cycleId,
+        int returnValue) =>
+        new()
+        {
+            Rules =
+            [
+                new ExecutableRule
+                {
+                    Name = "analysis-rule",
+                    When = new ExpressionWhen("true"),
+                    Return = new LiteralReturn(
+                        JsonSerializer.SerializeToElement(returnValue))
+                }
+            ],
+            Provenance = new AnalysisCandidateProvenance
+            {
+                WorkspaceId =
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                CycleId = cycleId,
+                AttemptId = $"attempt-{cycleId}",
+                EvidenceCutoff = ContractServiceFactory.Now.AddMinutes(-1),
+                EvidenceWatermark = 42,
+                AnalysisManifestDigest =
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+        };
 
     private static HttpRequestMessage JsonRequest(
         HttpMethod method,

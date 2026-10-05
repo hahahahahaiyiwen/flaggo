@@ -12,6 +12,11 @@ public interface IExecutableStore
         StoredExecutable executable,
         CancellationToken cancellationToken = default);
 
+    Task<AnalysisCandidateStoreResult> PutAnalysisCandidateAsync(
+        StoredExecutable executable,
+        AnalysisCandidateAdmission admission,
+        CancellationToken cancellationToken = default);
+
     Task<StoredExecutable?> GetAsync(
         string executableDigest,
         CancellationToken cancellationToken = default);
@@ -57,6 +62,23 @@ public enum ExecutableStoreWriteResult
     Existing
 }
 
+public sealed record AnalysisCandidateAdmission(
+    string WorkspaceId,
+    string CycleId,
+    string AttemptId,
+    string ContractName,
+    string ContractDigest,
+    string ExecutableDigest,
+    DateTimeOffset EvidenceCutoff,
+    long EvidenceWatermark,
+    string AnalysisManifestDigest,
+    DateTimeOffset CreatedAt);
+
+public sealed record AnalysisCandidateStoreResult(
+    string ExecutableDigest,
+    DateTimeOffset CreatedAt,
+    bool Created);
+
 public sealed record ActivationResult(
     string ExecutableDigest,
     string? PreviousExecutableDigest,
@@ -80,3 +102,26 @@ public sealed class ActivationConflictException(
     : Exception(
         $"Active executable changed: expected '{expectedExecutableDigest ?? "<none>"}', "
         + $"found '{actualExecutableDigest ?? "<none>"}'.");
+
+public sealed class CandidateAdmissionConflictException(
+    string workspaceId,
+    string cycleId)
+    : Exception(
+        $"Workspace '{workspaceId}' cycle '{cycleId}' already admitted a different Candidate.")
+{
+    public string WorkspaceId { get; } = workspaceId;
+
+    public string CycleId { get; } = cycleId;
+}
+
+public sealed class CandidateLifecycleConflictException(
+    string executableDigest,
+    ExecutableLifecycleState state)
+    : Exception(
+        $"Executable '{executableDigest}' is already in lifecycle state '{state}' and cannot "
+        + "be admitted as an inactive Candidate.")
+{
+    public string ExecutableDigest { get; } = executableDigest;
+
+    public ExecutableLifecycleState State { get; } = state;
+}

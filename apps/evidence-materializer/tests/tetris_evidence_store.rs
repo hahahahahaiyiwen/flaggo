@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_TETRIS_EVIDENCE_DATABASE_URL";
 const CONTRACT_DIGEST_ENVIRONMENT_VARIABLE: &str = "FLAGGO_TETRIS_CONTRACT_DIGEST";
 const EXECUTABLE_DIGEST_ENVIRONMENT_VARIABLE: &str = "FLAGGO_TETRIS_EXECUTABLE_DIGEST";
+const ANALYSIS_COHORT_SIZE_ENVIRONMENT_VARIABLE: &str = "FLAGGO_TETRIS_ANALYSIS_COHORT_SIZE";
 
 #[tokio::test]
 #[ignore = "requires the database produced by the Tetris real-host integration"]
@@ -26,6 +27,9 @@ async fn persisted_tetris_evidence_is_semantically_correct() {
     let database_url = required_environment(DATABASE_URL_ENVIRONMENT_VARIABLE);
     let expected_contract_digest = required_environment(CONTRACT_DIGEST_ENVIRONMENT_VARIABLE);
     let expected_executable_digest = required_environment(EXECUTABLE_DIGEST_ENVIRONMENT_VARIABLE);
+    let analysis_cohort_size = required_environment(ANALYSIS_COHORT_SIZE_ENVIRONMENT_VARIABLE)
+        .parse::<usize>()
+        .expect("analysis cohort size must be a non-negative integer");
     assert_live_transport_conformance(&database_url).await;
     let authority = AuthorityScope::new(
         "local".to_owned(),
@@ -40,7 +44,7 @@ async fn persisted_tetris_evidence_is_semantically_correct() {
     let observations = store
         .list_observations(
             &authority,
-            NonZeroU16::new(100).expect("nonzero observation limit"),
+            NonZeroU16::new(1000).expect("nonzero observation limit"),
         )
         .await
         .expect("Tetris observations");
@@ -104,7 +108,18 @@ async fn persisted_tetris_evidence_is_semantically_correct() {
         }
     }
 
-    assert_eq!(protocol_decision_ids.len(), 2);
+    let mut expected_placement_sessions =
+        BTreeSet::from(["tetris-e2e-high".to_owned(), "tetris-e2e-low".to_owned()]);
+    let expected_recovery_sessions = BTreeSet::from(["tetris-e2e-high".to_owned()]);
+    for index in 1..=analysis_cohort_size {
+        expected_placement_sessions.insert(format!("tetris-cohort-a-{index:02}"));
+        expected_placement_sessions.insert(format!("tetris-cohort-b-{index:02}"));
+    }
+
+    assert_eq!(
+        protocol_decision_ids.len(),
+        expected_placement_sessions.len()
+    );
     assert_eq!(
         decision_results,
         BTreeSet::from(["750".to_owned(), "850".to_owned()])
@@ -113,14 +128,8 @@ async fn persisted_tetris_evidence_is_semantically_correct() {
         decision_rules,
         BTreeSet::from(["high-pressure".to_owned(), "low-pressure".to_owned()])
     );
-    assert_eq!(
-        placement_sessions,
-        BTreeSet::from(["tetris-e2e-high".to_owned(), "tetris-e2e-low".to_owned()])
-    );
-    assert_eq!(
-        recovery_sessions,
-        BTreeSet::from(["tetris-e2e-high".to_owned()])
-    );
+    assert_eq!(placement_sessions, expected_placement_sessions);
+    assert_eq!(recovery_sessions, expected_recovery_sessions);
 
     store.close().await;
 }
