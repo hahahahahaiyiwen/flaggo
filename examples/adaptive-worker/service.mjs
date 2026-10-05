@@ -42,9 +42,6 @@ export async function startAdaptiveWorkerService({
     });
   const commonConfiguration = {
     ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
-    Flaggo__Authentication__Tenant: "local",
-    Flaggo__Authentication__Application: "adaptive-worker",
-    Flaggo__Authentication__Environment: "development",
   };
   const hosts = await startContractAndDecisionHosts({
     lifecycle,
@@ -107,7 +104,6 @@ export async function startAdaptiveWorkerService({
       decisionServiceUrl: hosts.decisionUrl,
       otlpIngestionUrl: otelIngestionUrl,
     },
-    credential: { mode: "local-development" },
     fetch: fetchWithAbort,
     signal: lifecycle.signal,
   });

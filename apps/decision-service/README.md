@@ -4,7 +4,7 @@
 evaluation.
 
 Decision Service is the composition root for one bounded runtime operation. It
-authenticates an application scope, resolves the executable active for the
+loads the exact named contract version, resolves the executable active for the
 requested contract digest, evaluates that immutable executable against complete
 input, and returns a `RuntimeDecision`.
 
@@ -13,11 +13,9 @@ The canonical cross-app lifecycle is documented in
 
 ## Responsibilities
 
-- Authenticate and authorize runtime requests.
 - Verify that the route name owns the requested `contractDigest`.
 - Validate complete SDK-constructed `RuntimeInput`.
-- Resolve the one active executable for the authenticated scope and exact
-  digest.
+- Resolve the one active executable for the exact digest.
 - Verify executable integrity and perform bounded deterministic evaluation.
 - Validate the result against the accepted contract.
 - Return `RuntimeDecision` or an explicit Problem Details failure.
@@ -47,9 +45,10 @@ GET  /health/live
 GET  /health/ready
 ```
 
-The Runtime API requires the `flaggo.decisions:decide` scope. Development
-configuration provides a local authentication bypass; it is not a production
-security model.
+The Runtime API currently has no authentication boundary. The route's
+`contractName + contractDigest` identifies the exact accepted contract, and
+`contractDigest` identifies its activation. Future authentication must
+authorize that already loaded resource rather than select it.
 
 ## State and dependencies
 
@@ -72,7 +71,7 @@ Evidence Store, or Async Analysis.
 The architecture diagram represents Decision Service as a rectangle because it
 is a request-driven Web API. The node is a conceptual app boundary, not a
 single process or replica. The request path is stateless, so any replica may
-serve a request when it can coherently read the authority stores.
+serve a request when it can coherently read the contract and executable stores.
 
 ## Run
 

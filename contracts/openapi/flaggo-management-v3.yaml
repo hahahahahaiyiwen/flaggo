@@ -3,7 +3,7 @@
   "info": {
     "title": "Flaggo Management API",
     "version": "3.0.0",
-    "description": "Management API for authority-bound, named, versioned DecisionContract resources. A contract name identifies the logical resource within its declared authority and contractDigest identifies one immutable scoped version. Strict management wire models live in ../schemas/management-models-v3.schema.json, shared health models live in ../schemas/runtime-models-v3.schema.json, and errors use ../schemas/problem-details-v3.schema.json.",
+    "description": "Management API for authority-bound, named, versioned DecisionContract resources. A contract name is globally owned by its first accepted declared authority, and contractDigest identifies one immutable version. Strict management wire models live in ../schemas/management-models-v3.schema.json, shared health models live in ../schemas/runtime-models-v3.schema.json, and errors use ../schemas/problem-details-v3.schema.json.",
     "license": {
       "name": "Apache-2.0"
     }
@@ -16,11 +16,6 @@
     {
       "url": "http://localhost:8080",
       "description": "Local development"
-    }
-  ],
-  "security": [
-    {
-      "oauth2": []
     }
   ],
   "tags": [
@@ -42,13 +37,6 @@
         "operationId": "getCurrentContractCatalog",
         "summary": "Get the cross-authority current-contract catalog.",
         "description": "Returns every current deployed DecisionContract in deterministic authority/name/digest order for Evidence Materializer. The response ETag is opaque transport change-detection metadata only; it is not a contract, evidence, provenance, or checkpoint identity.",
-        "security": [
-          {
-            "oauth2": [
-              "flaggo.contracts:materialize"
-            ]
-          }
-        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/IfNoneMatchHeader"
@@ -72,12 +60,6 @@
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
           "503": {
             "$ref": "#/components/responses/Problem"
           }
@@ -91,14 +73,7 @@
         ],
         "operationId": "deployDecisionContract",
         "summary": "Deploy a named DecisionContract.",
-        "description": "Validates the authority-bound payload, requires its name to equal contractName, computes contractDigest over its authority and semantic content, durably creates the immutable scoped version when new, generates and activates its default executable, and then moves that authority's named current-version pointer. Older digest activations remain available. Repeating the same scoped semantic payload is idempotent and returns the existing version; non-semantic-only changes do not create a version.",
-        "security": [
-          {
-            "oauth2": [
-              "flaggo.contracts:accept"
-            ]
-          }
-        ],
+        "description": "Validates the authority-bound payload, requires its name to equal contractName, and establishes global ownership of that name by the first accepted declared authority. A later deployment of the same name under another authority returns 409. The service computes contractDigest over authority and semantic content, durably creates the immutable version when new, generates and activates its default executable, and then moves the named current-version pointer. Older digest activations remain available. Repeating the same semantic payload is idempotent and returns the existing version; non-semantic-only changes do not create a version.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ContractNamePath"
@@ -118,12 +93,6 @@
             "$ref": "#/components/responses/CreatedDecisionContractVersion"
           },
           "400": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
             "$ref": "#/components/responses/Problem"
           },
           "409": {
@@ -147,13 +116,6 @@
         "operationId": "getCurrentDecisionContract",
         "summary": "Get the current accepted version of a named DecisionContract.",
         "description": "Returns the version selected by the named management resource's currentContractDigest pointer. This convenience lookup is for management only; runtime requests must carry an exact contractDigest and never resolve current implicitly.",
-        "security": [
-          {
-            "oauth2": [
-              "flaggo.contracts:read"
-            ]
-          }
-        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/ContractNamePath"
@@ -165,12 +127,6 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/DecisionContractVersion"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
           },
           "404": {
             "$ref": "#/components/responses/Problem"
@@ -185,14 +141,7 @@
         ],
         "operationId": "validateDecisionContract",
         "summary": "Dry-run validation for one named DecisionContract.",
-        "description": "Requires the payload name to equal contractName, then parses and type-checks the authority-bound contract, validates supported JSON Schema and CEL profiles, verifies cross-references and defaults, canonicalizes authority and semantic content, and computes the proposed scoped contractDigest without mutation. Well-formed but semantically invalid content returns 200 with status invalid.",
-        "security": [
-          {
-            "oauth2": [
-              "flaggo.contracts:validate"
-            ]
-          }
-        ],
+        "description": "Requires the payload name to equal contractName, then parses and type-checks the authority-bound contract, validates supported JSON Schema and CEL profiles, verifies cross-references and defaults, canonicalizes authority and semantic content, and computes the proposed contractDigest without mutation. Well-formed but semantically invalid content returns 200 with status invalid.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ContractNamePath"
@@ -223,12 +172,6 @@
           "400": {
             "$ref": "#/components/responses/Problem"
           },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
           "409": {
             "$ref": "#/components/responses/Problem"
           },
@@ -246,13 +189,6 @@
         "operationId": "listDecisionContractVersions",
         "summary": "List immutable versions of a named DecisionContract.",
         "description": "Returns accepted versions ordered by acceptedAt descending and then contractDigest descending. Pagination uses an opaque stable cursor. Ordering is management history and never authorizes runtime to select an implicit latest digest.",
-        "security": [
-          {
-            "oauth2": [
-              "flaggo.contracts:read"
-            ]
-          }
-        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/ContractNamePath"
@@ -274,12 +210,6 @@
           "400": {
             "$ref": "#/components/responses/Problem"
           },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
           "404": {
             "$ref": "#/components/responses/Problem"
           }
@@ -293,14 +223,7 @@
         ],
         "operationId": "getDecisionContractVersion",
         "summary": "Get one immutable DecisionContract version.",
-        "description": "Returns the exact digest version only when it belongs to the named DecisionContract within the authenticated application and environment scope.",
-        "security": [
-          {
-            "oauth2": [
-              "flaggo.contracts:read"
-            ]
-          }
-        ],
+        "description": "Returns the exact digest version only when it belongs to the named DecisionContract.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ContractNamePath"
@@ -316,12 +239,6 @@
           "200": {
             "$ref": "#/components/responses/DecisionContractVersion"
           },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
           "404": {
             "$ref": "#/components/responses/Problem"
           }
@@ -335,7 +252,6 @@
         ],
         "operationId": "healthLive",
         "summary": "Liveness probe. No external dependency checks.",
-        "security": [],
         "responses": {
           "200": {
             "description": "Process can serve the handler.",
@@ -363,7 +279,6 @@
         "operationId": "healthReady",
         "summary": "Readiness probe over required and optional dependencies.",
         "description": "200 ready requires every check up. 200 degraded is allowed when only optional checks are impaired. Any required check that is not up returns 503 not-ready.",
-        "security": [],
         "responses": {
           "200": {
             "description": "Ready or degraded readiness.",
@@ -400,23 +315,6 @@
     }
   },
   "components": {
-    "securitySchemes": {
-      "oauth2": {
-        "type": "oauth2",
-        "description": "OAuth 2.0/OIDC bearer access tokens. Authorization scopes are read from scope and scp. Every deployed DecisionContract declares the authority covered by its digest; a future credential-derived authority may constrain that declaration. Local development may explicitly enable an insecure bypass, disabled by default.",
-        "flows": {
-          "clientCredentials": {
-            "tokenUrl": "https://auth.flaggo.dev/oauth2/token",
-            "scopes": {
-              "flaggo.contracts:validate": "Dry-run validation for named DecisionContracts",
-              "flaggo.contracts:accept": "Create immutable DecisionContract versions and move the named current pointer",
-              "flaggo.contracts:read": "Read current and historical DecisionContract versions",
-              "flaggo.contracts:materialize": "Read the cross-authority current-contract catalog"
-            }
-          }
-        }
-      }
-    },
     "parameters": {
       "ContractNamePath": {
         "name": "contractName",

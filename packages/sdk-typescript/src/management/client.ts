@@ -40,7 +40,7 @@ function validateConfiguration(
     raw === undefined
     || !hasOnlyKeys(
       raw,
-      new Set(["baseUrl", "credential", "fetch", "timeoutMs", "retry"]),
+      new Set(["baseUrl", "fetch", "timeoutMs", "retry"]),
     )
   ) {
     inputError("/", "Contract client configuration contains unknown members.");

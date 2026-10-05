@@ -31,7 +31,6 @@ export async function runMain(): Promise<void> {
   });
   const client = createDecisionClient<WorkerDecisions>({
     runtimeConfig,
-    credential: { mode: "local-development" },
     telemetry: { logger: telemetry.flaggoLogger },
   });
   try {

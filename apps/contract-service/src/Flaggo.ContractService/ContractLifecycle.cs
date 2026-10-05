@@ -18,7 +18,6 @@ public interface IContractLifecycle
         CancellationToken cancellationToken = default);
 
     Task<DecisionContractVersion?> GetCurrentAsync(
-        AuthorityScope scope,
         string contractName,
         CancellationToken cancellationToken = default);
 
@@ -26,13 +25,11 @@ public interface IContractLifecycle
         CancellationToken cancellationToken = default);
 
     Task<DecisionContractVersion?> GetAsync(
-        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default);
 
     Task<DecisionContractVersionList?> ListAsync(
-        AuthorityScope scope,
         string contractName,
         int pageSize,
         string? cursor,
@@ -70,11 +67,9 @@ public sealed class ContractLifecycle(
             throw new InvalidDecisionContractException(validation.Issues);
         }
 
-        var scope = contract.Authority;
         var contractDigest = validation.ContractDigest;
         var acceptedAt = timeProvider.GetUtcNow();
         var pendingVersion = new AcceptedContractVersion(
-            scope,
             contractDigest,
             acceptedAt,
             contract);
@@ -84,7 +79,6 @@ public sealed class ContractLifecycle(
             pendingVersion,
             cancellationToken);
         var accepted = await contractStore.GetAsync(
-                scope,
                 contractName,
                 contractDigest,
                 cancellationToken)
@@ -92,13 +86,11 @@ public sealed class ContractLifecycle(
                 "The accepted contract could not be read after persistence.");
 
         var active = await EnsureRuntimeReadyAsync(
-            scope,
             accepted,
             defaultCompilation,
             authoredCompilation,
             cancellationToken);
         await contractStore.SetCurrentAsync(
-            scope,
             contractName,
             contractDigest,
             cancellationToken);
@@ -109,18 +101,16 @@ public sealed class ContractLifecycle(
     }
 
     public async Task<DecisionContractVersion?> GetCurrentAsync(
-        AuthorityScope scope,
         string contractName,
         CancellationToken cancellationToken = default)
     {
         ValidateRouteName(contractName);
         var accepted = await contractStore.GetCurrentAsync(
-            scope,
             contractName,
             cancellationToken);
         return accepted is null
             ? null
-            : await ProjectReadyAsync(scope, accepted, cancellationToken);
+            : await ProjectReadyAsync(accepted, cancellationToken);
     }
 
     public async Task<CurrentContractCatalogResult> GetCurrentCatalogAsync(
@@ -130,7 +120,6 @@ public sealed class ContractLifecycle(
         foreach (var version in current)
         {
             if (await executableStore.GetActiveAsync(
-                version.Scope,
                 version.ContractDigest,
                 cancellationToken) is null)
             {
@@ -143,7 +132,6 @@ public sealed class ContractLifecycle(
     }
 
     public async Task<DecisionContractVersion?> GetAsync(
-        AuthorityScope scope,
         string contractName,
         string contractDigest,
         CancellationToken cancellationToken = default)
@@ -151,17 +139,15 @@ public sealed class ContractLifecycle(
         ValidateRouteName(contractName);
         ValidateDigest(contractDigest);
         var accepted = await contractStore.GetAsync(
-            scope,
             contractName,
             contractDigest,
             cancellationToken);
         return accepted is null
             ? null
-            : await ProjectReadyAsync(scope, accepted, cancellationToken);
+            : await ProjectReadyAsync(accepted, cancellationToken);
     }
 
     public async Task<DecisionContractVersionList?> ListAsync(
-        AuthorityScope scope,
         string contractName,
         int pageSize,
         string? cursor,
@@ -176,7 +162,6 @@ public sealed class ContractLifecycle(
         }
 
         var current = await contractStore.GetCurrentAsync(
-            scope,
             contractName,
             cancellationToken);
         if (current is null)
@@ -185,7 +170,6 @@ public sealed class ContractLifecycle(
         }
 
         var page = await contractStore.ListAsync(
-            scope,
             contractName,
             pageSize,
             cursor,
@@ -194,7 +178,6 @@ public sealed class ContractLifecycle(
         foreach (var accepted in page.Versions)
         {
             var active = await executableStore.GetActiveAsync(
-                scope,
                 accepted.ContractDigest,
                 cancellationToken);
             if (active is null)
@@ -221,27 +204,23 @@ public sealed class ContractLifecycle(
     }
 
     private async Task<StoredExecutable> EnsureRuntimeReadyAsync(
-        AuthorityScope scope,
         AcceptedContractVersion accepted,
         ExecutableCompilation defaultCompilation,
         ExecutableCompilation? authoredCompilation,
         CancellationToken cancellationToken)
     {
         var active = await executableStore.GetActiveAsync(
-            scope,
             accepted.ContractDigest,
             cancellationToken);
         if (active is null)
         {
             await PutCandidateAsync(
-                scope,
                 defaultCompilation,
                 "default",
                 cancellationToken);
             try
             {
                 await executableStore.ActivateIfNoneAsync(
-                    scope,
                     accepted.ContractDigest,
                     defaultCompilation.ExecutableDigest,
                     cancellationToken);
@@ -252,7 +231,6 @@ public sealed class ContractLifecycle(
             }
 
             active = await executableStore.GetActiveAsync(
-                scope,
                 accepted.ContractDigest,
                 cancellationToken);
         }
@@ -269,14 +247,12 @@ public sealed class ContractLifecycle(
         }
 
         await PutCandidateAsync(
-            scope,
             authoredCompilation,
             "authored",
             cancellationToken);
         try
         {
             await executableStore.ActivateAsync(
-                scope,
                 accepted.ContractDigest,
                 authoredCompilation.ExecutableDigest,
                 defaultCompilation.ExecutableDigest,
@@ -289,7 +265,6 @@ public sealed class ContractLifecycle(
         }
 
         return await executableStore.GetActiveAsync(
-                scope,
                 accepted.ContractDigest,
                 cancellationToken)
             ?? throw new InvalidOperationException(
@@ -297,14 +272,12 @@ public sealed class ContractLifecycle(
     }
 
     private async Task PutCandidateAsync(
-        AuthorityScope scope,
         ExecutableCompilation compilation,
         string source,
         CancellationToken cancellationToken)
     {
         await executableStore.PutCandidateAsync(
             new StoredExecutable(
-                scope,
                 compilation.ExecutableDigest,
                 compilation.Executable,
                 compilation.CheckedExecutable,
@@ -351,12 +324,10 @@ public sealed class ContractLifecycle(
     }
 
     private async Task<DecisionContractVersion?> ProjectReadyAsync(
-        AuthorityScope scope,
         AcceptedContractVersion accepted,
         CancellationToken cancellationToken)
     {
         var active = await executableStore.GetActiveAsync(
-            scope,
             accepted.ContractDigest,
             cancellationToken);
         return active is null

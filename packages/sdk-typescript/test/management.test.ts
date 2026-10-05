@@ -68,7 +68,6 @@ describe("v3 Contract Service client", () => {
     }));
     const client = createContractClient({
       baseUrl: "https://contracts.test/",
-      credential: { mode: "local-development" },
       fetch,
     });
 
@@ -92,7 +91,7 @@ describe("v3 Contract Service client", () => {
     expect(new Headers(init?.headers).get("X-Flaggo-Correlation-Id"))
       .toBe("validation-1");
     expect(new Headers(init?.headers).get("Authorization"))
-      .toBe("Flaggo-Local-Development");
+      .toBeNull();
   });
 
   it("deploys a ready version and exposes response metadata", async () => {

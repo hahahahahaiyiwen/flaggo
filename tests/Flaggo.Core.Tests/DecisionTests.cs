@@ -43,7 +43,6 @@ public sealed class DecisionTests
         var runtime = await CreateRuntimeAsync(database, contract, executable);
 
         var decision = await runtime.DecideAsync(
-            Scope,
             contract.Name,
             executable.Executable.ContractDigest,
             Input(("_random", 0.5), ("x", 1L)));
@@ -75,7 +74,6 @@ public sealed class DecisionTests
         var runtime = await CreateRuntimeAsync(database, contract, executable);
 
         var decision = await runtime.DecideAsync(
-            Scope,
             contract.Name,
             executable.Executable.ContractDigest,
             Input(("_random", 0.5), ("x", -1L)));
@@ -110,22 +108,18 @@ public sealed class DecisionTests
             first,
             second);
         await executableStore.ActivateAsync(
-            Scope,
             first.Executable.ContractDigest,
             first.ExecutableDigest);
 
         var firstDecision = await runtime.DecideAsync(
-            Scope,
             contract.Name,
             first.Executable.ContractDigest,
             Input(("_random", 0.25)));
         await executableStore.ActivateAsync(
-            Scope,
             first.Executable.ContractDigest,
             second.ExecutableDigest,
             first.ExecutableDigest);
         var secondDecision = await runtime.DecideAsync(
-            Scope,
             contract.Name,
             first.Executable.ContractDigest,
             Input(("_random", 0.25)));
@@ -151,7 +145,6 @@ public sealed class DecisionTests
 
         var exception = await Assert.ThrowsAsync<RuntimeInputValidationException>(
             () => runtime.DecideAsync(
-                Scope,
                 contract.Name,
                 ContractDigests.ComputeContractDigest(
                     contract,
@@ -185,7 +178,6 @@ public sealed class DecisionTests
             0);
         var contractDigest = ContractDigests.ComputeContractDigest(contract, compiler);
         await contractStore.PutAsync(new AcceptedContractVersion(
-            Scope,
             contractDigest,
             DateTimeOffset.UtcNow,
             contract));
@@ -197,13 +189,11 @@ public sealed class DecisionTests
 
         await Assert.ThrowsAsync<DecisionContractVersionNotFoundException>(
             () => runtime.DecideAsync(
-                Scope,
                 "other.name",
                 contractDigest,
                 Input(("_random", 0.5))));
         await Assert.ThrowsAsync<ActiveExecutableNotFoundException>(
             () => runtime.DecideAsync(
-                Scope,
                 contract.Name,
                 contractDigest,
                 Input(("_random", 0.5))));
@@ -233,7 +223,6 @@ public sealed class DecisionTests
 
         var exception = await Assert.ThrowsAsync<DecisionEvaluationException>(
             () => runtime.DecideAsync(
-                Scope,
                 contract.Name,
                 executable.Executable.ContractDigest,
                 Input(("_random", 0.5), ("divisor", 0L))));
@@ -266,7 +255,6 @@ public sealed class DecisionTests
 
         var exception = await Assert.ThrowsAsync<DecisionResultValidationException>(
             () => runtime.DecideAsync(
-                Scope,
                 contract.Name,
                 executable.Executable.ContractDigest,
                 Input(("_random", 0.5), ("value", -1L))));
@@ -287,7 +275,6 @@ public sealed class DecisionTests
         if (executables.Length > 0)
         {
             await executableStore.ActivateAsync(
-                Scope,
                 executables[0].Executable.ContractDigest,
                 executables[0].ExecutableDigest);
         }
@@ -314,14 +301,12 @@ public sealed class DecisionTests
             contract,
             expressionCompiler);
         await contractStore.PutAsync(new AcceptedContractVersion(
-            Scope,
             contractDigest,
             new DateTimeOffset(2026, 3, 4, 10, 0, 0, TimeSpan.Zero),
             contract));
         foreach (var executable in executables)
         {
             await executableStore.PutCandidateAsync(new StoredExecutable(
-                Scope,
                 executable.ExecutableDigest,
                 executable.Executable,
                 executable.CheckedExecutable,

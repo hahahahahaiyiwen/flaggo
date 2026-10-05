@@ -54,7 +54,6 @@ async function play(lifecycle) {
   try {
     const provider = createFlaggoDropIntervalProvider({
       runtimeConfig: deployed.runtimeConfig,
-      credential: { mode: "local-development" },
       fetch: hosts.fetch,
       telemetry: telemetry.policyInstrumentation,
     });

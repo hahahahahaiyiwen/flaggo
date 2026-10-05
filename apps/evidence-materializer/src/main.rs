@@ -50,7 +50,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let provider = config
         .catalog_url
         .as_deref()
-        .map(|url| HttpContractCatalogProvider::new(url, config.catalog_bearer_token.clone()))
+        .map(HttpContractCatalogProvider::new)
         .transpose()?;
     if let Some(provider) = &provider {
         refresh_catalog(provider, &materializer, &mut catalog, &mut catalog_etag).await;

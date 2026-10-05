@@ -34,9 +34,9 @@ internal static class CurrentContractCatalogs
         IReadOnlyList<AcceptedContractVersion> currentVersions)
     {
         var contracts = currentVersions
-            .OrderBy(version => version.Scope.Tenant, StringComparer.Ordinal)
-            .ThenBy(version => version.Scope.Application, StringComparer.Ordinal)
-            .ThenBy(version => version.Scope.Environment, StringComparer.Ordinal)
+            .OrderBy(version => version.Contract.Authority.Tenant, StringComparer.Ordinal)
+            .ThenBy(version => version.Contract.Authority.Application, StringComparer.Ordinal)
+            .ThenBy(version => version.Contract.Authority.Environment, StringComparer.Ordinal)
             .ThenBy(version => version.Contract.Name, StringComparer.Ordinal)
             .ThenBy(version => version.ContractDigest, StringComparer.Ordinal)
             .Select(version => new CurrentContractCatalogEntry

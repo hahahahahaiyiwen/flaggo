@@ -12,7 +12,7 @@ public sealed class StoreTests
     private static readonly AuthorityScope Scope = new("local", "checkout", "production");
 
     [Fact]
-    public async Task ContractVersionsAreImmutableScopedAndPersistent()
+    public async Task ContractVersionsAreImmutableAndPersistent()
     {
         using var database = new TemporaryDatabase();
         var store = new SqliteContractVersionStore(database.ConnectionString);
@@ -20,7 +20,7 @@ public sealed class StoreTests
         var contract = CreateContract(defaultValue: 100);
         var digest = ContractDigests.ComputeContractDigest(contract);
         var acceptedAt = new DateTimeOffset(2026, 3, 1, 10, 0, 0, TimeSpan.Zero);
-        var version = new AcceptedContractVersion(Scope, digest, acceptedAt, contract);
+        var version = new AcceptedContractVersion(digest, acceptedAt, contract);
 
         Assert.Equal(ContractStoreWriteResult.Created, await store.PutAsync(version));
         Assert.Equal(
@@ -28,25 +28,20 @@ public sealed class StoreTests
             await store.PutAsync(version with { AcceptedAt = acceptedAt.AddHours(1) }));
 
         var persisted = await new SqliteContractVersionStore(database.ConnectionString)
-            .GetAsync(Scope, contract.Name, digest);
+            .GetAsync(contract.Name, digest);
 
         Assert.NotNull(persisted);
         Assert.Equal(acceptedAt, persisted.AcceptedAt);
         Assert.Equal(100, persisted.Contract.Result.Default.GetInt32());
-        Assert.Null(await store.GetAsync(
-            new AuthorityScope("local", "checkout", "staging"),
-            contract.Name,
-            digest));
-
         var changedContract = CreateContract(defaultValue: 200);
         await Assert.ThrowsAsync<ArgumentException>(() => store.PutAsync(
             version with { Contract = changedContract }));
-        Assert.Equal(100, (await store.GetAsync(Scope, contract.Name, digest))!
+        Assert.Equal(100, (await store.GetAsync(contract.Name, digest))!
             .Contract.Result.Default.GetInt32());
     }
 
     [Fact]
-    public async Task ContractAuthorityChangesDigestAndCurrentCatalogIdentity()
+    public async Task ContractNameCannotMoveToAnotherAuthority()
     {
         using var database = new TemporaryDatabase();
         var store = new SqliteContractVersionStore(database.ConnectionString);
@@ -55,34 +50,71 @@ public sealed class StoreTests
         var secondScope = new AuthorityScope("acme", "checkout", "production");
         var secondContract = firstContract with { Authority = secondScope };
         var first = new AcceptedContractVersion(
-            Scope,
             ContractDigests.ComputeContractDigest(firstContract),
             new DateTimeOffset(2026, 3, 1, 10, 0, 0, TimeSpan.Zero),
             firstContract);
         var second = new AcceptedContractVersion(
-            secondScope,
             ContractDigests.ComputeContractDigest(secondContract),
             first.AcceptedAt,
             secondContract);
 
         Assert.NotEqual(first.ContractDigest, second.ContractDigest);
         await store.PutAsync(first);
-        await store.PutAsync(second);
-        await store.SetCurrentAsync(
-            first.Scope,
-            first.Contract.Name,
-            first.ContractDigest);
-        await store.SetCurrentAsync(
-            second.Scope,
-            second.Contract.Name,
-            second.ContractDigest);
+        var conflict = await Assert.ThrowsAsync<ContractNameAuthorityConflictException>(
+            () => store.PutAsync(second));
+        Assert.Equal(first.Contract.Name, conflict.ContractName);
+        Assert.Equal(Scope, conflict.ExistingAuthority);
+        Assert.Equal(secondScope, conflict.RequestedAuthority);
+    }
 
-        var current = await store.ListAllCurrentAsync();
+    [Fact]
+    public async Task ConcurrentFirstWritesEstablishOneContractNameOwner()
+    {
+        using var database = new TemporaryDatabase();
+        var firstStore = new SqliteContractVersionStore(database.ConnectionString);
+        var secondStore = new SqliteContractVersionStore(database.ConnectionString);
+        await firstStore.InitializeAsync();
+        await secondStore.InitializeAsync();
+        var firstContract = CreateContract(defaultValue: 100);
+        var secondContract = firstContract with
+        {
+            Authority = new AuthorityScope("acme", "checkout", "production")
+        };
+        var acceptedAt = new DateTimeOffset(2026, 3, 1, 10, 0, 0, TimeSpan.Zero);
+        var first = new AcceptedContractVersion(
+            ContractDigests.ComputeContractDigest(firstContract),
+            acceptedAt,
+            firstContract);
+        var second = new AcceptedContractVersion(
+            ContractDigests.ComputeContractDigest(secondContract),
+            acceptedAt,
+            secondContract);
 
-        Assert.Collection(
-            current,
-            version => Assert.Equal(secondScope, version.Scope),
-            version => Assert.Equal(Scope, version.Scope));
+        static async Task<object> PutAsync(
+            IContractVersionStore store,
+            AcceptedContractVersion version)
+        {
+            try
+            {
+                return await store.PutAsync(version);
+            }
+            catch (ContractNameAuthorityConflictException conflict)
+            {
+                return conflict;
+            }
+        }
+
+        var results = await Task.WhenAll(
+            PutAsync(firstStore, first),
+            PutAsync(secondStore, second));
+
+        Assert.Single(results, result => result is ContractStoreWriteResult.Created);
+        Assert.Single(results, result => result is ContractNameAuthorityConflictException);
+        var versions = await firstStore.ListAsync(firstContract.Name, 10, cursor: null);
+        var persisted = Assert.Single(versions.Versions);
+        Assert.Contains(
+            persisted.Contract.Authority,
+            new[] { firstContract.Authority, secondContract.Authority });
     }
 
     [Fact]
@@ -104,17 +136,16 @@ public sealed class StoreTests
             await store.PutAsync(version);
         }
 
-        await store.SetCurrentAsync(Scope, versions[1].Contract.Name, versions[1].ContractDigest);
-        var current = await store.GetCurrentAsync(Scope, versions[1].Contract.Name);
+        await store.SetCurrentAsync(versions[1].Contract.Name, versions[1].ContractDigest);
+        var current = await store.GetCurrentAsync(versions[1].Contract.Name);
 
         Assert.NotNull(current);
         Assert.Equal(versions[1].ContractDigest, current.ContractDigest);
 
-        var first = await store.ListAsync(Scope, versions[0].Contract.Name, 2, cursor: null);
+        var first = await store.ListAsync(versions[0].Contract.Name, 2, cursor: null);
         Assert.Equal(2, first.Versions.Count);
         Assert.NotNull(first.NextCursor);
         var second = await store.ListAsync(
-            Scope,
             versions[0].Contract.Name,
             2,
             first.NextCursor);
@@ -132,16 +163,15 @@ public sealed class StoreTests
             first.Versions.Concat(second.Versions).Select(version => version.ContractDigest));
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => store.ListAsync(Scope, versions[0].Contract.Name, 2, "not-a-cursor"));
+            () => store.ListAsync(versions[0].Contract.Name, 2, "not-a-cursor"));
         await Assert.ThrowsAsync<ContractVersionNotFoundException>(
             () => store.SetCurrentAsync(
-                Scope,
                 versions[0].Contract.Name,
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000"));
     }
 
     [Fact]
-    public async Task ExecutableCandidatesAreImmutableScopedAndPersistent()
+    public async Task ExecutableCandidatesAreImmutableAndPersistent()
     {
         using var database = new TemporaryDatabase();
         var store = new SqliteExecutableStore(database.ConnectionString);
@@ -162,17 +192,13 @@ public sealed class StoreTests
             }));
 
         var persisted = await new SqliteExecutableStore(database.ConnectionString)
-            .GetAsync(Scope, candidate.ExecutableDigest);
+            .GetAsync(candidate.ExecutableDigest);
 
         Assert.NotNull(persisted);
         Assert.Equal(ExecutableLifecycleState.Candidate, persisted.State);
         Assert.Equal(0, persisted.StateVersion);
         Assert.Equal(createdAt, persisted.CreatedAt);
         Assert.Equal("test", persisted.Provenance!.Value.GetProperty("source").GetString());
-        Assert.Null(await store.GetAsync(
-            new AuthorityScope("local", "checkout", "staging"),
-            candidate.ExecutableDigest));
-
         await Assert.ThrowsAsync<ArgumentException>(() => store.PutCandidateAsync(
             candidate with
             {
@@ -199,11 +225,9 @@ public sealed class StoreTests
         await store.PutCandidateAsync(otherContract);
 
         var initial = await store.ActivateIfNoneAsync(
-            Scope,
             firstContractDigest,
             first.ExecutableDigest);
         var unchanged = await store.ActivateAsync(
-            Scope,
             firstContractDigest,
             first.ExecutableDigest,
             first.ExecutableDigest);
@@ -215,25 +239,22 @@ public sealed class StoreTests
 
         await Assert.ThrowsAsync<ActivationConflictException>(
             () => store.ActivateIfNoneAsync(
-                Scope,
                 firstContractDigest,
                 replacement.ExecutableDigest));
         Assert.Equal(
             first.ExecutableDigest,
-            (await store.GetActiveAsync(Scope, firstContractDigest))!.ExecutableDigest);
+            (await store.GetActiveAsync(firstContractDigest))!.ExecutableDigest);
 
         await Assert.ThrowsAsync<ActivationConflictException>(() => store.ActivateAsync(
-            Scope,
             firstContractDigest,
             replacement.ExecutableDigest,
             expectedActiveExecutableDigest:
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000"));
         Assert.Equal(
             first.ExecutableDigest,
-            (await store.GetActiveAsync(Scope, firstContractDigest))!.ExecutableDigest);
+            (await store.GetActiveAsync(firstContractDigest))!.ExecutableDigest);
 
         var replaced = await store.ActivateAsync(
-            Scope,
             firstContractDigest,
             replacement.ExecutableDigest,
             first.ExecutableDigest);
@@ -242,28 +263,27 @@ public sealed class StoreTests
         Assert.Equal(2, replaced.StateVersion);
         Assert.Equal(
             ExecutableLifecycleState.Inactive,
-            (await store.GetAsync(Scope, first.ExecutableDigest))!.State);
+            (await store.GetAsync(first.ExecutableDigest))!.State);
         Assert.Equal(
             ExecutableLifecycleState.Active,
-            (await store.GetAsync(Scope, replacement.ExecutableDigest))!.State);
+            (await store.GetAsync(replacement.ExecutableDigest))!.State);
 
-        await store.ActivateAsync(Scope, secondContractDigest, otherContract.ExecutableDigest);
+        await store.ActivateAsync(secondContractDigest, otherContract.ExecutableDigest);
         Assert.Equal(
             replacement.ExecutableDigest,
-            (await store.GetActiveAsync(Scope, firstContractDigest))!.ExecutableDigest);
+            (await store.GetActiveAsync(firstContractDigest))!.ExecutableDigest);
         Assert.Equal(
             otherContract.ExecutableDigest,
-            (await store.GetActiveAsync(Scope, secondContractDigest))!.ExecutableDigest);
+            (await store.GetActiveAsync(secondContractDigest))!.ExecutableDigest);
 
         var reactivated = await store.ActivateAsync(
-            Scope,
             firstContractDigest,
             first.ExecutableDigest,
             replacement.ExecutableDigest);
         Assert.Equal(3, reactivated.StateVersion);
         Assert.Equal(
             3,
-            (await store.GetAsync(Scope, replacement.ExecutableDigest))!.StateVersion);
+            (await store.GetAsync(replacement.ExecutableDigest))!.StateVersion);
     }
 
     [Fact]
@@ -280,7 +300,7 @@ public sealed class StoreTests
         await setupStore.PutCandidateAsync(initial);
         await setupStore.PutCandidateAsync(left);
         await setupStore.PutCandidateAsync(right);
-        await setupStore.ActivateAsync(Scope, contractDigest, initial.ExecutableDigest);
+        await setupStore.ActivateAsync(contractDigest, initial.ExecutableDigest);
 
         var results = await Task.WhenAll(
             TryActivateAsync(
@@ -299,7 +319,7 @@ public sealed class StoreTests
         Assert.IsType<ActivationConflictException>(failure.Error);
         Assert.Equal(
             success.Result!.ExecutableDigest,
-            (await setupStore.GetActiveAsync(Scope, contractDigest))!.ExecutableDigest);
+            (await setupStore.GetActiveAsync(contractDigest))!.ExecutableDigest);
     }
 
     [Fact]
@@ -341,7 +361,7 @@ public sealed class StoreTests
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(InitializeAsync);
         Assert.Equal(
-            $"Unsupported {component} schema version 1; expected 2.",
+            $"Unsupported {component} schema version 1; expected 3.",
             exception.Message);
     }
 
@@ -356,16 +376,16 @@ public sealed class StoreTests
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 3 "
+            "UPDATE flaggo_schema_versions SET version = 4 "
             + "WHERE component = 'contract-store';");
         Assert.False(await contractStore.IsAvailableAsync());
         Assert.True(await executableStore.IsAvailableAsync());
 
         await ExecuteSqlAsync(
             database.ConnectionString,
-            "UPDATE flaggo_schema_versions SET version = 2 "
+            "UPDATE flaggo_schema_versions SET version = 3 "
             + "WHERE component = 'contract-store'; "
-            + "UPDATE flaggo_schema_versions SET version = 3 "
+            + "UPDATE flaggo_schema_versions SET version = 4 "
             + "WHERE component = 'executable-store';");
         Assert.True(await contractStore.IsAvailableAsync());
         Assert.False(await executableStore.IsAvailableAsync());
@@ -398,7 +418,6 @@ public sealed class StoreTests
     {
         var contract = CreateContract(defaultValue);
         return new AcceptedContractVersion(
-            Scope,
             ContractDigests.ComputeContractDigest(contract),
             acceptedAt,
             contract);
@@ -442,7 +461,6 @@ public sealed class StoreTests
         var compilation = new FlaggoExecutableCompiler(expressionCompiler)
             .Compile(contract, executable);
         return new StoredExecutable(
-            Scope,
             compilation.ExecutableDigest,
             compilation.Executable,
             compilation.CheckedExecutable,
@@ -464,7 +482,6 @@ public sealed class StoreTests
         {
             return (
                 await store.ActivateAsync(
-                    Scope,
                     contractDigest,
                     executableDigest,
                     expectedExecutableDigest),

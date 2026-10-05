@@ -111,11 +111,8 @@ describe("v3 runtime client", () => {
     });
   });
 
-  it("reuses exact request bytes and refreshes credentials for retries", async () => {
+  it("reuses exact request bytes without adding authorization for retries", async () => {
     const random = vi.fn(() => 0.375);
-    const getToken = vi.fn()
-      .mockResolvedValueOnce("token-1")
-      .mockResolvedValueOnce("token-2");
     const fetch = vi.fn<FetchLike>()
       .mockResolvedValueOnce(jsonResponse({
         type: "https://flaggo.dev/problems/dependency-unavailable",
@@ -125,7 +122,6 @@ describe("v3 runtime client", () => {
       .mockResolvedValueOnce(jsonResponse(decision(6, { source: "default" })));
     const client = createDecisionClient<Decisions>({
       runtimeConfig,
-      credential: { mode: "bearer", getToken },
       retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
       fetch,
       random,
@@ -136,13 +132,12 @@ describe("v3 runtime client", () => {
     })).resolves.toMatchObject({ value: { result: 6 } });
 
     expect(random).toHaveBeenCalledTimes(1);
-    expect(getToken).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0]![1]?.body).toBe(fetch.mock.calls[1]![1]?.body);
     expect(new Headers(fetch.mock.calls[0]![1]?.headers).get("Authorization"))
-      .toBe("Bearer token-1");
+      .toBeNull();
     expect(new Headers(fetch.mock.calls[1]![1]?.headers).get("Authorization"))
-      .toBe("Bearer token-2");
+      .toBeNull();
   });
 
   it("normalizes exhausted transport failures without synthesizing fallback", async () => {

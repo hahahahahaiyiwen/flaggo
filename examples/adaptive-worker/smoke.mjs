@@ -58,7 +58,6 @@ async function runSmoke(lifecycle) {
   });
   const client = createDecisionClient({
     runtimeConfig,
-    credential: { mode: "local-development" },
     fetch: fetchWithAbort,
     random: () => 0.25,
     telemetry: { logger: telemetry.flaggoLogger },

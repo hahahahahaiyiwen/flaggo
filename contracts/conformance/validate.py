@@ -1262,27 +1262,6 @@ def main() -> int:
             f"{sorted(declared)} do not match manifest {sorted(indexed)}",
         )
 
-    for operation in (
-        operation for operation in operations if operation["scopes"]
-    ):
-        covered_by_scope_fixture = any(
-            fixture.get("expected", {}).get("status") == 403
-            and fixture.get("expected", {}).get("body", {}).get("type")
-            == "https://flaggo.dev/problems/insufficient-scope"
-            and match_operation(
-                fixture.get("request", {}).get("method"),
-                fixture.get("request", {}).get("path"),
-                operations,
-            )
-            is operation
-            for fixture in loaded_fixtures
-        )
-        rep.check(
-            covered_by_scope_fixture,
-            f"secured operation {operation['method']} {operation['route']} "
-            "lacks a 403 insufficient-scope fixture",
-        )
-
     validate_v3_identities(loaded_fixtures, rep)
 
     print_report(

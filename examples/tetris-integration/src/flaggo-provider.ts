@@ -9,7 +9,6 @@ import {
 import type { Logger } from "@opentelemetry/api-logs";
 import {
   createDecisionClient,
-  type CredentialProvider,
   type DecisionRuntimeConfiguration,
   type DecisionSpec,
   type FetchLike,
@@ -40,7 +39,6 @@ type TetrisDropIntervalAttributes =
   TetrisDecisions["tetris.dropInterval"]["attributes"];
 
 export interface FlaggoDropIntervalConfiguration {
-  readonly credential?: CredentialProvider;
   readonly fetch?: FetchLike;
   readonly retry?: RetryPolicy;
   readonly runtimeConfig: DecisionRuntimeConfiguration<TetrisDecisions>;
@@ -79,9 +77,6 @@ export function createFlaggoDropIntervalProvider(
     : createPolicyMetrics(configuration.telemetry.meter);
   const client = createDecisionClient<TetrisDecisions>({
     runtimeConfig: configuration.runtimeConfig,
-    ...(configuration.credential === undefined
-      ? {}
-      : { credential: configuration.credential }),
     ...(configuration.fetch === undefined
       ? {}
       : { fetch: configuration.fetch }),

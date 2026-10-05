@@ -79,7 +79,6 @@ freshness.
 | --- | --- |
 | `FLAGGO_DATABASE_URL` | Shared SQLx SQLite database URL; defaults to `sqlite://flaggo.db` |
 | `FLAGGO_CONTRACT_CATALOG_URL` | Optional Contract Service current-catalog endpoint |
-| `FLAGGO_CONTRACT_CATALOG_BEARER_TOKEN` | Optional bearer token; requires a catalog URL |
 | `FLAGGO_MATERIALIZER_POLL_INTERVAL_MS` | Inbox polling interval; defaults to 250 ms |
 | `FLAGGO_MATERIALIZER_CATALOG_INTERVAL_SECONDS` | Catalog refresh interval; defaults to 30 seconds |
 

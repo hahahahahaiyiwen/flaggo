@@ -1,21 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Claims;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using Flaggo.Contract;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
 using Flaggo.Expressions;
 using Flaggo.ServiceHosting;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace Flaggo.DecisionService.Tests;
 
@@ -281,37 +275,6 @@ public sealed class DecisionServiceEndpointTests
             ProblemTypes.ExecutableIntegrityFailure);
     }
 
-    [Theory]
-    [InlineData(null, HttpStatusCode.Unauthorized, ProblemTypes.AuthenticationRequired)]
-    [InlineData("forbidden", HttpStatusCode.Forbidden, ProblemTypes.InsufficientScope)]
-    public async Task EnforcesAuthenticationAndScope(
-        string? authentication,
-        HttpStatusCode expectedStatus,
-        string expectedProblemType)
-    {
-        using var factory = new DecisionServiceFactory();
-        using var client = factory.CreateClient();
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            "/v3/decision-contracts/checkout.delay/versions/"
-            + "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-            + "/decisions")
-        {
-            Content = new StringContent(
-                """{"attributes":{"_random":0.25}}""",
-                Encoding.UTF8,
-                "application/json")
-        };
-        if (authentication is not null)
-        {
-            request.Headers.Add(TestAuthenticationHandler.HeaderName, authentication);
-        }
-
-        using var response = await client.SendAsync(request);
-
-        await AssertProblemAsync(response, expectedStatus, expectedProblemType);
-    }
-
     [Fact]
     public async Task ExposesLiveAndReadyHealthWithoutAuthentication()
     {
@@ -448,7 +411,6 @@ public sealed class DecisionServiceEndpointTests
         {
             Content = new StringContent(body, Encoding.UTF8, mediaType)
         };
-        request.Headers.Add(TestAuthenticationHandler.HeaderName, "authorized");
         return request;
     }
 
@@ -505,15 +467,12 @@ public sealed class DecisionServiceEndpointTests
     {
         var contractStore = factory.Services.GetRequiredService<IContractVersionStore>();
         var executableStore = factory.Services.GetRequiredService<IExecutableStore>();
-        var scope = Scope;
         var contractDigest = compilation.Executable.ContractDigest;
         await contractStore.PutAsync(new AcceptedContractVersion(
-            scope,
             contractDigest,
             new DateTimeOffset(2026, 3, 5, 10, 0, 0, TimeSpan.Zero),
             contract));
         await executableStore.PutCandidateAsync(new StoredExecutable(
-            scope,
             compilation.ExecutableDigest,
             compilation.Executable,
             compilation.CheckedExecutable,
@@ -524,7 +483,6 @@ public sealed class DecisionServiceEndpointTests
         if (activate)
         {
             await executableStore.ActivateAsync(
-                scope,
                 contractDigest,
                 compilation.ExecutableDigest);
         }
@@ -563,27 +521,8 @@ public sealed class DecisionServiceFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Development");
         builder.UseSetting(
-            "Flaggo:Authentication:LocalDevelopmentBypass",
-            "true");
-        builder.UseSetting(
             "ConnectionStrings:Flaggo",
             $"Data Source={_databasePath};Pooling=False");
-        builder.ConfigureTestServices(services =>
-        {
-            services
-                .AddAuthentication(options =>
-                {
-                    options.DefaultAuthenticateScheme =
-                        TestAuthenticationHandler.SchemeName;
-                    options.DefaultChallengeScheme =
-                        TestAuthenticationHandler.SchemeName;
-                    options.DefaultForbidScheme =
-                        TestAuthenticationHandler.SchemeName;
-                })
-                .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(
-                    TestAuthenticationHandler.SchemeName,
-                    _ => { });
-        });
     }
 
     protected override void Dispose(bool disposing)
@@ -600,40 +539,5 @@ public sealed class DecisionServiceFactory : WebApplicationFactory<Program>
         {
             File.Delete(path);
         }
-    }
-}
-
-public sealed class TestAuthenticationHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger,
-    UrlEncoder encoder)
-    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
-{
-    public const string SchemeName = "Test";
-    public const string HeaderName = "X-Test-Authentication";
-
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-    {
-        var value = Request.Headers[HeaderName].FirstOrDefault();
-        if (value is null)
-        {
-            return Task.FromResult(AuthenticateResult.NoResult());
-        }
-
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.NameIdentifier, "test"),
-            new(FlaggoClaimTypes.Tenant, "local"),
-            new(FlaggoClaimTypes.Application, "test-application"),
-            new(FlaggoClaimTypes.Environment, "test-environment")
-        };
-        if (string.Equals(value, "authorized", StringComparison.Ordinal))
-        {
-            claims.Add(new Claim("scope", "flaggo.decisions:decide"));
-        }
-
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
-        return Task.FromResult(AuthenticateResult.Success(
-            new AuthenticationTicket(principal, SchemeName)));
     }
 }

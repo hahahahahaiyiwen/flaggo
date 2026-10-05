@@ -55,7 +55,6 @@ function validateConfiguration<TCatalog extends DecisionCatalog>(
       raw,
       new Set([
         "runtimeConfig",
-        "credential",
         "fetch",
         "timeoutMs",
         "retry",
@@ -171,9 +170,6 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
   const random = configuration.random ?? Math.random;
   const transport = createTransport({
     baseUrl: validated.baseUrl,
-    ...(configuration.credential === undefined
-      ? {}
-      : { credential: configuration.credential }),
     ...(configuration.fetch === undefined
       ? {}
       : { fetch: configuration.fetch }),

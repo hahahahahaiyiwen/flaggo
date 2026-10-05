@@ -76,7 +76,7 @@ generation and activation before returning accepted readiness.
 | --- | --- |
 | Accepted | The exact contract is durable, its default executable is active, and the digest is runtime-ready. |
 | Idempotent acceptance | The same canonical named contract resolves to the existing digest and accepted record. |
-| Rejected | Authentication, syntax, schema, semantic validation, or persistence failed; no accepted contract is reported. |
+| Rejected | Syntax, schema, semantic validation, name-authority ownership, or persistence failed; no accepted contract is reported. |
 
 ### New-digest cutover
 
@@ -84,14 +84,14 @@ When a changed contract under the same decision name produces `D2` while `D1`
 already exists:
 
 ```text
-RuntimeActivation[scope, D1] = E1
-ManagementCurrent[scope, name] = D1
+RuntimeActivation[D1] = E1
+ManagementCurrent[name] = D1
 
 accept D2
 
-RuntimeActivation[scope, D1] = E1
-RuntimeActivation[scope, D2] = DefaultExecutable(D2)
-ManagementCurrent[scope, name] = D2
+RuntimeActivation[D1] = E1
+RuntimeActivation[D2] = DefaultExecutable(D2)
+ManagementCurrent[name] = D2
 ```
 
 Acceptance of `D2` preserves the `D1` activation for applications still using
@@ -196,7 +196,7 @@ CandidateExecutable
   -> validate candidate identity and contract conformance
   -> verify candidate is current and eligible
   -> apply activation policy
-  -> atomically activate for authenticated scope and contractDigest
+  -> atomically activate for contractDigest
   -> ActiveExecutable
 ```
 
@@ -225,7 +225,7 @@ events, and runtime reads only `RuntimeActivation`.
 Activation is mandatory and atomically establishes:
 
 ```text
-RuntimeActivation[authenticated scope, contractDigest] = ActiveExecutable
+RuntimeActivation[contractDigest] = ActiveExecutable
 ```
 
 Activating a replacement for one digest does not modify activations for other
@@ -244,7 +244,10 @@ Runtime Evaluation applies the exact active executable to explicit runtime
 input:
 
 ```text
-authenticated scope + contractDigest
+contractName + contractDigest
+  -> resolve exact accepted contract
+
+contractDigest
   -> resolve exact ActiveExecutable
 
 ActiveExecutable + RuntimeInput
@@ -259,12 +262,12 @@ than read from ambient state.
 
 The surrounding Decision Service:
 
-1. authenticates tenant, application, and environment scope;
-2. validates the contract digest and SDK-constructed complete runtime input;
-3. resolves the exact active executable;
-4. evaluates it without invoking executable generation;
-5. validates the result against the accepted contract; and
-6. returns the runtime decision without retaining per-request session state.
+1. validates the route name/digest relationship and SDK-constructed complete
+   runtime input;
+2. resolves the exact active executable by contract digest;
+3. evaluates it without invoking executable generation;
+4. validates the result against the accepted contract; and
+5. returns the runtime decision without retaining per-request session state.
 
 An unknown digest, missing activation, invalid input, evaluation failure, or
 invalid result is explicit. Runtime never selects an implicit latest digest,
@@ -332,11 +335,11 @@ The lifecycle is isolated by contract digest except for the user-directed
 current-contract transition:
 
 ```text
-D1: accepted contract -> RuntimeActivation[scope, D1] = E1 -> runtime continues
-D2: accepted contract -> RuntimeActivation[scope, D2] = DefaultExecutable(D2)
+D1: accepted contract -> RuntimeActivation[D1] = E1 -> runtime continues
+D2: accepted contract -> RuntimeActivation[D2] = DefaultExecutable(D2)
                     \-> authored or learned candidate -> replacement activation
 
-ManagementCurrent[scope, name]: D1 -> D2
+ManagementCurrent[name]: D1 -> D2
 ```
 
 Flaggo does not infer executable or evidence compatibility between `D1` and
@@ -354,8 +357,7 @@ pipeline and must be recorded in candidate provenance.
    within the same lifecycle stage.
 5. Activation is mandatory before runtime evaluation.
 6. Candidate generation and validation never imply runtime authority.
-7. Runtime resolves only the active executable for the authenticated scope and
-   requested digest.
+7. Runtime resolves only the active executable for the requested digest.
 8. A new digest preserves older digest activations.
 9. Moving the current contract supersedes old-digest analysis but not
    old-digest runtime execution.

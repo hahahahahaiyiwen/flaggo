@@ -48,10 +48,6 @@ const runtimeConfig = parseFlaggoRuntimeConfiguration<
 
 const flaggo = createDecisionClient<Decisions>({
   runtimeConfig,
-  credential: {
-    mode: "bearer",
-    getToken: async () => obtainAccessToken(),
-  },
   retry: {
     maxAttempts: 2,
   },
@@ -155,7 +151,6 @@ const tracerProvider = new TracerProvider({
 
 const flaggo = createDecisionClient({
   runtimeConfig,
-  credential: { mode: "local-development" },
   telemetry: {
     logger: loggerProvider.getLogger("@flaggo/sdk"),
   },
@@ -193,10 +188,6 @@ import {
 
 const contracts = createContractClient({
   baseUrl: "https://contracts.example.com",
-  credential: {
-    mode: "bearer",
-    getToken: async () => obtainAccessToken(),
-  },
 });
 
 const definition = defineDecisionContract({

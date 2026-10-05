@@ -12,16 +12,16 @@ The canonical cross-app lifecycle is documented in
 
 ## Responsibilities
 
-- Authenticate and authorize Management API operations.
 - Validate, canonicalize, and accept complete `DecisionContract` versions.
+- Establish global ownership of each contract name by its first accepted
+  declared authority.
 - Compute `contractDigest` and persist immutable accepted versions.
 - Generate and activate the required default executable before reporting a
   version ready.
 - Generate deterministic authored executables.
 - Validate immutable candidates against their exact accepted contract.
 - Persist executable artifacts and generation provenance.
-- Atomically activate one executable for each authority scope and contract
-  digest.
+- Atomically activate one executable for each contract digest.
 - Publish the current contract catalog used by Evidence Materializer.
 
 ## Boundaries
@@ -54,9 +54,11 @@ GET  /health/live
 GET  /health/ready
 ```
 
-The Management API authenticates validation, acceptance, reads, and
-materialization-catalog access with separate scopes. Development configuration
-provides a local authentication bypass; it is not a production security model.
+The Management API currently has no authentication boundary. Declared
+authority is persisted contract data used for name ownership, telemetry
+routing, and evidence identity; it is not a caller-supplied lookup selector.
+Future authentication must authorize an already loaded resource rather than
+derive its storage identity from credentials.
 
 ## State and dependencies
 

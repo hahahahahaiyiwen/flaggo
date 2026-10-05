@@ -768,7 +768,6 @@ export function createHostEnvironment(
     DOTNET_ENVIRONMENT: "Development",
     ASPNETCORE_URLS: dynamicLoopbackUrl,
     Logging__Console__FormatterName: "json",
-    Flaggo__Authentication__LocalDevelopmentBypass: "true",
   };
 }
 

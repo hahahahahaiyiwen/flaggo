@@ -95,9 +95,10 @@ The route selects runtime authority. The request body is the complete
 
 - `attributes` contains application-bound and SDK-generated internal values;
 - optional `currentExposure` identifies the previous decision that the
-  application actually applied; and
-- tenant, application, and environment come from authentication rather than
-  the body.
+  application actually applied.
+
+Tenant, application, and environment are declared contract authority covered
+by `contractDigest`; they are not runtime request fields or lookup selectors.
 
 `currentExposure` is absent when no previous decision has been applied in the
 SDK's current activity context. It is exposure context, not proof that the new
@@ -310,13 +311,11 @@ The initial HTTP failure mapping is:
 | Problem type suffix | Status | Use |
 | --- | --- | --- |
 | `invalid-request` | 400 | Malformed JSON, invalid path/header syntax, or structurally invalid wire input |
-| `authentication-required` | 401 | Missing or invalid bearer credentials |
-| `insufficient-scope` | 403 | Missing `flaggo.decisions:decide` |
-| `contract-version-not-found` | 404 | Unknown name/digest or a digest not owned by the route name in the authenticated scope |
+| `contract-version-not-found` | 404 | Unknown name/digest or a digest not owned by the route name |
 | `unsupported-media-type` | 415 | Request is not `application/json` |
 | `invalid-runtime-input` | 422 | Complete input violates the accepted contract or internal-attribute profile |
 | `rate-limited` | 429 | Runtime admission limit; includes `Retry-After` |
-| `executable-not-active` | 503 | No executable is active for the exact scope and digest; includes `Retry-After` |
+| `executable-not-active` | 503 | No executable is active for the exact digest; includes `Retry-After` |
 | `dependency-unavailable` | 503 | A required Contract or Executable Store read is unavailable; includes `Retry-After` |
 | `executable-integrity-failure` | 500 | Stored executable identity or checked representation is inconsistent |
 | `evaluation-failed` | 500 | Checked expression evaluation fails or exhausts its runtime budget |
@@ -334,20 +333,19 @@ a successful `RuntimeDecision` and must not be conflated with a client fallback.
 
 ## Invariants
 
-1. Authentication establishes tenant, application, and environment scope.
-2. `contractName` identifies the logical DecisionContract resource.
-3. `contractDigest` selects one exact accepted version belonging to that name.
-4. Runtime never resolves the management resource's current version.
-5. The SDK constructs the complete `RuntimeInput`.
-6. Complete input includes required internal attributes and may include the
+1. `contractName` identifies the logical DecisionContract resource.
+2. `contractDigest` selects one exact accepted version belonging to that name.
+3. Runtime never resolves the management resource's current version.
+4. The SDK constructs the complete `RuntimeInput`.
+5. Complete input includes required internal attributes and may include the
    previous applied exposure.
-7. The runtime server does not generate or persist request attributes.
-8. Each request resolves one immutable active executable and evaluates it
+6. The runtime server does not generate or persist request attributes.
+7. Each request resolves one immutable active executable and evaluates it
    without server-side session state.
-9. Missing user attributes affect rule eligibility; invalid attributes are
+8. Missing user attributes affect rule eligibility; invalid attributes are
    errors.
-10. Evaluation is deterministic for one executable and complete runtime input.
-11. No-match returns the contract default as a normal result.
+9. Evaluation is deterministic for one executable and complete runtime input.
+10. No-match returns the contract default as a normal result.
 12. Failures are never disguised as contract-default results.
 13. Returning a decision does not imply exposure.
 

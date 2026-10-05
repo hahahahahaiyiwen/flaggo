@@ -7,7 +7,6 @@ import {
   InvalidServerResponseError,
 } from "../errors.js";
 import type {
-  CredentialProvider,
   FlaggoResponse,
   FlaggoResponseMetadata,
   ProblemDetails,
@@ -145,33 +144,6 @@ function validateRequestOptions(options: RequestOptions): void {
   }
   if (options.retry !== undefined) {
     assertRetryPolicy(options.retry, "/options/retry");
-  }
-}
-
-function validateCredential(
-  credential: CredentialProvider | undefined,
-): void {
-  if (credential === undefined) return;
-  const raw = record(credential);
-  if (
-    raw === undefined
-    || (
-      credential.mode === "local-development"
-      && !hasOnlyKeys(raw, new Set(["mode"]))
-    )
-    || (
-      credential.mode === "bearer"
-      && (
-        !hasOnlyKeys(raw, new Set(["mode", "getToken"]))
-        || typeof credential.getToken !== "function"
-      )
-    )
-    || (
-      credential.mode !== "local-development"
-      && credential.mode !== "bearer"
-    )
-  ) {
-    inputError("/credential", "Credential configuration is invalid.");
   }
 }
 
@@ -393,40 +365,7 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function authorization(
-  credential: CredentialProvider | undefined,
-  signal: AbortSignal,
-): Promise<string | undefined> {
-  if (credential === undefined) return undefined;
-  if (credential.mode === "local-development") {
-    return "Flaggo-Local-Development";
-  }
-
-  let token: string;
-  try {
-    token = await abortable(credential.getToken(), signal);
-  } catch (error) {
-    if (signal.aborted) throw error;
-    throw new FlaggoTransportError(
-      "The Flaggo credential provider failed.",
-      { cause: error },
-    );
-  }
-  if (
-    typeof token !== "string"
-    || token.length === 0
-    || utf8Length(token) > 16_384
-    || /[\r\n]/u.test(token)
-  ) {
-    throw new FlaggoTransportError(
-      "The Flaggo credential provider returned an invalid bearer token.",
-    );
-  }
-  return `Bearer ${token}`;
-}
-
 function requestHeaders(
-  authorizationValue: string | undefined,
   correlationId: string | undefined,
   hasBody: boolean,
 ): Headers {
@@ -434,9 +373,6 @@ function requestHeaders(
     Accept: "application/json, application/problem+json",
   });
   if (hasBody) headers.set("Content-Type", "application/json");
-  if (authorizationValue !== undefined) {
-    headers.set("Authorization", authorizationValue);
-  }
   if (correlationId !== undefined) {
     headers.set("X-Flaggo-Correlation-Id", correlationId);
   }
@@ -474,7 +410,6 @@ function abortError(
 export function createTransport(
   configuration: TransportConfiguration,
 ): Transport {
-  validateCredential(configuration.credential);
   assertTimeout(configuration.timeoutMs, "/timeoutMs");
   const defaultPolicy = assertRetryPolicy(configuration.retry, "/retry");
   const baseUrl = normalizeServiceBaseUrl(configuration.baseUrl, "/baseUrl");
@@ -528,16 +463,11 @@ export function createTransport(
 
           let response: Response;
           try {
-            const authorizationValue = await authorization(
-              configuration.credential,
-              controller.signal,
-            );
             response = await abortable(fetchImplementation(
               `${baseUrl}${request.path}`,
               {
                 method: request.method,
                 headers: requestHeaders(
-                  authorizationValue,
                   options.correlationId,
                   serialized !== undefined,
                 ),

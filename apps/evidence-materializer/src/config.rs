@@ -2,7 +2,6 @@ use std::{env, num::NonZeroU16, time::Duration};
 
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
 pub const CATALOG_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_URL";
-pub const CATALOG_BEARER_TOKEN_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_BEARER_TOKEN";
 pub const POLL_INTERVAL_MILLISECONDS_ENVIRONMENT_VARIABLE: &str =
     "FLAGGO_MATERIALIZER_POLL_INTERVAL_MS";
 pub const CATALOG_INTERVAL_SECONDS_ENVIRONMENT_VARIABLE: &str =
@@ -16,7 +15,6 @@ const DEFAULT_READ_LIMIT: u16 = 100;
 pub struct MaterializerConfig {
     pub database_url: String,
     pub catalog_url: Option<String>,
-    pub catalog_bearer_token: Option<String>,
     pub poll_interval: Duration,
     pub catalog_interval: Duration,
     pub read_limit: NonZeroU16,
@@ -27,12 +25,6 @@ impl MaterializerConfig {
         let database_url =
             nonempty_or_default(DATABASE_URL_ENVIRONMENT_VARIABLE, DEFAULT_DATABASE_URL)?;
         let catalog_url = optional_nonempty(CATALOG_URL_ENVIRONMENT_VARIABLE)?;
-        let catalog_bearer_token = optional_nonempty(CATALOG_BEARER_TOKEN_ENVIRONMENT_VARIABLE)?;
-        if catalog_bearer_token.is_some() && catalog_url.is_none() {
-            return Err(format!(
-                "{CATALOG_BEARER_TOKEN_ENVIRONMENT_VARIABLE} requires {CATALOG_URL_ENVIRONMENT_VARIABLE}"
-            ));
-        }
         let poll_interval = parse_duration(
             POLL_INTERVAL_MILLISECONDS_ENVIRONMENT_VARIABLE,
             DEFAULT_POLL_INTERVAL_MILLISECONDS,
@@ -47,7 +39,6 @@ impl MaterializerConfig {
         Ok(Self {
             database_url,
             catalog_url,
-            catalog_bearer_token,
             poll_interval,
             catalog_interval,
             read_limit: NonZeroU16::new(DEFAULT_READ_LIMIT)
