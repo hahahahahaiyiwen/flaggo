@@ -1,6 +1,7 @@
 using Flaggo.Contract;
 using Flaggo.ContractStore;
 using Flaggo.Decision;
+using Flaggo.DecisionService;
 using Flaggo.ExecutableStore;
 using Flaggo.Expressions;
 using Flaggo.ServiceHosting;
@@ -12,10 +13,16 @@ const string serviceName = "flaggo-decision-service";
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Flaggo")
     ?? "Data Source=flaggo.db";
+var serviceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
+builder.AddFlaggoServiceObservability(
+    serviceName,
+    "flaggo.decision-service",
+    serviceVersion);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<FlaggoExpressionCompiler>();
 builder.Services.AddSingleton<FlaggoExecutableCompiler>();
+builder.Services.AddSingleton<DecisionServiceObservability>();
 builder.Services.AddSingleton<IContractVersionStore>(provider =>
     new SqliteContractVersionStore(
         connectionString,
@@ -43,17 +50,43 @@ app.MapPost(
             string contractName,
             string contractDigest,
             IDecisionRuntime runtime,
+            DecisionServiceObservability observability,
             CancellationToken cancellationToken) =>
         {
-            var input = await HttpJson.ReadAsync<RuntimeInput>(
-                context.Request,
-                cancellationToken);
-            var decision = await runtime.DecideAsync(
+            using var operation = observability.StartEvaluation(
                 contractName,
-                contractDigest,
-                input,
-                cancellationToken);
-            return Results.Json(decision, StrictJson.Options);
+                contractDigest);
+            try
+            {
+                var input = await HttpJson.ReadAsync<RuntimeInput>(
+                    context.Request,
+                    cancellationToken);
+                var decision = await runtime.DecideAsync(
+                    contractName,
+                    contractDigest,
+                    input,
+                    cancellationToken);
+                var source = DecisionServiceObservability.EvaluationSource(decision);
+                operation.Activity?.SetTag(
+                    "flaggo.executable.digest",
+                    decision.ExecutableDigest);
+                operation.Complete(
+                    "success",
+                    attributes:
+                    [
+                        new(
+                            "flaggo.evaluation.source",
+                            source)
+                    ]);
+                return Results.Json(decision, StrictJson.Options);
+            }
+            catch (Exception exception)
+            {
+                var (outcome, category) =
+                    DecisionServiceObservability.Classify(exception);
+                operation.Fail(exception, outcome, category);
+                throw;
+            }
         });
 
 app.MapGet(
@@ -62,7 +95,7 @@ app.MapGet(
         new LivenessResult
         {
             Service = serviceName,
-            Version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0",
+            Version = serviceVersion,
             ObservedAt = timeProvider.GetUtcNow()
         },
         StrictJson.Options));

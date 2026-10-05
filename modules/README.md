@@ -11,6 +11,7 @@ executable-store
 evidence-store
 raw-otlp-inbox
 hosting
+service-observability
 ```
 
 The semantic owner and allowed access for each store are defined in
@@ -35,8 +36,10 @@ not depend on an app composition root or on the legacy
   analysis.
 - Raw OTLP Inbox persists complete validated OTLP export requests as a bounded,
   replayable work log without depending on its SQLx/SQLite adapter contract.
-- Hosting owns reusable strict HTTP, correlation, Problem Details, and health
-  mechanics without domain routes.
+- Hosting owns reusable .NET HTTP, correlation, Problem Details, health, and
+  OpenTelemetry composition without domain routes.
+- Service Observability owns the shared Rust Resource, OTLP exporter,
+  structured-console, trace-propagation, and bounded-shutdown composition.
 
 The former Audit, Policy, Reasoning, Registry, Evidence, and State modules were
 removed by #49. Do not reintroduce forwarding projects, namespace aliases,

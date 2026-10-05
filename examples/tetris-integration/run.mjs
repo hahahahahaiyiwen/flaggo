@@ -11,6 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   createHostLifecycle,
   installSignalHandlers,
+  parseMaterializationHealth,
   runWithCleanup,
 } from "./host-process.mjs";
 import { deployTetrisContract } from "./deploy-contract.mjs";
@@ -410,33 +411,27 @@ async function runAsyncAnalysisCandidateCheck({
   lifecycle,
 }) {
   let githubToken = await currentGitHubToken(lifecycle.signal);
-  const { host, startup } = await hosts.startAsyncAnalysis({ githubToken });
+  const { host } = await hosts.startAsyncAnalysis({ githubToken });
   githubToken = undefined;
-  assert.equal(startup.model, "copilot-sdk-default");
-  assert.equal(startup.sessionEventLogging, true);
 
   const entry = await host.waitForStructuredLog(
     (candidate) => {
       if (
-        candidate.event === "async_analysis.worker_attempt_failed"
-        || candidate.event === "async_analysis.worker_failed"
-        || candidate.event === "async_analysis.failed"
+        candidate["event.name"] === "flaggo.analysis.cycle.failed"
+        || candidate["event.name"] === "flaggo.service.failed"
       ) {
         throw new Error(
-          `Async Analysis failed: ${candidate.error ?? JSON.stringify(candidate)}`,
+          `Async Analysis failed: ${JSON.stringify(candidate)}`,
         );
       }
-      if (candidate.event !== "async_analysis.worker_outcome") return false;
-      const outcome = candidate.outcome;
-      if (outcome?.kind === "notEligible") return false;
-      if (
-        outcome?.kind === "completed"
-        && outcome.outcome?.kind === "candidate"
-      ) return true;
+      if (candidate["event.name"] !== "flaggo.analysis.cycle.completed") {
+        return false;
+      }
+      const outcome = candidate["flaggo.operation.outcome"];
+      if (outcome === "not_eligible" || outcome === "busy") return false;
+      if (outcome === "candidate") return true;
       throw new Error(
-        `Async Analysis did not produce a Candidate: ${
-          JSON.stringify(outcome)
-        }`,
+        `Async Analysis did not produce a Candidate: ${JSON.stringify(candidate)}`,
       );
     },
     {
@@ -444,11 +439,11 @@ async function runAsyncAnalysisCandidateCheck({
       timeoutMilliseconds: 420000,
     },
   );
-  const candidate = entry.outcome.outcome.candidate;
-  assert.equal(candidate.contractName, contractName);
-  assert.equal(candidate.contractDigest, contractDigest);
-  assert.equal(candidate.created, true);
-  assert.notEqual(candidate.executableDigest, activeExecutableDigest);
+  assert.equal(entry["flaggo.contract.name"], contractName);
+  assert.equal(entry["flaggo.contract.digest"], contractDigest);
+  const candidateExecutableDigest = entry["flaggo.candidate.digest"];
+  assert.match(candidateExecutableDigest, /^sha256:[0-9a-f]{64}$/u);
+  assert.notEqual(candidateExecutableDigest, activeExecutableDigest);
   await host.waitForStructuredLog(
     (structured) =>
       structured.event === "async_analysis.agent_session_event",
@@ -477,9 +472,9 @@ async function runAsyncAnalysisCandidateCheck({
   );
   return {
     activeExecutableDigest,
-    candidateExecutableDigest: candidate.executableDigest,
+    candidateExecutableDigest,
     candidatePersistedInactive: true,
-    cycleId: entry.outcome.cycleId,
+    cycleId: entry["flaggo.analysis.cycle.id"],
     sessionDiagnostics,
   };
 }
@@ -796,30 +791,38 @@ async function waitForEvidenceMaterialization({
   let observedBatches = 0;
   await host.waitForStructuredLog(
     (entry) => {
-      if (entry.event !== "materializer.batch_page_committed") return false;
-      observedBatches += entry.batchesRead;
+      if (entry["event.name"] !== "flaggo.materializer.page.committed") {
+        return false;
+      }
+      observedBatches += entry["flaggo.materializer.batches_read"];
       return observedBatches >= expectedBatches;
     },
     { signal },
   );
 
   const entries = host.structuredLogs.filter(
-    (entry) => entry.event === "materializer.batch_page_committed",
+    (entry) => entry["event.name"] === "flaggo.materializer.page.committed",
   );
-  const properties = [
-    "batchesRead",
-    "conflictsCreated",
-    "diagnosticsCreated",
-    "duplicateObservations",
-    "observationsCreated",
-    "provenanceCreated",
-  ];
+  const properties = new Map([
+    ["batchesRead", "flaggo.materializer.batches_read"],
+    ["conflictsCreated", "flaggo.materializer.conflicts_created"],
+    ["diagnosticsCreated", "flaggo.materializer.diagnostics_created"],
+    [
+      "duplicateObservations",
+      "flaggo.materializer.duplicate_observations",
+    ],
+    ["observationsCreated", "flaggo.materializer.observations_created"],
+    ["provenanceCreated", "flaggo.materializer.provenance_created"],
+  ]);
   const summary = Object.fromEntries(
-    properties.map((property) => [
+    [...properties].map(([property, telemetryAttribute]) => [
       property,
       entries.reduce((total, entry) => {
-        assert.equal(Number.isSafeInteger(entry[property]), true);
-        return total + entry[property];
+        assert.equal(
+          Number.isSafeInteger(entry[telemetryAttribute]),
+          true,
+        );
+        return total + entry[telemetryAttribute];
       }, 0),
     ]),
   );
@@ -829,7 +832,7 @@ async function waitForEvidenceMaterialization({
   assert.equal(summary.conflictsCreated, 0);
   assert.equal(summary.diagnosticsCreated, 0);
   assert.equal(summary.duplicateObservations, 0);
-  const materialization = entries.at(-1).materialization;
+  const materialization = parseMaterializationHealth(entries.at(-1));
   assertMaterializationHealth(materialization);
   assert.equal(materialization.checkpointBatchId, expectedBatches);
   assert.equal(materialization.pendingBatchCount, 0);

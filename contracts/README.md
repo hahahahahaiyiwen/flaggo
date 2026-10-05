@@ -124,11 +124,29 @@ OTLP failure responses; and no Phase 4 ingestion authentication. Upstream
 `opentelemetry-proto` definitions remain the payload authority. Flaggo defines
 no custom OTLP request model or OTLP OpenAPI operation.
 
+[`flaggo-service-observability-profile-v1.json`](otel/flaggo-service-observability-profile-v1.json)
+is the machine-readable contract for Flaggo's own operational telemetry. It
+defines service Resource identity, instrumentation scopes, bounded custom
+attributes, meaningful domain spans, significant log events, low-cardinality
+metrics, correlation, redaction, health, and OTLP export behavior for Contract
+Service, Decision Service, OTel Ingestion, Evidence Materializer, and Async
+Analysis. The strict profile shape is defined by
+[`service-observability-profile-v1.schema.json`](schemas/service-observability-profile-v1.schema.json).
+
+Service operations and application evidence are separate telemetry domains.
+Operational telemetry must not carry `flaggo.tenant`, `flaggo.application`, or
+`flaggo.environment` as Resource attributes. Exact contract and workflow
+identifiers may correlate spans and logs, but they are forbidden as metric
+dimensions. The reserved service schema URL is not emitted until it is
+published. See
+[Internal service observability](../docs/design/architecture/OBSERVABILITY.md)
+for ownership and implementation guidance.
+
 The fixture surface contains logical event cases plus OTLP/HTTP JSON and
 gzip-compressed Protobuf exchanges. The offline gate validates the profile,
-schema files, fixture/profile agreement, strict event JSON, event hashes, and
-the binary export envelope. Real-host OTLP profile dispatch remains a separate
-implementation conformance check.
+schema files, service-observability invariants, fixture/profile agreement,
+strict event JSON, event hashes, and the binary export envelope. Real-host OTLP
+profile dispatch remains a separate implementation conformance check.
 
 ## Validate
 
@@ -140,10 +158,11 @@ python contracts\conformance\validate.py
 Validation checks registered schemas, OpenAPI structure and local references,
 fixture-manifest coverage, positive request/response bodies, negative schema
 cases, semantic value contracts, Flaggo event semantics, the OTLP/HTTP profile,
-the v3 DecisionContract management surface, and the v3 runtime evaluation
-surface. The Tetris consumer and host harness use the v3 management and runtime
-APIs; the deleted v2 bundle schema is no longer part of their validation path.
-It does not start network services or access remote schema registries.
+the service-observability profile, the v3 DecisionContract management surface,
+and the v3 runtime evaluation surface. The Tetris consumer and host harness use
+the v3 management and runtime APIs; the deleted v2 bundle schema is no longer
+part of their validation path. It does not start network services or access
+remote schema registries.
 
 The `Contracts` GitHub Actions workflow runs the local Tetris and Adaptive
 Worker real-host integrations in dedicated jobs rather than folding them into

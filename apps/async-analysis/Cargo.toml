@@ -17,11 +17,14 @@ flaggo-analysis-agent = { version = "0.1.0", path = "../../modules/analysis-agen
 flaggo-analysis-domain = { version = "0.1.0", path = "../../modules/analysis-domain" }
 flaggo-analysis-workspace = { version = "0.1.0", path = "../../modules/analysis-workspace" }
 flaggo-evidence-store = { version = "0.1.0", path = "../../modules/evidence-store" }
+flaggo-service-observability.workspace = true
+opentelemetry.workspace = true
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror = "2.0.18"
 tokio = { workspace = true, features = ["fs", "time"] }
+tracing.workspace = true
 uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]

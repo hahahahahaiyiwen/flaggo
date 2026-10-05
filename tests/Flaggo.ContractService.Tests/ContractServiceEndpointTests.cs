@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using Flaggo.Contract;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
@@ -90,6 +92,10 @@ public sealed class ContractServiceEndpointTests
     [Fact]
     public async Task ValidationComputesFixtureDigestWithoutPersistence()
     {
+        var activities = new ConcurrentBag<Activity>();
+        using var activityListener = Listen(
+            "flaggo.contract-service",
+            activities);
         using var factory = new ContractServiceFactory();
         using var client = factory.CreateClient();
         var fixture = await ReadFixtureAsync("01-validate-valid.json");
@@ -111,12 +117,40 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(
             "client-validation",
             Assert.Single(response.Headers.GetValues(CorrelationIds.HeaderName)));
+        var activity = Assert.Single(
+            activities,
+            candidate => candidate.DisplayName == "flaggo.contract.validate");
+        Assert.Equal(
+            "tetris.dropInterval",
+            activity.GetTagItem("flaggo.contract.name"));
+        Assert.Equal(
+            result.GetProperty("contractDigest").GetString(),
+            activity.GetTagItem("flaggo.contract.digest"));
+        Assert.Equal("success", activity.GetTagItem("flaggo.operation.outcome"));
+        Assert.Equal(
+            "client-validation",
+            activity.GetTagItem("flaggo.request.correlation_id"));
 
         using var get = JsonRequest(
             HttpMethod.Get,
             "/v3/decision-contracts/tetris.dropInterval");
         using var getResponse = await client.SendAsync(get);
         Assert.Equal(HttpStatusCode.NotFound, getResponse.StatusCode);
+    }
+
+    private static ActivityListener Listen(
+        string sourceName,
+        ConcurrentBag<Activity> activities)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activities.Add
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 
     [Fact]
@@ -417,6 +451,10 @@ public sealed class ContractServiceEndpointTests
     [Fact]
     public async Task AnalysisCandidateSubmissionPersistsInactiveAndRetriesIdempotently()
     {
+        var activities = new ConcurrentBag<Activity>();
+        using var activityListener = Listen(
+            "flaggo.contract-service",
+            activities);
         using var factory = new ContractServiceFactory();
         using var client = factory.CreateClient();
         var version = await PutDefaultAsync(client, 3);
@@ -448,6 +486,22 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(
             activeDigest,
             (await store.GetActiveAsync(version.ContractDigest))?.ExecutableDigest);
+        var submissionActivity = Assert.Single(
+            activities,
+            candidate =>
+                candidate.DisplayName == "flaggo.candidate.submit"
+                && Equals(
+                    candidate.GetTagItem("flaggo.candidate.digest"),
+                    created.ExecutableDigest));
+        Assert.Equal(
+            version.ContractDigest,
+            submissionActivity.GetTagItem("flaggo.contract.digest"));
+        Assert.Equal(
+            created.ExecutableDigest,
+            submissionActivity.GetTagItem("flaggo.candidate.digest"));
+        Assert.Equal(
+            "success",
+            submissionActivity.GetTagItem("flaggo.operation.outcome"));
         Assert.Equal(
             submission.Provenance.CycleId,
             persisted?.Provenance?.GetProperty("cycleId").GetString());
@@ -520,6 +574,10 @@ public sealed class ContractServiceEndpointTests
     [Fact]
     public async Task AnalysisCandidateSubmissionRequiresTheExactCurrentContractDigest()
     {
+        var activities = new ConcurrentBag<Activity>();
+        using var activityListener = Listen(
+            "flaggo.contract-service",
+            activities);
         using var factory = new ContractServiceFactory();
         using var client = factory.CreateClient();
         var previous = await PutDefaultAsync(client, 3);
@@ -535,6 +593,19 @@ public sealed class ContractServiceEndpointTests
             staleResponse,
             HttpStatusCode.Conflict,
             ProblemTypes.StaleContractDigest);
+        var staleActivity = Assert.Single(
+            activities,
+            candidate =>
+                candidate.DisplayName == "flaggo.candidate.submit"
+                && Equals(
+                    candidate.GetTagItem("flaggo.operation.outcome"),
+                    "stale"));
+        Assert.Equal(
+            "stale",
+            staleActivity.GetTagItem("flaggo.operation.outcome"));
+        Assert.Equal(
+            "conflict",
+            staleActivity.GetTagItem("flaggo.failure.category"));
 
         const string missingDigest =
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";

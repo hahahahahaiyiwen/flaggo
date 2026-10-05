@@ -1,19 +1,21 @@
 use std::{cmp, error::Error, future::IntoFuture, io, sync::Arc, time::Duration};
 
 use flaggo_otel_ingestion::{
-    configured_database_url, configured_inbox_limits, configured_listen_address,
-    configured_receiver, router,
+    INSTRUMENTATION_SCOPE, OtlpIngestionObservability, SERVICE_NAME, configured_database_url,
+    configured_inbox_limits, configured_listen_address, configured_receiver, instrumented_router,
 };
 use flaggo_raw_otlp_inbox::{
-    RawOtlpInboxError, RawOtlpInboxRetention, RawOtlpInboxRetentionResult, SqliteRawOtlpInbox,
+    RawOtlpInbox, RawOtlpInboxError, RawOtlpInboxRetention, RawOtlpInboxRetentionResult,
+    SqliteRawOtlpInbox,
 };
-use serde_json::json;
+use flaggo_service_observability::{ServiceObservability, reject_own_receiver};
 use tokio::{
     net::TcpListener,
     signal,
     sync::watch,
     time::{MissedTickBehavior, interval},
 };
+use tracing::Instrument as _;
 
 const MAXIMUM_RETENTION_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -23,24 +25,72 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let inbox_limits = configured_inbox_limits()?;
     let listen_address = configured_listen_address()?;
     let receiver = configured_receiver()?;
-    let inbox = Arc::new(SqliteRawOtlpInbox::connect(&database_url, inbox_limits).await?);
-    report_retention(inbox.enforce_retention().await?);
     let listener = TcpListener::bind(listen_address).await?;
     let address = listener.local_addr()?;
-    println!(
-        "{}",
-        json!({
-            "address": format!("http://{address}"),
-            "event": "server.listening"
-        })
+    reject_own_receiver(address)?;
+    let telemetry = ServiceObservability::initialize(
+        SERVICE_NAME,
+        INSTRUMENTATION_SCOPE,
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    let result = run(
+        database_url,
+        inbox_limits,
+        receiver,
+        listener,
+        address,
+        OtlpIngestionObservability::new(),
+    );
+    let result = result.await;
+    if let Err(error) = &result {
+        tracing::event!(
+            target: INSTRUMENTATION_SCOPE,
+            tracing::Level::ERROR,
+            {
+                "event.name" = "flaggo.service.failed",
+                "flaggo.operation.outcome" = "failure",
+                "flaggo.failure.category" = failure_category(error.as_ref()),
+                "error.type" = std::any::type_name_of_val(error.as_ref()),
+            },
+            "OTel Ingestion failed"
+        );
+    }
+    telemetry.shutdown()?;
+    result
+}
+
+async fn run(
+    database_url: String,
+    inbox_limits: flaggo_raw_otlp_inbox::RawOtlpInboxLimits,
+    receiver: flaggo_otel_ingestion::OtlpReceiverConfig,
+    listener: TcpListener,
+    address: std::net::SocketAddr,
+    observability: OtlpIngestionObservability,
+) -> Result<(), Box<dyn Error>> {
+    let inbox = Arc::new(SqliteRawOtlpInbox::connect(&database_url, inbox_limits).await?);
+    enforce_retention(&inbox, &observability).await?;
+    observability.record_health(&inbox.inspect().await?);
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::INFO,
+        {
+            "event.name" = "flaggo.service.started",
+            "flaggo.operation.outcome" = "success",
+            "server.address" = %format!("http://{address}"),
+        },
+        "OTel Ingestion started"
     );
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let server = axum::serve(listener, router(inbox.clone(), receiver, inbox_limits))
-        .with_graceful_shutdown(wait_for_shutdown(shutdown_receiver.clone()))
-        .into_future();
+    let server = axum::serve(
+        listener,
+        instrumented_router(inbox.clone(), receiver, inbox_limits, observability.clone()),
+    )
+    .with_graceful_shutdown(wait_for_shutdown(shutdown_receiver.clone()))
+    .into_future();
     let retention_worker = run_retention_worker(
         inbox.clone(),
+        observability,
         cmp::min(
             inbox_limits.hard_retention(),
             MAXIMUM_RETENTION_MAINTENANCE_INTERVAL,
@@ -77,13 +127,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok(())
     }
     .await;
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::INFO,
+        {
+            "event.name" = "flaggo.service.stopping",
+            "flaggo.operation.outcome" = "success",
+        },
+        "OTel Ingestion stopping"
+    );
     inbox.close().await;
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::INFO,
+        {
+            "event.name" = "flaggo.service.stopped",
+            "flaggo.operation.outcome" = "success",
+        },
+        "OTel Ingestion stopped"
+    );
     result
 }
 
 async fn shutdown_signal() {
     if let Err(error) = signal::ctrl_c().await {
-        eprintln!("Failed to install Ctrl+C handler: {error}");
+        tracing::event!(
+            target: INSTRUMENTATION_SCOPE,
+            tracing::Level::ERROR,
+            {
+                "error.type" = std::any::type_name_of_val(&error),
+                "flaggo.failure.category" = "internal",
+            },
+            "Failed to install Ctrl+C handler"
+        );
     }
 }
 
@@ -97,6 +173,7 @@ async fn wait_for_shutdown(mut shutdown: watch::Receiver<bool>) {
 
 async fn run_retention_worker(
     inbox: Arc<SqliteRawOtlpInbox>,
+    observability: OtlpIngestionObservability,
     maintenance_interval: Duration,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), RawOtlpInboxError> {
@@ -106,7 +183,7 @@ async fn run_retention_worker(
     loop {
         tokio::select! {
             _ = maintenance.tick() => {
-                report_retention(inbox.enforce_retention().await?);
+                enforce_retention(&inbox, &observability).await?;
             }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
@@ -117,18 +194,63 @@ async fn run_retention_worker(
     }
 }
 
-fn report_retention(result: RawOtlpInboxRetentionResult) {
+async fn enforce_retention(
+    inbox: &SqliteRawOtlpInbox,
+    observability: &OtlpIngestionObservability,
+) -> Result<(), RawOtlpInboxError> {
+    let span = tracing::info_span!(
+        target: INSTRUMENTATION_SCOPE,
+        "flaggo.inbox.retention",
+        flaggo.operation.name = "inbox.retention",
+        flaggo.operation.outcome = tracing::field::Empty,
+        flaggo.failure.category = tracing::field::Empty,
+    );
+    async {
+        match inbox.enforce_retention().await {
+            Ok(result) => {
+                tracing::Span::current().record("flaggo.operation.outcome", "success");
+                report_retention(result, observability);
+                observability.record_health(&inbox.inspect().await?);
+                Ok(())
+            }
+            Err(error) => {
+                tracing::Span::current().record("flaggo.operation.outcome", "failure");
+                tracing::Span::current().record("flaggo.failure.category", "dependency");
+                Err(error)
+            }
+        }
+    }
+    .instrument(span)
+    .await
+}
+
+fn report_retention(
+    result: RawOtlpInboxRetentionResult,
+    observability: &OtlpIngestionObservability,
+) {
+    observability.record_retention(result);
     if result.expired_batch_count == 0 {
         return;
     }
-    println!(
-        "{}",
-        json!({
-            "event": "inbox.retention_expired",
-            "expiredBatchCount": result.expired_batch_count,
-            "expiredPayloadBytes": result.expired_payload_bytes
-        })
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::INFO,
+        {
+            "event.name" = "flaggo.inbox.retention.completed",
+            "flaggo.operation.outcome" = "success",
+            "flaggo.inbox.expired.batch_count" = result.expired_batch_count,
+            "flaggo.inbox.expired.payload_bytes" = result.expired_payload_bytes,
+        },
+        "Raw OTLP Inbox retention completed"
     );
+}
+
+fn failure_category(error: &(dyn Error + 'static)) -> &'static str {
+    if error.is::<RawOtlpInboxError>() || error.is::<io::Error>() {
+        "dependency"
+    } else {
+        "internal"
+    }
 }
 
 enum ServiceExit {
@@ -141,6 +263,7 @@ enum ServiceExit {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
+    use flaggo_otel_ingestion::OtlpIngestionObservability;
     use flaggo_raw_otlp_inbox::{
         DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression,
         OtlpWireEncoding, RawOtlpInbox, RawOtlpInboxLimits, SqliteRawOtlpInbox,
@@ -186,6 +309,7 @@ mod tests {
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let worker = tokio::spawn(run_retention_worker(
             inbox.clone(),
+            OtlpIngestionObservability::new(),
             Duration::from_millis(10),
             shutdown_receiver,
         ));

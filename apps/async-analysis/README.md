@@ -94,6 +94,25 @@ fields plus a bounded diagnostic preview.
 | `FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS` | `1200` | Maximum Copilot attempt duration |
 | `FLAGGO_ANALYSIS_YIELD_GRACE_SECONDS` | `30` | Checkpoint grace period for supersession and shutdown |
 
+## Operational observability
+
+The process uses service name `flaggo-async-analysis` and instrumentation
+scope `flaggo.async-analysis`. It emits registered service lifecycle events,
+one root `flaggo.analysis.cycle` span for each exact-contract work attempt,
+bounded cycle outcome and duration metrics, and an active-worker gauge. Exact
+contract, cycle, attempt, and Candidate identifiers appear only on spans and
+structured lifecycle logs; they are never metric dimensions.
+
+Console logs are always available. Logs, metrics, and traces export as
+OTLP/HTTP binary Protobuf when the standard
+`OTEL_EXPORTER_OTLP_*_ENDPOINT` variables are configured. Invalid exporter
+configuration fails startup, exporter unavailability does not change analysis
+outcomes, and shutdown performs a bounded provider flush. Prompts, evidence,
+model output, credentials, and workspace content are excluded from service
+telemetry. Opt-in `async_analysis.agent_session_event` diagnostics remain
+direct bounded console output and are not sent through the service's OTLP
+pipeline.
+
 ## Durable cycle behavior
 
 The physical workspace directory is the SHA-256 digest of the contract name;

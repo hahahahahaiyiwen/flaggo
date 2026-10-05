@@ -12,10 +12,16 @@ const string serviceName = "flaggo-contract-service";
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Flaggo")
     ?? "Data Source=flaggo.db";
+var serviceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
+builder.AddFlaggoServiceObservability(
+    serviceName,
+    "flaggo.contract-service",
+    serviceVersion);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<FlaggoExpressionCompiler>();
 builder.Services.AddSingleton<FlaggoExecutableCompiler>();
+builder.Services.AddSingleton<ContractServiceObservability>();
 builder.Services.AddSingleton<IContractVersionStore>(provider =>
     new SqliteContractVersionStore(
         connectionString,
@@ -180,7 +186,7 @@ app.MapGet(
         new LivenessResult
         {
             Service = serviceName,
-            Version = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0",
+            Version = serviceVersion,
             ObservedAt = timeProvider.GetUtcNow()
         },
         StrictJson.Options));

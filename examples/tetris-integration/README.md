@@ -215,8 +215,10 @@ nearly the full learning interval, placement time is derived from the returned
 the agent a bounded regression-discontinuity hypothesis rather than
 coincident fixture data.
 After materialization, it waits through the one-minute learning interval and
-requires the real agent to persist a new inactive Candidate. `NoChange`,
-`NoCandidate`, handoff, failure, timeout, and provider errors fail the test.
+requires the real agent to persist a new inactive Candidate. The harness
+observes the registered `flaggo.analysis.cycle.completed` event and exact
+contract, cycle, and Candidate correlations. `NoChange`, `NoCandidate`,
+handoff, failure, timeout, and provider errors fail the test.
 The test then makes another decision and verifies the previously active
 executable is still authoritative. It also parses every structured live
 `sessionEvent`, requires each serialized event to remain at or below 16 KiB,

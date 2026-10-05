@@ -10,13 +10,14 @@ use flaggo_analysis_domain::AnalysisProfile;
 use flaggo_analysis_workspace::LocalWorkspaceProvider;
 use flaggo_async_analysis::{
     AnalysisCoordinator, CoordinatorConfig, CoordinatorRunOutcome, SystemClock,
-    config::AnalysisServiceConfig, contract_client::ContractServiceClient,
+    config::AnalysisServiceConfig,
+    contract_client::ContractServiceClient,
     local_capabilities::LocalCapabilityFactory,
+    observability::{INSTRUMENTATION_SCOPE, SERVICE_NAME, analysis_failure_category},
 };
 use flaggo_evidence_store::{EvidenceQueryLimits, SqliteEvidenceAnalysisStore};
-use serde_json::json;
+use flaggo_service_observability::ServiceObservability;
 use tokio::{
-    signal,
     sync::watch,
     task::JoinSet,
     time::{MissedTickBehavior, interval},
@@ -24,17 +25,27 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    if let Err(error) = run().await {
-        eprintln!(
-            "{}",
-            json!({
-                "error": error.to_string(),
-                "event": "async_analysis.failed"
-            })
+    let telemetry = ServiceObservability::initialize(
+        SERVICE_NAME,
+        INSTRUMENTATION_SCOPE,
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    let result = run().await;
+    if let Err(error) = &result {
+        tracing::event!(
+            target: INSTRUMENTATION_SCOPE,
+            tracing::Level::ERROR,
+            {
+                "event.name" = "flaggo.service.failed",
+                "flaggo.operation.outcome" = "failure",
+                "flaggo.failure.category" = service_failure_category(error.as_ref()),
+                "error.type" = std::any::type_name_of_val(error.as_ref()),
+            },
+            "Async Analysis failed"
         );
-        return Err(error);
     }
-    Ok(())
+    telemetry.shutdown()?;
+    result
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
@@ -88,74 +99,85 @@ async fn run() -> Result<(), Box<dyn Error>> {
         clock,
     ));
 
-    println!(
-        "{}",
-        json!({
-            "event": "async_analysis.started",
-            "maxAgents": config.max_agents.get(),
-            "model": config.model.as_deref().unwrap_or("copilot-sdk-default"),
-            "sessionEventLogging": config.log_session_events,
-            "workspaceRoot": config.workspace_root
-        })
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::INFO,
+        {
+            "event.name" = "flaggo.service.started",
+            "flaggo.operation.outcome" = "success",
+        },
+        "Async Analysis started"
     );
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let mut workers = JoinSet::new();
-    for worker_id in 0..config.max_agents.get() {
+    for _ in 0..config.max_agents.get() {
         workers.spawn(run_worker(
-            worker_id,
             Arc::clone(&coordinator),
             config.poll_interval,
             shutdown_receiver.clone(),
         ));
     }
 
-    let shutdown_reason = tokio::select! {
-        result = signal::ctrl_c() => {
-            result?;
-            "signal"
+    let exit_failure: Option<Box<dyn Error>> = tokio::select! {
+        result = shutdown_signal() => {
+            result
+                .err()
+                .map(|error| Box::new(error) as Box<dyn Error>)
         }
         worker = workers.join_next() => {
             match worker {
-                Some(Ok(())) => "worker-exited",
-                Some(Err(error)) => {
-                    eprintln!("{}", json!({
-                        "error": error.to_string(),
-                        "event": "async_analysis.worker_failed"
-                    }));
-                    "worker-failed"
-                }
-                None => "workers-empty",
+                Some(Ok(())) => Some(Box::new(io::Error::other(
+                    "an Async Analysis worker exited unexpectedly",
+                )) as Box<dyn Error>),
+                Some(Err(error)) => Some(Box::new(io::Error::other(format!(
+                    "an Async Analysis worker failed: {error}",
+                ))) as Box<dyn Error>),
+                None => Some(Box::new(io::Error::other(
+                    "the Async Analysis worker set became empty",
+                )) as Box<dyn Error>),
             }
         }
     };
-    println!(
-        "{}",
-        json!({
-            "event": "async_analysis.stopping",
-            "reason": shutdown_reason
-        })
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::INFO,
+        {
+            "event.name" = "flaggo.service.stopping",
+            "flaggo.operation.outcome" = "success",
+        },
+        "Async Analysis stopping"
     );
     let _ = shutdown_sender.send(true);
     while let Some(worker) = workers.join_next().await {
         if let Err(error) = worker {
-            eprintln!(
-                "{}",
-                json!({
-                    "error": error.to_string(),
-                    "event": "async_analysis.worker_failed"
-                })
+            tracing::event!(
+                target: INSTRUMENTATION_SCOPE,
+                tracing::Level::ERROR,
+                {
+                    "flaggo.failure.category" = "internal",
+                    "error.type" = std::any::type_name_of_val(&error),
+                },
+                "Async Analysis worker failed during shutdown"
             );
         }
     }
-    copilot_provider.stop().await?;
+    let provider_shutdown = copilot_provider.stop().await;
     evidence_store.close().await;
-    println!("{}", json!({"event": "async_analysis.stopped"}));
-    Ok(())
+    provider_shutdown?;
+    tracing::event!(
+        target: INSTRUMENTATION_SCOPE,
+        tracing::Level::INFO,
+        {
+            "event.name" = "flaggo.service.stopped",
+            "flaggo.operation.outcome" = "success",
+        },
+        "Async Analysis stopped"
+    );
+    exit_failure.map_or(Ok(()), Err)
 }
 
 async fn run_worker(
-    worker_id: usize,
     coordinator: Arc<AnalysisCoordinator>,
     poll_interval: std::time::Duration,
     mut shutdown: watch::Receiver<bool>,
@@ -175,19 +197,18 @@ async fn run_worker(
                     .await
                 {
                     Ok(CoordinatorRunOutcome::Idle) => {}
-                    Ok(outcome) => {
-                        println!("{}", json!({
-                            "event": "async_analysis.worker_outcome",
-                            "outcome": outcome,
-                            "workerId": worker_id
-                        }));
-                    }
+                    Ok(_) => {}
                     Err(error) => {
-                        eprintln!("{}", json!({
-                            "error": error.to_string(),
-                            "event": "async_analysis.worker_attempt_failed",
-                            "workerId": worker_id
-                        }));
+                        tracing::event!(
+                            target: INSTRUMENTATION_SCOPE,
+                            tracing::Level::WARN,
+                            {
+                                "flaggo.failure.category" =
+                                    analysis_failure_category(&error),
+                                "error.type" = std::any::type_name_of_val(&error),
+                            },
+                            "Async Analysis polling attempt failed"
+                        );
                     }
                 }
                 if *shutdown.borrow() {
@@ -195,5 +216,32 @@ async fn run_worker(
                 }
             }
         }
+    }
+}
+
+fn service_failure_category(error: &(dyn Error + 'static)) -> &'static str {
+    if let Some(error) = error.downcast_ref::<io::Error>() {
+        return match error.kind() {
+            io::ErrorKind::InvalidInput => "configuration",
+            io::ErrorKind::Other => "internal",
+            _ => "dependency",
+        };
+    }
+    "dependency"
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<()> {
+    use tokio::signal::unix::{SignalKind, signal as unix_signal};
+
+    let mut terminate = unix_signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
     }
 }

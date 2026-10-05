@@ -42,3 +42,38 @@ partial-success responses.
 The offline conformance gate validates the profile and its golden fixtures.
 Passing that gate establishes artifact consistency; real-host interoperability
 must additionally dispatch the fixtures through OTel Ingestion.
+
+## Flaggo service observability profile
+
+`flaggo-service-observability-profile-v1.json` is the canonical registry for
+operational telemetry emitted by Flaggo services and workers. Its strict shape
+is defined by
+`../schemas/service-observability-profile-v1.schema.json`.
+
+The profile defines:
+
+- one stable Resource identity and instrumentation scope per service;
+- the bounded custom attribute registry and metric-dimension policy;
+- meaningful domain spans rather than spans for every method;
+- significant lifecycle and state-transition log events;
+- low-cardinality request, duration, error, queue, and progress metrics;
+- W3C trace and public request-correlation behavior;
+- content redaction and exact-identifier cardinality rules;
+- OTLP/HTTP exporter configuration and failure isolation; and
+- HTTP health only for existing HTTP services, with workers observed through
+  process lifecycle and telemetry.
+
+This operational profile is separate from the application/evidence telemetry
+schema above. Service Resources must not use application routing authority
+attributes. Exact `flaggo.contract.name` and `flaggo.contract.digest` values
+correlate important spans and logs, but neither is a metric dimension.
+
+The profile reserves:
+
+```text
+https://flaggo.dev/schemas/service-observability/1.0.0
+```
+
+Instrumentation must leave `schemaUrl` unset until that URL is published and
+retrievable. The contract does not select a telemetry backend; local
+visualization and backend pinning belong to the playground deployment.

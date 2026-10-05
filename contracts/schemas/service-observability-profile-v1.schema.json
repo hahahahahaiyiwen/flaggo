@@ -1,0 +1,663 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/service-observability-profile-v1.schema.json",
+  "title": "Flaggo service observability profile v1",
+  "description": "Machine-readable contract for Flaggo-owned internal service logs, metrics, traces, correlation, cardinality, redaction, export, and health boundaries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "profile",
+    "version",
+    "schemaUrl",
+    "export",
+    "resource",
+    "scopes",
+    "attributes",
+    "spans",
+    "logEvents",
+    "metrics",
+    "correlation",
+    "redaction",
+    "health"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://flaggo.dev/contracts/schemas/service-observability-profile-v1.schema.json"
+    },
+    "profile": {
+      "const": "flaggo.service-observability"
+    },
+    "version": {
+      "const": "1.0.0"
+    },
+    "schemaUrl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reserved",
+        "emit"
+      ],
+      "properties": {
+        "reserved": {
+          "const": "https://flaggo.dev/schemas/service-observability/1.0.0"
+        },
+        "emit": {
+          "const": false
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "signals",
+        "consoleLogs",
+        "enablement",
+        "endpointEnvironmentVariables",
+        "invalidConfiguration",
+        "unavailableBackend",
+        "queue",
+        "shutdownFlush",
+        "ingestionSelfExport"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "http/protobuf"
+        },
+        "signals": {
+          "$ref": "#/$defs/Signals"
+        },
+        "consoleLogs": {
+          "const": true
+        },
+        "enablement": {
+          "const": "configured-endpoint"
+        },
+        "endpointEnvironmentVariables": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "OTEL_EXPORTER_OTLP_ENDPOINT",
+              "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+              "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+              "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            ]
+          }
+        },
+        "invalidConfiguration": {
+          "const": "fail-startup"
+        },
+        "unavailableBackend": {
+          "const": "degrade-without-domain-failure"
+        },
+        "queue": {
+          "const": "bounded"
+        },
+        "shutdownFlush": {
+          "const": "bounded"
+        },
+        "ingestionSelfExport": {
+          "const": "reject-own-local-receiver"
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiredAttributes",
+        "optionalAttributes",
+        "forbiddenAttributes"
+      ],
+      "properties": {
+        "requiredAttributes": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ResourceAttribute"
+          }
+        },
+        "optionalAttributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAttribute"
+          }
+        },
+        "forbiddenAttributes": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/AttributeName"
+          }
+        }
+      }
+    },
+    "scopes": {
+      "type": "array",
+      "minItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/Scope"
+      }
+    },
+    "attributes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/AttributeDefinition"
+      }
+    },
+    "spans": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/SpanDefinition"
+      }
+    },
+    "logEvents": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/LogEventDefinition"
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/MetricDefinition"
+      }
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "traceContext",
+        "requestCorrelationHeader",
+        "requestCorrelationAttribute",
+        "contractIdentity",
+        "exactIdentifiers",
+        "asynchronousWork"
+      ],
+      "properties": {
+        "traceContext": {
+          "const": "w3c"
+        },
+        "requestCorrelationHeader": {
+          "const": "X-Flaggo-Correlation-Id"
+        },
+        "requestCorrelationAttribute": {
+          "const": "flaggo.request.correlation_id"
+        },
+        "contractIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "nameAttribute",
+            "digestAttribute",
+            "nameRule",
+            "digestRule"
+          ],
+          "properties": {
+            "nameAttribute": {
+              "const": "flaggo.contract.name"
+            },
+            "digestAttribute": {
+              "const": "flaggo.contract.digest"
+            },
+            "nameRule": {
+              "const": "required-when-contract-known"
+            },
+            "digestRule": {
+              "const": "required-when-exact-contract-known"
+            }
+          }
+        },
+        "exactIdentifiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "signals",
+            "metricDimensions"
+          ],
+          "properties": {
+            "signals": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "logs",
+                  "traces"
+                ]
+              }
+            },
+            "metricDimensions": {
+              "const": "forbidden"
+            }
+          }
+        },
+        "asynchronousWork": {
+          "const": "new-root-span-with-domain-identifiers"
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "forbiddenContent"
+      ],
+      "properties": {
+        "forbiddenContent": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existingHttpHealth",
+        "backgroundWorkers"
+      ],
+      "properties": {
+        "existingHttpHealth": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "flaggo-contract-service",
+              "flaggo-decision-service",
+              "flaggo-otel-ingestion"
+            ]
+          }
+        },
+        "backgroundWorkers": {
+          "const": "process-and-telemetry-observed"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "AttributeName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_.-]*$"
+    },
+    "SignalName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^flaggo\\.[a-z][a-z0-9_.-]*$"
+    },
+    "ScopeName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^flaggo\\.[a-z][a-z0-9.-]*$"
+    },
+    "StringSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "AttributeNames": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/AttributeName"
+      }
+    },
+    "Signals": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "logs",
+          "metrics",
+          "traces"
+        ]
+      }
+    },
+    "ResourceAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "source",
+        "cardinality",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/AttributeName"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "boolean",
+            "int64",
+            "double"
+          ]
+        },
+        "source": {
+          "enum": [
+            "fixed-by-binary",
+            "assembly-or-package",
+            "configured-or-generated-per-process",
+            "optional-standard-resource"
+          ]
+        },
+        "cardinality": {
+          "enum": [
+            "fixed",
+            "bounded",
+            "unbounded"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "signals",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ScopeName"
+        },
+        "signals": {
+          "$ref": "#/$defs/Signals"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "AttributeDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "cardinality",
+        "classification",
+        "metricDimension",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/AttributeName"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "boolean",
+            "int64",
+            "double"
+          ]
+        },
+        "cardinality": {
+          "enum": [
+            "fixed",
+            "bounded",
+            "unbounded"
+          ]
+        },
+        "classification": {
+          "enum": [
+            "bounded-operation",
+            "bounded-outcome",
+            "correlation-identifier",
+            "domain-identifier",
+            "failure-category",
+            "aggregate",
+            "transport"
+          ]
+        },
+        "metricDimension": {
+          "type": "boolean"
+        },
+        "allowedValues": {
+          "$ref": "#/$defs/StringSet"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ConditionalAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "when"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/AttributeName"
+        },
+        "when": {
+          "enum": [
+            "when-supplied",
+            "when-known",
+            "when-exact-contract-known",
+            "when-error",
+            "when-success",
+            "when-rule-selected",
+            "when-batch-read",
+            "when-cycle-created",
+            "when-attempt-created",
+            "when-candidate-known",
+            "when-executable-known"
+          ]
+        }
+      }
+    },
+    "SignalDefinitionBase": {
+      "type": "object",
+      "required": [
+        "scopes",
+        "purpose",
+        "requiredAttributes",
+        "conditionalAttributes",
+        "outcomes"
+      ],
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ScopeName"
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredAttributes": {
+          "$ref": "#/$defs/AttributeNames"
+        },
+        "conditionalAttributes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ConditionalAttribute"
+          }
+        },
+        "outcomes": {
+          "$ref": "#/$defs/StringSet"
+        }
+      }
+    },
+    "SpanDefinition": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SignalDefinitionBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "kind",
+            "scopes",
+            "purpose",
+            "requiredAttributes",
+            "conditionalAttributes",
+            "outcomes"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/SignalName"
+            },
+            "kind": {
+              "enum": [
+                "internal",
+                "server",
+                "client",
+                "producer",
+                "consumer"
+              ]
+            },
+            "scopes": {},
+            "purpose": {},
+            "requiredAttributes": {},
+            "conditionalAttributes": {},
+            "outcomes": {}
+          }
+        }
+      ]
+    },
+    "LogEventDefinition": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SignalDefinitionBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "eventName",
+            "minimumSeverity",
+            "scopes",
+            "purpose",
+            "requiredAttributes",
+            "conditionalAttributes",
+            "outcomes"
+          ],
+          "properties": {
+            "eventName": {
+              "$ref": "#/$defs/SignalName"
+            },
+            "minimumSeverity": {
+              "enum": [
+                "info",
+                "warn",
+                "error"
+              ]
+            },
+            "scopes": {},
+            "purpose": {},
+            "requiredAttributes": {},
+            "conditionalAttributes": {},
+            "outcomes": {}
+          }
+        }
+      ]
+    },
+    "MetricDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "scopes",
+        "instrument",
+        "unit",
+        "valueType",
+        "monotonic",
+        "purpose",
+        "requiredAttributes",
+        "optionalAttributes"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/SignalName"
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ScopeName"
+          }
+        },
+        "instrument": {
+          "enum": [
+            "counter",
+            "histogram",
+            "observable-gauge"
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "valueType": {
+          "enum": [
+            "int64",
+            "double"
+          ]
+        },
+        "monotonic": {
+          "type": "boolean"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredAttributes": {
+          "$ref": "#/$defs/AttributeNames"
+        },
+        "optionalAttributes": {
+          "$ref": "#/$defs/AttributeNames"
+        }
+      }
+    }
+  }
+}

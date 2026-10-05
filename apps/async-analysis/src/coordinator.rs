@@ -13,7 +13,10 @@ use flaggo_analysis_workspace::{PrepareCycleResult, WorkspaceProvider};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::{RwLock, watch};
+use tracing::Instrument as _;
 use uuid::Uuid;
+
+use crate::observability::{AnalysisObservability, CycleObservation, analysis_failure_category};
 
 #[async_trait]
 pub trait ContractService: Send + Sync {
@@ -72,6 +75,7 @@ pub enum CoordinatorRunOutcome {
         contract_name: String,
         cycle_id: String,
         reason: String,
+        failure_category: &'static str,
     },
     Busy {
         contract_name: String,
@@ -91,6 +95,7 @@ pub struct AnalysisCoordinator {
     config: CoordinatorConfig,
     clock: Arc<dyn Clock>,
     catalog: RwLock<CatalogState>,
+    observability: AnalysisObservability,
 }
 
 impl AnalysisCoordinator {
@@ -114,6 +119,7 @@ impl AnalysisCoordinator {
                 revision: None,
                 contracts: Vec::new(),
             }),
+            observability: AnalysisObservability::new(),
         }
     }
 
@@ -188,7 +194,24 @@ impl AnalysisCoordinator {
         &self,
         contract: AnalysisContract,
         now: DateTime<Utc>,
+        shutdown: Option<watch::Receiver<bool>>,
+    ) -> Result<CoordinatorRunOutcome, AnalysisError> {
+        let mut observation = self.observability.start_cycle(&contract);
+        let span = observation.span();
+        let result = self
+            .run_contract_observed(contract, now, shutdown, &mut observation)
+            .instrument(span)
+            .await;
+        observation.finish(&result);
+        result
+    }
+
+    async fn run_contract_observed(
+        &self,
+        contract: AnalysisContract,
+        now: DateTime<Utc>,
         mut shutdown: Option<watch::Receiver<bool>>,
+        observation: &mut CycleObservation,
     ) -> Result<CoordinatorRunOutcome, AnalysisError> {
         let attempt_id = Uuid::new_v4().to_string();
         let workspace = match self
@@ -217,6 +240,8 @@ impl AnalysisCoordinator {
             }
         };
         let cycle = preparation.cycle;
+        observation.record_active_attempt(&cycle.cycle_id, &attempt_id);
+        let _active_worker = self.observability.worker_active();
         let context = AttemptContext::new(&cycle, attempt_id);
         let tools = self
             .capabilities
@@ -262,6 +287,7 @@ impl AnalysisCoordinator {
                                 contract_name: contract.name,
                                 cycle_id: cycle.cycle_id,
                                 reason: error.to_string(),
+                                failure_category: analysis_failure_category(&error),
                             });
                         }
                     };
@@ -324,6 +350,7 @@ impl AnalysisCoordinator {
                                 contract_name: contract.name,
                                 cycle_id: cycle.cycle_id,
                                 reason: reason.to_owned(),
+                                failure_category: "timeout",
                             });
                         }
                     }
@@ -362,6 +389,7 @@ impl AnalysisCoordinator {
                     contract_name: contract.name,
                     cycle_id: cycle.cycle_id,
                     reason: error.to_string(),
+                    failure_category: "integrity",
                 });
             }
         }
@@ -406,6 +434,7 @@ impl AnalysisCoordinator {
                         contract_name: contract.name,
                         cycle_id: cycle.cycle_id,
                         reason: error.to_string(),
+                        failure_category: "integrity",
                     });
                 }
                 workspace
@@ -434,6 +463,7 @@ impl AnalysisCoordinator {
                     contract_name: contract.name,
                     cycle_id: cycle.cycle_id,
                     reason: error.to_string(),
+                    failure_category: analysis_failure_category(&error),
                 });
             }
         };
@@ -443,6 +473,7 @@ impl AnalysisCoordinator {
                 contract_name: contract.name,
                 cycle_id: cycle.cycle_id,
                 reason: "agent committed a handoff checkpoint".to_owned(),
+                failure_category: "internal",
             });
         };
         workspace

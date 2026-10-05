@@ -79,6 +79,20 @@ with `ConnectionStrings__Flaggo`; the default is `Data Source=flaggo.db`.
 Readiness requires both owned stores. It does not depend on Decision Service,
 OTel Ingestion, Evidence Materializer, Evidence Store, or Async Analysis.
 
+## Operational observability
+
+The service uses instrumentation scope `flaggo.contract-service`. Automatic
+ASP.NET Core and HTTP client telemetry is supplemented by domain spans and
+bounded metrics for validation, deployment, reads, catalog reads, Candidate
+admission, and activation. Important spans and lifecycle logs carry exact
+contract, Candidate, and executable identities; metrics never use those exact
+identifiers as dimensions.
+
+Console logging remains enabled, and structured JSON formatting can be selected
+through standard .NET logging configuration. Logs, metrics, and traces export
+as OTLP/HTTP binary Protobuf only when standard
+`OTEL_EXPORTER_OTLP_*_ENDPOINT` configuration is present.
+
 ## Execution model
 
 The architecture diagram represents Contract Service as a rectangle because it
@@ -106,3 +120,4 @@ dotnet build Flaggo.slnx -c Debug --no-restore
 - [Decision authority](../../docs/design/architecture/AUTHORITY.md)
 - [Decision contract lifecycle](../../docs/design/contracts/LIFECYCLE.md)
 - [Management API v3](../../contracts/openapi/flaggo-management-v3.yaml)
+- [Internal service observability](../../docs/design/architecture/OBSERVABILITY.md)
