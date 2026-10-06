@@ -302,12 +302,16 @@ Runtime and learning progress independently:
   blocking runtime requests.
 - When `learning.policy.evaluate.interval` elapses, one asynchronous analysis
   run becomes eligible.
-- A valid candidate under `auto-activation` immediately attempts atomic
-  activation.
+- Contract Service scans admitted candidates immediately at startup and then
+  at its configured activation interval, independently of the analysis
+  evaluation interval.
+- A valid current candidate under `auto-activation` attempts one atomic
+  activation; when several are pending for the exact digest, only the newest
+  is selected and older candidates become inactive.
 - A runtime request observes either the complete previous executable or the
   complete replacement.
-- Analysis failure, no-candidate completion, or activation conflict leaves the
-  current executable active and begins the next waiting interval.
+- Analysis failure, no-candidate completion, activation failure, or an
+  optimistic-concurrency yield leaves the current executable active.
 
 The loop begins with the automatically activated default executable, so a
 learning-only contract can produce decisions and correlated application

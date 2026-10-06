@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Text.Json;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
 using Flaggo.Expressions;
@@ -148,6 +149,47 @@ public sealed class ContractServiceObservability
                 ["flaggo.operation.outcome"] = "success"
             });
 
+    public void ActivationResolved(
+        string contractName,
+        string contractDigest,
+        string candidateDigest,
+        string outcome,
+        string? failureCategory,
+        int supersededCandidateCount)
+    {
+        var attributes = new Dictionary<string, object?>
+        {
+            ["flaggo.contract.name"] = contractName,
+            ["flaggo.contract.digest"] = contractDigest,
+            ["flaggo.candidate.digest"] = candidateDigest,
+            ["flaggo.activation.superseded_count"] = (long)supersededCandidateCount,
+            ["flaggo.operation.outcome"] = outcome
+        };
+        if (failureCategory is not null)
+        {
+            attributes["flaggo.failure.category"] = failureCategory;
+        }
+
+        _instrumentation.LogEvent(
+            LogLevel.Information,
+            "flaggo.activation.resolved",
+            attributes: attributes);
+    }
+
+    public void ActivationScanFailed(Exception exception)
+    {
+        var (outcome, category) = Classify(exception);
+        _instrumentation.LogEvent(
+            LogLevel.Warning,
+            "flaggo.activation.scan_failed",
+            exception,
+            new Dictionary<string, object?>
+            {
+                ["flaggo.operation.outcome"] = outcome,
+                ["flaggo.failure.category"] = category
+            });
+    }
+
     public void ActivationRejected(
         string contractName,
         string contractDigest,
@@ -187,7 +229,7 @@ public sealed class ContractServiceObservability
             SqliteException or IOException => ("unavailable", "dependency"),
             TimeoutException => ("unavailable", "timeout"),
             OperationCanceledException => ("cancelled", "cancelled"),
-            InvalidDataException => ("failure", "integrity"),
+            InvalidDataException or JsonException => ("failure", "integrity"),
             _ => ("failure", "internal")
         };
 

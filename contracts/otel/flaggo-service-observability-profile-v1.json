@@ -162,6 +162,14 @@
       "description": "Exact Candidate digest when admission or activation identifies a Candidate."
     },
     {
+      "name": "flaggo.activation.superseded_count",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Number of pending analysis Candidates made inactive by one activation resolution."
+    },
+    {
       "name": "flaggo.batch.id",
       "type": "string",
       "cardinality": "unbounded",
@@ -231,7 +239,8 @@
         "stale",
         "success",
         "superseded",
-        "unavailable"
+        "unavailable",
+        "yielded"
       ],
       "description": "Bounded terminal classification for one operation."
     },
@@ -716,7 +725,9 @@
         "rejected",
         "stale",
         "success",
-        "unavailable"
+        "superseded",
+        "unavailable",
+        "yielded"
       ]
     },
     {
@@ -1256,6 +1267,49 @@
         "invalid",
         "rejected",
         "stale",
+        "unavailable"
+      ]
+    },
+    {
+      "eventName": "flaggo.activation.resolved",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Record a non-failure Candidate rejection, supersession, or optimistic-concurrency yield.",
+      "requiredAttributes": [
+        "flaggo.activation.superseded_count",
+        "flaggo.candidate.digest",
+        "flaggo.contract.digest",
+        "flaggo.contract.name",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "rejected",
+        "superseded",
+        "yielded"
+      ]
+    },
+    {
+      "eventName": "flaggo.activation.scan_failed",
+      "minimumSeverity": "warn",
+      "scopes": [
+        "flaggo.contract-service"
+      ],
+      "purpose": "Record a failed paced activation scan before one Candidate can be resolved.",
+      "requiredAttributes": [
+        "flaggo.failure.category",
+        "flaggo.operation.outcome"
+      ],
+      "conditionalAttributes": [],
+      "outcomes": [
+        "failure",
         "unavailable"
       ]
     }

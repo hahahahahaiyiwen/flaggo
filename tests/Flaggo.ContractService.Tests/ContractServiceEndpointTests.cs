@@ -11,6 +11,7 @@ using Flaggo.ServiceHosting;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -526,6 +527,152 @@ public sealed class ContractServiceEndpointTests
     }
 
     [Fact]
+    public async Task ActivationWorkerActivatesNewestEligibleAnalysisCandidate()
+    {
+        var activities = new ConcurrentBag<Activity>();
+        using var activityListener = Listen(
+            "flaggo.contract-service",
+            activities);
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var fixture = await ReadFixtureAsync("01-validate-valid.json");
+        using var deployRequest = JsonRequest(
+            HttpMethod.Put,
+            "/v3/decision-contracts/tetris.dropInterval",
+            fixture.Body);
+        using var deployResponse = await client.SendAsync(deployRequest);
+        deployResponse.EnsureSuccessStatusCode();
+        var version = (await deployResponse.Content
+            .ReadFromJsonAsync<DecisionContractVersion>(StrictJson.Options))!;
+        var path =
+            $"/v3/decision-contracts/tetris.dropInterval/versions/"
+            + $"{version.ContractDigest}/candidates";
+        var older = await PostCandidateAsync(
+            client,
+            path,
+            CreateCandidateSubmission("cycle-older", returnValue: 600));
+        factory.Clock.SetUtcNow(ContractServiceFactory.Now.AddSeconds(1));
+        var newestSubmission =
+            CreateCandidateSubmission("cycle-newest", returnValue: 700);
+        var newest = await PostCandidateAsync(
+            client,
+            path,
+            newestSubmission);
+
+        var worker = factory.Services
+            .GetRequiredService<AnalysisCandidateActivationWorker>();
+        await worker.RunOnceAsync();
+
+        var store = factory.Services.GetRequiredService<IExecutableStore>();
+        Assert.Equal(
+            newest.ExecutableDigest,
+            (await store.GetActiveAsync(version.ContractDigest))?.ExecutableDigest);
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await store.GetAsync(older.ExecutableDigest))?.State);
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await store.GetAsync(version.ActiveExecutableDigest))?.State);
+        var activity = Assert.Single(
+            activities,
+            candidate =>
+                candidate.DisplayName == "flaggo.candidate.activate"
+                && Equals(
+                    candidate.GetTagItem("flaggo.candidate.digest"),
+                    newest.ExecutableDigest));
+        Assert.Equal("success", activity.GetTagItem("flaggo.operation.outcome"));
+
+        using var retryRequest = JsonRequest(
+            HttpMethod.Post,
+            path,
+            JsonSerializer.Serialize(newestSubmission, StrictJson.Options));
+        using var retryResponse = await client.SendAsync(retryRequest);
+        var retry = await retryResponse.Content
+            .ReadFromJsonAsync<AnalysisCandidateResult>(StrictJson.Options);
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        Assert.NotNull(retry);
+        Assert.False(retry.Created);
+        Assert.Equal("active", retry.LifecycleState);
+        Assert.Equal(newest.ExecutableDigest, retry.ExecutableDigest);
+        Assert.Equal(newest.CreatedAt, retry.CreatedAt);
+
+        await worker.RunOnceAsync();
+        Assert.Equal(
+            newest.ExecutableDigest,
+            (await store.GetActiveAsync(version.ContractDigest))?.ExecutableDigest);
+    }
+
+    [Fact]
+    public async Task ActivationWorkerRejectsCandidateWithoutAutoActivationPolicy()
+    {
+        var activities = new ConcurrentBag<Activity>();
+        using var activityListener = Listen(
+            "flaggo.contract-service",
+            activities);
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var version = await PutDefaultAsync(client, 3);
+        var path =
+            $"/v3/decision-contracts/worker.batchSize/versions/"
+            + $"{version.ContractDigest}/candidates";
+        var older = await PostCandidateAsync(
+            client,
+            path,
+            CreateCandidateSubmission("cycle-policy-older", returnValue: 4));
+        factory.Clock.SetUtcNow(ContractServiceFactory.Now.AddSeconds(1));
+        var newest = await PostCandidateAsync(
+            client,
+            path,
+            CreateCandidateSubmission("cycle-policy-newest", returnValue: 5));
+
+        await factory.Services
+            .GetRequiredService<AnalysisCandidateActivationWorker>()
+            .RunOnceAsync();
+
+        var store = factory.Services.GetRequiredService<IExecutableStore>();
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await store.GetAsync(newest.ExecutableDigest))?.State);
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await store.GetAsync(older.ExecutableDigest))?.State);
+        Assert.Equal(
+            version.ActiveExecutableDigest,
+            (await store.GetActiveAsync(version.ContractDigest))?.ExecutableDigest);
+        var activity = Assert.Single(
+            activities,
+            item =>
+                item.DisplayName == "flaggo.candidate.activate"
+                && Equals(
+                    item.GetTagItem("flaggo.candidate.digest"),
+                    newest.ExecutableDigest));
+        Assert.Equal("rejected", activity.GetTagItem("flaggo.operation.outcome"));
+        Assert.Equal("validation", activity.GetTagItem("flaggo.failure.category"));
+    }
+
+    [Fact]
+    public void ActivationWorkerConfigurationDefaultsAndRejectsInvalidPacing()
+    {
+        var defaultOptions = CandidateActivationOptions.FromConfiguration(
+            new ConfigurationBuilder().Build());
+        Assert.Equal(TimeSpan.FromSeconds(5), defaultOptions.PollInterval);
+
+        var invalid = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [CandidateActivationOptions.PollIntervalEnvironmentVariable] = "0"
+            })
+            .Build();
+        Action readInvalidOptions = () =>
+            CandidateActivationOptions.FromConfiguration(invalid);
+        var exception = Assert.Throws<InvalidOperationException>(readInvalidOptions);
+        Assert.Contains(
+            CandidateActivationOptions.PollIntervalEnvironmentVariable,
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AnalysisCandidateSubmissionRejectsConflictsAndInvalidExecutables()
     {
         using var factory = new ContractServiceFactory();
@@ -808,6 +955,21 @@ public sealed class ContractServiceEndpointTests
             }
         };
 
+    private static async Task<AnalysisCandidateResult> PostCandidateAsync(
+        HttpClient client,
+        string path,
+        AnalysisCandidateSubmission submission)
+    {
+        using var request = JsonRequest(
+            HttpMethod.Post,
+            path,
+            JsonSerializer.Serialize(submission, StrictJson.Options));
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<AnalysisCandidateResult>(
+            StrictJson.Options))!;
+    }
+
     private static HttpRequestMessage JsonRequest(
         HttpMethod method,
         string path,
@@ -878,6 +1040,9 @@ public sealed class ContractServiceFactory : WebApplicationFactory<Program>
         builder.UseSetting(
             "ConnectionStrings:Flaggo",
             $"Data Source={_databasePath};Pooling=False");
+        builder.UseSetting(
+            CandidateActivationOptions.PollIntervalEnvironmentVariable,
+            "600000");
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<TimeProvider>();

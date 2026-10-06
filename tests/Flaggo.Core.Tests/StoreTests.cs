@@ -234,6 +234,16 @@ public sealed class StoreTests
                 admission.WorkspaceId,
                 admission.CycleId));
 
+        await store.ActivateAsync(
+            candidate.Executable.ContractDigest,
+            candidate.ExecutableDigest);
+        var resolvedRetry = await new SqliteExecutableStore(database.ConnectionString)
+            .PutAnalysisCandidateAsync(candidate, admission);
+        Assert.False(resolvedRetry.Created);
+        Assert.Equal(ExecutableLifecycleState.Active, resolvedRetry.LifecycleState);
+        Assert.Equal(created.ExecutableDigest, resolvedRetry.ExecutableDigest);
+        Assert.Equal(created.CreatedAt, resolvedRetry.CreatedAt);
+
         var conflictingCandidate = CreateCandidate(contract, variant: 2);
         var conflict = CreateAdmission(
             conflictingCandidate,
@@ -385,6 +395,375 @@ public sealed class StoreTests
         Assert.Equal(
             success.Result!.ExecutableDigest,
             (await setupStore.GetActiveAsync(contractDigest))!.ExecutableDigest);
+    }
+
+    [Fact]
+    public async Task AnalysisActivationSelectsNewestCurrentCandidateAndSupersedesBacklog()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+        var acceptedAt = new DateTimeOffset(2026, 3, 4, 10, 0, 0, TimeSpan.Zero);
+        var previousContract = CreateAcceptedVersion(100, acceptedAt);
+        var currentContract = CreateAcceptedVersion(200, acceptedAt.AddMinutes(1));
+        await contractStore.PutAsync(previousContract);
+        await contractStore.PutAsync(currentContract);
+        await contractStore.SetCurrentAsync(
+            currentContract.Contract.Name,
+            currentContract.ContractDigest);
+
+        var initial = CreateCandidate(
+            currentContract.Contract,
+            variant: 1,
+            createdAt: acceptedAt.AddMinutes(2));
+        var older = CreateCandidate(
+            currentContract.Contract,
+            variant: 2,
+            createdAt: acceptedAt.AddMinutes(3));
+        var newest = CreateCandidate(
+            currentContract.Contract,
+            variant: 3,
+            createdAt: acceptedAt.AddMinutes(4));
+        var staleButLater = CreateCandidate(
+            previousContract.Contract,
+            variant: 4,
+            createdAt: acceptedAt.AddMinutes(5));
+        await executableStore.PutCandidateAsync(initial);
+        await executableStore.ActivateAsync(
+            currentContract.ContractDigest,
+            initial.ExecutableDigest);
+        await executableStore.PutAnalysisCandidateAsync(
+            older,
+            CreateAdmission(older, "cycle-older"));
+        await executableStore.PutAnalysisCandidateAsync(
+            newest,
+            CreateAdmission(newest, "cycle-newest"));
+        await executableStore.PutAnalysisCandidateAsync(
+            staleButLater,
+            CreateAdmission(staleButLater, "cycle-stale"));
+
+        var snapshot = Assert.Single(
+            (await executableStore.ListPendingAsync(10)).Candidates);
+
+        Assert.Equal(newest.ExecutableDigest, snapshot.Admission.ExecutableDigest);
+        Assert.Equal(initial.ExecutableDigest, snapshot.ActiveExecutable?.ExecutableDigest);
+
+        var result = await executableStore.ResolveAsync(
+            new AnalysisCandidateResolutionCommand(
+                snapshot.Admission,
+                snapshot.CandidateStateVersion,
+                snapshot.ActiveExecutable,
+                AnalysisCandidateResolutionAction.Activate));
+
+        Assert.Equal(AnalysisCandidateResolutionOutcome.Activated, result.Outcome);
+        Assert.Equal(2, result.SupersededCandidateCount);
+        Assert.Equal(
+            newest.ExecutableDigest,
+            (await executableStore.GetActiveAsync(currentContract.ContractDigest))!
+                .ExecutableDigest);
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await executableStore.GetAsync(older.ExecutableDigest))!.State);
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await executableStore.GetAsync(staleButLater.ExecutableDigest))!.State);
+        Assert.Empty((await executableStore.ListPendingAsync(10)).Candidates);
+    }
+
+    [Fact]
+    public async Task AnalysisActivationSupersedesCandidateAfterCurrentContractMoves()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+        var acceptedAt = new DateTimeOffset(2026, 3, 4, 11, 0, 0, TimeSpan.Zero);
+        var previousContract = CreateAcceptedVersion(100, acceptedAt);
+        var currentContract = CreateAcceptedVersion(200, acceptedAt.AddMinutes(1));
+        await contractStore.PutAsync(previousContract);
+        await contractStore.PutAsync(currentContract);
+        await contractStore.SetCurrentAsync(
+            previousContract.Contract.Name,
+            previousContract.ContractDigest);
+        var initial = CreateCandidate(previousContract.Contract, variant: 1);
+        var candidate = CreateCandidate(previousContract.Contract, variant: 2);
+        await executableStore.PutCandidateAsync(initial);
+        await executableStore.ActivateAsync(
+            previousContract.ContractDigest,
+            initial.ExecutableDigest);
+        await executableStore.PutAnalysisCandidateAsync(
+            candidate,
+            CreateAdmission(candidate, "cycle-stale"));
+        var snapshot = Assert.Single(
+            (await executableStore.ListPendingAsync(10)).Candidates);
+
+        await contractStore.SetCurrentAsync(
+            currentContract.Contract.Name,
+            currentContract.ContractDigest);
+        var result = await executableStore.ResolveAsync(
+            new AnalysisCandidateResolutionCommand(
+                snapshot.Admission,
+                snapshot.CandidateStateVersion,
+                snapshot.ActiveExecutable,
+                AnalysisCandidateResolutionAction.Activate));
+
+        Assert.Equal(AnalysisCandidateResolutionOutcome.Superseded, result.Outcome);
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await executableStore.GetAsync(candidate.ExecutableDigest))!.State);
+        Assert.Equal(
+            initial.ExecutableDigest,
+            (await executableStore.GetActiveAsync(previousContract.ContractDigest))!
+                .ExecutableDigest);
+    }
+
+    [Fact]
+    public async Task AnalysisActivationDetectsActiveExecutableAbaByStateVersion()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+        var accepted = CreateAcceptedVersion(
+            100,
+            new DateTimeOffset(2026, 3, 4, 12, 0, 0, TimeSpan.Zero));
+        await contractStore.PutAsync(accepted);
+        await contractStore.SetCurrentAsync(
+            accepted.Contract.Name,
+            accepted.ContractDigest);
+        var initial = CreateCandidate(accepted.Contract, variant: 1);
+        var intervening = CreateCandidate(accepted.Contract, variant: 2);
+        var candidate = CreateCandidate(accepted.Contract, variant: 3);
+        await executableStore.PutCandidateAsync(initial);
+        await executableStore.PutCandidateAsync(intervening);
+        await executableStore.ActivateAsync(
+            accepted.ContractDigest,
+            initial.ExecutableDigest);
+        await executableStore.PutAnalysisCandidateAsync(
+            candidate,
+            CreateAdmission(candidate, "cycle-aba"));
+        var snapshot = Assert.Single(
+            (await executableStore.ListPendingAsync(10)).Candidates);
+
+        await executableStore.ActivateAsync(
+            accepted.ContractDigest,
+            intervening.ExecutableDigest,
+            initial.ExecutableDigest);
+        await executableStore.ActivateAsync(
+            accepted.ContractDigest,
+            initial.ExecutableDigest,
+            intervening.ExecutableDigest);
+        var result = await executableStore.ResolveAsync(
+            new AnalysisCandidateResolutionCommand(
+                snapshot.Admission,
+                snapshot.CandidateStateVersion,
+                snapshot.ActiveExecutable,
+                AnalysisCandidateResolutionAction.Activate));
+
+        Assert.Equal(AnalysisCandidateResolutionOutcome.Yielded, result.Outcome);
+        Assert.Equal(
+            ExecutableLifecycleState.Candidate,
+            (await executableStore.GetAsync(candidate.ExecutableDigest))!.State);
+        Assert.Equal(
+            initial.ExecutableDigest,
+            (await executableStore.GetActiveAsync(accepted.ContractDigest))!
+                .ExecutableDigest);
+    }
+
+    [Fact]
+    public async Task ConcurrentAnalysisActivationHasOneWinnerAndOneIdempotentYield()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var setupStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await setupStore.InitializeAsync();
+        var accepted = CreateAcceptedVersion(
+            100,
+            new DateTimeOffset(2026, 3, 4, 13, 0, 0, TimeSpan.Zero));
+        await contractStore.PutAsync(accepted);
+        await contractStore.SetCurrentAsync(
+            accepted.Contract.Name,
+            accepted.ContractDigest);
+        var initial = CreateCandidate(accepted.Contract, variant: 1);
+        var candidate = CreateCandidate(accepted.Contract, variant: 2);
+        await setupStore.PutCandidateAsync(initial);
+        await setupStore.ActivateAsync(
+            accepted.ContractDigest,
+            initial.ExecutableDigest);
+        await setupStore.PutAnalysisCandidateAsync(
+            candidate,
+            CreateAdmission(candidate, "cycle-concurrent"));
+        var snapshot = Assert.Single(
+            (await setupStore.ListPendingAsync(10)).Candidates);
+        var command = new AnalysisCandidateResolutionCommand(
+            snapshot.Admission,
+            snapshot.CandidateStateVersion,
+            snapshot.ActiveExecutable,
+            AnalysisCandidateResolutionAction.Activate);
+
+        var results = await Task.WhenAll(
+            new SqliteExecutableStore(database.ConnectionString).ResolveAsync(command),
+            new SqliteExecutableStore(database.ConnectionString).ResolveAsync(command));
+
+        Assert.Single(
+            results,
+            result => result.Outcome == AnalysisCandidateResolutionOutcome.Activated);
+        Assert.Single(
+            results,
+            result => result.Outcome
+                == AnalysisCandidateResolutionOutcome.AlreadyResolved);
+        Assert.Equal(
+            candidate.ExecutableDigest,
+            (await setupStore.GetActiveAsync(accepted.ContractDigest))!
+                .ExecutableDigest);
+    }
+
+    [Fact]
+    public async Task FailedAnalysisActivationRollsBackAndLeavesCandidatePending()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+        var accepted = CreateAcceptedVersion(
+            100,
+            new DateTimeOffset(2026, 3, 4, 14, 0, 0, TimeSpan.Zero));
+        await contractStore.PutAsync(accepted);
+        await contractStore.SetCurrentAsync(
+            accepted.Contract.Name,
+            accepted.ContractDigest);
+        var initial = CreateCandidate(accepted.Contract, variant: 1);
+        var candidate = CreateCandidate(accepted.Contract, variant: 2);
+        await executableStore.PutCandidateAsync(initial);
+        await executableStore.ActivateAsync(
+            accepted.ContractDigest,
+            initial.ExecutableDigest);
+        await executableStore.PutAnalysisCandidateAsync(
+            candidate,
+            CreateAdmission(candidate, "cycle-failure"));
+        var snapshot = Assert.Single(
+            (await executableStore.ListPendingAsync(10)).Candidates);
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            $"""
+            CREATE TRIGGER fail_analysis_activation
+            BEFORE UPDATE OF lifecycle_state ON decision_executables
+            WHEN NEW.executable_digest = '{candidate.ExecutableDigest}'
+             AND NEW.lifecycle_state = 'active'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected activation failure');
+            END;
+            """);
+
+        await Assert.ThrowsAsync<SqliteException>(() => executableStore.ResolveAsync(
+            new AnalysisCandidateResolutionCommand(
+                snapshot.Admission,
+                snapshot.CandidateStateVersion,
+                snapshot.ActiveExecutable,
+                AnalysisCandidateResolutionAction.Activate)));
+
+        Assert.Equal(
+            initial.ExecutableDigest,
+            (await executableStore.GetActiveAsync(accepted.ContractDigest))!
+                .ExecutableDigest);
+        Assert.Equal(
+            ExecutableLifecycleState.Candidate,
+            (await executableStore.GetAsync(candidate.ExecutableDigest))!.State);
+    }
+
+    [Fact]
+    public async Task AnalysisCandidateDiscoveryPagesByContractWithoutStarvation()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+        var firstContract = CreateContract(100);
+        var secondContract = CreateContract(200) with { Name = "inventory.limit" };
+        var acceptedAt = new DateTimeOffset(2026, 3, 4, 15, 0, 0, TimeSpan.Zero);
+        foreach (var contract in new[] { firstContract, secondContract })
+        {
+            var version = new AcceptedContractVersion(
+                ContractDigests.ComputeContractDigest(contract),
+                acceptedAt,
+                contract);
+            await contractStore.PutAsync(version);
+            await contractStore.SetCurrentAsync(
+                contract.Name,
+                version.ContractDigest);
+        }
+
+        var firstCandidate = CreateCandidate(firstContract, variant: 1);
+        var secondCandidate = CreateCandidate(secondContract, variant: 2);
+        await executableStore.PutAnalysisCandidateAsync(
+            firstCandidate,
+            CreateAdmission(
+                firstCandidate,
+                "cycle-first",
+                contractName: firstContract.Name));
+        await executableStore.PutAnalysisCandidateAsync(
+            secondCandidate,
+            CreateAdmission(
+                secondCandidate,
+                "cycle-second",
+                contractName: secondContract.Name));
+
+        var firstPage = await executableStore.ListPendingAsync(1);
+        var first = Assert.Single(firstPage.Candidates);
+        Assert.NotNull(firstPage.NextContractName);
+        var secondPage = await executableStore.ListPendingAsync(
+            1,
+            firstPage.NextContractName);
+        var second = Assert.Single(secondPage.Candidates);
+
+        Assert.NotEqual(
+            first.Admission.ContractName,
+            second.Admission.ContractName);
+        Assert.Null(secondPage.NextContractName);
+    }
+
+    [Fact]
+    public async Task AnalysisCandidateDiscoveryStartsFromPendingExecutables()
+    {
+        using var database = new TemporaryDatabase();
+        var store = new SqliteExecutableStore(database.ConnectionString);
+        await store.InitializeAsync();
+        await using var connection = new SqliteConnection(database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            EXPLAIN QUERY PLAN
+            SELECT admission.contract_name
+            FROM decision_executables AS executable
+            CROSS JOIN analysis_candidate_admissions AS admission
+            WHERE executable.lifecycle_state = 'candidate'
+              AND admission.executable_digest = executable.executable_digest;
+            """;
+        var plan = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            plan.Add(reader.GetString(3));
+        }
+
+        Assert.Contains(
+            plan,
+            step => step.Contains(
+                "ix_executables_analysis_candidates",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            plan,
+            step => step.Contains(
+                "ix_analysis_candidates_executable",
+                StringComparison.Ordinal));
     }
 
     [Fact]
@@ -553,13 +932,14 @@ public sealed class StoreTests
     private static AnalysisCandidateAdmission CreateAdmission(
         StoredExecutable candidate,
         string cycleId,
-        string? workspaceId = null) =>
+        string? workspaceId = null,
+        string contractName = "checkout.delay") =>
         new(
             workspaceId
                 ?? "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             cycleId,
             $"attempt-{cycleId}",
-            "checkout.delay",
+            contractName,
             candidate.Executable.ContractDigest,
             candidate.ExecutableDigest,
             candidate.CreatedAt.AddMinutes(-5),

@@ -161,11 +161,14 @@ open so a fresh agent session can resume from durable artifacts.
 
 Candidate proposal is journaled before submission. A retry reuses the original
 attempt identity and exact rules, allowing safe recovery if the process loses
-the HTTP response. A different second proposal is rejected. Analysis artifacts
-are sealed into a content-digested manifest before admission; mutable host
-control records and Copilot session state are excluded. The manifest records
-the exact ordered analysis skill names used by the cycle, and resume under a
-different skill set or order is rejected.
+the HTTP response. If activation or rejection wins before that retry, Contract
+Service returns the original admission with its current lifecycle and
+`propose_executable` records the submission as successful without reopening it.
+A different second proposal is rejected. Analysis artifacts are sealed into a
+content-digested manifest before admission; mutable host control records and
+Copilot session state are excluded. The manifest records the exact ordered
+analysis skill names used by the cycle, and resume under a different skill set
+or order is rejected.
 
 The agent sees only the active cycle at `/workspace`. It may write beneath
 `/workspace/analysis` and `/workspace/handoffs`; host-owned cycle records are

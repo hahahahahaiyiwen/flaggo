@@ -251,8 +251,8 @@
           "decision-contracts"
         ],
         "operationId": "submitAnalysisCandidate",
-        "summary": "Persist an inactive analysis Candidate for one exact current contract digest.",
-        "description": "Validates and canonicalizes the proposed rules against the immutable contract version, fences admission on that digest still being current, and atomically persists Candidate lifecycle state with trusted cycle provenance. This operation never activates an executable. The contract name and digest come only from the route; retries must repeat the exact workspace-cycle submission.",
+        "summary": "Admit an analysis Candidate for one exact current contract digest.",
+        "description": "Validates and canonicalizes the proposed rules against the immutable contract version, fences first admission on that digest still being current, and atomically persists Candidate lifecycle state with trusted cycle provenance. This operation never activates an executable. The contract name and digest come only from the route; retries must repeat the exact workspace-cycle submission. An exact retry returns the original admission with its current lifecycle without reopening or mutating it.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ContractNamePath"
@@ -536,7 +536,7 @@
         }
       },
       "AnalysisCandidate": {
-        "description": "An existing inactive Candidate admitted for the exact workspace cycle.",
+        "description": "The existing admission for the exact workspace cycle, including its current candidate, active, or inactive lifecycle.",
         "headers": {
           "X-Flaggo-Correlation-Id": {
             "$ref": "#/components/headers/CorrelationId"

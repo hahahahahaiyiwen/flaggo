@@ -419,7 +419,15 @@ public sealed class ContractLifecycle(
                     ContractName = contractName,
                     ContractDigest = contractDigest,
                     ExecutableDigest = result.ExecutableDigest,
-                    LifecycleState = "candidate",
+                    LifecycleState = result.LifecycleState switch
+                    {
+                        ExecutableLifecycleState.Candidate => "candidate",
+                        ExecutableLifecycleState.Active => "active",
+                        ExecutableLifecycleState.Inactive => "inactive",
+                        _ => throw new InvalidDataException(
+                            $"Unknown executable lifecycle state "
+                            + $"'{result.LifecycleState}'.")
+                    },
                     CreatedAt = result.CreatedAt,
                     Created = result.Created
                 };

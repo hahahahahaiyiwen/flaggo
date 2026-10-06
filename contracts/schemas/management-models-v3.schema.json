@@ -964,8 +964,13 @@
           "$ref": "#/$defs/Sha256Digest"
         },
         "lifecycleState": {
-          "const": "candidate",
-          "description": "The persisted executable is inactive and has no runtime authority."
+          "type": "string",
+          "enum": [
+            "active",
+            "candidate",
+            "inactive"
+          ],
+          "description": "Current lifecycle state. A newly created admission is candidate; an exact retry may observe a worker-resolved active or inactive executable."
         },
         "createdAt": {
           "type": "string",
@@ -974,6 +979,23 @@
         "created": {
           "type": "boolean",
           "description": "True for first admission of the workspace cycle; false for an exact retry."
+        }
+      },
+      "if": {
+        "properties": {
+          "created": {
+            "const": true
+          }
+        },
+        "required": [
+          "created"
+        ]
+      },
+      "then": {
+        "properties": {
+          "lifecycleState": {
+            "const": "candidate"
+          }
         }
       }
     },

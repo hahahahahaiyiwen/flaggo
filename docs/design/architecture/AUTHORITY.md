@@ -147,15 +147,15 @@ mode: auto-activation
 ```
 
 For a valid evidence-generated candidate from the current contract, the
-Contract Service immediately attempts atomic activation. A failed validation,
-superseded learning run, or failed activation leaves the existing executable
-active.
+Contract Service activation worker attempts one atomic transition when its
+paced scan discovers the candidate. A failed validation, superseded learning
+run, or failed activation leaves the existing executable active.
 
 `auto-activation` does not grant Async Analysis authority to change executable
 lifecycle state, and it does not tell the Decision Service to discover the
 latest generated executable. Analysis produces an immutable candidate; the
-Contract Service performs the checked activation transition through
-`IExecutableStore`.
+Contract Service performs the checked activation transition through its
+analysis-Candidate activation store boundary.
 
 ## Activation
 

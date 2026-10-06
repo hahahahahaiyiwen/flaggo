@@ -192,9 +192,14 @@ impl ContractService for ContractServiceClient {
             return Err(candidate_response_error(response).await);
         }
         let result: CandidateResult = read_candidate_json(response).await?;
+        let valid_lifecycle = match (result.created, result.lifecycle_state.as_str()) {
+            (true, "candidate") => true,
+            (false, "candidate" | "active" | "inactive") => true,
+            _ => false,
+        };
         if result.contract_name != context.contract.name
             || result.contract_digest != context.contract.digest
-            || result.lifecycle_state != "candidate"
+            || !valid_lifecycle
         {
             return Err(AnalysisError::Candidate(
                 "Contract Service returned an invalid Candidate identity or lifecycle".to_owned(),
@@ -425,7 +430,10 @@ struct CandidateResult {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use axum::{
         Json, Router,
@@ -442,6 +450,7 @@ mod tests {
     #[derive(Default)]
     struct TestState {
         submissions: Mutex<Vec<Value>>,
+        candidate_resolved: AtomicBool,
     }
 
     fn learning_contract() -> Value {
@@ -543,16 +552,21 @@ mod tests {
             .lock()
             .expect("submission lock")
             .push(submission);
+        let resolved = state.candidate_resolved.load(Ordering::SeqCst);
         let payload = json!({
             "contractName": contract_name,
             "contractDigest": contract_digest,
             "executableDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            "lifecycleState": "candidate",
+            "lifecycleState": if resolved { "active" } else { "candidate" },
             "createdAt": "2026-03-01T02:00:00Z",
-            "created": true
+            "created": !resolved
         });
         Response::builder()
-            .status(StatusCode::CREATED)
+            .status(if resolved {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            })
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(payload.to_string()))
             .expect("Candidate response")
@@ -673,8 +687,28 @@ mod tests {
             "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         );
 
+        state.candidate_resolved.store(true, Ordering::SeqCst);
+        let retry = client
+            .submit_candidate(
+                &context,
+                json!([{
+                    "name": "learned",
+                    "when": {"expression": "true"},
+                    "return": {"value": 5}
+                }]),
+                &EvidenceCutoff {
+                    cutoff,
+                    watermark: 42,
+                },
+                "sha256:mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+            )
+            .await
+            .expect("recover resolved Candidate admission");
+        assert!(!retry.created);
+        assert_eq!(retry.executable_digest, candidate.executable_digest);
+
         let submissions = state.submissions.lock().expect("submission lock");
-        assert_eq!(submissions.len(), 1);
+        assert_eq!(submissions.len(), 2);
         assert_eq!(
             submissions[0]["provenance"]["workspaceId"],
             context.workspace_id

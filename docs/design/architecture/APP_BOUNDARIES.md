@@ -7,16 +7,13 @@ workers, and durable stores participate in the end-to-end lifecycle. Detailed
 wire behavior remains authoritative under `contracts/`; app-specific documents
 define each boundary in more depth.
 
-Four server composition roots are implemented:
+Five runnable composition roots are implemented:
 
 - Contract Service;
 - Decision Service;
-- OTel Ingestion; and
-- Evidence Materializer.
-
-Async Analysis is planned but not implemented. It is intentionally collapsed
-to one conceptual worker boundary here. Its internal scheduling, correlation,
-generation, and persistence design belongs to its implementation work.
+- OTel Ingestion;
+- Evidence Materializer; and
+- Async Analysis.
 
 ## Diagram notation
 
@@ -27,7 +24,7 @@ generation, and persistence design belongs to its implementation work.
 | Diamond | Asynchronous, periodic, or background worker component |
 | Cylinder | Durable state boundary |
 | Solid arrow | Implemented data or control flow |
-| Dashed arrow | Planned Async Analysis flow |
+| Dashed arrow | Deferred or optional flow |
 
 Shapes identify execution models, not deployment topology or instance counts.
 A component is a conceptual grouping that may have one or many processes or
@@ -58,12 +55,15 @@ flowchart TB
     subgraph authority["Management and runtime authority"]
         direction LR
         contract["Contract Service"]
+        activation{"Candidate Activation Worker"}
         contractStore[("Contract Store")]
         executableStore[("Executable Store")]
         decision["Decision Service"]
 
         contract -->|accepted versions and current pointer| contractStore
-        contract -->|executables, provenance, and activation| executableStore
+        contract -->|executables and admission provenance| executableStore
+        activation -->|current-pointer fence| contractStore
+        activation -->|atomic Candidate resolution| executableStore
         contractStore -->|exact accepted contract| decision
         executableStore -->|active executable| decision
     end
@@ -80,7 +80,7 @@ flowchart TB
 
     materializer{"Evidence Materializer"}
     evidenceStore[("Evidence Store")]
-    analysis{"Async Analysis<br/>(planned; internals collapsed)"}
+    analysis{"Async Analysis"}
 
     deploy -->|Management API v3| contract
     runtime -->|Runtime API v3: exact name and digest| decision
@@ -91,9 +91,9 @@ flowchart TB
     contract -->|current contract catalog API| materializer
     materializer -->|observations and materialization provenance| evidenceStore
 
-    evidenceStore -.->|materialized observations| analysis
-    contract -.->|exact current contracts| analysis
-    analysis -.->|candidate and analysis provenance| contract
+    evidenceStore -->|materialized observations| analysis
+    contract -->|exact current contracts| analysis
+    analysis -->|candidate and analysis provenance| contract
 ```
 
 The central authority rule is visible in the loop: Async Analysis may propose
@@ -125,13 +125,14 @@ Async Analysis never writes Executable Store or runtime authority directly.
    request before acknowledgement. Its retention worker expires raw requests by
    receipt age. Evidence Materializer independently reads pending requests
    forward and writes durable query-ready observations.
-7. **Analyze and propose.** Once implemented, Async Analysis will read
-   materialized observations plus the exact current contract, correlate usable
-   evidence, record its method and evidence provenance, and propose an
+7. **Analyze and propose.** Async Analysis reads
+   materialized observations plus the exact current contract, correlates usable
+   evidence, records its method and evidence provenance, and proposes an
    immutable candidate to Contract Service.
-8. **Validate and replace.** Contract Service will validate the candidate
-   against its exact contract and attempt atomic activation if it remains
-   eligible. Later runtime requests observe either the complete previous
+8. **Validate and replace.** Contract Service validates and admits the
+   candidate without changing authority. Its paced activation worker selects
+   the newest eligible Candidate and performs one atomic current-fenced
+   replacement. Later runtime requests observe either the complete previous
    activation or the complete replacement.
 
 ## Responsibility matrix
@@ -139,11 +140,11 @@ Async Analysis never writes Executable Store or runtime authority directly.
 | Component | Role and status | Consumes | Produces and owns | Must not do |
 | --- | --- | --- | --- | --- |
 | Application and SDK | Client boundary, implemented | Authored contract bindings, application attributes, immutable runtime configuration | Complete `RuntimeInput`, decision use, decision-received telemetry, and ordinary app telemetry | Discover a moving contract version, grant runtime authority, or treat decision receipt as proven exposure |
-| Contract Service | Web API, implemented | Management requests and, in the planned loop, immutable candidate submissions | Accepted contract identity, management current pointer, executable artifacts and provenance, candidate validation, and atomic activation | Evaluate runtime requests, ingest evidence, correlate observations, or delegate activation authority |
+| Contract Service | Web API plus activation worker, implemented | Management requests and immutable candidate submissions | Accepted contract identity, management current pointer, executable artifacts and provenance, candidate validation, and atomic activation | Evaluate runtime requests, ingest evidence, correlate observations, or delegate activation authority |
 | Decision Service | Web API, implemented | Exact contract name and digest, complete input, accepted contract, and active executable | One bounded `RuntimeDecision`; no semantic per-request durable state | Select latest versions, generate or activate executables, query evidence, or run analysis |
 | OTel Ingestion | Web API plus retention worker, implemented | OTLP/HTTP export requests and inbox retention settings | Durable Raw OTLP Inbox append, capacity accounting, and receipt-age retention | Extract declared authority, select contract evidence, materialize signals, or delete based on consumer progress |
 | Evidence Materializer | Background worker, implemented | Retained inbox batches and optional current-contract catalog | Evidence Store observations, inbox provenance, diagnostics, conflicts, catalog cache, and forward checkpoint | Acknowledge ingestion, own inbox retention, correlate evidence, revisit completed batches after catalog changes, or generate candidates |
-| Async Analysis | Background worker, planned and collapsed | Exact current contracts and materialized Evidence Store observations | Analysis-run state, evidence selection and method provenance, and immutable candidate proposals | Read Raw OTLP as a fallback, write activation state, bypass candidate validation, or enter the runtime request path |
+| Async Analysis | Background worker, implemented | Exact current contracts and materialized Evidence Store observations | Analysis-run state, evidence selection and method provenance, and immutable candidate proposals | Read Raw OTLP as a fallback, write activation state, bypass candidate validation, or enter the runtime request path |
 
 Operator Console is a planned management client rather than a server authority.
 It must use service APIs and cannot gain authority by reading or writing store
@@ -158,8 +159,8 @@ than selecting them by credential claims.
 | Executable Store | Contract Service | Decision Service reads active lifecycle state and immutable artifacts | Artifacts are immutable; only Contract Service candidate admission and activation change lifecycle authority |
 | Raw OTLP Inbox | OTel Ingestion | Evidence Materializer reads retained batches | Receiver appends; inbox retention expires by receipt age independently of materialization |
 | Materializer checkpoint and catalog cache | Evidence Materializer | No other app mutates them | One active materializer advances one global forward checkpoint per database; producing versions are provenance and neither version nor catalog changes backfill completed batches |
-| Evidence Store observations and materialization provenance | Evidence Materializer | Planned Async Analysis reads through the Evidence Store contract | Observations outlive raw inbox retention; decision observations preserve an emitted contract digest, while ordinary application observations have no eager contract association |
-| Analysis run state and evidence/method provenance | Async Analysis, planned | Contract Service receives candidate provenance at admission | A run is scoped to an exact contract digest; superseded work cannot activate |
+| Evidence Store observations and materialization provenance | Evidence Materializer | Async Analysis reads through the Evidence Store contract | Observations outlive raw inbox retention; decision observations preserve an emitted contract digest, while ordinary application observations have no eager contract association |
+| Analysis run state and evidence/method provenance | Async Analysis | Contract Service receives candidate provenance at admission | A run is scoped to an exact contract digest; superseded work cannot activate |
 
 The current local implementation physically co-locates several schemas in
 SQLite. Co-location is not shared ownership. Apps depend on domain/store
@@ -173,12 +174,12 @@ project.
 | Establish validation or deployment scope | Contract Service | Tenant, application, and environment declared by the submitted contract |
 | Claim contract-name ownership | Contract Service | The first accepted declared authority owns the name globally |
 | Accept contract | Contract Service | Server-computed immutable `contractDigest` containing declared authority and a name-keyed management current pointer |
-| Generate candidate | Contract Service for default/authored paths; planned Async Analysis for learned paths | Immutable proposal bound to one exact digest; no runtime authority |
+| Generate candidate | Contract Service for default/authored paths; Async Analysis for learned paths | Immutable proposal bound to one exact digest; no runtime authority |
 | Validate and admit candidate | Contract Service | Contract-conformant immutable executable and provenance |
 | Activate executable | Contract Service | Atomic `RuntimeActivation[contractDigest]` mapping |
 | Resolve runtime executable | Decision Service | One immutable active executable captured for the request |
 | Derive current telemetry scope | Evidence Materializer | Declared authority from required OTLP Resource attributes; not authentication authority |
-| Interpret evidence | Planned Async Analysis | Evidence scoped to an exact contract digest and recorded provenance |
+| Interpret evidence | Async Analysis | Evidence scoped to an exact contract digest and recorded provenance |
 
 Authentication for OTel writes is not implemented. OTel Ingestion therefore
 does not establish authority from credentials; Evidence Materializer derives
@@ -227,9 +228,10 @@ availability, evidence freshness, or learning success.
   by the current executable; this document does not require that topology.
 - Exactly one Evidence Materializer may be active per database under the
   current forward-checkpoint design.
-- Planned Async Analysis is single-flight per contract digest. Coordination
-  across future worker instances remains part of that app's implementation
-  design.
+- Async Analysis uses durable claims to remain single-flight per contract
+  digest across worker instances.
+- Contract Service activation workers may run on multiple instances; lifecycle
+  version comparisons make one transition win while conflicting workers yield.
 
 ## Related documents
 

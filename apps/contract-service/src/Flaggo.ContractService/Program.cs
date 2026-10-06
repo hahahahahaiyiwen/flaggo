@@ -13,6 +13,8 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Flaggo")
     ?? "Data Source=flaggo.db";
 var serviceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+var candidateActivationOptions =
+    CandidateActivationOptions.FromConfiguration(builder.Configuration);
 
 builder.AddFlaggoServiceObservability(
     serviceName,
@@ -22,16 +24,24 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<FlaggoExpressionCompiler>();
 builder.Services.AddSingleton<FlaggoExecutableCompiler>();
 builder.Services.AddSingleton<ContractServiceObservability>();
+builder.Services.AddSingleton(candidateActivationOptions);
 builder.Services.AddSingleton<IContractVersionStore>(provider =>
     new SqliteContractVersionStore(
         connectionString,
         provider.GetRequiredService<FlaggoExpressionCompiler>()));
-builder.Services.AddSingleton<IExecutableStore>(provider =>
+builder.Services.AddSingleton(provider =>
     new SqliteExecutableStore(
         connectionString,
         provider.GetRequiredService<FlaggoExpressionCompiler>(),
         provider.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IExecutableStore>(provider =>
+    provider.GetRequiredService<SqliteExecutableStore>());
+builder.Services.AddSingleton<IAnalysisCandidateActivationStore>(provider =>
+    provider.GetRequiredService<SqliteExecutableStore>());
 builder.Services.AddSingleton<IContractLifecycle, ContractLifecycle>();
+builder.Services.AddSingleton<AnalysisCandidateActivationWorker>();
+builder.Services.AddHostedService(provider =>
+    provider.GetRequiredService<AnalysisCandidateActivationWorker>());
 var app = builder.Build();
 
 app.UseFlaggoCorrelationIds();

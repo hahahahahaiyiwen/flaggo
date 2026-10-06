@@ -26,7 +26,7 @@ ActiveExecutable + complete RuntimeInput
 decision receipt + application telemetry
   -> Raw OTLP Inbox
   -> Evidence Store
-  -> planned Async Analysis
+  -> Async Analysis
   -> CandidateExecutable
   -> Contract Service validation and activation
 ```
