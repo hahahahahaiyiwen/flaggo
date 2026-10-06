@@ -31,8 +31,8 @@ not depend on an app composition root or on the legacy
   scoped Candidate, Active, and Inactive lifecycle state.
 - Evidence Store is a Rust storage-neutral contract with a SQLx/SQLite adapter.
   It atomically persists selected query-ready telemetry observations,
-  materialization provenance, diagnostics, the current catalog cache,
-  versioned checkpoints, and logical-source conflicts for asynchronous
+  materialization provenance, diagnostics, the current catalog cache, one
+  global forward checkpoint, and logical-source conflicts for asynchronous
   analysis.
 - Raw OTLP Inbox persists complete validated OTLP export requests as a bounded,
   replayable work log without depending on its SQLx/SQLite adapter contract.

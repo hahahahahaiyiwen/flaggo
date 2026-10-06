@@ -21,6 +21,9 @@ export async function startLocalFlaggoHosts({
     database: resolve(runDirectory, "flaggo.db"),
     contractLog: resolve(runDirectory, "contract-service.log"),
     decisionLog: resolve(runDirectory, "decision-service.log"),
+    asyncAnalysisLog: resolve(runDirectory, "async-analysis.log"),
+    asyncAnalysisWorkspace: resolve(runDirectory, "w"),
+    copilotHome: resolve(runDirectory, "c"),
     evidenceMaterializerLog: resolve(runDirectory, "evidence-materializer.log"),
     otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
   };
@@ -135,12 +138,48 @@ export async function startLocalFlaggoHosts({
     };
   }
 
+  async function startAsyncAnalysis({ githubToken }) {
+    if (typeof githubToken !== "string" || githubToken.trim() === "") {
+      throw new TypeError("githubToken must be a non-empty string.");
+    }
+    const host = lifecycle.startHost(() => startRustHost(
+      "tetris-async-analysis",
+      "flaggo-async-analysis",
+      paths.asyncAnalysisLog,
+      repositoryRoot,
+      {
+        FLAGGO_ANALYSIS_COPILOT_HOME: paths.copilotHome,
+        FLAGGO_ANALYSIS_GITHUB_TOKEN: githubToken,
+        FLAGGO_ANALYSIS_LOG_SESSION_EVENTS: "true",
+        FLAGGO_ANALYSIS_POLL_INTERVAL_MS: "1000",
+        FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: "300",
+        FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.asyncAnalysisWorkspace,
+        FLAGGO_CONTRACT_CATALOG_URL:
+          `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
+        FLAGGO_CONTRACT_SERVICE_URL: hosts.contractUrl,
+        FLAGGO_DATABASE_URL: databaseUrl,
+      },
+      { reportsListeningUrl: false },
+    ));
+    const startup = await host.waitForStructuredLog(
+      (entry) => entry["event.name"] === "flaggo.service.started",
+      {
+        signal: lifecycle.signal,
+        timeoutMilliseconds: 120000,
+      },
+    );
+    lifecycle.assertHealthy();
+    return { host, startup };
+  }
+
   return {
     ...hosts,
     databaseUrl,
     fetch: fetchWithAbort,
     otelIngestion,
     otelIngestionUrl,
+    paths,
+    startAsyncAnalysis,
     startEvidenceMaterializer,
   };
 }

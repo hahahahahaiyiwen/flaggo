@@ -31,6 +31,7 @@
     "test": "npm run test --workspaces",
     "test:adaptive-worker": "npm run build:adaptive-worker && npm run build:rust && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/adaptive-worker/smoke.mjs",
     "test:tetris-app": "npm run build:tetris && npm run build:tetris-flaggo && node --test examples/tetris-integration/test/contract-deployment.test.mjs examples/tetris-integration/test/drop-interval.test.mjs examples/tetris-integration/test/game.test.mjs examples/tetris-integration/test/flaggo-provider.test.mjs examples/tetris-integration/test/host-process.test.mjs examples/tetris-integration/test/session-telemetry.test.mjs examples/tetris-integration/test/session.test.mjs examples/tetris-integration/test/terminal.test.mjs",
+    "test:tetris-analysis-integration": "npm run test:tetris-integration -- --analysis",
     "test:tetris-integration": "npm run build:tetris-integration && npm run build:rust && dotnet build Flaggo.slnx -c Debug --no-restore && node examples/tetris-integration/run.mjs",
     "tetris": "npm run build:tetris && node examples/tetris-integration/dist/standalone/main.js",
     "tetris:flaggo": "npm run build:tetris-flaggo && npm run build:rust && dotnet build Flaggo.slnx -c Debug && node examples/tetris-integration/run-flaggo.mjs",

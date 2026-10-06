@@ -155,6 +155,31 @@ app.MapGet(
                 : Results.Json(version, StrictJson.Options);
         });
 
+app.MapPost(
+        "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
+        async (
+            string contractName,
+            string contractDigest,
+            HttpContext context,
+            IContractLifecycle lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var submission = await HttpJson.ReadAsync<AnalysisCandidateSubmission>(
+                context.Request,
+                cancellationToken);
+            var result = await lifecycle.SubmitAnalysisCandidateAsync(
+                contractName,
+                contractDigest,
+                submission,
+                cancellationToken);
+            return Results.Json(
+                result,
+                StrictJson.Options,
+                statusCode: result.Created
+                    ? StatusCodes.Status201Created
+                    : StatusCodes.Status200OK);
+        });
+
 app.MapGet(
     "/health/live",
     (TimeProvider timeProvider) => Results.Json(
@@ -264,6 +289,44 @@ static async Task WriteExceptionAsync(HttpContext context)
                 ProblemTypes.InvalidDecisionContract,
                 "Invalid decision contract",
                 "The decision contract failed semantic validation."),
+        ExecutableCompilationException invalidExecutable =>
+            ProblemResults.Create(
+                context,
+                StatusCodes.Status422UnprocessableEntity,
+                ProblemTypes.InvalidDecisionExecutable,
+                "Invalid decision executable",
+                string.Join(
+                    "; ",
+                    invalidExecutable.Issues.Select(issue =>
+                        $"{issue.Code} at {issue.Path}: {issue.Message}"))),
+        ContractVersionNotFoundException =>
+            ProblemResults.Create(
+                context,
+                StatusCodes.Status404NotFound,
+                ProblemTypes.ContractVersionNotFound,
+                "Decision contract not found",
+                "The requested DecisionContract resource does not exist."),
+        StaleContractDigestException stale =>
+            ProblemResults.Create(
+                context,
+                StatusCodes.Status409Conflict,
+                ProblemTypes.StaleContractDigest,
+                "Stale contract digest",
+                stale.Message),
+        CandidateAdmissionConflictException conflict =>
+            ProblemResults.Create(
+                context,
+                StatusCodes.Status409Conflict,
+                ProblemTypes.CandidateAdmissionConflict,
+                "Candidate admission conflict",
+                conflict.Message),
+        CandidateLifecycleConflictException conflict =>
+            ProblemResults.Create(
+                context,
+                StatusCodes.Status409Conflict,
+                ProblemTypes.CandidateAdmissionConflict,
+                "Candidate lifecycle conflict",
+                conflict.Message),
         ArgumentException or FormatException =>
             ProblemResults.Create(
                 context,
@@ -300,6 +363,11 @@ static async Task WriteExceptionAsync(HttpContext context)
         and not UnauthorizedAccessException
         and not ContractNameMismatchException
         and not InvalidDecisionContractException
+        and not ExecutableCompilationException
+        and not ContractVersionNotFoundException
+        and not StaleContractDigestException
+        and not CandidateAdmissionConflictException
+        and not CandidateLifecycleConflictException
         and not ArgumentException
         and not FormatException
         and not ActivationConflictException)

@@ -600,8 +600,14 @@ export function startManagedProcess(
     },
     recordStructuredLog,
   );
+  const stderrObserver = createStructuredLogObserver(
+    () => {},
+    recordStructuredLog,
+  );
   child.stdout.on("data", (chunk) => observer.write(chunk));
   child.stdout.once("end", () => observer.end());
+  child.stderr.on("data", (chunk) => stderrObserver.write(chunk));
+  child.stderr.once("end", () => stderrObserver.end());
 
   let exited = false;
   let closed = false;

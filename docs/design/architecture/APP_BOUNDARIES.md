@@ -157,7 +157,7 @@ than selecting them by credential claims.
 | Contract Store | Contract Service | Decision Service reads exact accepted versions; workers use Contract Service APIs instead of its tables | Versions are immutable by `contractDigest`; only Contract Service moves the management current pointer |
 | Executable Store | Contract Service | Decision Service reads active lifecycle state and immutable artifacts | Artifacts are immutable; only Contract Service candidate admission and activation change lifecycle authority |
 | Raw OTLP Inbox | OTel Ingestion | Evidence Materializer reads retained batches | Receiver appends; inbox retention expires by receipt age independently of materialization |
-| Materializer checkpoint and catalog cache | Evidence Materializer | No other app mutates them | One active materializer advances one versioned forward checkpoint per database; catalog changes do not backfill completed batches |
+| Materializer checkpoint and catalog cache | Evidence Materializer | No other app mutates them | One active materializer advances one global forward checkpoint per database; producing versions are provenance and neither version nor catalog changes backfill completed batches |
 | Evidence Store observations and materialization provenance | Evidence Materializer | Planned Async Analysis reads through the Evidence Store contract | Observations outlive raw inbox retention; decision observations preserve an emitted contract digest, while ordinary application observations have no eager contract association |
 | Analysis run state and evidence/method provenance | Async Analysis, planned | Contract Service receives candidate provenance at admission | A run is scoped to an exact contract digest; superseded work cannot activate |
 

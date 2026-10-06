@@ -245,6 +245,56 @@
         }
       }
     },
+    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates": {
+      "post": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "submitAnalysisCandidate",
+        "summary": "Persist an inactive analysis Candidate for one exact current contract digest.",
+        "description": "Validates and canonicalizes the proposed rules against the immutable contract version, fences admission on that digest still being current, and atomically persists Candidate lifecycle state with trusted cycle provenance. This operation never activates an executable. The contract name and digest come only from the route; retries must repeat the exact workspace-cycle submission.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/AnalysisCandidateSubmission"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AnalysisCandidate"
+          },
+          "201": {
+            "$ref": "#/components/responses/CreatedAnalysisCandidate"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "tags": [
@@ -406,6 +456,16 @@
             }
           }
         }
+      },
+      "AnalysisCandidateSubmission": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/AnalysisCandidateSubmission"
+            }
+          }
+        }
       }
     },
     "responses": {
@@ -471,6 +531,36 @@
           "application/json": {
             "schema": {
               "$ref": "../schemas/management-models-v3.schema.json#/$defs/CurrentContractCatalog"
+            }
+          }
+        }
+      },
+      "AnalysisCandidate": {
+        "description": "An existing inactive Candidate admitted for the exact workspace cycle.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/AnalysisCandidateResult"
+            }
+          }
+        }
+      },
+      "CreatedAnalysisCandidate": {
+        "description": "A newly persisted inactive Candidate with no runtime authority.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/AnalysisCandidateResult"
             }
           }
         }

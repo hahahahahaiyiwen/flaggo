@@ -1,7 +1,11 @@
 [workspace]
 members = [
+    "apps/async-analysis",
     "apps/evidence-materializer",
     "apps/otel-ingestion",
+    "modules/analysis-agent",
+    "modules/analysis-domain",
+    "modules/analysis-workspace",
     "modules/evidence-store",
     "modules/otlp-codec",
     "modules/raw-otlp-inbox",

@@ -4,9 +4,16 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
+mod analysis;
 mod sqlite;
+mod sqlite_analysis;
 
+pub use analysis::{
+    EvidenceAnalysisStore, EvidenceQueryCapabilities, EvidenceQueryLimits, EvidenceQueryRequest,
+    EvidenceQueryResult, EvidenceQueryScope, EvidenceSourceSelector, ObservationWatermark,
+};
 pub use sqlite::SqliteEvidenceStore;
+pub use sqlite_analysis::{SQLITE_EVIDENCE_QUERY_CAPABILITIES, SqliteEvidenceAnalysisStore};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AuthorityScope {
@@ -179,6 +186,10 @@ pub enum EvidenceStoreError {
     CorruptData(String),
     #[error("invalid evidence write: {0}")]
     InvalidWrite(String),
+    #[error("invalid evidence query: {0}")]
+    InvalidQuery(String),
+    #[error("evidence query exceeded its {0} limit")]
+    QueryLimit(&'static str),
     #[error("evidence store is unavailable")]
     Unavailable {
         #[source]
@@ -200,10 +211,7 @@ pub trait EvidenceStore: Send + Sync {
 
     async fn load_catalog(&self) -> Result<Option<StoredContractCatalog>, EvidenceStoreError>;
 
-    async fn forward_checkpoint(
-        &self,
-        key: &ForwardMaterializationKey,
-    ) -> Result<Option<u64>, EvidenceStoreError>;
+    async fn forward_checkpoint(&self) -> Result<Option<u64>, EvidenceStoreError>;
 
     async fn commit(
         &self,

@@ -16,7 +16,7 @@ use crate::{
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const CREATE_SCHEMA_VERSIONS: &str = "
@@ -53,7 +53,8 @@ const CREATE_CHECKPOINTS: &str = "
 ";
 const CREATE_OBSERVATIONS: &str = "
     CREATE TABLE IF NOT EXISTS evidence_observations (
-        observation_id TEXT PRIMARY KEY,
+        observation_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        observation_id TEXT NOT NULL UNIQUE,
         logical_source_id TEXT NOT NULL,
         content_digest TEXT NOT NULL,
         tenant TEXT NOT NULL,
@@ -87,6 +88,7 @@ const CREATE_OBSERVATION_INDEXES: &str = "
         application,
         environment,
         observed_at_unix_nano,
+        observation_sequence,
         observation_id
     );
 
@@ -250,23 +252,12 @@ impl SqliteEvidenceStore {
 
     async fn stored_checkpoint(
         transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        key: &ForwardMaterializationKey,
     ) -> Result<Option<u64>, EvidenceStoreError> {
         let value: Option<i64> = sqlx::query_scalar(
-            "SELECT last_inbox_batch_id
-             FROM evidence_materializer_checkpoints
-             WHERE materializer_version = ?
-               AND decoder_version = ?
-               AND identity_version = ?
-               AND projection_version = ?
-               AND routing_version = ?",
+            "SELECT MAX(last_inbox_batch_id)
+             FROM evidence_materializer_checkpoints",
         )
-        .bind(&key.versions.materializer)
-        .bind(&key.versions.decoder)
-        .bind(&key.versions.identity)
-        .bind(&key.versions.projection)
-        .bind(&key.versions.routing)
-        .fetch_optional(&mut **transaction)
+        .fetch_one(&mut **transaction)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
         value
@@ -314,14 +305,10 @@ impl SqliteEvidenceStore {
             "SELECT observation_id, content_digest
              FROM evidence_observations
              WHERE logical_source_id = ?
-               AND decoder_version = ?
-               AND identity_version = ?
-               AND projection_version = ?",
+             ORDER BY observation_sequence
+             LIMIT 1",
         )
         .bind(&observation.logical_source_id)
-        .bind(&observation.versions.decoder)
-        .bind(&observation.versions.identity)
-        .bind(&observation.versions.projection)
         .fetch_optional(&mut **transaction)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
@@ -471,26 +458,12 @@ impl EvidenceStore for SqliteEvidenceStore {
         .transpose()
     }
 
-    async fn forward_checkpoint(
-        &self,
-        key: &ForwardMaterializationKey,
-    ) -> Result<Option<u64>, EvidenceStoreError> {
-        validate_key(key)?;
+    async fn forward_checkpoint(&self) -> Result<Option<u64>, EvidenceStoreError> {
         let value: Option<i64> = sqlx::query_scalar(
-            "SELECT last_inbox_batch_id
-             FROM evidence_materializer_checkpoints
-             WHERE materializer_version = ?
-               AND decoder_version = ?
-               AND identity_version = ?
-               AND projection_version = ?
-               AND routing_version = ?",
+            "SELECT MAX(last_inbox_batch_id)
+             FROM evidence_materializer_checkpoints",
         )
-        .bind(&key.versions.materializer)
-        .bind(&key.versions.decoder)
-        .bind(&key.versions.identity)
-        .bind(&key.versions.projection)
-        .bind(&key.versions.routing)
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
         value
@@ -508,7 +481,7 @@ impl EvidenceStore for SqliteEvidenceStore {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(EvidenceStoreError::unavailable)?;
-        if Self::stored_checkpoint(&mut transaction, &commit.key)
+        if Self::stored_checkpoint(&mut transaction)
             .await?
             .is_some_and(|value| value >= commit.inbox_batch_id)
         {

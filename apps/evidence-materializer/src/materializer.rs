@@ -3,7 +3,7 @@ use std::num::{NonZeroU16, NonZeroU64};
 use chrono::{DateTime, Utc};
 use flaggo_evidence_store::{
     EvidenceStore, EvidenceStoreCommitResult, EvidenceStoreError, EvidenceStoreHealth,
-    ForwardMaterializationKey, MaterializerVersions, StoredContractCatalog,
+    MaterializerVersions, StoredContractCatalog,
 };
 use flaggo_raw_otlp_inbox::{InboxBatchId, RawOtlpInbox, RawOtlpInboxError};
 use thiserror::Error;
@@ -60,8 +60,7 @@ where
         &self,
         catalog: &CompiledContractCatalog,
     ) -> Result<MaterializerRunResult, MaterializerError> {
-        let key = self.forward_key();
-        let checkpoint = self.store.forward_checkpoint(&key).await?;
+        let checkpoint = self.store.forward_checkpoint().await?;
         let after = checkpoint.and_then(NonZeroU64::new).map(InboxBatchId::new);
         let batches = self.inbox.read_after(after, self.read_limit).await?;
         let mut result = MaterializerRunResult {
@@ -76,7 +75,7 @@ where
     }
 
     pub async fn inspect(&self) -> Result<MaterializerHealth, MaterializerError> {
-        let checkpoint_batch_id = self.store.forward_checkpoint(&self.forward_key()).await?;
+        let checkpoint_batch_id = self.store.forward_checkpoint().await?;
         let after = checkpoint_batch_id
             .and_then(NonZeroU64::new)
             .map(InboxBatchId::new);
@@ -93,12 +92,6 @@ where
 
     pub fn store(&self) -> &S {
         &self.store
-    }
-
-    fn forward_key(&self) -> ForwardMaterializationKey {
-        ForwardMaterializationKey {
-            versions: self.versions.clone(),
-        }
     }
 }
 

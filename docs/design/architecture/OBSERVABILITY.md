@@ -8,11 +8,10 @@ workers. The machine-readable authority is
 whose strict shape is defined by
 [`service-observability-profile-v1.schema.json`](../../../contracts/schemas/service-observability-profile-v1.schema.json).
 
-Contract Service, Decision Service, OTel Ingestion, and Evidence Materializer
-implement the profile through shared .NET and Rust hosting boundaries. Async
-Analysis remains a registered scope but must adopt the same boundary when its
-app is integrated. New signals extend the registry and conformance checks
-before service code emits them.
+Contract Service, Decision Service, OTel Ingestion, Evidence Materializer, and
+Async Analysis implement the profile through shared .NET and Rust hosting
+boundaries. New signals extend the registry and conformance checks before
+service code emits them.
 
 ## Telemetry domains
 

@@ -93,7 +93,7 @@
     "policy": {
       "mode": "auto-activation",
       "evaluate": {
-        "interval": "PT15M"
+        "interval": "PT1M"
       }
     },
     "evidence": [

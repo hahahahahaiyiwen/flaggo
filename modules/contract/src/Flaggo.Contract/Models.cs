@@ -321,6 +321,60 @@ public sealed record DecisionExecutable
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AnalysisCandidateSubmission
+{
+    [JsonPropertyName("rules")]
+    public required IReadOnlyList<ExecutableRule> Rules { get; init; }
+
+    [JsonPropertyName("provenance")]
+    public required AnalysisCandidateProvenance Provenance { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AnalysisCandidateProvenance
+{
+    [JsonPropertyName("workspaceId")]
+    public required string WorkspaceId { get; init; }
+
+    [JsonPropertyName("cycleId")]
+    public required string CycleId { get; init; }
+
+    [JsonPropertyName("attemptId")]
+    public required string AttemptId { get; init; }
+
+    [JsonPropertyName("evidenceCutoff")]
+    public required DateTimeOffset EvidenceCutoff { get; init; }
+
+    [JsonPropertyName("evidenceWatermark")]
+    public required long EvidenceWatermark { get; init; }
+
+    [JsonPropertyName("analysisManifestDigest")]
+    public required string AnalysisManifestDigest { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AnalysisCandidateResult
+{
+    [JsonPropertyName("contractName")]
+    public required string ContractName { get; init; }
+
+    [JsonPropertyName("contractDigest")]
+    public required string ContractDigest { get; init; }
+
+    [JsonPropertyName("executableDigest")]
+    public required string ExecutableDigest { get; init; }
+
+    [JsonPropertyName("lifecycleState")]
+    public required string LifecycleState { get; init; }
+
+    [JsonPropertyName("createdAt")]
+    public required DateTimeOffset CreatedAt { get; init; }
+
+    [JsonPropertyName("created")]
+    public required bool Created { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ExecutableRule
 {
     [JsonPropertyName("name")]

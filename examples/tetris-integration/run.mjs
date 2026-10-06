@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -19,10 +20,20 @@ import { startLocalFlaggoHosts } from "./local-flaggo.mjs";
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleDirectory, "../..");
 const execFileAsync = promisify(execFile);
+const supportedArguments = new Set(["--analysis"]);
+for (const argument of process.argv.slice(2)) {
+  if (!supportedArguments.has(argument)) {
+    throw new Error(`Unsupported Tetris integration argument '${argument}'.`);
+  }
+}
+const analysisEnabled = process.argv.includes("--analysis");
+const analysisCohortSize = 10;
+const analysisOutcomeDelayMilliseconds = 5_250;
+const analysisSessionEventMaxBytes = 16 * 1024;
 const runDirectory = resolve(
   repositoryRoot,
   ".flaggo",
-  `tetris-integration-${process.pid}-${Date.now()}`,
+  `t-${process.pid}-${Date.now()}`,
 );
 
 async function runIntegration(lifecycle) {
@@ -113,6 +124,9 @@ async function runIntegration(lifecycle) {
   });
   const lowClock = deterministicClock();
   const highClock = deterministicClock();
+  const expectedSessionIds = ["tetris-e2e-low", "tetris-e2e-high"];
+  const expectedPolicyDecisions = 2
+    + (analysisEnabled ? analysisCohortSize * 2 : 0);
   const lowSession = new TetrisSession({
     game: {
       pieceSource: new SequencePieceSource(["O"]),
@@ -163,13 +177,26 @@ async function runIntegration(lifecycle) {
     assert.equal(highPolicy.policyContext?.sessionId, "tetris-e2e-high");
     assert.equal(highPolicy.policyContext?.recoveryFailures5s, 3);
 
+    if (analysisEnabled) {
+      expectedSessionIds.push(...await emitAnalysisEvidenceCohort({
+        SequencePieceSource,
+        TetrisSession,
+        forceFlush: () => telemetry.forceFlush(),
+        instrumentation: telemetry.sessionInstrumentation,
+        provider,
+        signal: lifecycle.signal,
+        size: analysisCohortSize,
+      }));
+    }
+
     lowSession.close();
     highSession.close();
     await telemetry.forceFlush();
     telemetrySummary = assertTelemetry({
       telemetry,
       proxy,
-      expectedSessionIds: ["tetris-e2e-low", "tetris-e2e-high"],
+      expectedPolicyDecisions,
+      expectedSessionIds,
     });
   } finally {
     lowSession.close();
@@ -187,7 +214,7 @@ async function runIntegration(lifecycle) {
     signal: lifecycle.signal,
   });
 
-  assert.equal(capturedDecisions.length, 2);
+  assert.equal(capturedDecisions.length, expectedPolicyDecisions);
   const decisionsBySession = new Map(
     capturedDecisions.map((decision) => [
       decision.request.attributes.session_id,
@@ -242,6 +269,17 @@ async function runIntegration(lifecycle) {
   assertEquivalentDecision(restHigh, highDecision.response);
   assertEquivalentDecision(restLow, lowDecision.response);
 
+  const analysis = analysisEnabled
+    ? await runAsyncAnalysisCandidateCheck({
+      activeExecutableDigest: deployed.deployment.activeExecutableDigest,
+      attributes: highDecision.request.attributes,
+      contractDigest: deployed.deployment.contractDigest,
+      contractName: deployed.contract.name,
+      hosts,
+      lifecycle,
+    })
+    : undefined;
+
   await materializer.stop();
   await hosts.decision.stop();
   await assert.rejects(() =>
@@ -257,6 +295,7 @@ async function runIntegration(lifecycle) {
   await hosts.contract.stop();
   await hosts.otelIngestion.stop();
   await assertPersistedTetrisEvidence({
+    analysisCohortSize: analysisEnabled ? analysisCohortSize : 0,
     contractDigest: deployed.deployment.contractDigest,
     databaseUrl: hosts.databaseUrl,
     executableDigest: deployed.deployment.activeExecutableDigest,
@@ -354,6 +393,7 @@ async function runIntegration(lifecycle) {
       high: restHigh.result,
       low: restLow.result,
     },
+    ...(analysis === undefined ? {} : { asyncAnalysis: analysis }),
     restartPersistence: {
       high: restartedHigh.result,
       executableDigest: restartedHigh.executableDigest,
@@ -362,7 +402,145 @@ async function runIntegration(lifecycle) {
   }, null, 2)}\n`);
 }
 
-function assertTelemetry({ telemetry, proxy, expectedSessionIds }) {
+async function runAsyncAnalysisCandidateCheck({
+  activeExecutableDigest,
+  attributes,
+  contractDigest,
+  contractName,
+  hosts,
+  lifecycle,
+}) {
+  let githubToken = await currentGitHubToken(lifecycle.signal);
+  const { host } = await hosts.startAsyncAnalysis({ githubToken });
+  githubToken = undefined;
+
+  const entry = await host.waitForStructuredLog(
+    (candidate) => {
+      if (
+        candidate["event.name"] === "flaggo.analysis.cycle.failed"
+        || candidate["event.name"] === "flaggo.service.failed"
+      ) {
+        throw new Error(
+          `Async Analysis failed: ${JSON.stringify(candidate)}`,
+        );
+      }
+      if (candidate["event.name"] !== "flaggo.analysis.cycle.completed") {
+        return false;
+      }
+      const outcome = candidate["flaggo.operation.outcome"];
+      if (outcome === "not_eligible" || outcome === "busy") return false;
+      if (outcome === "candidate") return true;
+      throw new Error(
+        `Async Analysis did not produce a Candidate: ${JSON.stringify(candidate)}`,
+      );
+    },
+    {
+      signal: lifecycle.signal,
+      timeoutMilliseconds: 420000,
+    },
+  );
+  assert.equal(entry["flaggo.contract.name"], contractName);
+  assert.equal(entry["flaggo.contract.digest"], contractDigest);
+  const candidateExecutableDigest = entry["flaggo.candidate.digest"];
+  assert.match(candidateExecutableDigest, /^sha256:[0-9a-f]{64}$/u);
+  assert.notEqual(candidateExecutableDigest, activeExecutableDigest);
+  await host.waitForStructuredLog(
+    (structured) =>
+      structured.event === "async_analysis.agent_session_event",
+    {
+      signal: lifecycle.signal,
+      timeoutMilliseconds: 10000,
+    },
+  );
+
+  const decisionAfterCandidate = await postDecisionRest({
+    fetch: hosts.fetch,
+    decisionUrl: hosts.decisionUrl,
+    contractName,
+    contractDigest,
+    attributes,
+    signal: lifecycle.signal,
+  });
+  assert.equal(
+    decisionAfterCandidate.executableDigest,
+    activeExecutableDigest,
+    "An inactive Candidate must not replace the active executable.",
+  );
+  await host.stop();
+  const sessionDiagnostics = await assertAnalysisSessionDiagnostics(
+    hosts.paths.asyncAnalysisLog,
+  );
+  return {
+    activeExecutableDigest,
+    candidateExecutableDigest,
+    candidatePersistedInactive: true,
+    cycleId: entry["flaggo.analysis.cycle.id"],
+    sessionDiagnostics,
+  };
+}
+
+async function assertAnalysisSessionDiagnostics(logPath) {
+  const entries = (await readFile(logPath, "utf8"))
+    .split(/\r?\n/u)
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line));
+  const sessionEvents = entries
+    .filter((entry) => entry.event === "async_analysis.agent_session_event")
+    .map((entry) => entry.sessionEvent);
+  assert.ok(sessionEvents.length > 0);
+
+  const sizes = sessionEvents.map((event) =>
+    Buffer.byteLength(JSON.stringify(event), "utf8")
+  );
+  assert.ok(sizes.every((size) => size <= analysisSessionEventMaxBytes));
+  const truncatedEvents = sessionEvents.filter((event) =>
+    Object.hasOwn(event, "flaggoTruncation")
+  );
+  assert.ok(
+    truncatedEvents.length > 0,
+    "The live session must exercise bounded diagnostic truncation.",
+  );
+  assert.ok(truncatedEvents.every((event) =>
+    event.flaggoTruncation.limitBytes === analysisSessionEventMaxBytes
+    && event.flaggoTruncation.originalBytes > 0
+    && event.flaggoTruncation.truncatedValues > 0
+  ));
+  assert.ok(truncatedEvents.some((event) =>
+    event.flaggoTruncation.originalBytes > analysisSessionEventMaxBytes
+  ));
+
+  return {
+    events: sessionEvents.length,
+    maxEventBytes: Math.max(...sizes),
+    truncatedEvents: truncatedEvents.length,
+  };
+}
+
+async function currentGitHubToken(signal) {
+  try {
+    const { stdout } = await execFileAsync("gh", ["auth", "token"], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      signal,
+      windowsHide: true,
+    });
+    const token = stdout.trim();
+    if (token === "") throw new Error("empty token");
+    return token;
+  } catch {
+    throw new Error(
+      "The live Async Analysis integration requires an authenticated "
+      + "GitHub CLI. Run 'gh auth login' and retry.",
+    );
+  }
+}
+
+function assertTelemetry({
+  telemetry,
+  proxy,
+  expectedPolicyDecisions,
+  expectedSessionIds,
+}) {
   const events = telemetry.events;
   const eventNames = new Set(events.map((event) => event.eventName));
   for (const expected of [
@@ -422,7 +600,7 @@ function assertTelemetry({ telemetry, proxy, expectedSessionIds }) {
     span.name === "tetris.drop_interval.select"
   );
   assert.ok(commandSpans.length > 0);
-  assert.equal(policySpans.length, 2);
+  assert.equal(policySpans.length, expectedPolicyDecisions);
   assert.ok(commandSpans.every((span) =>
     span.instrumentationScope.name === "tetris.engine"
   ));
@@ -512,11 +690,11 @@ function assertTelemetry({ telemetry, proxy, expectedSessionIds }) {
 }
 
 function metric(metrics, name) {
-  const found = metrics.find(({ metric: candidate }) =>
+  const found = metrics.filter(({ metric: candidate }) =>
     candidate.descriptor.name === name
   );
-  assert.ok(found, `missing metric '${name}'`);
-  return found;
+  assert.ok(found.length > 0, `missing metric '${name}'`);
+  return found.at(-1);
 }
 
 function deterministicClock() {
@@ -527,6 +705,74 @@ function deterministicClock() {
       current += milliseconds;
     },
   };
+}
+
+async function emitAnalysisEvidenceCohort({
+  SequencePieceSource,
+  TetrisSession,
+  forceFlush,
+  instrumentation,
+  provider,
+  signal,
+  size,
+}) {
+  const sessionIds = [];
+  for (let index = 0; index < size; index += 1) {
+    const suffix = String(index + 1).padStart(2, "0");
+    const scenarios = [
+      {
+        boardPressure: 0.749,
+        expectedIntervalMs: 750,
+        sessionId: `tetris-cohort-a-${suffix}`,
+      },
+      {
+        boardPressure: 0.751,
+        expectedIntervalMs: 850,
+        sessionId: `tetris-cohort-b-${suffix}`,
+      },
+    ];
+
+    const evaluatedScenarios = [];
+    for (const scenario of scenarios) {
+      const selection = await provider.select({
+        boardPressureMean5s: scenario.boardPressure,
+        boardPressureMax5s: 0.8,
+        currentLevel: 0,
+        placementTimeMeanMs5s: 0,
+        recoveryFailures5s: 0,
+        piecesLocked5s: 0,
+        sessionId: scenario.sessionId,
+      }, signal);
+      assert.equal(selection.intervalMs, scenario.expectedIntervalMs);
+      evaluatedScenarios.push({
+        ...scenario,
+        placementTimeMs: selection.intervalMs + index * 4,
+      });
+    }
+    await forceFlush();
+    await delay(analysisOutcomeDelayMilliseconds, undefined, { signal });
+
+    for (const scenario of evaluatedScenarios) {
+      const clock = deterministicClock();
+      const session = new TetrisSession({
+        game: {
+          pieceSource: new SequencePieceSource(["O"]),
+          sessionId: scenario.sessionId,
+        },
+        instrumentation,
+        now: clock.now,
+        provider,
+      });
+      try {
+        clock.advance(scenario.placementTimeMs);
+        session.dispatch("hard-drop");
+      } finally {
+        session.close();
+      }
+      sessionIds.push(scenario.sessionId);
+    }
+  }
+  return sessionIds;
 }
 
 function moveHorizontally(session, offset) {
@@ -669,6 +915,7 @@ function assertMaterializationHealth(health) {
 }
 
 async function assertPersistedTetrisEvidence({
+  analysisCohortSize: expectedAnalysisCohortSize,
   contractDigest,
   databaseUrl,
   executableDigest,
@@ -697,6 +944,8 @@ async function assertPersistedTetrisEvidence({
           FLAGGO_TETRIS_CONTRACT_DIGEST: contractDigest,
           FLAGGO_TETRIS_EVIDENCE_DATABASE_URL: databaseUrl,
           FLAGGO_TETRIS_EXECUTABLE_DIGEST: executableDigest,
+          FLAGGO_TETRIS_ANALYSIS_COHORT_SIZE:
+            String(expectedAnalysisCohortSize),
         },
         maxBuffer: 10 * 1024 * 1024,
         signal,
@@ -923,14 +1172,23 @@ async function startRecordingProxy(upstreamBaseUrl) {
 }
 
 async function main() {
+  let preserveRunDirectory = false;
   const lifecycle = createHostLifecycle({
-    removeRunDirectory: () =>
-      rm(runDirectory, { recursive: true, force: true }),
+    removeRunDirectory: () => preserveRunDirectory
+      ? Promise.resolve()
+      : rm(runDirectory, { recursive: true, force: true }),
   });
   const uninstallSignalHandlers = installSignalHandlers(lifecycle);
   try {
     await runWithCleanup(
-      () => runIntegration(lifecycle),
+      async () => {
+        try {
+          return await runIntegration(lifecycle);
+        } catch (error) {
+          preserveRunDirectory = true;
+          throw error;
+        }
+      },
       lifecycle,
       (cleanupError) => {
         process.stderr.write(`Cleanup failure: ${formatError(cleanupError)}\n`);
@@ -941,6 +1199,11 @@ async function main() {
       process.exitCode = lifecycle.signalExitCode;
     } else {
       process.exitCode = 1;
+      if (preserveRunDirectory) {
+        process.stderr.write(
+          `Integration artifacts preserved at ${runDirectory}\n`,
+        );
+      }
       process.stderr.write(`${formatError(error)}\n`);
     }
   } finally {

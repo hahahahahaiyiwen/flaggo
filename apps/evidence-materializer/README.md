@@ -4,8 +4,10 @@
 
 Evidence Materializer is the composition root that turns retained OTLP export
 requests into query-ready observations. It reads the Raw OTLP Inbox forward
-through one versioned checkpoint, decodes and routes individual signals, and
-transactionally writes Evidence Store projections.
+through one global checkpoint, decodes and routes individual signals, and
+transactionally writes Evidence Store projections. Producing versions are
+recorded as provenance without replaying completed inbox batches after an
+upgrade.
 
 The canonical cross-app lifecycle is documented in
 [Application boundaries and lifecycle](../../docs/design/architecture/APP_BOUNDARIES.md).

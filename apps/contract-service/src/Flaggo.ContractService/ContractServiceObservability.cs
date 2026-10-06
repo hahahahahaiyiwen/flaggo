@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Flaggo.ContractStore;
 using Flaggo.ExecutableStore;
+using Flaggo.Expressions;
 using Flaggo.ServiceHosting;
 using Microsoft.Data.Sqlite;
 
@@ -55,7 +56,7 @@ public sealed class ContractServiceObservability
     public FlaggoOperation StartCandidateSubmission(
         string contractName,
         string contractDigest,
-        string candidateDigest)
+        string? candidateDigest = null)
     {
         var correlationId = Activity.Current?.GetTagItem(
             "flaggo.request.correlation_id");
@@ -63,7 +64,10 @@ public sealed class ContractServiceObservability
         activity?.SetTag("flaggo.operation.name", "candidate.submit");
         activity?.SetTag("flaggo.contract.name", contractName);
         activity?.SetTag("flaggo.contract.digest", contractDigest);
-        activity?.SetTag("flaggo.candidate.digest", candidateDigest);
+        if (candidateDigest is not null)
+        {
+            activity?.SetTag("flaggo.candidate.digest", candidateDigest);
+        }
         activity?.SetTag("flaggo.request.correlation_id", correlationId);
         return new FlaggoOperation(
             activity,
@@ -111,7 +115,7 @@ public sealed class ContractServiceObservability
     public void CandidateRejected(
         string contractName,
         string contractDigest,
-        string candidateDigest,
+        string? candidateDigest,
         Exception exception)
     {
         var (outcome, category) = Classify(exception);
@@ -171,8 +175,13 @@ public sealed class ContractServiceObservability
         {
             ContractNameMismatchException
                 or InvalidDecisionContractException
+                or ExecutableCompilationException
                 or ArgumentException
                 or FormatException => ("invalid", "validation"),
+            ContractVersionNotFoundException => ("invalid", "not_found"),
+            StaleContractDigestException => ("stale", "conflict"),
+            CandidateAdmissionConflictException
+                or CandidateLifecycleConflictException => ("conflict", "conflict"),
             ActivationConflictException => ("conflict", "conflict"),
             ContractNameAuthorityConflictException => ("conflict", "conflict"),
             SqliteException or IOException => ("unavailable", "dependency"),
@@ -186,12 +195,18 @@ public sealed class ContractServiceObservability
         string contractName,
         string contractDigest,
         string outcome,
-        string candidateDigest) =>
-        new()
+        string? candidateDigest)
+    {
+        var attributes = new Dictionary<string, object?>
         {
             ["flaggo.contract.name"] = contractName,
             ["flaggo.contract.digest"] = contractDigest,
-            ["flaggo.candidate.digest"] = candidateDigest,
             ["flaggo.operation.outcome"] = outcome
         };
+        if (candidateDigest is not null)
+        {
+            attributes["flaggo.candidate.digest"] = candidateDigest;
+        }
+        return attributes;
+    }
 }

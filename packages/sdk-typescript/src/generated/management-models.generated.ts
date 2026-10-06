@@ -497,6 +497,59 @@ export interface DecisionExecutable {
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "AnalysisCandidateProvenance".
+ */
+export interface AnalysisCandidateProvenance {
+  /**
+   * Stable digest identity of the contract-name workspace.
+   */
+  workspaceId: string;
+  cycleId: string;
+  attemptId: string;
+  /**
+   * Inclusive event-time cutoff frozen by the analysis cycle.
+   */
+  evidenceCutoff: string;
+  /**
+   * Opaque Evidence Store observation watermark frozen by the analysis cycle.
+   */
+  evidenceWatermark: number;
+  /**
+   * Digest of the immutable analysis manifest persisted in the workspace.
+   */
+  analysisManifestDigest: string;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "AnalysisCandidateSubmission".
+ */
+export interface AnalysisCandidateSubmission {
+  /**
+   * Ordered deterministic rules proposed for the exact contract digest.
+   */
+  rules: ExecutableRule[];
+  provenance: AnalysisCandidateProvenance;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "AnalysisCandidateResult".
+ */
+export interface AnalysisCandidateResult {
+  contractName: DecisionName;
+  contractDigest: Sha256Digest;
+  executableDigest: Sha256Digest;
+  /**
+   * The persisted executable is inactive and has no runtime authority.
+   */
+  lifecycleState: "candidate";
+  createdAt: string;
+  /**
+   * True for first admission of the workspace cycle; false for an exact retry.
+   */
+  created: boolean;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
  * via the `definition` "ValidationIssue".
  */
 export interface ValidationIssue {

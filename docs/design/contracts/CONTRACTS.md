@@ -464,19 +464,22 @@ policy:
     interval: PT15M
 ```
 
-`auto-activation` instructs the Contract Service to attempt atomic activation
-when analysis produces a valid candidate for the current contract. It does not
-bypass candidate validation, contract conformance, current-contract checks, or
-activation conflict handling. It also does not make runtime search for the
-latest generated executable. If validation or activation fails, the existing
-active executable remains unchanged.
+`auto-activation` instructs a separate Contract Service activator to attempt
+atomic activation after Async Analysis persists a valid inactive Candidate for
+the current contract. Candidate persistence does not activate it. The policy
+does not bypass candidate validation, contract conformance, current-contract
+checks, or activation conflict handling. It also does not make runtime search
+for the latest generated executable. If validation or activation fails, the
+existing active executable remains unchanged.
 
 `evaluate.interval` is an ISO 8601 duration and represents a minimum delay, not
 an execution-time guarantee. The first analysis attempt becomes eligible one
-interval after the contract becomes accepted and ready. Only one analysis run
-may be active for a contract digest. The next interval starts after the
-previous attempt completes, whether it activates a candidate, produces no
-candidate, or fails.
+interval after the contract becomes accepted and ready. Only one analysis
+cycle may claim the contract-name workspace at a time, and that cycle binds one
+exact current digest. The next interval starts after the previous cycle
+reaches a terminal outcome, whether it persists an inactive Candidate,
+produces no candidate, or fails. Recoverable attempts resume that cycle without
+advancing the interval.
 
 Analysis method selection is not part of the initial contract shape. Flaggo
 selects the method automatically and records its exact name, version,

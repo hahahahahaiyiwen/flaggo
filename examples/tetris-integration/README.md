@@ -173,6 +173,8 @@ Runtime attributes state their temporal meaning explicitly:
 `board_pressure_mean_5s`, `board_pressure_max_5s`,
 `placement_time_mean_ms_5s`, `recovery_failures_5s`,
 `pieces_locked_5s`, `current_level`, and `session_id`.
+The learning policy evaluates on a one-minute cadence so a local Async
+Analysis run can pick up evidence that arrived after an earlier cycle.
 
 The optional adapter uses `createDecisionClient` from `@flaggo/sdk/runtime`.
 The deployment helper uses `bindDecisionContract` and `createContractClient`
@@ -196,6 +198,40 @@ Run the real-host integration independently:
 npm run test:tetris-integration
 ```
 
+Run the credentialed live-agent extension separately:
+
+```powershell
+npm run test:tetris-analysis-integration
+```
+
+That command captures `gh auth token` in memory without printing or persisting
+it, leaves `FLAGGO_ANALYSIS_MODEL` unset so the Copilot SDK selects its default,
+and enables redacted per-session model/tool events in `async-analysis.log`.
+The analysis fixture emits ten paired decision cohorts immediately below and
+above the authored `0.75` pressure threshold. Each pair is separated from its
+outcomes by more than the five-second context window, the ten rounds span
+nearly the full learning interval, placement time is derived from the returned
+`750`/`850` result, and neither cohort emits a new recovery failure. This gives
+the agent a bounded regression-discontinuity hypothesis rather than
+coincident fixture data.
+After materialization, it waits through the one-minute learning interval and
+requires the real agent to persist a new inactive Candidate. The harness
+observes the registered `flaggo.analysis.cycle.completed` event and exact
+contract, cycle, and Candidate correlations. `NoChange`, `NoCandidate`,
+handoff, failure, timeout, and provider errors fail the test.
+The test then makes another decision and verifies the previously active
+executable is still authoritative. It also parses every structured live
+`sessionEvent`, requires each serialized event to remain at or below 16 KiB,
+and requires the broad real session to exercise `flaggoTruncation` metadata.
+Because model behavior is intentionally nondeterministic, this is an opt-in
+behavior-quality test rather than part of the deterministic application test
+suite.
+
+Successful runs remove their isolated directory. Failed runs print and
+preserve its exact `.flaggo/t-*` path; inspect `async-analysis.log`, `w`, and
+`c` to diagnose the full agent attempt.
+The credential is not written to those artifacts.
+
 The real-host harness drives two deterministic headless sessions through a
 line clear and rejected recovery actions, verifies the `850` and `750` paths,
 captures logs, metrics, and traces while forwarding them to the Rust OTLP
@@ -216,10 +252,11 @@ conflicts. Its structured startup and commit events must expose the expected
 checkpoint, pending-batch lag, oldest pending age, newest evidence timestamp,
 and evidence freshness. After stopping the writers, a Rust assertion reads
 those rows through the production Evidence Store API and requires exactly the
-two catalog-selected metric sources plus the two built-in decision
-observations. It verifies authority, source shape, materializer versions,
-content digests, contract/executable provenance, rule results, and the expected
-high/low session correlation while rejecting any unselected source.
+two catalog-selected metric sources plus all expected exact-digest built-in
+decision observations. It verifies authority, source shape, materializer
+versions, content digests, contract/executable provenance, rule results, and
+the expected high/low session correlation while rejecting any unselected
+source.
 Materializer startup health after restart must then report the same Evidence
 Store counts with no pending batches. The test also verifies SDK-owned
 `_random`, direct REST parity from the captured session attributes,

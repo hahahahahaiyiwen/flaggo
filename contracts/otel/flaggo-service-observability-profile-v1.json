@@ -222,6 +222,7 @@
         "failure",
         "idle",
         "invalid",
+        "no_change",
         "no_candidate",
         "not_eligible",
         "not_found",
@@ -893,6 +894,7 @@
         "candidate",
         "failure",
         "idle",
+        "no_change",
         "no_candidate",
         "not_eligible",
         "recoverable",
@@ -1094,7 +1096,7 @@
       "scopes": [
         "flaggo.async-analysis"
       ],
-      "purpose": "Record candidate, no-candidate, superseded, busy, idle, or not-eligible cycle completion.",
+      "purpose": "Record candidate, no-change, no-candidate, superseded, busy, idle, or not-eligible cycle completion.",
       "requiredAttributes": [
         "flaggo.contract.digest",
         "flaggo.contract.name",
@@ -1118,6 +1120,7 @@
         "busy",
         "candidate",
         "idle",
+        "no_change",
         "no_candidate",
         "not_eligible",
         "superseded"

@@ -291,23 +291,29 @@ signal payload, producing versions, and inbox provenance.
 Exactly one Evidence Materializer is active per database. Its forward
 checkpoint and catalog state are single-writer coordination; active-active
 materializers and partitioned work claims are deferred scale-out concerns.
+The checkpoint is global across materializer, decoder, identity, projection,
+and routing versions. An upgraded materializer continues after the last
+committed inbox batch instead of replaying retained batches. Producing-version
+fields remain observation provenance; they do not create a separate evidence
+identity or progress stream.
 The first accepted candidate owns an observation and its origin provenance.
 Later candidates with the same logical identity and content digest are ignored.
-Within one decoder, identity, and projection version, different content for
-that identity is an invariant violation: the accepted observation remains
-unchanged and usable, while the incoming candidate is rejected and recorded as
-a conflict diagnostic.
+Different content for that identity, including content produced after a
+materializer upgrade, is an invariant violation: the accepted observation
+remains unchanged and usable, while the incoming candidate is rejected and
+recorded as a conflict diagnostic.
 
 Evidence Store observations remain durable after raw inbox payloads expire.
 OTel Ingestion periodically invokes the inbox-owned, receipt-age retention
 operation; receiver appends and materializer reads do not perform cleanup.
 Retention is independent of materialization progress. Changed materialization
-versions may rematerialize only within the currently retained replay range;
+versions apply only to inbox batches after the global forward checkpoint;
 analysis never silently scans the inbox as a fallback.
 Evidence Materializer exposes operational progress through structured process
-events. Startup and every committed batch page report the versioned forward
-checkpoint, exact retained batches after that checkpoint, oldest pending
-receipt age, newest persisted evidence timestamp, and evidence freshness.
+events. Startup and every committed batch page report the global forward
+checkpoint, active producing versions, exact retained batches after that
+checkpoint, oldest pending receipt age, newest persisted evidence timestamp,
+and evidence freshness.
 Fatal startup, inspection, or materialization failures emit a structured
 failure event before process exit. Duplicate and conflict counts remain part
 of each committed-page event, while durable conflict and diagnostic totals are
@@ -338,30 +344,40 @@ accepted-ready contract digest
   -> wait learning.policy.evaluate.interval
   -> read correlated evidence for current contract
   -> run one bounded asynchronous analysis
-  -> produce no candidate, failure, or CandidateExecutable
+  -> produce no candidate, failure, or proposed executable rules
   -> validate candidate against exact contractDigest
+  -> persist one immutable inactive Candidate
+
+separate Contract Service activator
   -> apply auto-activation policy
-  -> atomically activate if still current and valid
+  -> atomically activate if still current and eligible
 ```
 
-Only one analysis run may be active for a contract digest. The next interval
-starts after the previous attempt completes. Runtime continues using the
-existing active executable throughout evidence delay, analysis, failure, and
+Only one analysis cycle may claim a contract-name workspace at a time. Each
+cycle binds one exact current digest, immutable evidence cutoff, and opaque
+Evidence Store watermark. The next interval starts after the previous cycle
+reaches a terminal outcome. Recoverable attempts resume the same cycle without
+advancing cadence. Runtime continues using the existing active executable
+throughout evidence delay, analysis, failure, Candidate persistence, and
 activation attempts.
 
-`auto-activation` means the Contract Service attempts to replace the
-activation mapping after validation. Runtime never scans the Evidence Store or
-Executable Store for the latest generated artifact.
+`auto-activation` means a separate Contract Service activator may attempt to
+replace the activation mapping after Async Analysis persists a validated
+inactive Candidate. Candidate persistence does not imply activation. Runtime
+never scans the Evidence Store or Executable Store for the latest generated
+artifact.
 
 Async Analysis chooses aggregation windows, populations, primary objective
 aggregation, and analysis method. It records those choices and the evidence
 references in generation provenance rather than adding them to the initial
 contract syntax.
 
-When a newer digest becomes current, an older run may finish for reconstruction
-but cannot activate. Analysis results and generation provenance remain attached
-to the digest that produced them. Immutable source observations may be reused
-only when a later analysis explicitly selects and interprets them.
+When a newer digest becomes current, the older cycle receives a bounded
+checkpoint period and becomes superseded. Candidate admission independently
+rechecks current identity, so catalog-detection delay cannot persist a stale
+proposal. Analysis results and generation provenance remain attached to the
+digest that produced them. Immutable source observations may be reused only
+when a later analysis explicitly selects and interprets them.
 
 ## Phase 4 Flaggo OTLP logs mapping
 

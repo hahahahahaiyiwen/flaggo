@@ -208,6 +208,71 @@ public sealed class StoreTests
     }
 
     [Fact]
+    public async Task AnalysisCandidateAdmissionIsDurableAndIdempotentPerCycle()
+    {
+        using var database = new TemporaryDatabase();
+        var store = new SqliteExecutableStore(database.ConnectionString);
+        await store.InitializeAsync();
+        var contract = CreateContract(100);
+        var candidate = CreateCandidate(contract, variant: 1);
+        var admission = CreateAdmission(candidate, cycleId: "cycle-1");
+
+        var created = await store.PutAnalysisCandidateAsync(candidate, admission);
+        var retry = await new SqliteExecutableStore(database.ConnectionString)
+            .PutAnalysisCandidateAsync(
+                candidate with { CreatedAt = candidate.CreatedAt.AddHours(1) },
+                admission with { CreatedAt = admission.CreatedAt.AddHours(1) });
+
+        Assert.True(created.Created);
+        Assert.False(retry.Created);
+        Assert.Equal(created.ExecutableDigest, retry.ExecutableDigest);
+        Assert.Equal(admission.CreatedAt, retry.CreatedAt);
+        Assert.Equal(
+            admission,
+            await ReadAnalysisAdmissionAsync(
+                database.ConnectionString,
+                admission.WorkspaceId,
+                admission.CycleId));
+
+        var conflictingCandidate = CreateCandidate(contract, variant: 2);
+        var conflict = CreateAdmission(
+            conflictingCandidate,
+            admission.CycleId,
+            admission.WorkspaceId);
+        await Assert.ThrowsAsync<CandidateAdmissionConflictException>(
+            () => store.PutAnalysisCandidateAsync(conflictingCandidate, conflict));
+        Assert.Null(await store.GetAsync(conflictingCandidate.ExecutableDigest));
+    }
+
+    [Fact]
+    public async Task AnalysisCandidateAdmissionRejectsNonCandidateExecutableDigest()
+    {
+        using var database = new TemporaryDatabase();
+        var store = new SqliteExecutableStore(database.ConnectionString);
+        await store.InitializeAsync();
+        var contract = CreateContract(100);
+        var contractDigest = ContractDigests.ComputeContractDigest(contract);
+        var previous = CreateCandidate(contract, variant: 1);
+        var current = CreateCandidate(contract, variant: 2);
+        await store.PutCandidateAsync(previous);
+        await store.PutCandidateAsync(current);
+        await store.ActivateAsync(contractDigest, previous.ExecutableDigest);
+
+        var activeConflict = await Assert.ThrowsAsync<CandidateLifecycleConflictException>(
+            () => store.PutAnalysisCandidateAsync(
+                previous,
+                CreateAdmission(previous, cycleId: "active-cycle")));
+        Assert.Equal(ExecutableLifecycleState.Active, activeConflict.State);
+
+        await store.ActivateAsync(contractDigest, current.ExecutableDigest);
+        var inactiveConflict = await Assert.ThrowsAsync<CandidateLifecycleConflictException>(
+            () => store.PutAnalysisCandidateAsync(
+                previous,
+                CreateAdmission(previous, cycleId: "inactive-cycle")));
+        Assert.Equal(ExecutableLifecycleState.Inactive, inactiveConflict.State);
+    }
+
+    [Fact]
     public async Task ActivationAtomicallyReplacesOnlyTheMatchingContract()
     {
         using var database = new TemporaryDatabase();
@@ -361,7 +426,8 @@ public sealed class StoreTests
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(InitializeAsync);
         Assert.Equal(
-            $"Unsupported {component} schema version 1; expected 3.",
+            $"Unsupported {component} schema version 1; "
+            + $"expected {(component == "executable-store" ? 4 : 3)}.",
             exception.Message);
     }
 
@@ -385,7 +451,7 @@ public sealed class StoreTests
             database.ConnectionString,
             "UPDATE flaggo_schema_versions SET version = 3 "
             + "WHERE component = 'contract-store'; "
-            + "UPDATE flaggo_schema_versions SET version = 4 "
+            + "UPDATE flaggo_schema_versions SET version = 5 "
             + "WHERE component = 'executable-store';");
         Assert.True(await contractStore.IsAvailableAsync());
         Assert.False(await executableStore.IsAvailableAsync());
@@ -404,6 +470,18 @@ public sealed class StoreTests
             database.ConnectionString,
             "DROP TABLE decision_contract_current;");
         Assert.False(await contractStore.IsAvailableAsync());
+        Assert.True(await executableStore.IsAvailableAsync());
+
+        await contractStore.InitializeAsync();
+        Assert.True(await contractStore.IsAvailableAsync());
+
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "DROP TABLE analysis_candidate_admissions;");
+        Assert.True(await contractStore.IsAvailableAsync());
+        Assert.False(await executableStore.IsAvailableAsync());
+
+        await executableStore.InitializeAsync();
         Assert.True(await executableStore.IsAvailableAsync());
 
         await ExecuteSqlAsync(
@@ -470,6 +548,61 @@ public sealed class StoreTests
                 ?? new DateTimeOffset(2026, 3, 3, 10, variant, 0, TimeSpan.Zero),
             ActivatedAt: null,
             Provenance: JsonSerializer.SerializeToElement(new { source = "test" }));
+    }
+
+    private static AnalysisCandidateAdmission CreateAdmission(
+        StoredExecutable candidate,
+        string cycleId,
+        string? workspaceId = null) =>
+        new(
+            workspaceId
+                ?? "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            cycleId,
+            $"attempt-{cycleId}",
+            "checkout.delay",
+            candidate.Executable.ContractDigest,
+            candidate.ExecutableDigest,
+            candidate.CreatedAt.AddMinutes(-5),
+            42,
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            candidate.CreatedAt);
+
+    private static async Task<AnalysisCandidateAdmission?> ReadAnalysisAdmissionAsync(
+        string connectionString,
+        string workspaceId,
+        string cycleId)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT attempt_id, contract_name, contract_digest, executable_digest,
+                   evidence_cutoff, evidence_watermark, analysis_manifest_digest, created_at
+            FROM analysis_candidate_admissions
+            WHERE workspace_id = $workspaceId
+              AND cycle_id = $cycleId;
+            """;
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+        command.Parameters.AddWithValue("$cycleId", cycleId);
+        await using var reader = await command.ExecuteReaderAsync();
+        return await reader.ReadAsync()
+            ? new AnalysisCandidateAdmission(
+                workspaceId,
+                cycleId,
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                DateTimeOffset.Parse(
+                    reader.GetString(4),
+                    System.Globalization.CultureInfo.InvariantCulture),
+                reader.GetInt64(5),
+                reader.GetString(6),
+                DateTimeOffset.Parse(
+                    reader.GetString(7),
+                    System.Globalization.CultureInfo.InvariantCulture))
+            : null;
     }
 
     private static async Task<(ActivationResult? Result, Exception? Error)> TryActivateAsync(
