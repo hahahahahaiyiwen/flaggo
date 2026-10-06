@@ -19,7 +19,7 @@ The architecture distinguishes:
 Conflating these concepts would make runtime depend on delayed telemetry or
 would treat a returned-but-unused decision as clean learning evidence.
 
-The OTel Ingestion, Evidence Materializer, and planned Async Analysis app
+The OTel Ingestion, Evidence Materializer, and Async Analysis app
 boundaries are canonical in
 [Application boundaries and lifecycle](APP_BOUNDARIES.md).
 

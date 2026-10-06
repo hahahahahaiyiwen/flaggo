@@ -70,10 +70,10 @@ DecisionContract + correlated evidence
   -> deterministic Decision Service evaluation
 ```
 
-The initial learning policy uses `mode: auto-activation`: a valid candidate
-from the current contract immediately attempts atomic activation. Runtime
-still reads only the activation mapping; it never discovers the latest
-generated artifact.
+The initial learning policy uses `mode: auto-activation`: Contract Service
+discovers a valid admitted candidate on its paced activation scan and attempts
+one atomic current-fenced transition. Runtime still reads only the activation
+mapping; it never discovers the latest generated artifact.
 
 Not every branch should become a decision call, and not every decision needs
 AI. Flaggo is for contextual, high-change decisions where an explicit

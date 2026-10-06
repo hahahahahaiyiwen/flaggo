@@ -77,6 +77,7 @@ public sealed record AnalysisCandidateAdmission(
 public sealed record AnalysisCandidateStoreResult(
     string ExecutableDigest,
     DateTimeOffset CreatedAt,
+    ExecutableLifecycleState LifecycleState,
     bool Created);
 
 public sealed record ActivationResult(

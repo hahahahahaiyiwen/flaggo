@@ -227,8 +227,8 @@ The Contract Service owns:
 - candidate validation and immutable executable persistence;
 - atomic activation;
 - management current-version transitions;
-- receiving planned evidence-generated candidate proposals through an explicit
-  app boundary; and
+- receiving evidence-generated candidate proposals through an explicit app
+  boundary and resolving them with a paced activation worker; and
 - management response and Problem Details mapping.
 
 It does not evaluate runtime decision requests, construct `RuntimeInput`,
@@ -243,7 +243,7 @@ infer contract compatibility across digests.
 | Executable Store | Persist immutable generated executables and provenance; atomically manage scoped Candidate, Active, and Inactive lifecycle state |
 | Management current pointer | Select the version returned by the name-level management read and eligible for new evidence-based analysis |
 | Generation capability | Produce default and authored candidates without granting runtime authority |
-| Planned candidate ingress | Receive evidence-generated candidates and provenance from Async Analysis for authoritative validation and activation |
+| Candidate ingress and activation worker | Receive validated evidence-generated Candidates and provenance from Async Analysis, then resolve eligible Candidates without granting the producer activation authority |
 
 The physical database layout is an implementation choice. These records have
 different semantic roles even when stored transactionally in one database.
@@ -272,20 +272,31 @@ same candidate-validation and activation boundary.
 Async Analysis owns interval scheduling, evidence selection, correlation, and
 evidence-based generation. It reads exact current contracts through a Contract
 Service boundary and may return an immutable candidate plus provenance, but it
-cannot write runtime authority. The candidate-submission API is not yet
-implemented.
+cannot write runtime authority. Candidate submission validates and persists the
+immutable executable as `candidate`; it does not activate it.
 
-The initial policy is `mode: auto-activation`. After validating a candidate
-and confirming that its contract is still current, the Contract Service
-immediately attempts atomic activation. Failure or supersession preserves the
-existing executable.
+The initial policy is `mode: auto-activation`. An internal hosted worker runs
+one bounded scan during service startup, then waits
+`FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS` between scans. The positive
+default is 5000 ms and is independent of
+`learning.policy.evaluate.interval`.
+
+Discovery includes only executables with durable Async Analysis admission
+provenance. For each contract, the current digest is preferred and the newest
+pending admission is selected. A successful activation makes older pending
+Candidates inactive. Stale, invalid, and policy-ineligible Candidates also
+become inactive; retryable infrastructure failures remain `candidate`.
+An exact admission retry returns the original admission and its current
+lifecycle even if the worker already resolved it; the retry never reopens or
+mutates that executable.
 
 Auto-activation is a Contract Service transition:
 
 ```text
-valid current candidate
-  -> Contract Service activation command
-  -> IExecutableStore.Activate(contractDigest, executableDigest)
+admitted Candidate
+  -> immutable contract and executable validation
+  -> current pointer + Candidate version + active version compare
+  -> atomic lifecycle replacement or yield
 ```
 
 It is not a rule telling the Decision Service to query the newest generated
@@ -301,6 +312,12 @@ The Contract Service must preserve these ordering guarantees:
 - current-version movement occurs only after the new digest is ready;
 - accepting a new digest does not change older digest activations;
 - a superseded learning run cannot activate after the current contract changes;
+- current-pointer comparison and executable lifecycle updates occur in one
+  non-deferred SQLite transaction;
+- Candidate and active-executable lifecycle versions prevent ABA and stale
+  scan snapshots from changing authority;
+- concurrent Contract Service workers need no leader: one conditional
+  transition wins and conflicting workers yield until a later scan;
 - only one complete executable digest occupies an activation slot;
 - duplicate activation of the same executable is idempotent; and
 - a failed replacement leaves the prior activation intact.
@@ -314,8 +331,11 @@ contract.
 The service returns explicit failures for malformed requests, route/payload
 mismatch, contract-name authority conflict, unsupported contract features,
 persistence failure, default generation failure, and activation failure.
-Failure to generate a later authored or learned candidate is a recorded
-lifecycle outcome and leaves the current executable active.
+Failure to generate a later authored or learned candidate leaves the current
+executable active. Executable lifecycle state is the durable authority record;
+activation success, rejection, supersession, yield, and failure are reported
+through spans, metrics, and structured events rather than a separate outcome
+journal.
 
 Dry-run semantic errors are returned as structured validation results.
 Protocol and service failures use RFC 9457 Problem Details. The service never
@@ -337,7 +357,9 @@ executable from another contract digest.
 8. The management current-version pointer never selects a runtime contract
    version.
 9. Older digest activations survive acceptance of a newer version.
-10. Runtime evaluation, application result use, and telemetry emission remain
+10. Multi-instance activation conflicts yield without a tight retry or worker
+    failure.
+11. Runtime evaluation, application result use, and telemetry emission remain
     outside Contract Service.
 
 ## Related documents
