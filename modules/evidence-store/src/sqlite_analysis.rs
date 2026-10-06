@@ -18,8 +18,8 @@ use sqlx::{
 };
 
 use crate::{
-    EvidenceAnalysisStore, EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope,
-    EvidenceSourceSelector, EvidenceStoreError, ObservationWatermark,
+    EvidenceAnalysisStore, EvidenceQueryCapabilities, EvidenceQueryRequest, EvidenceQueryResult,
+    EvidenceQueryScope, EvidenceSourceSelector, EvidenceStoreError, ObservationWatermark,
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
@@ -41,6 +41,21 @@ const SAFE_FUNCTIONS: &[&str] = &[
     "total",
     "upper",
 ];
+pub const SQLITE_EVIDENCE_QUERY_CAPABILITIES: EvidenceQueryCapabilities =
+    EvidenceQueryCapabilities {
+        dialect: "sqlite",
+        statements: &["SELECT", "WITH (non-recursive)"],
+        relations: &["observations", "named CTEs"],
+        features: &[
+            "aggregation",
+            "arithmetic",
+            "CASE expressions",
+            "grouping",
+            "JSON extraction",
+            "ordering",
+        ],
+        functions: SAFE_FUNCTIONS,
+    };
 
 #[derive(Clone)]
 pub struct SqliteEvidenceAnalysisStore {
@@ -92,6 +107,10 @@ impl SqliteEvidenceAnalysisStore {
 
 #[async_trait]
 impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
+    fn query_capabilities(&self) -> EvidenceQueryCapabilities {
+        SQLITE_EVIDENCE_QUERY_CAPABILITIES
+    }
+
     async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError> {
         let value: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(observation_sequence), 0) FROM evidence_observations",

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_agent::{
     AgentPool, AgentRunOutcome, AgentSessionSpec, AnalysisCapabilityFactory, AnalysisTask,
+    context::{analysis_task_prompt, prepare_agent_workspace},
 };
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisContractIdentity, AnalysisError, AnalysisProfile, AttemptContext,
@@ -250,8 +251,9 @@ impl AnalysisCoordinator {
         let filesystem = workspace
             .filesystem(&cycle.cycle_id, &context.attempt_id)
             .await?;
+        prepare_agent_workspace(filesystem.as_ref()).await?;
         let task = AnalysisTask {
-            prompt: analysis_prompt(&context),
+            prompt: analysis_task_prompt(&context),
         };
         let lease = self
             .agent_pool
@@ -550,26 +552,4 @@ async fn wait_for_shutdown(shutdown: &mut Option<watch::Receiver<bool>>) {
             return;
         }
     }
-}
-
-fn analysis_prompt(context: &AttemptContext) -> String {
-    format!(
-        "Analyze the current cycle for contract '{}' at digest '{}'. \
-         The trusted workspace is '{}', cycle is '{}', and attempt is '{}'. \
-         Invoke the evidence-analysis skill, obey the coordinator-owned analysis status, \
-         commit one evidence cutoff before querying, \
-         directly analyze every primary-objective and guardrail evidence source, \
-         checkpoint durable work in the workspace, and finish with exactly one JSON object: \
-         {{\"outcome\":\"candidate\",\"explanation\":\"...\"}}, \
-         {{\"outcome\":\"noChange\",\"explanation\":\"...\"}}, \
-         {{\"outcome\":\"noCandidate\",\"explanation\":\"...\"}}, \
-         {{\"outcome\":\"failure\",\"explanation\":\"...\"}}, \
-         {{\"outcome\":\"handoff\",\"explanation\":\"...\"}}, or \
-         {{\"outcome\":\"superseded\",\"explanation\":\"...\"}}.",
-        context.contract.name,
-        context.contract.digest,
-        context.workspace_id,
-        context.cycle_id,
-        context.attempt_id
-    )
 }

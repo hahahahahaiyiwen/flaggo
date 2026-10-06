@@ -211,22 +211,22 @@ mod tests {
 
     #[async_trait]
     impl AnalysisTools for TestTools {
-        async fn check_analysis_status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
+        async fn check_cycle_status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
             self.yield_signal.status()
         }
 
-        async fn commit_evidence_cutoff(
+        async fn commit_cutoff(
             &self,
             _cutoff: chrono::DateTime<Utc>,
         ) -> Result<EvidenceCutoff, AnalysisError> {
             unreachable!()
         }
 
-        async fn describe_evidence(&self) -> Result<serde_json::Value, AnalysisError> {
+        async fn describe(&self) -> Result<serde_json::Value, AnalysisError> {
             unreachable!()
         }
 
-        async fn query_evidence(&self, _sql: &str) -> Result<serde_json::Value, AnalysisError> {
+        async fn run_sql(&self, _sql: &str) -> Result<serde_json::Value, AnalysisError> {
             unreachable!()
         }
 

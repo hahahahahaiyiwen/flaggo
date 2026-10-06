@@ -63,8 +63,20 @@ pub struct EvidenceQueryResult {
     pub result_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceQueryCapabilities {
+    pub dialect: &'static str,
+    pub statements: &'static [&'static str],
+    pub relations: &'static [&'static str],
+    pub features: &'static [&'static str],
+    pub functions: &'static [&'static str],
+}
+
 #[async_trait]
 pub trait EvidenceAnalysisStore: Send + Sync {
+    fn query_capabilities(&self) -> EvidenceQueryCapabilities;
+
     async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError>;
 
     async fn query(

@@ -1381,8 +1381,12 @@ mod tests {
 
     fn profile() -> AnalysisProfile {
         AnalysisProfile {
-            skill_name: "evidence-analysis".to_owned(),
-            skill_version: "1".to_owned(),
+            skill_names: vec![
+                "analysis-cycle-protocol".to_owned(),
+                "understand-decision-contract".to_owned(),
+                "qualitative-analysis".to_owned(),
+                "author-executable".to_owned(),
+            ],
         }
     }
 

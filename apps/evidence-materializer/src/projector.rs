@@ -129,13 +129,9 @@ fn create_observation(
         ])
     };
     let observation_id = hash_parts(&[
-        b"flaggo-observation-v3",
+        b"flaggo-observation-v4",
         logical_source_id.as_bytes(),
         content_digest.as_bytes(),
-        versions.materializer.as_bytes(),
-        versions.decoder.as_bytes(),
-        versions.identity.as_bytes(),
-        versions.projection.as_bytes(),
     ]);
 
     EvidenceObservationWrite {
@@ -225,4 +221,73 @@ fn hash_parts(parts: &[&[u8]]) -> String {
         hasher.update(part);
     }
     format!("sha256:{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use flaggo_evidence_store::{AuthorityScope, EvidenceSignal, MaterializerVersions};
+    use serde_json::json;
+
+    use super::{Candidate, create_observation};
+
+    #[test]
+    fn observation_identity_does_not_change_with_producing_versions() {
+        let authority =
+            AuthorityScope::new("local".to_owned(), "app".to_owned(), "test".to_owned()).unwrap();
+        let first = create_observation(
+            candidate(),
+            authority.clone(),
+            None,
+            None,
+            None,
+            &versions("1"),
+        );
+        let second = create_observation(candidate(), authority, None, None, None, &versions("2"));
+
+        assert_eq!(
+            first.observation.observation_id,
+            second.observation.observation_id
+        );
+        assert_eq!(
+            first.observation.logical_source_id,
+            second.observation.logical_source_id
+        );
+        assert_eq!(
+            first.observation.content_digest,
+            second.observation.content_digest
+        );
+        assert_ne!(first.observation.versions, second.observation.versions);
+    }
+
+    fn candidate() -> Candidate {
+        Candidate {
+            ordinal: 0,
+            signal: EvidenceSignal::Log,
+            instrumentation_scope: "test".to_owned(),
+            signal_name: "test.event".to_owned(),
+            metric_kind: None,
+            metric_unit: None,
+            observed_at_unix_nano: 1,
+            observed_time_source: "timeUnixNano",
+            resource: None,
+            resource_schema_url: String::new(),
+            scope: None,
+            scope_schema_url: String::new(),
+            signal_attributes: Vec::new(),
+            parent_span_name: None,
+            payload: json!({ "body": "same" }),
+            identity: json!({ "id": "same" }),
+            identity_is_content_derived: false,
+        }
+    }
+
+    fn versions(value: &str) -> MaterializerVersions {
+        MaterializerVersions {
+            materializer: value.to_owned(),
+            decoder: value.to_owned(),
+            identity: value.to_owned(),
+            projection: value.to_owned(),
+            routing: value.to_owned(),
+        }
+    }
 }

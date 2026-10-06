@@ -66,16 +66,13 @@ impl YieldSignal {
 
 #[async_trait]
 pub trait AnalysisTools: Send + Sync {
-    async fn check_analysis_status(&self) -> Result<AnalysisRunStatus, AnalysisError>;
+    async fn check_cycle_status(&self) -> Result<AnalysisRunStatus, AnalysisError>;
 
-    async fn commit_evidence_cutoff(
-        &self,
-        cutoff: DateTime<Utc>,
-    ) -> Result<EvidenceCutoff, AnalysisError>;
+    async fn commit_cutoff(&self, cutoff: DateTime<Utc>) -> Result<EvidenceCutoff, AnalysisError>;
 
-    async fn describe_evidence(&self) -> Result<Value, AnalysisError>;
+    async fn describe(&self) -> Result<Value, AnalysisError>;
 
-    async fn query_evidence(&self, sql: &str) -> Result<Value, AnalysisError>;
+    async fn run_sql(&self, sql: &str) -> Result<Value, AnalysisError>;
 
     async fn propose_executable(&self, rules: Value) -> Result<CandidateRecord, AnalysisError>;
 

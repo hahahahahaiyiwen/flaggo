@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use flaggo_analysis_agent::context::analysis_skill_directory;
+
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
 pub const CATALOG_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_URL";
 pub const CONTRACT_SERVICE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_SERVICE_URL";
@@ -39,7 +41,7 @@ pub struct AnalysisServiceConfig {
     pub contract_service_url: String,
     pub workspace_root: PathBuf,
     pub copilot_home: PathBuf,
-    pub skill_root: PathBuf,
+    pub skill_directory: PathBuf,
     pub model: Option<String>,
     pub github_token: Option<String>,
     pub log_session_events: bool,
@@ -77,11 +79,11 @@ impl AnalysisServiceConfig {
             ));
         }
 
-        let skill_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
-        if !skill_root.is_dir() {
+        let skill_directory = analysis_skill_directory();
+        if !skill_directory.is_dir() {
             return Err(format!(
                 "analysis skill directory does not exist: {}",
-                skill_root.display()
+                skill_directory.display()
             ));
         }
         Ok(Self {
@@ -102,7 +104,7 @@ impl AnalysisServiceConfig {
                 COPILOT_HOME_ENVIRONMENT_VARIABLE,
                 DEFAULT_COPILOT_HOME,
             )?),
-            skill_root,
+            skill_directory,
             model,
             github_token: optional_nonempty(GITHUB_TOKEN_ENVIRONMENT_VARIABLE)?,
             log_session_events: parse_bool(LOG_SESSION_EVENTS_ENVIRONMENT_VARIABLE, false)?,

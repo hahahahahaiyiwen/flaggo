@@ -40,8 +40,7 @@ pub struct AnalysisContract {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisProfile {
-    pub skill_name: String,
-    pub skill_version: String,
+    pub skill_names: Vec<String>,
 }
 
 impl AnalysisContract {
@@ -355,7 +354,7 @@ mod tests {
     use chrono::TimeZone;
     use serde_json::json;
 
-    use super::{AnalysisAuthority, AnalysisContract, ScheduleError};
+    use super::{AnalysisAuthority, AnalysisContract, AnalysisProfile, ScheduleError};
 
     fn contract(interval: &str) -> AnalysisContract {
         AnalysisContract {
@@ -395,5 +394,29 @@ mod tests {
             contract("not-a-duration").eligible_after(contract("PT1M").accepted_at),
             Err(ScheduleError::InvalidInterval(_))
         ));
+    }
+
+    #[test]
+    fn profile_serializes_the_ordered_unversioned_skill_set() {
+        let profile = AnalysisProfile {
+            skill_names: vec![
+                "analysis-cycle-protocol".to_owned(),
+                "understand-decision-contract".to_owned(),
+                "qualitative-analysis".to_owned(),
+                "author-executable".to_owned(),
+            ],
+        };
+
+        assert_eq!(
+            serde_json::to_value(profile).expect("serialize profile"),
+            json!({
+                "skillNames": [
+                    "analysis-cycle-protocol",
+                    "understand-decision-contract",
+                    "qualitative-analysis",
+                    "author-executable"
+                ]
+            })
+        );
     }
 }

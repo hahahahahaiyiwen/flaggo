@@ -1,8 +1,10 @@
-//! Provider-neutral analysis-agent contracts and bounded session pooling.
+//! Provider-neutral analysis-agent contracts, context, and bounded sessions.
 //!
-//! This crate owns agent capacity and session lifecycle contracts. It does not
-//! schedule analysis, persist workspaces, or select a concrete model SDK.
+//! This crate owns the static analysis-agent context package, agent capacity,
+//! and session lifecycle contracts. It does not schedule analysis, persist
+//! cycle state, or select a concrete model SDK.
 
+pub mod context;
 #[cfg(feature = "copilot")]
 pub mod copilot;
 

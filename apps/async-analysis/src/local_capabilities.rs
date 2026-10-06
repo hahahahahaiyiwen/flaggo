@@ -81,14 +81,11 @@ struct LocalAnalysisTools {
 
 #[async_trait]
 impl AnalysisTools for LocalAnalysisTools {
-    async fn check_analysis_status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
+    async fn check_cycle_status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
         self.yield_signal.status()
     }
 
-    async fn commit_evidence_cutoff(
-        &self,
-        cutoff: DateTime<Utc>,
-    ) -> Result<EvidenceCutoff, AnalysisError> {
+    async fn commit_cutoff(&self, cutoff: DateTime<Utc>) -> Result<EvidenceCutoff, AnalysisError> {
         self.ensure_not_yielding()?;
         if cutoff > self.clock.now() {
             return Err(AnalysisError::Evidence(
@@ -122,10 +119,11 @@ impl AnalysisTools for LocalAnalysisTools {
         Ok(committed)
     }
 
-    async fn describe_evidence(&self) -> Result<Value, AnalysisError> {
+    async fn describe(&self) -> Result<Value, AnalysisError> {
         self.ensure_not_yielding()?;
         Ok(json!({
             "relation": "observations",
+            "queryCapabilities": self.evidence_store.query_capabilities(),
             "columns": [
                 "observation_sequence",
                 "observation_id",
@@ -192,7 +190,7 @@ impl AnalysisTools for LocalAnalysisTools {
         }))
     }
 
-    async fn query_evidence(&self, sql: &str) -> Result<Value, AnalysisError> {
+    async fn run_sql(&self, sql: &str) -> Result<Value, AnalysisError> {
         self.ensure_not_yielding()?;
         let cutoff = self
             .workspace
@@ -389,7 +387,10 @@ mod tests {
     use flaggo_analysis_workspace::{
         CyclePreparation, LocalWorkspaceProvider, PrepareCycleResult, WorkspaceProvider,
     };
-    use flaggo_evidence_store::{EvidenceQueryResult, EvidenceStoreError, ObservationWatermark};
+    use flaggo_evidence_store::{
+        EvidenceQueryCapabilities, EvidenceQueryResult, EvidenceStoreError, ObservationWatermark,
+        SQLITE_EVIDENCE_QUERY_CAPABILITIES,
+    };
     use serde_json::json;
 
     use super::*;
@@ -409,6 +410,10 @@ mod tests {
 
     #[async_trait]
     impl EvidenceAnalysisStore for FakeEvidenceStore {
+        fn query_capabilities(&self) -> EvidenceQueryCapabilities {
+            SQLITE_EVIDENCE_QUERY_CAPABILITIES
+        }
+
         async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError> {
             let mut captures = self.captures.lock().expect("capture lock");
             *captures += 1;
@@ -515,8 +520,12 @@ mod tests {
 
     fn profile() -> AnalysisProfile {
         AnalysisProfile {
-            skill_name: "evidence-analysis".to_owned(),
-            skill_version: "1".to_owned(),
+            skill_names: vec![
+                "analysis-cycle-protocol".to_owned(),
+                "understand-decision-contract".to_owned(),
+                "qualitative-analysis".to_owned(),
+                "author-executable".to_owned(),
+            ],
         }
     }
 
@@ -585,11 +594,11 @@ mod tests {
 
         assert!(
             tools
-                .query_evidence("SELECT count(*) FROM observations")
+                .run_sql("SELECT count(*) FROM observations")
                 .await
                 .is_err()
         );
-        let description = tools.describe_evidence().await.expect("describe evidence");
+        let description = tools.describe().await.expect("describe data");
         assert_eq!(
             description["builtInSources"][0]["name"],
             DECISION_OBSERVATION_NAME
@@ -598,18 +607,19 @@ mod tests {
             description["builtInSources"][0]["exactContractDigest"],
             true
         );
-        tools
-            .commit_evidence_cutoff(now)
-            .await
-            .expect("commit cutoff");
-        tools
-            .commit_evidence_cutoff(now)
-            .await
-            .expect("idempotent cutoff");
+        assert_eq!(description["queryCapabilities"]["dialect"], "sqlite");
+        assert!(
+            description["queryCapabilities"]["functions"]
+                .as_array()
+                .expect("functions")
+                .contains(&json!("avg"))
+        );
+        tools.commit_cutoff(now).await.expect("commit cutoff");
+        tools.commit_cutoff(now).await.expect("idempotent cutoff");
         assert_eq!(*evidence.captures.lock().expect("capture lock"), 1);
 
         let result = tools
-            .query_evidence("SELECT count(*) AS count FROM observations")
+            .run_sql("SELECT count(*) AS count FROM observations")
             .await
             .expect("query");
         assert_eq!(result["rows"][0]["count"], 3);
@@ -722,15 +732,15 @@ mod tests {
 
         assert!(
             tools
-                .commit_evidence_cutoff(now + chrono::Duration::nanoseconds(1))
+                .commit_cutoff(now + chrono::Duration::nanoseconds(1))
                 .await
                 .is_err()
         );
         assert_eq!(
             tools
-                .check_analysis_status()
+                .check_cycle_status()
                 .await
-                .expect("active analysis status"),
+                .expect("active cycle status"),
             AnalysisRunStatus::Active
         );
         tools
@@ -742,9 +752,9 @@ mod tests {
             .expect("request supersession");
         assert_eq!(
             tools
-                .check_analysis_status()
+                .check_cycle_status()
                 .await
-                .expect("superseded analysis status"),
+                .expect("superseded cycle status"),
             AnalysisRunStatus::ContractSuperseded {
                 replacement_digest: Some(
                     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -752,6 +762,6 @@ mod tests {
                 )
             }
         );
-        assert!(tools.describe_evidence().await.is_err());
+        assert!(tools.describe().await.is_err());
     }
 }

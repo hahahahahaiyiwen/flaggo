@@ -57,6 +57,54 @@ async fn freezes_queries_at_the_committed_cutoff_and_watermark() {
 }
 
 #[tokio::test]
+async fn supports_bounded_aggregate_analysis_with_named_ctes() {
+    let directory = tempfile::tempdir().expect("temporary evidence directory");
+    let database_url = sqlite_url(&directory.path().join("evidence.db"));
+    let writer = SqliteEvidenceStore::connect(&database_url)
+        .await
+        .expect("writer");
+    writer
+        .commit(commit(1, observation("first", 100, 1)))
+        .await
+        .expect("first observation");
+    writer
+        .commit(commit(2, observation("second", 100, 3)))
+        .await
+        .expect("second observation");
+    let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
+        .await
+        .expect("analysis reader");
+
+    let capabilities = reader.query_capabilities();
+    assert!(capabilities.functions.contains(&"avg"));
+    assert!(capabilities.features.contains(&"grouping"));
+    let result = reader
+        .query(
+            &scope(),
+            EvidenceQueryRequest {
+                sql: "WITH values_by_source AS (\
+                          SELECT signal_name, json_extract(payload_json, '$.value') AS value \
+                          FROM observations\
+                      ) \
+                      SELECT signal_name, count(*) AS samples, avg(value) AS average \
+                      FROM values_by_source GROUP BY signal_name"
+                    .to_owned(),
+                cutoff_unix_nano: 100,
+                watermark: reader.capture_watermark().await.expect("watermark"),
+                limits: limits(),
+            },
+        )
+        .await
+        .expect("aggregate query");
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0].get("samples"), Some(&serde_json::json!(2)));
+    assert_eq!(result.rows[0].get("average"), Some(&serde_json::json!(2.0)));
+    reader.close().await;
+    writer.close().await;
+}
+
+#[tokio::test]
 async fn rejects_mutation_physical_tables_and_unapproved_functions() {
     let directory = tempfile::tempdir().expect("temporary evidence directory");
     let database_url = sqlite_url(&directory.path().join("evidence.db"));

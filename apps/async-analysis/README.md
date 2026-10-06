@@ -12,8 +12,8 @@ The local implementation combines:
   watermark per cycle;
 - read-only, contract-scoped, bounded SQL over the Evidence Store;
 - a Copilot SDK adapter running the local Copilot CLI in empty mode;
-- an attempt-scoped virtual POSIX filesystem and versioned
-  `evidence-analysis` skill; and
+- module-owned role/task prompts, composable unversioned skills, and an
+  attempt-scoped virtual POSIX filesystem; and
 - Contract Service Candidate admission with current-digest fencing.
 
 ## Module boundaries
@@ -22,7 +22,7 @@ The local implementation combines:
 | --- | --- |
 | `flaggo-analysis-domain` | Stable analysis values, errors, and pure cadence calculations without provider dependencies |
 | `flaggo-analysis-workspace` | Workspace contracts, durable cycle semantics, and the local filesystem provider |
-| `flaggo-analysis-agent` | Provider-neutral agent/session contracts, bounded Agent Pool, and the optional empty-mode Copilot adapter |
+| `flaggo-analysis-agent` | Static agent context, provider-neutral agent/session contracts, bounded Agent Pool, and the optional empty-mode Copilot adapter |
 | `flaggo-async-analysis` | Coordinator policy, configuration, Contract Service and Evidence Store adapters, and the process entrypoint |
 
 Workspace code cannot discover contracts, query evidence, invoke an agent, or
@@ -32,16 +32,53 @@ translates declared capabilities but does not own analysis policy. The app
 library owns coordination and local external-system adapters; its binary is
 the composition root that selects concrete providers.
 
+## Agent context
+
+The agent-facing surface is intentionally split by responsibility:
+
+| Surface | Location | Responsibility |
+| --- | --- | --- |
+| Role and mission | `modules/analysis-agent/agent/prompts/system.md` | Define the data-scientist role, closed-loop stages, contract objective, guardrails, and executable mission without encoding workflow |
+| Minimal task | `modules/analysis-agent/agent/prompts/task.md` | Require `analysis-cycle-protocol`; `context.rs` binds the dynamic contract, workspace, cycle, and attempt identity |
+| Cycle protocol | `modules/analysis-agent/agent/skills/analysis-cycle-protocol/SKILL.md` | Load cycle context, periodically check cycle status, commit the evidence snapshot, persist artifacts, and select a terminal outcome |
+| Contract interpretation | `modules/analysis-agent/agent/skills/understand-decision-contract/SKILL.md` | Interpret the accepted contract wrapper, learning objective, guardrails, evidence mappings, and executable constraints |
+| Analytical method | `modules/analysis-agent/agent/skills/qualitative-analysis/SKILL.md` | Data quality, population and temporal boundaries, comparative reasoning, uncertainty, and the executable conclusion |
+| Executable authoring | `modules/analysis-agent/agent/skills/author-executable/SKILL.md` | Apply the supported `flaggo.cel/v1` profile and convert supported analysis into one minimal executable proposal |
+| Writable artifact templates | `modules/analysis-agent/agent/templates` | Provide existing files that the runtime's edit tool can update |
+| Copilot tool catalog and permission allowlist | `modules/analysis-agent/src/copilot/tools.rs` | Five bounded filesystem/skill built-ins and the five typed Flaggo tools |
+| Trusted tool behavior | `src/local_capabilities.rs` | Coordinator status, immutable cutoff, scoped evidence access, and inactive Candidate admission |
+
+Every prompt, skill, and template uses Markdown headings for human-readable
+hierarchy and semantic XML tags around each agent-facing instruction or
+artifact section. Skill files retain YAML `name` and `description` frontmatter
+only for Copilot discovery.
+
+The durable analysis profile binds each cycle to the ordered skill names
+`analysis-cycle-protocol`, `understand-decision-contract`,
+`qualitative-analysis`, and `author-executable`; skills are deliberately
+unversioned.
+`modules/analysis-agent/src/context.rs` owns the assets, binds dynamic cycle
+identity as escaped XML, and prepares the writable templates. The current
+local packaging loads skills from the analysis-agent module source tree.
+
+The current Copilot runtime exposes editing but no create-file tool. Before a
+session starts, the analysis-agent context package therefore creates stable
+findings, supersession, and handoff templates inside the writable workspace.
+The agent preserves their semantic XML tags and replaces their Markdown
+placeholders; resumed attempts retain existing content.
+
 The agent cannot access a shell, host paths, arbitrary network endpoints,
 database credentials, activation operations, or Executable Store tables.
 `propose_executable` can persist one validated `candidate` lifecycle record;
 activation remains a separate Contract Service concern.
 The headless permission predicate approves only filesystem reads/writes and
-the five registered analysis tools. `check_analysis_status` reads only the
-coordinator-owned control signal; the agent does not query Contract Service to
-detect supersession. The permission predicate rejects shell, URL, MCP, memory,
-hook, unknown-permission, and unknown-custom-tool requests; the virtual
-filesystem still enforces the narrower workspace read/write paths.
+the five registered analysis tools: `check_cycle_status`, `describe`,
+`run_sql`, `commit_cutoff`, and `propose_executable`.
+`check_cycle_status` reads only the coordinator-owned control signal; the
+agent does not query Contract Service to detect supersession. The permission
+predicate rejects shell, URL, MCP, memory, hook, unknown-permission, and
+unknown-custom-tool requests; the virtual filesystem still enforces the
+narrower workspace read/write paths.
 
 ## Run locally
 
@@ -127,7 +164,8 @@ attempt identity and exact rules, allowing safe recovery if the process loses
 the HTTP response. A different second proposal is rejected. Analysis artifacts
 are sealed into a content-digested manifest before admission; mutable host
 control records and Copilot session state are excluded. The manifest records
-the exact analysis skill name and version used by the cycle.
+the exact ordered analysis skill names used by the cycle, and resume under a
+different skill set or order is rejected.
 
 The agent sees only the active cycle at `/workspace`. It may write beneath
 `/workspace/analysis` and `/workspace/handoffs`; host-owned cycle records are
@@ -142,11 +180,25 @@ decision ID, active executable digest, serialized result and hash, evaluation
 source/rule, request correlation ID, and explicit correlation attributes.
 They do not expose the active executable body or the complete decision input
 unless the application supplied those values as correlation attributes.
-`describe_evidence` publishes the normalized decision-attribute and metric
+`describe` publishes the normalized decision-attribute and metric
 data-point JSON paths. Finite OTel doubles retain their exact bit encoding and
 also expose a decimal `value` for SQL analysis. Metric observations may be
 cumulative snapshots, so analysis must use the latest point or changes between
 points for each correlated population rather than summing repeated exports.
+
+`run_sql` does not accept arbitrary SQLite. It accepts one validated,
+read-only `SELECT` or non-recursive `WITH` statement over the logical
+`observations` relation and named CTEs. Grouping, ordering, arithmetic, `CASE`,
+JSON extraction, and common aggregates are supported. The current approved
+functions are `abs`, `avg`, `coalesce`, `count`, `json_extract`, `json_type`,
+`lower`, `max`, `min`, `nullif`, `round`, `sum`, `total`, and `upper`;
+`describe` reports this list to the agent. Authority, declared source,
+exact contract digest, committed cutoff timestamp, and storage watermark are
+always injected by trusted code. Multiple statements, recursive CTEs,
+mutation, pragmas, physical tables, table-valued functions, and unapproved
+functions are rejected, and results are bounded by row, byte, and timeout
+limits. Percentiles, median, standard deviation, regression, and richer
+statistical operations are not available yet.
 
 The first cycle becomes eligible at `acceptedAt + evaluate.interval`. Later
 cycles become eligible at the prior terminal cycle's

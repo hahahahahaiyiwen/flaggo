@@ -6,7 +6,10 @@ use std::{
 
 use chrono::{DateTime, TimeDelta, Utc};
 use flaggo_evidence_materializer::{CompiledContractCatalog, EvidenceMaterializer, decode_batch};
-use flaggo_evidence_store::{AuthorityScope, EvidenceStore, SqliteEvidenceStore};
+use flaggo_evidence_store::{
+    AuthorityScope, EvidenceMaterializationCommit, EvidenceStore, ForwardMaterializationKey,
+    MaterializerVersions, SqliteEvidenceStore,
+};
 use flaggo_raw_otlp_inbox::{
     DEFAULT_OTLP_PROFILE_VERSION, InboxClock, NewRawOtlpBatch, OtlpProfileVersion, OtlpSignal,
     OtlpTransportCompression, OtlpWireEncoding, RawOtlpInbox, RawOtlpInboxLimits,
@@ -428,6 +431,47 @@ async fn reports_checkpoint_backlog_and_evidence_freshness() {
     assert_eq!(after.oldest_pending_received_at, None);
     assert_eq!(after.newest_pending_received_at, None);
     assert!(after.evidence_store.newest_observed_at_unix_nano.is_some());
+
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn materializer_upgrade_continues_after_the_global_checkpoint() {
+    let fixture = Fixture::new().await;
+    let catalog = contract_catalog(CONTRACT_DIGEST_ONE);
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, vec![application_log()])
+        .await;
+    fixture
+        .store
+        .commit(EvidenceMaterializationCommit {
+            key: ForwardMaterializationKey {
+                versions: MaterializerVersions {
+                    materializer: "1".to_owned(),
+                    decoder: "2".to_owned(),
+                    identity: "2".to_owned(),
+                    projection: "1".to_owned(),
+                    routing: "1".to_owned(),
+                },
+            },
+            inbox_batch_id: 1,
+            observations: Vec::new(),
+            diagnostics: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let materializer = EvidenceMaterializer::new(
+        fixture.inbox.clone(),
+        fixture.store.clone(),
+        NonZeroU16::new(10).unwrap(),
+    );
+
+    let before = materializer.inspect().await.unwrap();
+    assert_eq!(before.checkpoint_batch_id, Some(1));
+    assert_eq!(before.pending_batch_count, 0);
+    let result = materializer.run_once(&catalog).await.unwrap();
+    assert_eq!(result.batches_read, 0);
+    assert_eq!(result.observations_created, 0);
 
     fixture.close().await;
 }

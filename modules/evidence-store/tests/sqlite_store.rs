@@ -34,7 +34,7 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
     assert_eq!(created.observations_created, 1);
     assert_eq!(created.provenance_created, 1);
     assert_eq!(
-        store.forward_checkpoint(&key).await.expect("checkpoint"),
+        store.forward_checkpoint().await.expect("checkpoint"),
         Some(1)
     );
 
@@ -78,46 +78,46 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
 
     let mut projection_key = key.clone();
     projection_key.versions.projection = "3".to_owned();
-    let mut reprojected = observation("third", "logical", br#"{"value":2}"#);
+    let mut reprojected = observation("third", "logical", br#"{"value":1}"#);
     reprojected.versions.projection = "3".to_owned();
     let new_projection = store
         .commit(commit(5, &projection_key, reprojected))
         .await
         .expect("new projection version");
-    assert_eq!(new_projection.observations_created, 1);
+    assert_eq!(new_projection.observations_created, 0);
+    assert_eq!(new_projection.duplicate_observations, 1);
     assert_eq!(new_projection.conflicts_created, 0);
-    assert_eq!(new_projection.provenance_created, 1);
+    assert_eq!(new_projection.provenance_created, 0);
+
+    let mut changed_projection_key = key.clone();
+    changed_projection_key.versions.projection = "4".to_owned();
+    let mut changed_projection = observation("fourth", "logical", br#"{"value":2}"#);
+    changed_projection.versions.projection = "4".to_owned();
+    let projection_conflict = store
+        .commit(commit(6, &changed_projection_key, changed_projection))
+        .await
+        .expect("changed projection content");
+    assert_eq!(projection_conflict.observations_created, 0);
+    assert_eq!(projection_conflict.conflicts_created, 1);
+    assert_eq!(projection_conflict.diagnostics_created, 1);
+    assert_eq!(projection_conflict.provenance_created, 0);
 
     let health = store.inspect().await.expect("evidence health");
     assert!(health.has_cached_catalog);
-    assert_eq!(health.observation_count, 2);
-    assert_eq!(health.provenance_count, 2);
-    assert_eq!(health.conflict_count, 1);
-    assert_eq!(health.diagnostic_count, 1);
+    assert_eq!(health.observation_count, 1);
+    assert_eq!(health.provenance_count, 1);
+    assert_eq!(health.conflict_count, 2);
+    assert_eq!(health.diagnostic_count, 2);
     assert_eq!(
-        store.forward_checkpoint(&key).await.expect("checkpoint"),
-        Some(3)
-    );
-    assert_eq!(
-        store
-            .forward_checkpoint(&routing_key)
-            .await
-            .expect("routing checkpoint"),
-        Some(4)
-    );
-    assert_eq!(
-        store
-            .forward_checkpoint(&projection_key)
-            .await
-            .expect("projection checkpoint"),
-        Some(5)
+        store.forward_checkpoint().await.expect("checkpoint"),
+        Some(6)
     );
 
     let observations = store
         .list_observations(&authority(), NonZeroU16::new(10).expect("nonzero limit"))
         .await
         .expect("observations");
-    assert_eq!(observations.len(), 2);
+    assert_eq!(observations.len(), 1);
     assert_eq!(observations[0].observation.authority.tenant, "local");
     assert_eq!(
         observations[0].observation.source.instrumentation_scope,
@@ -138,8 +138,8 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
         "\"catalog:opaque\""
     );
     assert_eq!(
-        reopened.forward_checkpoint(&key).await.expect("checkpoint"),
-        Some(3)
+        reopened.forward_checkpoint().await.expect("checkpoint"),
+        Some(6)
     );
     reopened.close().await;
 }

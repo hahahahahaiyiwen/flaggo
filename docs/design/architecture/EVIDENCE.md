@@ -291,23 +291,29 @@ signal payload, producing versions, and inbox provenance.
 Exactly one Evidence Materializer is active per database. Its forward
 checkpoint and catalog state are single-writer coordination; active-active
 materializers and partitioned work claims are deferred scale-out concerns.
+The checkpoint is global across materializer, decoder, identity, projection,
+and routing versions. An upgraded materializer continues after the last
+committed inbox batch instead of replaying retained batches. Producing-version
+fields remain observation provenance; they do not create a separate evidence
+identity or progress stream.
 The first accepted candidate owns an observation and its origin provenance.
 Later candidates with the same logical identity and content digest are ignored.
-Within one decoder, identity, and projection version, different content for
-that identity is an invariant violation: the accepted observation remains
-unchanged and usable, while the incoming candidate is rejected and recorded as
-a conflict diagnostic.
+Different content for that identity, including content produced after a
+materializer upgrade, is an invariant violation: the accepted observation
+remains unchanged and usable, while the incoming candidate is rejected and
+recorded as a conflict diagnostic.
 
 Evidence Store observations remain durable after raw inbox payloads expire.
 OTel Ingestion periodically invokes the inbox-owned, receipt-age retention
 operation; receiver appends and materializer reads do not perform cleanup.
 Retention is independent of materialization progress. Changed materialization
-versions may rematerialize only within the currently retained replay range;
+versions apply only to inbox batches after the global forward checkpoint;
 analysis never silently scans the inbox as a fallback.
 Evidence Materializer exposes operational progress through structured process
-events. Startup and every committed batch page report the versioned forward
-checkpoint, exact retained batches after that checkpoint, oldest pending
-receipt age, newest persisted evidence timestamp, and evidence freshness.
+events. Startup and every committed batch page report the global forward
+checkpoint, active producing versions, exact retained batches after that
+checkpoint, oldest pending receipt age, newest persisted evidence timestamp,
+and evidence freshness.
 Fatal startup, inspection, or materialization failures emit a structured
 failure event before process exit. Duplicate and conflict counts remain part
 of each committed-page event, while durable conflict and diagnostic totals are

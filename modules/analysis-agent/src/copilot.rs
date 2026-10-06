@@ -19,39 +19,33 @@ use async_trait::async_trait;
 use flaggo_analysis_domain::AnalysisError;
 use flaggo_analysis_workspace::{WorkspaceEntryKind, WorkspaceFileSystem};
 use github_copilot_sdk::{
-    Client, ClientOptions, Error as CopilotError, ErrorKind,
-    mode::{ClientMode, ToolSet},
+    Client, ClientOptions,
+    mode::ClientMode,
     session::Session,
     session_fs::{
         DirEntry, DirEntryKind, FileInfo, FsError, FsErrorKind, SessionFsConfig,
         SessionFsConventions, SessionFsProvider,
     },
-    tool::{JsonSchema, ToolHandler},
-    types::{
-        MessageOptions, PermissionRequestData, PermissionRequestKind, SessionConfig,
-        SystemMessageConfig, Tool, ToolInvocation, ToolResult,
-    },
+    tool::JsonSchema,
+    types::{MessageOptions, SessionConfig, SystemMessageConfig},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-const CHECK_ANALYSIS_STATUS_TOOL: &str = "check_analysis_status";
-const COMMIT_CUTOFF_TOOL: &str = "commit_evidence_cutoff";
-const DESCRIBE_EVIDENCE_TOOL: &str = "describe_evidence";
-const QUERY_EVIDENCE_TOOL: &str = "query_evidence";
-const PROPOSE_EXECUTABLE_TOOL: &str = "propose_executable";
+pub mod tools;
+
+use tools::{available_tools, copilot_tools, is_analysis_permission};
+
 const SESSION_EVENT_MAX_ARRAY_ITEMS: usize = 32;
 const SESSION_EVENT_MAX_BYTES: usize = 16 * 1024;
 const SESSION_EVENT_MAX_STRING_BYTES: usize = 4 * 1024;
 const SESSION_EVENT_PREVIEW_BYTES: usize = 8 * 1024;
-pub const ANALYSIS_SKILL_NAME: &str = "evidence-analysis";
-pub const ANALYSIS_SKILL_VERSION: &str = "4";
-
 pub struct CopilotAgentProvider {
     runtime: Arc<CopilotRuntime>,
     model: Option<String>,
     skill_directory: PathBuf,
+    system_message: String,
     run_timeout: Duration,
 }
 
@@ -67,6 +61,7 @@ impl CopilotAgentProvider {
         runtime_config: CopilotRuntimeConfig,
         model: Option<String>,
         skill_directory: PathBuf,
+        system_message: String,
         run_timeout: Duration,
     ) -> Result<Self, AnalysisError> {
         let runtime = Arc::new(CopilotRuntime::new(runtime_config));
@@ -75,6 +70,7 @@ impl CopilotAgentProvider {
             runtime,
             model,
             skill_directory,
+            system_message,
             run_timeout,
         })
     }
@@ -94,26 +90,14 @@ impl AgentProvider for CopilotAgentProvider {
         let tools = specification.tools;
         let filesystem: Arc<dyn SessionFsProvider> =
             Arc::new(CopilotWorkspaceFileSystem::new(specification.filesystem));
-        let available_tools = ToolSet::new()
-            .add_builtin("view")
-            .and_then(|set| set.add_builtin("edit"))
-            .and_then(|set| set.add_builtin("apply_patch"))
-            .and_then(|set| set.add_builtin("rg"))
-            .and_then(|set| set.add_builtin("glob"))
-            .and_then(|set| set.add_builtin("skill"))
-            .and_then(|set| set.add_custom(CHECK_ANALYSIS_STATUS_TOOL))
-            .and_then(|set| set.add_custom(COMMIT_CUTOFF_TOOL))
-            .and_then(|set| set.add_custom(DESCRIBE_EVIDENCE_TOOL))
-            .and_then(|set| set.add_custom(QUERY_EVIDENCE_TOOL))
-            .and_then(|set| set.add_custom(PROPOSE_EXECUTABLE_TOOL))
-            .map_err(agent_error)?
-            .into_vec();
+        let available_tools = available_tools()?;
 
         let client = self.runtime.client().await?;
         let (session, client) = match client
             .create_session(session_config(
                 self.model.as_deref(),
                 &self.skill_directory,
+                &self.system_message,
                 available_tools.clone(),
                 Arc::clone(&filesystem),
                 Arc::clone(&tools),
@@ -128,6 +112,7 @@ impl AgentProvider for CopilotAgentProvider {
                     .create_session(session_config(
                         self.model.as_deref(),
                         &self.skill_directory,
+                        &self.system_message,
                         available_tools,
                         filesystem,
                         tools,
@@ -225,6 +210,7 @@ impl CopilotRuntime {
 fn session_config(
     model: Option<&str>,
     skill_directory: &std::path::Path,
+    system_message: &str,
     available_tools: Vec<String>,
     filesystem: Arc<dyn SessionFsProvider>,
     tools: Arc<dyn AnalysisTools>,
@@ -244,34 +230,12 @@ fn session_config(
     config.enable_host_git_operations = Some(false);
     config.enable_session_store = Some(false);
     config.streaming = Some(false);
-    config.system_message = Some(SystemMessageConfig::new().with_mode("append").with_content(
-        "You are a bounded Flaggo evidence-analysis worker. Use only the declared \
-                 workspace, skill, and typed tools. Never infer or alter trusted identity. \
-                 Persist analysis and checkpoints before returning a terminal outcome.",
-    ));
+    config.system_message = Some(
+        SystemMessageConfig::new()
+            .with_mode("append")
+            .with_content(system_message),
+    );
     config
-}
-
-fn is_analysis_permission(request: &PermissionRequestData) -> bool {
-    match request.kind {
-        Some(PermissionRequestKind::Read | PermissionRequestKind::Write) => true,
-        Some(PermissionRequestKind::CustomTool) => request
-            .extra
-            .pointer("/permissionRequest/toolName")
-            .or_else(|| request.extra.get("toolName"))
-            .and_then(Value::as_str)
-            .is_some_and(|name| {
-                matches!(
-                    name,
-                    CHECK_ANALYSIS_STATUS_TOOL
-                        | COMMIT_CUTOFF_TOOL
-                        | DESCRIBE_EVIDENCE_TOOL
-                        | QUERY_EVIDENCE_TOOL
-                        | PROPOSE_EXECUTABLE_TOOL
-                )
-            }),
-        _ => false,
-    }
 }
 
 fn apply_model_selection(config: &mut SessionConfig, model: Option<&str>) {
@@ -621,171 +585,6 @@ impl SessionFsProvider for CopilotWorkspaceFileSystem {
     }
 }
 
-#[derive(Clone, Copy)]
-enum AnalysisToolKind {
-    CheckStatus,
-    CommitCutoff,
-    DescribeEvidence,
-    QueryEvidence,
-    ProposeExecutable,
-}
-
-struct AnalysisToolHandler {
-    kind: AnalysisToolKind,
-    tools: Arc<dyn AnalysisTools>,
-}
-
-#[async_trait]
-impl ToolHandler for AnalysisToolHandler {
-    async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, CopilotError> {
-        let result = match self.kind {
-            AnalysisToolKind::CheckStatus => serde_json::to_value(
-                self.tools
-                    .check_analysis_status()
-                    .await
-                    .map_err(tool_error)?,
-            )?,
-            AnalysisToolKind::CommitCutoff => {
-                let cutoff = invocation
-                    .arguments
-                    .get("cutoff")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        CopilotError::with_message(
-                            ErrorKind::InvalidConfig,
-                            "commit_evidence_cutoff requires an RFC 3339 cutoff",
-                        )
-                    })?
-                    .parse()
-                    .map_err(|error| {
-                        CopilotError::with_message(
-                            ErrorKind::InvalidConfig,
-                            format!("invalid RFC 3339 cutoff: {error}"),
-                        )
-                    })?;
-                serde_json::to_value(
-                    self.tools
-                        .commit_evidence_cutoff(cutoff)
-                        .await
-                        .map_err(tool_error)?,
-                )?
-            }
-            AnalysisToolKind::DescribeEvidence => {
-                self.tools.describe_evidence().await.map_err(tool_error)?
-            }
-            AnalysisToolKind::QueryEvidence => {
-                let sql = invocation
-                    .arguments
-                    .get("sql")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        CopilotError::with_message(
-                            ErrorKind::InvalidConfig,
-                            "query_evidence requires SQL text",
-                        )
-                    })?;
-                self.tools.query_evidence(sql).await.map_err(tool_error)?
-            }
-            AnalysisToolKind::ProposeExecutable => {
-                let rules = invocation.arguments.get("rules").cloned().ok_or_else(|| {
-                    CopilotError::with_message(
-                        ErrorKind::InvalidConfig,
-                        "propose_executable requires rules",
-                    )
-                })?;
-                serde_json::to_value(
-                    self.tools
-                        .propose_executable(rules)
-                        .await
-                        .map_err(tool_error)?,
-                )?
-            }
-        };
-        Ok(ToolResult::Text(serde_json::to_string(&result)?))
-    }
-}
-
-fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
-    vec![
-        tool(
-            CHECK_ANALYSIS_STATUS_TOOL,
-            "Read the coordinator-owned control status for this analysis attempt.",
-            json!({"type": "object", "additionalProperties": false}),
-            AnalysisToolKind::CheckStatus,
-            Arc::clone(&tools),
-        ),
-        tool(
-            COMMIT_CUTOFF_TOOL,
-            "Commit the cycle's immutable evidence cutoff and storage watermark.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["cutoff"],
-                "properties": {
-                    "cutoff": {
-                        "type": "string",
-                        "description": "RFC 3339 UTC timestamp no later than now."
-                    }
-                }
-            }),
-            AnalysisToolKind::CommitCutoff,
-            Arc::clone(&tools),
-        ),
-        tool(
-            DESCRIBE_EVIDENCE_TOOL,
-            "Describe the read-only observations relation and trusted evidence scope.",
-            json!({"type": "object", "additionalProperties": false}),
-            AnalysisToolKind::DescribeEvidence,
-            Arc::clone(&tools),
-        ),
-        tool(
-            QUERY_EVIDENCE_TOOL,
-            "Run one bounded read-only SQL query over the scoped observations relation.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["sql"],
-                "properties": {
-                    "sql": {"type": "string"}
-                }
-            }),
-            AnalysisToolKind::QueryEvidence,
-            Arc::clone(&tools),
-        ),
-        tool(
-            PROPOSE_EXECUTABLE_TOOL,
-            "Validate and persist exactly one inactive Candidate for this cycle.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["rules"],
-                "properties": {
-                    "rules": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "object"}
-                    }
-                }
-            }),
-            AnalysisToolKind::ProposeExecutable,
-            tools,
-        ),
-    ]
-}
-
-fn tool(
-    name: &'static str,
-    description: &'static str,
-    parameters: Value,
-    kind: AnalysisToolKind,
-    tools: Arc<dyn AnalysisTools>,
-) -> Tool {
-    Tool::new(name)
-        .with_description(description)
-        .with_parameters(parameters)
-        .with_handler(Arc::new(AnalysisToolHandler { kind, tools }))
-}
-
 fn fs_error(error: AnalysisError) -> FsError {
     FsError::with_message(FsErrorKind::Other, error.to_string())
 }
@@ -797,23 +596,18 @@ fn fs_not_found(path: &str) -> FsError {
     )
 }
 
-fn tool_error(error: AnalysisError) -> CopilotError {
-    CopilotError::with_message(ErrorKind::InvalidConfig, error.to_string())
-}
-
 fn agent_error(error: impl std::fmt::Display) -> AnalysisError {
     AnalysisError::Agent(error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use github_copilot_sdk::types::{PermissionRequestData, PermissionRequestKind, SessionConfig};
+    use github_copilot_sdk::types::SessionConfig;
     use serde_json::json;
 
     use super::{
-        CHECK_ANALYSIS_STATUS_TOOL, FinalOutcome, FinalOutcomeKind, SESSION_EVENT_MAX_BYTES,
-        apply_model_selection, is_analysis_permission, redact_sensitive_values,
-        sanitize_session_event,
+        FinalOutcome, FinalOutcomeKind, SESSION_EVENT_MAX_BYTES, apply_model_selection,
+        redact_sensitive_values, sanitize_session_event,
     };
     use crate::AgentRunOutcome;
 
@@ -874,47 +668,6 @@ mod tests {
         apply_model_selection(&mut pinned, Some("gpt-test"));
         assert_eq!(pinned.model.as_deref(), Some("gpt-test"));
         assert_eq!(pinned.allowed_models, Some(vec!["gpt-test".to_owned()]));
-    }
-
-    #[test]
-    fn approves_only_bounded_analysis_permissions() {
-        for kind in [PermissionRequestKind::Read, PermissionRequestKind::Write] {
-            assert!(is_analysis_permission(&PermissionRequestData {
-                kind: Some(kind),
-                ..PermissionRequestData::default()
-            }));
-        }
-        assert!(is_analysis_permission(&PermissionRequestData {
-            kind: Some(PermissionRequestKind::CustomTool),
-            extra: json!({
-                "permissionRequest": {
-                    "toolName": CHECK_ANALYSIS_STATUS_TOOL
-                }
-            }),
-            ..PermissionRequestData::default()
-        }));
-        for kind in [
-            PermissionRequestKind::Shell,
-            PermissionRequestKind::Url,
-            PermissionRequestKind::Mcp,
-            PermissionRequestKind::Memory,
-            PermissionRequestKind::Hook,
-            PermissionRequestKind::Unknown,
-        ] {
-            assert!(!is_analysis_permission(&PermissionRequestData {
-                kind: Some(kind),
-                ..PermissionRequestData::default()
-            }));
-        }
-        assert!(!is_analysis_permission(&PermissionRequestData {
-            kind: Some(PermissionRequestKind::CustomTool),
-            extra: json!({
-                "permissionRequest": {
-                    "toolName": "unregistered_tool"
-                }
-            }),
-            ..PermissionRequestData::default()
-        }));
     }
 
     #[test]

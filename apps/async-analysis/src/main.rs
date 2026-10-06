@@ -2,11 +2,9 @@ use std::{error::Error, io, sync::Arc};
 
 use flaggo_analysis_agent::{
     AgentPool,
-    copilot::{
-        ANALYSIS_SKILL_NAME, ANALYSIS_SKILL_VERSION, CopilotAgentProvider, CopilotRuntimeConfig,
-    },
+    context::{ANALYSIS_SYSTEM_PROMPT, analysis_profile},
+    copilot::{CopilotAgentProvider, CopilotRuntimeConfig},
 };
-use flaggo_analysis_domain::AnalysisProfile;
 use flaggo_analysis_workspace::LocalWorkspaceProvider;
 use flaggo_async_analysis::{
     AnalysisCoordinator, CoordinatorConfig, CoordinatorRunOutcome, SystemClock,
@@ -78,7 +76,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 log_session_events: config.log_session_events,
             },
             config.model.clone(),
-            config.skill_root.clone(),
+            config.skill_directory.clone(),
+            ANALYSIS_SYSTEM_PROMPT.to_owned(),
             config.run_timeout,
         )
         .await?,
@@ -91,10 +90,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         CoordinatorConfig {
             supersession_poll_interval: config.poll_interval,
             yield_grace_period: config.yield_grace_period,
-            analysis_profile: AnalysisProfile {
-                skill_name: ANALYSIS_SKILL_NAME.to_owned(),
-                skill_version: ANALYSIS_SKILL_VERSION.to_owned(),
-            },
+            analysis_profile: analysis_profile(),
         },
         clock,
     ));

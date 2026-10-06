@@ -13,6 +13,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use flaggo_analysis_agent::{
     AgentPool, AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec, AnalysisRunStatus,
     AnalysisTask, AnalysisTools,
+    context::{ANALYSIS_FINDINGS_PATH, HANDOFF_CHECKPOINT_PATH, SUPERSESSION_NOTE_PATH},
 };
 use flaggo_analysis_domain::{
     AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisError,
@@ -25,8 +26,9 @@ use flaggo_async_analysis::{
     local_capabilities::LocalCapabilityFactory,
 };
 use flaggo_evidence_store::{
-    EvidenceAnalysisStore, EvidenceQueryLimits, EvidenceQueryRequest, EvidenceQueryResult,
-    EvidenceQueryScope, EvidenceStoreError, ObservationWatermark,
+    EvidenceAnalysisStore, EvidenceQueryCapabilities, EvidenceQueryLimits, EvidenceQueryRequest,
+    EvidenceQueryResult, EvidenceQueryScope, EvidenceStoreError, ObservationWatermark,
+    SQLITE_EVIDENCE_QUERY_CAPABILITIES,
 };
 use serde_json::{Value, json};
 
@@ -114,6 +116,10 @@ struct FakeEvidenceStore {
 
 #[async_trait]
 impl EvidenceAnalysisStore for FakeEvidenceStore {
+    fn query_capabilities(&self) -> EvidenceQueryCapabilities {
+        SQLITE_EVIDENCE_QUERY_CAPABILITIES
+    }
+
     async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError> {
         Ok(ObservationWatermark::new(7))
     }
@@ -188,13 +194,23 @@ impl AgentSession for ScriptedSession {
     async fn run(&self, _task: AnalysisTask) -> Result<AgentRunOutcome, AnalysisError> {
         match self.script {
             Script::Candidate => {
-                self.tools.commit_evidence_cutoff(self.cutoff).await?;
+                for path in [
+                    ANALYSIS_FINDINGS_PATH,
+                    SUPERSESSION_NOTE_PATH,
+                    HANDOFF_CHECKPOINT_PATH,
+                ] {
+                    assert!(
+                        self.filesystem.read_text(path).await?.contains("<!--"),
+                        "agent artifact template was not prepared: {path}"
+                    );
+                }
+                self.tools.commit_cutoff(self.cutoff).await?;
                 self.tools
-                    .query_evidence("SELECT count(*) AS count FROM observations")
+                    .run_sql("SELECT count(*) AS count FROM observations")
                     .await?;
                 self.filesystem
                     .write_text(
-                        "/workspace/analysis/findings.md",
+                        ANALYSIS_FINDINGS_PATH,
                         "The bounded evidence supports a candidate.",
                     )
                     .await?;
@@ -208,9 +224,9 @@ impl AgentSession for ScriptedSession {
                 Ok(AgentRunOutcome::Candidate)
             }
             Script::NoChange => {
-                self.tools.commit_evidence_cutoff(self.cutoff).await?;
+                self.tools.commit_cutoff(self.cutoff).await?;
                 self.tools
-                    .query_evidence("SELECT count(*) AS count FROM observations")
+                    .run_sql("SELECT count(*) AS count FROM observations")
                     .await?;
                 self.filesystem
                     .write_text(
@@ -226,7 +242,7 @@ impl AgentSession for ScriptedSession {
                 Err(AnalysisError::Agent("provider interrupted".to_owned()))
             }
             Script::FailThenNoCandidate => {
-                self.tools.commit_evidence_cutoff(self.cutoff).await?;
+                self.tools.commit_cutoff(self.cutoff).await?;
                 self.filesystem
                     .write_text(
                         "/workspace/analysis/recovery.md",
@@ -241,7 +257,7 @@ impl AgentSession for ScriptedSession {
                 self.contract_service
                     .set_current(self.replacement.clone().expect("supersession replacement"));
                 loop {
-                    match self.tools.check_analysis_status().await? {
+                    match self.tools.check_cycle_status().await? {
                         AnalysisRunStatus::Active => {
                             tokio::time::sleep(Duration::from_millis(1)).await;
                         }
@@ -268,7 +284,7 @@ impl AgentSession for ScriptedSession {
                 Ok(AgentRunOutcome::Superseded)
             }
             Script::SupersedeBeforeCompletion => {
-                self.tools.commit_evidence_cutoff(self.cutoff).await?;
+                self.tools.commit_cutoff(self.cutoff).await?;
                 self.contract_service
                     .set_current(self.replacement.clone().expect("supersession replacement"));
                 Ok(AgentRunOutcome::NoChange {
@@ -284,7 +300,7 @@ impl AgentSession for ScriptedSession {
             Script::ClaimSupersession => Ok(AgentRunOutcome::Superseded),
             Script::ShutdownCheckpoint => {
                 loop {
-                    match self.tools.check_analysis_status().await? {
+                    match self.tools.check_cycle_status().await? {
                         AnalysisRunStatus::Active => {
                             tokio::time::sleep(Duration::from_millis(1)).await;
                         }
@@ -383,8 +399,12 @@ fn coordinator_with_poll_interval(
             supersession_poll_interval,
             yield_grace_period: Duration::from_millis(100),
             analysis_profile: AnalysisProfile {
-                skill_name: "evidence-analysis".to_owned(),
-                skill_version: "1".to_owned(),
+                skill_names: vec![
+                    "analysis-cycle-protocol".to_owned(),
+                    "understand-decision-contract".to_owned(),
+                    "qualitative-analysis".to_owned(),
+                    "author-executable".to_owned(),
+                ],
             },
         },
         clock,
