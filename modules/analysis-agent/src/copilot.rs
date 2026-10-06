@@ -36,7 +36,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-const CHECK_CURRENT_TOOL: &str = "check_current_contract";
+const CHECK_ANALYSIS_STATUS_TOOL: &str = "check_analysis_status";
 const COMMIT_CUTOFF_TOOL: &str = "commit_evidence_cutoff";
 const DESCRIBE_EVIDENCE_TOOL: &str = "describe_evidence";
 const QUERY_EVIDENCE_TOOL: &str = "query_evidence";
@@ -46,7 +46,7 @@ const SESSION_EVENT_MAX_BYTES: usize = 16 * 1024;
 const SESSION_EVENT_MAX_STRING_BYTES: usize = 4 * 1024;
 const SESSION_EVENT_PREVIEW_BYTES: usize = 8 * 1024;
 pub const ANALYSIS_SKILL_NAME: &str = "evidence-analysis";
-pub const ANALYSIS_SKILL_VERSION: &str = "3";
+pub const ANALYSIS_SKILL_VERSION: &str = "4";
 
 pub struct CopilotAgentProvider {
     runtime: Arc<CopilotRuntime>,
@@ -101,7 +101,7 @@ impl AgentProvider for CopilotAgentProvider {
             .and_then(|set| set.add_builtin("rg"))
             .and_then(|set| set.add_builtin("glob"))
             .and_then(|set| set.add_builtin("skill"))
-            .and_then(|set| set.add_custom(CHECK_CURRENT_TOOL))
+            .and_then(|set| set.add_custom(CHECK_ANALYSIS_STATUS_TOOL))
             .and_then(|set| set.add_custom(COMMIT_CUTOFF_TOOL))
             .and_then(|set| set.add_custom(DESCRIBE_EVIDENCE_TOOL))
             .and_then(|set| set.add_custom(QUERY_EVIDENCE_TOOL))
@@ -263,7 +263,7 @@ fn is_analysis_permission(request: &PermissionRequestData) -> bool {
             .is_some_and(|name| {
                 matches!(
                     name,
-                    CHECK_CURRENT_TOOL
+                    CHECK_ANALYSIS_STATUS_TOOL
                         | COMMIT_CUTOFF_TOOL
                         | DESCRIBE_EVIDENCE_TOOL
                         | QUERY_EVIDENCE_TOOL
@@ -445,8 +445,9 @@ impl AgentSession for CopilotAgentSession {
     }
 
     async fn request_yield(&self, _reason: &str) -> Result<(), AnalysisError> {
-        // The shared YieldSignal is visible to every trusted tool. Sending another
-        // SDK message while send_and_wait is active is explicitly unsafe.
+        // The coordinator-owned status is visible through the status tool and
+        // gates every trusted operation. Sending another SDK message while
+        // send_and_wait is active is explicitly unsafe.
         Ok(())
     }
 
@@ -622,7 +623,7 @@ impl SessionFsProvider for CopilotWorkspaceFileSystem {
 
 #[derive(Clone, Copy)]
 enum AnalysisToolKind {
-    CheckCurrent,
+    CheckStatus,
     CommitCutoff,
     DescribeEvidence,
     QueryEvidence,
@@ -638,9 +639,9 @@ struct AnalysisToolHandler {
 impl ToolHandler for AnalysisToolHandler {
     async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, CopilotError> {
         let result = match self.kind {
-            AnalysisToolKind::CheckCurrent => serde_json::to_value(
+            AnalysisToolKind::CheckStatus => serde_json::to_value(
                 self.tools
-                    .check_current_contract()
+                    .check_analysis_status()
                     .await
                     .map_err(tool_error)?,
             )?,
@@ -707,10 +708,10 @@ impl ToolHandler for AnalysisToolHandler {
 fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
     vec![
         tool(
-            CHECK_CURRENT_TOOL,
-            "Check whether the cycle's exact contract digest is still current.",
+            CHECK_ANALYSIS_STATUS_TOOL,
+            "Read the coordinator-owned control status for this analysis attempt.",
             json!({"type": "object", "additionalProperties": false}),
-            AnalysisToolKind::CheckCurrent,
+            AnalysisToolKind::CheckStatus,
             Arc::clone(&tools),
         ),
         tool(
@@ -810,7 +811,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        CHECK_CURRENT_TOOL, FinalOutcome, FinalOutcomeKind, SESSION_EVENT_MAX_BYTES,
+        CHECK_ANALYSIS_STATUS_TOOL, FinalOutcome, FinalOutcomeKind, SESSION_EVENT_MAX_BYTES,
         apply_model_selection, is_analysis_permission, redact_sensitive_values,
         sanitize_session_event,
     };
@@ -887,7 +888,7 @@ mod tests {
             kind: Some(PermissionRequestKind::CustomTool),
             extra: json!({
                 "permissionRequest": {
-                    "toolName": CHECK_CURRENT_TOOL
+                    "toolName": CHECK_ANALYSIS_STATUS_TOOL
                 }
             }),
             ..PermissionRequestData::default()

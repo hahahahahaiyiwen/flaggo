@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_agent::{
-    AnalysisCapabilityFactory, AnalysisTools, CurrentContractCheck, YieldSignal,
+    AnalysisCapabilityFactory, AnalysisRunStatus, AnalysisTools, YieldSignal,
 };
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisError, AttemptContext, CandidateRecord, EvidenceCutoff,
@@ -81,18 +81,8 @@ struct LocalAnalysisTools {
 
 #[async_trait]
 impl AnalysisTools for LocalAnalysisTools {
-    async fn check_current_contract(&self) -> Result<CurrentContractCheck, AnalysisError> {
-        self.ensure_not_yielding()?;
-        let current = self
-            .contract_service
-            .get_current_contract(&self.context.contract.name)
-            .await?;
-        let current_digest = current.map(|contract| contract.contract_digest);
-        Ok(CurrentContractCheck {
-            expected_digest: self.context.contract.digest.clone(),
-            is_current: current_digest.as_deref() == Some(&self.context.contract.digest),
-            current_digest,
-        })
+    async fn check_analysis_status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
+        self.yield_signal.status()
     }
 
     async fn commit_evidence_cutoff(
@@ -251,13 +241,6 @@ impl AnalysisTools for LocalAnalysisTools {
 
     async fn propose_executable(&self, rules: Value) -> Result<CandidateRecord, AnalysisError> {
         self.ensure_not_yielding()?;
-        let current = self.check_current_contract().await?;
-        if !current.is_current {
-            return Err(AnalysisError::Candidate(format!(
-                "contract digest was superseded by {}",
-                current.current_digest.as_deref().unwrap_or("<none>")
-            )));
-        }
         let cutoff = self
             .workspace
             .cutoff(&self.context.cycle_id)
@@ -314,16 +297,18 @@ impl AnalysisTools for LocalAnalysisTools {
 
 impl LocalAnalysisTools {
     fn ensure_not_yielding(&self) -> Result<(), AnalysisError> {
-        if self.yield_signal.is_requested() {
-            Err(AnalysisError::InvalidState(format!(
-                "analysis attempt must checkpoint and stop: {}",
-                self.yield_signal
-                    .reason()
-                    .as_deref()
-                    .unwrap_or("yield requested")
-            )))
-        } else {
-            Ok(())
+        match self.yield_signal.status()? {
+            AnalysisRunStatus::Active => Ok(()),
+            AnalysisRunStatus::ContractSuperseded {
+                replacement_digest,
+            } => Err(AnalysisError::InvalidState(format!(
+                "analysis attempt must checkpoint and return superseded; replacement digest: {}",
+                replacement_digest.as_deref().unwrap_or("<none>")
+            ))),
+            AnalysisRunStatus::ServiceShutdown => Err(AnalysisError::InvalidState(
+                "analysis attempt must checkpoint and return handoff because the service is shutting down"
+                    .to_owned(),
+            )),
         }
     }
 }
@@ -741,9 +726,32 @@ mod tests {
                 .await
                 .is_err()
         );
+        assert_eq!(
+            tools
+                .check_analysis_status()
+                .await
+                .expect("active analysis status"),
+            AnalysisRunStatus::Active
+        );
         tools
             .yield_signal()
-            .request("test requested a graceful yield");
+            .request_contract_superseded(Some(
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_owned(),
+            ))
+            .expect("request supersession");
+        assert_eq!(
+            tools
+                .check_analysis_status()
+                .await
+                .expect("superseded analysis status"),
+            AnalysisRunStatus::ContractSuperseded {
+                replacement_digest: Some(
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .to_owned()
+                )
+            }
+        );
         assert!(tools.describe_evidence().await.is_err());
     }
 }

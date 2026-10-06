@@ -11,8 +11,8 @@ use std::{
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use flaggo_analysis_agent::{
-    AgentPool, AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec, AnalysisTask,
-    AnalysisTools,
+    AgentPool, AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec, AnalysisRunStatus,
+    AnalysisTask, AnalysisTools,
 };
 use flaggo_analysis_domain::{
     AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisError,
@@ -140,6 +140,9 @@ enum Script {
     NoChange,
     FailThenNoCandidate,
     Supersede,
+    SupersedeBeforeCompletion,
+    IgnoreSupersession,
+    ClaimSupersession,
     ShutdownCheckpoint,
 }
 
@@ -237,20 +240,59 @@ impl AgentSession for ScriptedSession {
             Script::Supersede => {
                 self.contract_service
                     .set_current(self.replacement.clone().expect("supersession replacement"));
-                while !self.tools.yield_signal().is_requested() {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                loop {
+                    match self.tools.check_analysis_status().await? {
+                        AnalysisRunStatus::Active => {
+                            tokio::time::sleep(Duration::from_millis(1)).await;
+                        }
+                        AnalysisRunStatus::ContractSuperseded { replacement_digest } => {
+                            assert_eq!(
+                                replacement_digest,
+                                self.replacement
+                                    .as_ref()
+                                    .map(|contract| contract.contract_digest.clone())
+                            );
+                            break;
+                        }
+                        AnalysisRunStatus::ServiceShutdown => {
+                            panic!("expected contract supersession")
+                        }
+                    }
                 }
                 self.filesystem
                     .write_text(
-                        "/workspace/handoffs/superseded.md",
+                        "/workspace/analysis/supersession.md",
                         "Checkpointed after the trusted supersession signal.",
                     )
                     .await?;
                 Ok(AgentRunOutcome::Superseded)
             }
+            Script::SupersedeBeforeCompletion => {
+                self.tools.commit_evidence_cutoff(self.cutoff).await?;
+                self.contract_service
+                    .set_current(self.replacement.clone().expect("supersession replacement"));
+                Ok(AgentRunOutcome::NoChange {
+                    reason: "the old executable remains appropriate".to_owned(),
+                })
+            }
+            Script::IgnoreSupersession => {
+                self.contract_service
+                    .set_current(self.replacement.clone().expect("supersession replacement"));
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(AgentRunOutcome::Superseded)
+            }
+            Script::ClaimSupersession => Ok(AgentRunOutcome::Superseded),
             Script::ShutdownCheckpoint => {
-                while !self.tools.yield_signal().is_requested() {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                loop {
+                    match self.tools.check_analysis_status().await? {
+                        AnalysisRunStatus::Active => {
+                            tokio::time::sleep(Duration::from_millis(1)).await;
+                        }
+                        AnalysisRunStatus::ServiceShutdown => break,
+                        AnalysisRunStatus::ContractSuperseded { .. } => {
+                            panic!("expected service shutdown")
+                        }
+                    }
                 }
                 self.filesystem
                     .write_text(
@@ -304,6 +346,24 @@ fn coordinator(
     provider: Arc<ScriptedAgentProvider>,
     now: DateTime<Utc>,
 ) -> AnalysisCoordinator {
+    coordinator_with_poll_interval(
+        workspace_root,
+        service,
+        evidence,
+        provider,
+        now,
+        Duration::from_millis(5),
+    )
+}
+
+fn coordinator_with_poll_interval(
+    workspace_root: &std::path::Path,
+    service: Arc<FakeContractService>,
+    evidence: Arc<FakeEvidenceStore>,
+    provider: Arc<ScriptedAgentProvider>,
+    now: DateTime<Utc>,
+    supersession_poll_interval: Duration,
+) -> AnalysisCoordinator {
     let clock: Arc<dyn Clock> = Arc::new(FixedClock(now));
     AnalysisCoordinator::new(
         service.clone(),
@@ -320,7 +380,7 @@ fn coordinator(
         )),
         AgentPool::new(provider, NonZeroUsize::new(1).expect("nonzero")),
         CoordinatorConfig {
-            supersession_poll_interval: Duration::from_millis(5),
+            supersession_poll_interval,
             yield_grace_period: Duration::from_millis(100),
             analysis_profile: AnalysisProfile {
                 skill_name: "evidence-analysis".to_owned(),
@@ -529,12 +589,149 @@ async fn checkpoints_workspace_during_graceful_supersession() {
         .join(directory_name)
         .join("cycles")
         .join(cycle_id)
-        .join("handoffs")
-        .join("superseded.md");
+        .join("analysis")
+        .join("supersession.md");
     assert_eq!(
         std::fs::read_to_string(checkpoint).expect("supersession checkpoint"),
         "Checkpointed after the trusted supersession signal."
     );
+}
+
+#[tokio::test]
+async fn final_currentness_check_supersedes_an_agent_result_that_wins_the_poll_race() {
+    let accepted_at = Utc
+        .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
+        .single()
+        .expect("valid timestamp");
+    let now = accepted_at + chrono::Duration::hours(2);
+    let old_contract = contract('a', accepted_at);
+    let new_contract = contract('c', accepted_at);
+    let service = Arc::new(FakeContractService {
+        current: RwLock::new(Some(old_contract)),
+        submissions: Mutex::new(Vec::new()),
+        now,
+    });
+    let evidence = Arc::new(FakeEvidenceStore {
+        queries: AtomicUsize::new(0),
+    });
+    let provider = Arc::new(ScriptedAgentProvider {
+        script: Script::SupersedeBeforeCompletion,
+        starts: AtomicUsize::new(0),
+        cutoff: now,
+        contract_service: Arc::clone(&service),
+        replacement: Some(new_contract.clone()),
+    });
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let coordinator = coordinator_with_poll_interval(
+        directory.path(),
+        service,
+        evidence,
+        provider,
+        now,
+        Duration::from_secs(60),
+    );
+
+    let outcome = coordinator
+        .run_once(now)
+        .await
+        .expect("final currentness check");
+    let CoordinatorRunOutcome::Completed {
+        outcome: CycleOutcome::Superseded { replacement_digest },
+        ..
+    } = outcome
+    else {
+        panic!("expected coordinator supersession, got {outcome:?}");
+    };
+    assert_eq!(
+        replacement_digest.as_deref(),
+        Some(new_contract.contract_digest.as_str())
+    );
+}
+
+#[tokio::test]
+async fn coordinator_finalizes_supersession_when_the_agent_ignores_the_yield_signal() {
+    let accepted_at = Utc
+        .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
+        .single()
+        .expect("valid timestamp");
+    let now = accepted_at + chrono::Duration::hours(2);
+    let old_contract = contract('a', accepted_at);
+    let new_contract = contract('c', accepted_at);
+    let service = Arc::new(FakeContractService {
+        current: RwLock::new(Some(old_contract)),
+        submissions: Mutex::new(Vec::new()),
+        now,
+    });
+    let evidence = Arc::new(FakeEvidenceStore {
+        queries: AtomicUsize::new(0),
+    });
+    let provider = Arc::new(ScriptedAgentProvider {
+        script: Script::IgnoreSupersession,
+        starts: AtomicUsize::new(0),
+        cutoff: now,
+        contract_service: Arc::clone(&service),
+        replacement: Some(new_contract.clone()),
+    });
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let coordinator = coordinator(directory.path(), service, evidence, provider, now);
+
+    let outcome = tokio::time::timeout(Duration::from_secs(2), coordinator.run_once(now))
+        .await
+        .expect("coordinator should enforce the yield grace period")
+        .expect("superseded attempt");
+    let CoordinatorRunOutcome::Completed {
+        outcome: CycleOutcome::Superseded { replacement_digest },
+        ..
+    } = outcome
+    else {
+        panic!("expected coordinator supersession, got {outcome:?}");
+    };
+    assert_eq!(
+        replacement_digest.as_deref(),
+        Some(new_contract.contract_digest.as_str())
+    );
+}
+
+#[tokio::test]
+async fn rejects_agent_claimed_supersession_without_a_coordinator_signal() {
+    let accepted_at = Utc
+        .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
+        .single()
+        .expect("valid timestamp");
+    let now = accepted_at + chrono::Duration::hours(2);
+    let contract = contract('a', accepted_at);
+    let service = Arc::new(FakeContractService {
+        current: RwLock::new(Some(contract)),
+        submissions: Mutex::new(Vec::new()),
+        now,
+    });
+    let evidence = Arc::new(FakeEvidenceStore {
+        queries: AtomicUsize::new(0),
+    });
+    let provider = Arc::new(ScriptedAgentProvider {
+        script: Script::ClaimSupersession,
+        starts: AtomicUsize::new(0),
+        cutoff: now,
+        contract_service: Arc::clone(&service),
+        replacement: None,
+    });
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let coordinator = coordinator(directory.path(), service, evidence, provider, now);
+
+    let outcome = coordinator
+        .run_once(now)
+        .await
+        .expect("agent-claimed supersession");
+    let CoordinatorRunOutcome::Recoverable {
+        failure_category,
+        reason,
+        ..
+    } = outcome
+    else {
+        panic!("expected recoverable integrity failure, got {outcome:?}");
+    };
+    assert_eq!(failure_category, "integrity");
+    assert!(reason.contains("without a coordinator supersession signal"));
 }
 
 #[tokio::test]

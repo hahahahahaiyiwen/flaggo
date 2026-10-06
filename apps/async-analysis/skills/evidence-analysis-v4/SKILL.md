@@ -1,8 +1,8 @@
 ---
 name: evidence-analysis
-description: Analyze one immutable Flaggo contract cycle and persist a durable handoff or terminal result.
+description: Analyze one immutable Flaggo contract cycle and persist a durable supersession note, handoff, or terminal result.
 allowed-tools:
-  - check_current_contract
+  - check_analysis_status
   - commit_evidence_cutoff
   - describe_evidence
   - query_evidence
@@ -11,17 +11,25 @@ allowed-tools:
 
 # Evidence analysis workflow
 
-Version: 3
+Version: 4
 
 Work only on the contract, cycle, and workspace already bound to this
-session. Trusted identity, evidence scope, cutoff watermark, and Candidate
-lifecycle are enforced by tools and must never be reconstructed or overridden.
+session. Trusted identity, evidence scope, cutoff watermark, Candidate
+lifecycle, and control status are enforced by tools and must never be
+reconstructed or overridden.
 
 1. Read `/workspace/contract.json`, `/workspace/cycle.json`, any existing
    `/workspace/analysis` or `/workspace/handoffs` artifacts, and relevant
    completed cycles under the read-only `/workspace/history` tree.
-2. Call `check_current_contract`. If the digest is no longer current, save a
-   concise checkpoint and return a `superseded` outcome.
+2. Call `check_analysis_status` before starting work, before each evidence
+   query or Candidate proposal, and immediately before selecting a terminal
+   outcome.
+   - On `contractSuperseded`, stop analysis, write a concise
+     `/workspace/analysis/supersession.md` note describing reusable work and
+     uncertainty, and return `superseded`.
+   - On `serviceShutdown`, save a concise checkpoint under
+     `/workspace/handoffs` and return `handoff`.
+   The status is coordinator-owned; never infer supersession independently.
 3. Call `describe_evidence` before designing queries.
 4. Choose an RFC 3339 evidence cutoff no later than the current time and call
    `commit_evidence_cutoff` exactly once. A resumed attempt must reuse the
@@ -51,22 +59,24 @@ lifecycle are enforced by tools and must never be reconstructed or overridden.
    `/workspace/handoffs` before yielding incomplete work.
 7. Propose rules only when the evidence supports an executable that satisfies
    the exact contract. `propose_executable` can persist only one validated
-   inactive Candidate. It cannot activate it. A Candidate is a testable
-   hypothesis, not a claim that observational evidence proves causality.
-   Repeated, well-separated evidence may support a conservative Candidate when
-   it distinguishes a plausible adjustment that improves the objective or
-   guardrails. Record the uncertainty instead of withholding such a Candidate
-   solely because it has not yet been activated and evaluated.
+   inactive Candidate. It cannot activate it. Contract Service independently
+   fences Candidate admission against the current contract digest. A Candidate
+   is a testable hypothesis, not a claim that observational evidence proves
+   causality. Repeated, well-separated evidence may support a conservative
+   Candidate when it distinguishes a plausible adjustment that improves the
+   objective or guardrails. Record the uncertainty instead of withholding such
+   a Candidate solely because it has not yet been activated and evaluated.
 8. Finish with exactly one structured outcome:
    - `candidate` only after `propose_executable` succeeds;
-   - `noChange` when sufficient evidence supports
-     retaining the current executable; do not call `propose_executable`;
-   - `noCandidate` when available evidence is
-     insufficient to determine an appropriate Candidate;
-   - `handoff` when durable work remains for a
-     later agent;
+   - `noChange` when sufficient evidence supports retaining the current
+     executable; do not call `propose_executable`;
+   - `noCandidate` when available evidence is insufficient to determine an
+     appropriate Candidate;
+   - `handoff` when durable work remains for a later agent or shutdown was
+     requested;
    - `failure` for a terminal analysis failure;
-   - `superseded` after a trusted supersession signal.
+   - `superseded` only after `check_analysis_status` reports
+     `contractSuperseded`.
 
 Return the selected outcome with one concise, non-empty `explanation`.
 

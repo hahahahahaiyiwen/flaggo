@@ -37,9 +37,11 @@ database credentials, activation operations, or Executable Store tables.
 `propose_executable` can persist one validated `candidate` lifecycle record;
 activation remains a separate Contract Service concern.
 The headless permission predicate approves only filesystem reads/writes and
-the five registered analysis tools. It rejects shell, URL, MCP, memory, hook,
-unknown-permission, and unknown-custom-tool requests; the virtual filesystem
-still enforces the narrower workspace read/write paths.
+the five registered analysis tools. `check_analysis_status` reads only the
+coordinator-owned control signal; the agent does not query Contract Service to
+detect supersession. The permission predicate rejects shell, URL, MCP, memory,
+hook, unknown-permission, and unknown-custom-tool requests; the virtual
+filesystem still enforces the narrower workspace read/write paths.
 
 ## Run locally
 
@@ -149,7 +151,14 @@ points for each correlated population rather than summing repeated exports.
 The first cycle becomes eligible at `acceptedAt + evaluate.interval`. Later
 cycles become eligible at the prior terminal cycle's
 `completedAt + evaluate.interval`. A new current digest supersedes an active
-old cycle, grants a bounded checkpoint period, and receives its own schedule.
+old cycle. The coordinator is the sole supersession detector: it marks the
+cycle superseding, raises the agent-visible control signal, blocks further
+trusted analysis operations, and grants a bounded period for the agent to
+write `/workspace/analysis/supersession.md` and acknowledge the signal. The
+coordinator finalizes supersession even if the agent does not cooperate and
+rechecks currentness before accepting an ordinary terminal result. Contract
+Service independently provides the final atomic stale-digest fence for
+Candidate admission. The replacement digest receives its own schedule.
 Terminal `outcome.json` is the completion journal: restart reconciliation
 finishes cycle status, cadence, and current-pointer updates idempotently.
 `NoChange` is a successful terminal outcome when completed analysis supports

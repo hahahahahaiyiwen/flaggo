@@ -291,23 +291,50 @@ impl AnalysisCoordinator {
                             });
                         }
                     };
-                    let current_digest = current
-                        .as_ref()
-                        .map(|current| current.contract_digest.as_str());
-                    if current_digest != Some(contract.contract_digest.as_str()) {
+                    let current_digest = current.map(|current| current.contract_digest);
+                    if current_digest.as_deref() != Some(contract.contract_digest.as_str()) {
                         workspace
-                            .mark_superseding(&cycle.cycle_id, current_digest)
+                            .mark_superseding(&cycle.cycle_id, current_digest.as_deref())
                             .await?;
                         tools
                             .yield_signal()
-                            .request("the contract digest changed");
+                            .request_contract_superseded(current_digest.clone())?;
                         lease
                             .request_yield("The contract digest changed. Checkpoint and stop.")
                             .await?;
-                        let _ = tokio::time::timeout(self.config.yield_grace_period, &mut run).await;
+                        match tokio::time::timeout(self.config.yield_grace_period, &mut run).await {
+                            Ok(Ok(AgentRunOutcome::Superseded)) => {}
+                            Ok(Ok(_)) => {
+                                workspace
+                                    .record_attempt_failure(
+                                        &cycle.cycle_id,
+                                        &context.attempt_id,
+                                        "agent completed without acknowledging the coordinator supersession signal",
+                                    )
+                                    .await?;
+                            }
+                            Ok(Err(_)) => {
+                                workspace
+                                    .record_attempt_failure(
+                                        &cycle.cycle_id,
+                                        &context.attempt_id,
+                                        "agent failed while responding to the coordinator supersession signal",
+                                    )
+                                    .await?;
+                            }
+                            Err(_) => {
+                                workspace
+                                    .record_attempt_failure(
+                                        &cycle.cycle_id,
+                                        &context.attempt_id,
+                                        "agent did not acknowledge supersession within the yield grace period",
+                                    )
+                                    .await?;
+                            }
+                        }
                         lease.close().await?;
                         let outcome = CycleOutcome::Superseded {
-                            replacement_digest: current_digest.map(str::to_owned),
+                            replacement_digest: current_digest,
                         };
                         workspace
                             .complete_cycle(
@@ -325,9 +352,7 @@ impl AnalysisCoordinator {
                     }
                 }
                 () = wait_for_shutdown(&mut shutdown) => {
-                    tools
-                        .yield_signal()
-                        .request("the Async Analysis service is shutting down");
+                    tools.yield_signal().request_shutdown()?;
                     lease
                         .request_yield(
                             "The service is shutting down. Commit a checkpoint and hand off.",
@@ -358,9 +383,83 @@ impl AnalysisCoordinator {
             }
         };
 
+        let agent_outcome = match agent_outcome {
+            Ok(AgentRunOutcome::Handoff { summary }) => {
+                workspace
+                    .record_handoff(&cycle.cycle_id, &context.attempt_id, &summary)
+                    .await?;
+                lease.close().await?;
+                return Ok(CoordinatorRunOutcome::Recoverable {
+                    contract_name: contract.name,
+                    cycle_id: cycle.cycle_id,
+                    reason: "agent committed a handoff checkpoint".to_owned(),
+                    failure_category: "internal",
+                });
+            }
+            Err(error) => {
+                workspace
+                    .record_attempt_failure(
+                        &cycle.cycle_id,
+                        &context.attempt_id,
+                        &error.to_string(),
+                    )
+                    .await?;
+                lease.close().await?;
+                return Ok(CoordinatorRunOutcome::Recoverable {
+                    contract_name: contract.name,
+                    cycle_id: cycle.cycle_id,
+                    reason: error.to_string(),
+                    failure_category: analysis_failure_category(&error),
+                });
+            }
+            Ok(outcome) => outcome,
+        };
+
+        let current = match self
+            .contract_service
+            .get_current_contract(&contract.name)
+            .await
+        {
+            Ok(current) => current,
+            Err(error) => {
+                workspace
+                    .record_attempt_failure(
+                        &cycle.cycle_id,
+                        &context.attempt_id,
+                        &error.to_string(),
+                    )
+                    .await?;
+                lease.close().await?;
+                return Ok(CoordinatorRunOutcome::Recoverable {
+                    contract_name: contract.name,
+                    cycle_id: cycle.cycle_id,
+                    reason: error.to_string(),
+                    failure_category: analysis_failure_category(&error),
+                });
+            }
+        };
+        let current_digest = current.map(|current| current.contract_digest);
+        if current_digest.as_deref() != Some(contract.contract_digest.as_str()) {
+            workspace
+                .mark_superseding(&cycle.cycle_id, current_digest.as_deref())
+                .await?;
+            lease.close().await?;
+            let outcome = CycleOutcome::Superseded {
+                replacement_digest: current_digest,
+            };
+            workspace
+                .complete_cycle(&contract, &cycle.cycle_id, &outcome, self.clock.now())
+                .await?;
+            return Ok(CoordinatorRunOutcome::Completed {
+                contract_name: contract.name,
+                cycle_id: cycle.cycle_id,
+                outcome,
+            });
+        }
+
         let completed_without_candidate = match &agent_outcome {
-            Ok(AgentRunOutcome::NoChange { .. }) => Some("no change"),
-            Ok(AgentRunOutcome::NoCandidate { .. }) => Some("no Candidate"),
+            AgentRunOutcome::NoChange { .. } => Some("no change"),
+            AgentRunOutcome::NoCandidate { .. } => Some("no Candidate"),
             _ => None,
         };
         if let Some(reported_outcome) = completed_without_candidate {
@@ -395,62 +494,23 @@ impl AnalysisCoordinator {
         }
 
         let outcome = match agent_outcome {
-            Ok(AgentRunOutcome::Candidate) => {
+            AgentRunOutcome::Candidate => {
                 let candidate = tools.proposed_candidate().await?.ok_or_else(|| {
                     AnalysisError::InvalidState(
                         "agent reported a Candidate without a successful proposal tool call"
                             .to_owned(),
                     )
                 })?;
-                Some(CycleOutcome::Candidate { candidate })
+                CycleOutcome::Candidate { candidate }
             }
-            Ok(AgentRunOutcome::NoChange { reason }) => Some(CycleOutcome::NoChange { reason }),
-            Ok(AgentRunOutcome::NoCandidate { reason }) => {
-                Some(CycleOutcome::NoCandidate { reason })
-            }
-            Ok(AgentRunOutcome::Failure { reason }) => Some(CycleOutcome::Failure { reason }),
-            Ok(AgentRunOutcome::Superseded) => {
-                let current = self
-                    .contract_service
-                    .get_current_contract(&contract.name)
-                    .await?;
-                let current_digest = current
-                    .as_ref()
-                    .map(|current| current.contract_digest.as_str());
-                if current_digest == Some(contract.contract_digest.as_str()) {
-                    let error = AnalysisError::InvalidState(
-                        "agent reported supersession while its contract digest remained current"
-                            .to_owned(),
-                    );
-                    workspace
-                        .record_attempt_failure(
-                            &cycle.cycle_id,
-                            &context.attempt_id,
-                            &error.to_string(),
-                        )
-                        .await?;
-                    lease.close().await?;
-                    return Ok(CoordinatorRunOutcome::Recoverable {
-                        contract_name: contract.name,
-                        cycle_id: cycle.cycle_id,
-                        reason: error.to_string(),
-                        failure_category: "integrity",
-                    });
-                }
-                workspace
-                    .mark_superseding(&cycle.cycle_id, current_digest)
-                    .await?;
-                Some(CycleOutcome::Superseded {
-                    replacement_digest: current_digest.map(str::to_owned),
-                })
-            }
-            Ok(AgentRunOutcome::Handoff { summary }) => {
-                workspace
-                    .record_handoff(&cycle.cycle_id, &context.attempt_id, &summary)
-                    .await?;
-                None
-            }
-            Err(error) => {
+            AgentRunOutcome::NoChange { reason } => CycleOutcome::NoChange { reason },
+            AgentRunOutcome::NoCandidate { reason } => CycleOutcome::NoCandidate { reason },
+            AgentRunOutcome::Failure { reason } => CycleOutcome::Failure { reason },
+            AgentRunOutcome::Superseded => {
+                let error = AnalysisError::InvalidState(
+                    "agent reported supersession without a coordinator supersession signal"
+                        .to_owned(),
+                );
                 workspace
                     .record_attempt_failure(
                         &cycle.cycle_id,
@@ -463,19 +523,12 @@ impl AnalysisCoordinator {
                     contract_name: contract.name,
                     cycle_id: cycle.cycle_id,
                     reason: error.to_string(),
-                    failure_category: analysis_failure_category(&error),
+                    failure_category: "integrity",
                 });
             }
+            AgentRunOutcome::Handoff { .. } => unreachable!("handoff returned above"),
         };
         lease.close().await?;
-        let Some(outcome) = outcome else {
-            return Ok(CoordinatorRunOutcome::Recoverable {
-                contract_name: contract.name,
-                cycle_id: cycle.cycle_id,
-                reason: "agent committed a handoff checkpoint".to_owned(),
-                failure_category: "internal",
-            });
-        };
         workspace
             .complete_cycle(&contract, &cycle.cycle_id, &outcome, self.clock.now())
             .await?;
@@ -503,7 +556,8 @@ fn analysis_prompt(context: &AttemptContext) -> String {
     format!(
         "Analyze the current cycle for contract '{}' at digest '{}'. \
          The trusted workspace is '{}', cycle is '{}', and attempt is '{}'. \
-         Invoke the evidence-analysis skill, commit one evidence cutoff before querying, \
+         Invoke the evidence-analysis skill, obey the coordinator-owned analysis status, \
+         commit one evidence cutoff before querying, \
          directly analyze every primary-objective and guardrail evidence source, \
          checkpoint durable work in the workspace, and finish with exactly one JSON object: \
          {{\"outcome\":\"candidate\",\"explanation\":\"...\"}}, \

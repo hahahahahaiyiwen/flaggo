@@ -9,7 +9,7 @@ pub mod copilot;
 mod capability;
 mod provider;
 
-pub use capability::{AnalysisCapabilityFactory, AnalysisTools, CurrentContractCheck, YieldSignal};
+pub use capability::{AnalysisCapabilityFactory, AnalysisRunStatus, AnalysisTools, YieldSignal};
 pub use provider::{
     AgentLease, AgentPool, AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec,
     AnalysisTask,

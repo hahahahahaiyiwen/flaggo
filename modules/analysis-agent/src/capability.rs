@@ -10,47 +10,63 @@ use flaggo_analysis_domain::{
 };
 use flaggo_analysis_workspace::WorkspaceLease;
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum AnalysisRunStatus {
+    Active,
+    ContractSuperseded {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        replacement_digest: Option<String>,
+    },
+    ServiceShutdown,
+}
+
 pub struct YieldSignal {
-    reason: RwLock<Option<String>>,
+    status: RwLock<AnalysisRunStatus>,
 }
 
 impl Default for YieldSignal {
     fn default() -> Self {
         Self {
-            reason: RwLock::new(None),
+            status: RwLock::new(AnalysisRunStatus::Active),
         }
     }
 }
 
 impl YieldSignal {
-    pub fn request(&self, reason: impl Into<String>) {
-        if let Ok(mut current) = self.reason.write() {
-            current.get_or_insert_with(|| reason.into());
+    pub fn request_contract_superseded(
+        &self,
+        replacement_digest: Option<String>,
+    ) -> Result<(), AnalysisError> {
+        self.request(AnalysisRunStatus::ContractSuperseded { replacement_digest })
+    }
+
+    pub fn request_shutdown(&self) -> Result<(), AnalysisError> {
+        self.request(AnalysisRunStatus::ServiceShutdown)
+    }
+
+    pub fn status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
+        self.status
+            .read()
+            .map(|status| status.clone())
+            .map_err(|_| AnalysisError::Agent("analysis control lock was poisoned".to_owned()))
+    }
+
+    fn request(&self, requested: AnalysisRunStatus) -> Result<(), AnalysisError> {
+        let mut status = self
+            .status
+            .write()
+            .map_err(|_| AnalysisError::Agent("analysis control lock was poisoned".to_owned()))?;
+        if *status == AnalysisRunStatus::Active {
+            *status = requested;
         }
+        Ok(())
     }
-
-    #[must_use]
-    pub fn is_requested(&self) -> bool {
-        self.reason.read().is_ok_and(|reason| reason.is_some())
-    }
-
-    #[must_use]
-    pub fn reason(&self) -> Option<String> {
-        self.reason.read().ok().and_then(|reason| reason.clone())
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CurrentContractCheck {
-    pub expected_digest: String,
-    pub current_digest: Option<String>,
-    pub is_current: bool,
 }
 
 #[async_trait]
 pub trait AnalysisTools: Send + Sync {
-    async fn check_current_contract(&self) -> Result<CurrentContractCheck, AnalysisError>;
+    async fn check_analysis_status(&self) -> Result<AnalysisRunStatus, AnalysisError>;
 
     async fn commit_evidence_cutoff(
         &self,

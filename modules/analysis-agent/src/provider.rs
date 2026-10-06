@@ -120,8 +120,8 @@ mod tests {
     use flaggo_analysis_workspace::{WorkspaceEntry, WorkspaceFileInfo, WorkspaceFileSystem};
 
     use crate::{
-        AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec, AnalysisTask,
-        AnalysisTools, CurrentContractCheck, YieldSignal,
+        AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec, AnalysisRunStatus,
+        AnalysisTask, AnalysisTools, YieldSignal,
     };
 
     struct TestProvider;
@@ -211,8 +211,8 @@ mod tests {
 
     #[async_trait]
     impl AnalysisTools for TestTools {
-        async fn check_current_contract(&self) -> Result<CurrentContractCheck, AnalysisError> {
-            unreachable!()
+        async fn check_analysis_status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
+            self.yield_signal.status()
         }
 
         async fn commit_evidence_cutoff(
