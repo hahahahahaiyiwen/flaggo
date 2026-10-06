@@ -539,9 +539,9 @@ export interface AnalysisCandidateResult {
   contractDigest: Sha256Digest;
   executableDigest: Sha256Digest;
   /**
-   * The persisted executable is inactive and has no runtime authority.
+   * Current lifecycle state. A newly created admission is candidate; an exact retry may observe a worker-resolved active or inactive executable.
    */
-  lifecycleState: "candidate";
+  lifecycleState: "active" | "candidate" | "inactive";
   createdAt: string;
   /**
    * True for first admission of the workspace cycle; false for an exact retry.

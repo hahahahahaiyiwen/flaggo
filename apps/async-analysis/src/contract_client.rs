@@ -192,11 +192,10 @@ impl ContractService for ContractServiceClient {
             return Err(candidate_response_error(response).await);
         }
         let result: CandidateResult = read_candidate_json(response).await?;
-        let valid_lifecycle = match (result.created, result.lifecycle_state.as_str()) {
-            (true, "candidate") => true,
-            (false, "candidate" | "active" | "inactive") => true,
-            _ => false,
-        };
+        let valid_lifecycle = matches!(
+            (result.created, result.lifecycle_state.as_str()),
+            (true, "candidate") | (false, "candidate" | "active" | "inactive")
+        );
         if result.contract_name != context.contract.name
             || result.contract_digest != context.contract.digest
             || !valid_lifecycle
