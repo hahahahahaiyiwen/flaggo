@@ -31,7 +31,7 @@ contract author
        -> executable generator
        -> Executable Store
 
-Evidence Store -> Async Analysis (planned)
+Evidence Store -> Async Analysis
                     -> immutable candidate + provenance
                     -> Contract Service validation and activation
 ```

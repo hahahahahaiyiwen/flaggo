@@ -1,15 +1,19 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { expect, test } from "@playwright/test";
+import { createDecisionClient } from "@flaggo/sdk/runtime";
+import { parseListeningUrl } from "../../tetris-integration/host-process.mjs";
+import { parseLokiResponse, parseTempoResponse } from "../dist/backend.js";
 import { startPlaygroundFixture } from "./playground-fixture.mjs";
 
 const exampleDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const repositoryRoot = resolve(exampleDirectory, "../..");
 const analysisMode = process.env.FLAGGO_PLAYGROUND_E2E_ANALYSIS_MODE
   ?? "deterministic";
 if (analysisMode !== "deterministic" && analysisMode !== "copilot") {
@@ -23,12 +27,24 @@ let playgroundUrl;
 
 test.beforeAll(async () => {
   test.setTimeout(660_000);
-  host = await startPlaygroundFixture({ mode: "benchmark", analysisMode });
+  host = await startPlaygroundFixture({ mode: "benchmark", analysisMode, retain: true });
   playgroundUrl = host.url;
 });
 
 test.afterAll(async () => {
   await host?.close();
+  if (host !== undefined) {
+    await rm(host.runDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await expect(access(host.runDirectory)).rejects.toThrow();
+  }
+});
+
+test.afterEach(async ({}, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus || host === undefined) return;
+  const log = await readFile(resolve(host.runDirectory, "async-analysis.log"), "utf8");
+  const path = testInfo.outputPath("async-analysis.log");
+  await writeFile(path, log.slice(-65_536), "utf8");
+  await testInfo.attach("analysis-diagnostics", { path });
 });
 
 test("learns adaptive gravity and improves matched held-out gameplay", async ({
@@ -55,22 +71,9 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   const terminalState = await terminalStateResponse.json();
   const evaluationPath = testInfo.outputPath("adaptive-evaluation.json");
   await writeFile(evaluationPath, JSON.stringify(terminalState, null, 2), "utf8");
-  await testInfo.attach("adaptive-evaluation", {
+  await testInfo.attach("terminal-evaluation", {
     path: evaluationPath,
   });
-  if (terminalState.demo.stage !== "completed") {
-    const directory = (await readdir(resolve(repositoryRoot, ".flaggo")))
-      .find((name) => name.startsWith(`tetris-playground-${host.child.pid}-`));
-    if (directory === undefined) {
-      throw new Error("The failed playground's diagnostic directory is missing.");
-    }
-    const log = await readFile(resolve(
-      repositoryRoot, ".flaggo", directory, "async-analysis.log",
-    ), "utf8");
-    const logPath = testInfo.outputPath("async-analysis.log");
-    await writeFile(logPath, log.slice(-65_536), "utf8");
-    await testInfo.attach("analysis-diagnostics", { path: logPath });
-  }
   expect(terminalState.demo.stage, terminalState.demo.detail).toBe("completed");
   const { baseline, learned, balanceImprovement } = terminalState.demo;
   for (const result of [baseline, learned]) {
@@ -104,9 +107,19 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   await expect(page.locator(".health-pill.failed")).toHaveCount(0);
   await expect(page.locator(".health-pill.stopped")).toHaveCount(0);
   await expect(page.locator(".phase-activation").first()).toBeVisible();
-  const stateResponse = await page.request.get(`${playgroundUrl}/api/state`);
-  expect(stateResponse.ok()).toBe(true);
-  const state = await stateResponse.json();
+  let state;
+  await expect.poll(async () => {
+    const response = await page.request.get(`${playgroundUrl}/api/state`);
+    expect(response.ok()).toBe(true);
+    state = await response.json();
+    const cycle = state.executables.activeExecutable.provenance?.cycleId;
+    return state.timeline.some((event) =>
+      event.name === "flaggo.analysis.cycle.completed" && event.outcome === "candidate"
+      && event.attributes["flaggo.analysis.cycle.id"] === cycle)
+      && state.controlLoop.candidate?.candidateDigest === learned.executableDigest
+      && state.controlLoop.activation?.executableDigest === learned.executableDigest;
+  }, { timeout: 30_000 }).toBe(true);
+  await writeFile(evaluationPath, JSON.stringify(state, null, 2), "utf8");
   expect(state.backendFailures).toEqual([]);
   expect(state.metrics.length).toBeGreaterThan(0);
   expect(state.evidence.observationsCreated).toBeGreaterThan(0);
@@ -117,7 +130,6 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   expect(state.executables.activeExecutable.executableDigest).toBe(
     learned.executableDigest,
   );
-  expect(state.controlLoop.analysis.status).toBe("success");
   expect(state.controlLoop.candidate.status).toBe("success");
   expect(state.controlLoop.activation.status).toBe("success");
   for (const phase of [
@@ -129,4 +141,154 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   ]) {
     expect(state.timeline.some((event) => event.phase === phase)).toBe(true);
   }
+  const active = state.executables.activeExecutable;
+  const provenance = active.provenance;
+  expect(active.contractDigest).toBe(state.executables.contractDigest);
+  expect(provenance.source).toBe("async-analysis");
+  expect(provenance.cycleId).toMatch(/^[0-9a-f-]{36}$/u);
+  expect(provenance.attemptId).toMatch(/^[0-9a-f-]{36}$/u);
+  expect(provenance.evidenceWatermark).toBeGreaterThan(0);
+  expect(Date.parse(provenance.evidenceCutoff)).toBeLessThanOrEqual(
+    Date.parse(active.createdAt),
+  );
+  expect(provenance.analysisManifestDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  expect(state.controlLoop.candidate.candidateDigest).toBe(learned.executableDigest);
+  expect(state.controlLoop.activation.executableDigest).toBe(learned.executableDigest);
+  for (const service of state.services) {
+    expect(state.metrics.some((metric) => metric.service === service.name),
+      `${service.name} must export operational metrics`).toBe(true);
+  }
+  const urls = Object.fromEntries(await Promise.all([
+    ["contractServiceUrl", "contract-service.log"],
+    ["decisionServiceUrl", "decision-service.log"],
+    ["otlpIngestionUrl", "otel-ingestion.log"],
+  ].map(async ([name, file]) => {
+    const log = await readFile(resolve(host.runDirectory, file), "utf8");
+    const url = log.split(/\r?\n/u).map(parseListeningUrl).find((value) => value !== undefined);
+    expect(url, `${file} must report its bound loopback address`).toBeDefined();
+    return [name, url];
+  })));
+  const manifest = JSON.parse(await readFile(resolve(exampleDirectory, "flaggo.deploy.json"), "utf8"));
+  const runtimeConfig = {
+    format: "flaggo.runtime-config/v1",
+    authority: manifest.authority,
+    services: urls,
+    bindings: { "tetris.dropInterval": { contractDigest: active.contractDigest } },
+  };
+  const client = createDecisionClient({ runtimeConfig, random: () => 0.25 });
+  const decisions = [];
+  for (const pressure of [0.1, 0.3]) {
+    const attributes = {
+      board_pressure_mean_5s: pressure, board_pressure_max_5s: pressure,
+      hard_drop_ratio_5s: 0.5, placement_time_mean_ms_5s: 3_000,
+      pieces_locked_5s: 2, active_play_ms_5s: 5_000,
+      challenge_balance_5s: 0.5, lines_cleared_5s: 0, game_over_count_5s: 0,
+      current_drop_interval_ms: 800, session_id: "phase4-exit-parity",
+      exposure_id: `unused-${pressure}`,
+    };
+    const sdk = (await client.decide("tetris.dropInterval", { attributes })).value;
+    const restResponse = await page.request.post(
+      `${urls.decisionServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/decisions`,
+      { data: { attributes: { ...attributes, _random: 0.25 } } },
+    );
+    expect(restResponse.ok()).toBe(true);
+    const rest = await restResponse.json();
+    for (const decision of [sdk, rest]) {
+      expect(decision.contractDigest).toBe(active.contractDigest);
+      expect(decision.executableDigest).toBe(learned.executableDigest);
+    }
+    expect(rest.result).toBe(sdk.result);
+    expect(rest.evaluation).toEqual(sdk.evaluation);
+    if (analysisMode === "deterministic") {
+      expect(sdk.result).toBe(pressure < 0.15 ? 200 : 1_000);
+    }
+    decisions.push({ attributes, sdk, rest });
+  }
+  const conflict = await page.request.post(
+    `${urls.contractServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables/${baseline.executableDigest}/activate`,
+    { data: {
+      expectedActiveExecutableDigest: baseline.executableDigest,
+      expectedActiveStateVersion: 0,
+      expectedCandidateStateVersion: 0,
+    } },
+  );
+  expect(conflict.status()).toBe(409);
+  const catalog = await page.request.get(
+    `${urls.contractServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables`,
+  );
+  expect(catalog.ok()).toBe(true);
+  expect((await catalog.json()).activeExecutable.executableDigest).toBe(learned.executableDigest);
+  const rejectedExport = await page.request.post(`${urls.otlpIngestionUrl}/v1/logs`, {
+    headers: { "Content-Type": "application/xml" }, data: "<invalid/>",
+  });
+  expect(rejectedExport.status()).toBe(415);
+  const execute = promisify(execFile);
+  const containers = await execute("docker", [
+    "ps", "--filter", `name=flaggo-playground-${host.child.pid}-`,
+    "--filter", "label=com.docker.compose.service=lgtm", "--format", "{{.ID}}",
+  ]);
+  const containerIds = containers.stdout.trim().split(/\r?\n/u).filter(Boolean);
+  expect(containerIds).toHaveLength(1);
+  const backendPorts = await execute("docker", [
+    "inspect", "--format", "{{json .NetworkSettings.Ports}}", containerIds[0],
+  ]);
+  const ports = JSON.parse(backendPorts.stdout);
+  const endpoint = (port) => {
+    expect(ports[port]).toHaveLength(1);
+    expect(ports[port][0].HostIp).toBe("127.0.0.1");
+    return `http://127.0.0.1:${ports[port][0].HostPort}`;
+  };
+  const tempoUrl = endpoint("3200/tcp");
+  const lokiUrl = endpoint("3100/tcp");
+  const telemetry = {};
+  await expect.poll(async () => {
+    await Promise.all(state.services.map(async ({ name }) => {
+      const [logsResponse, tracesResponse] = await Promise.all([
+        page.request.get(`${lokiUrl}/loki/api/v1/query_range?${new URLSearchParams({
+          query: `{service_name="${name}"} | trace_id != ""`,
+          start: String(BigInt(Date.parse(state.demo.startedAt) - 60_000) * 1_000_000n),
+          limit: "10",
+        })}`),
+        page.request.get(`${tempoUrl}/api/search?${new URLSearchParams({
+          q: `{ resource.service.name = "${name}" && name =~ "^flaggo\\\\..*" }`,
+          start: String(Math.floor(Date.parse(state.demo.startedAt) / 1_000) - 60),
+          end: String(Math.ceil(Date.now() / 1_000)),
+          limit: "60",
+        })}`),
+      ]);
+      expect(logsResponse.ok(), await logsResponse.text()).toBe(true);
+      expect(tracesResponse.ok(), await tracesResponse.text()).toBe(true);
+      telemetry[name] = {
+        logs: parseLokiResponse(await logsResponse.json()),
+        spans: parseTempoResponse(await tracesResponse.json()),
+      };
+      const log = telemetry[name].logs.find((value) => value.traceId !== undefined);
+      if (log !== undefined) {
+        const traceResponse = await page.request.get(`${tempoUrl}/api/traces/${log.traceId}`);
+        if (traceResponse.status() !== 404) {
+          expect(traceResponse.ok(), await traceResponse.text()).toBe(true);
+          telemetry[name].correlatedTrace = { traceId: log.traceId, trace: await traceResponse.json() };
+        }
+      }
+    }));
+    return Object.values(telemetry).every(({ logs, spans, correlatedTrace }) =>
+      logs.length > 0 && spans.length > 0
+      && correlatedTrace !== undefined);
+  }, { timeout: 60_000, message: "Every service must have correlated logs and traces in LGTM" }).toBe(true)
+    .finally(async () => {
+      const path = testInfo.outputPath("service-telemetry.json");
+      await writeFile(path, JSON.stringify(telemetry, null, 2), "utf8");
+      await testInfo.attach("service-telemetry", { path });
+    });
+  await writeFile(evaluationPath, JSON.stringify({
+    ...state, exitVerification: {
+      runtimeConfig, decisions, telemetry,
+      rejectedActivation: await conflict.json(), rejectedExport: await rejectedExport.json(),
+    },
+  }, null, 2), "utf8");
+  await testInfo.attach("phase4-exit-verification", { path: evaluationPath });
+  await host.close();
+  await expect(fetch(`${playgroundUrl}/api/health`, {
+    signal: AbortSignal.timeout(2_000),
+  })).rejects.toThrow();
 });

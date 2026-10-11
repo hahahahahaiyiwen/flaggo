@@ -7,8 +7,10 @@ artifacts.
 The implemented stack covers contract acceptance, default and deterministic
 authored-executable generation, atomic activation, stateless runtime
 evaluation, direct OTLP ingestion, a bounded Raw OTLP Inbox, and forward-only
-Evidence Materialization. Evidence correlation and asynchronous
-evidence-based candidate generation remain planned.
+Evidence Materialization, asynchronous bounded evidence analysis, immutable
+Candidate admission, and auto-activation. Applications own exposure/outcome
+correlation; analysis joins the declared evidence rather than relying on an
+ingestion-time correlation guarantee.
 
 ## Product model
 
@@ -32,8 +34,8 @@ decision receipt + application telemetry
 ```
 
 Activation is the only transition that grants runtime authority. The initial
-learning declaration uses `mode: auto-activation` to define how a future valid
-evidence-generated candidate would attempt activation. Async Analysis cannot
+learning declaration uses `mode: auto-activation` to request activation of an
+eligible validated evidence-generated Candidate. Async Analysis cannot
 write runtime authority directly; its candidate returns through Contract
 Service validation and activation. Runtime never selects a contract or
 executable by generation recency.
@@ -48,9 +50,12 @@ versions by `contractDigest`; runtime resolves only the executable active for
 the exact requested digest and authenticated tenant/application/environment
 scope.
 
-The pre-v3 implementation has been removed. Async Analysis, evidence
-correlation, and evidence-generated candidate production remain future
-implementation work.
+The pre-v3 implementation has been removed. The
+[Tetris playground](../examples/tetris-playground/README.md) exercises the
+learning loop with real local services and a standard local OTel backend.
+Its credential-free benchmark uses an example-owned deterministic agent;
+live learning uses Copilot. Neither admission nor the greedy-player benchmark
+proves production safety or human enjoyment.
 
 [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3), native issue
 dependencies, and self-contained issue contracts remain the authoritative
@@ -67,7 +72,7 @@ roadmap and status source. This page is orientation, not a second roadmap.
 | How do clients, services, workers, and stores fit together? | [Architecture overview](design/architecture/OVERVIEW.md) |
 | How do authoring clients deploy and inspect contracts? | [Contract clients and Contract Service](design/architecture/CONTRACT_SERVICE.md) |
 | How do applications and the SDK call runtime? | [Runtime client and Decision Service](design/architecture/RUNTIME.md) |
-| How do OTLP ingestion, materialization, evidence, and planned analysis relate? | [Evidence and learning](design/architecture/EVIDENCE.md) |
+| How do OTLP ingestion, materialization, evidence, and analysis relate? | [Evidence and learning](design/architecture/EVIDENCE.md) |
 | What are the contract and executable primitives? | [Decision contracts and executables](design/contracts/CONTRACTS.md) |
 | How does the lifecycle progress? | [Decision contract lifecycle](design/contracts/LIFECYCLE.md) |
 | How does exact-version stateless evaluation work? | [Runtime evaluation model](design/contracts/RUNTIME_EVALUATION.md) |
