@@ -1,0 +1,5 @@
+{
+  "name": "@flaggo/example-tetris-playground",
+  "private": true,
+  "type": "module"
+}

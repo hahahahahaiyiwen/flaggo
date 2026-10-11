@@ -24,6 +24,11 @@ public sealed class SqliteContractVersionStore : IContractVersionStore
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
+        await using (var journal = connection.CreateCommand())
+        {
+            journal.CommandText = "PRAGMA journal_mode = WAL;";
+            await journal.ExecuteNonQueryAsync(cancellationToken);
+        }
         await using (var versionTable = connection.CreateCommand())
         {
             versionTable.CommandText =

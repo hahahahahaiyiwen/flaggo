@@ -527,6 +527,136 @@ public sealed class ContractServiceEndpointTests
     }
 
     [Fact]
+    public async Task ListsExecutableDetailsAndManuallyActivatesCandidate()
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var version = await PutDefaultAsync(client, 3);
+        var candidatesPath =
+            $"/v3/decision-contracts/worker.batchSize/versions/"
+            + $"{version.ContractDigest}/candidates";
+        var candidate = await PostCandidateAsync(
+            client,
+            candidatesPath,
+            CreateCandidateSubmission("manual-cycle", returnValue: 5));
+        var executablesPath =
+            $"/v3/decision-contracts/worker.batchSize/versions/"
+            + $"{version.ContractDigest}/executables";
+
+        using var catalogResponse = await client.GetAsync(executablesPath);
+        var catalog = await catalogResponse.Content
+            .ReadFromJsonAsync<DecisionExecutableCatalog>(StrictJson.Options);
+
+        Assert.Equal(HttpStatusCode.OK, catalogResponse.StatusCode);
+        Assert.NotNull(catalog);
+        Assert.Equal(version.ActiveExecutableDigest, catalog.ActiveExecutable.ExecutableDigest);
+        Assert.Equal("active", catalog.ActiveExecutable.LifecycleState);
+        var listedCandidate = Assert.Single(catalog.Candidates);
+        Assert.Equal(candidate.ExecutableDigest, listedCandidate.ExecutableDigest);
+        Assert.Equal("candidate", listedCandidate.LifecycleState);
+        Assert.Equal("analysis-rule", Assert.Single(listedCandidate.Executable.Rules).Name);
+        Assert.Equal(
+            "manual-cycle",
+            listedCandidate.Provenance?.GetProperty("cycleId").GetString());
+
+        using var initialHistoryResponse = await client.GetAsync($"{executablesPath}/history");
+        Assert.Equal(HttpStatusCode.OK, initialHistoryResponse.StatusCode);
+        var initialHistory = await initialHistoryResponse.Content
+            .ReadFromJsonAsync<DecisionExecutableHistory>(StrictJson.Options);
+        Assert.NotNull(initialHistory);
+        using var initialHistoryJson = JsonDocument.Parse(
+            await initialHistoryResponse.Content.ReadAsStringAsync());
+        Assert.Equal(
+            JsonValueKind.Null,
+            initialHistoryJson.RootElement.GetProperty("nextCursor").ValueKind);
+        Assert.Equal(["active", "candidate"], initialHistory.Executables
+            .Select(value => value.LifecycleState).Order(StringComparer.Ordinal));
+        Assert.Equal(version.ContractDigest, initialHistory.ContractDigest);
+        Assert.Null(initialHistory.NextCursor);
+
+        var activation = new DecisionExecutableActivationRequest
+        {
+            ExpectedActiveExecutableDigest =
+                catalog.ActiveExecutable.ExecutableDigest,
+            ExpectedActiveStateVersion = catalog.ActiveExecutable.StateVersion,
+            ExpectedCandidateStateVersion = listedCandidate.StateVersion
+        };
+        using var activateRequest = JsonRequest(
+            HttpMethod.Post,
+            $"{executablesPath}/{candidate.ExecutableDigest}/activate",
+            JsonSerializer.Serialize(activation, StrictJson.Options));
+        using var activateResponse = await client.SendAsync(activateRequest);
+        var activated = await activateResponse.Content
+            .ReadFromJsonAsync<DecisionExecutableActivationResult>(
+                StrictJson.Options);
+
+        Assert.Equal(HttpStatusCode.OK, activateResponse.StatusCode);
+        Assert.NotNull(activated);
+        Assert.Equal(
+            candidate.ExecutableDigest,
+            activated.Executable.ExecutableDigest);
+        Assert.Equal("active", activated.Executable.LifecycleState);
+        Assert.Equal(
+            version.ActiveExecutableDigest,
+            activated.PreviousExecutableDigest);
+
+        using var refreshedResponse = await client.GetAsync(executablesPath);
+        var refreshed = await refreshedResponse.Content
+            .ReadFromJsonAsync<DecisionExecutableCatalog>(StrictJson.Options);
+        Assert.Equal(candidate.ExecutableDigest, refreshed?.ActiveExecutable.ExecutableDigest);
+        Assert.Empty(refreshed!.Candidates);
+        using var refreshedJson = JsonDocument.Parse(
+            await refreshedResponse.Content.ReadAsStringAsync());
+        Assert.Equal(
+            JsonValueKind.Null,
+            refreshedJson.RootElement.GetProperty("nextCursor").ValueKind);
+
+        using var historyResponse = await client.GetAsync($"{executablesPath}/history?limit=1");
+        var history = await historyResponse.Content
+            .ReadFromJsonAsync<DecisionExecutableHistory>(StrictJson.Options);
+        Assert.Equal(HttpStatusCode.OK, historyResponse.StatusCode);
+        Assert.NotNull(history);
+        Assert.Single(history.Executables);
+        Assert.NotNull(history.NextCursor);
+        using var nextResponse = await client.GetAsync(
+            $"{executablesPath}/history?limit=1&cursor={Uri.EscapeDataString(history.NextCursor)}");
+        var next = await nextResponse.Content
+            .ReadFromJsonAsync<DecisionExecutableHistory>(StrictJson.Options);
+        Assert.Equal(HttpStatusCode.OK, nextResponse.StatusCode);
+        Assert.NotNull(next);
+        Assert.Null(next.NextCursor);
+        using var finalHistoryJson = JsonDocument.Parse(
+            await nextResponse.Content.ReadAsStringAsync());
+        Assert.Equal(
+            JsonValueKind.Null,
+            finalHistoryJson.RootElement.GetProperty("nextCursor").ValueKind);
+        var all = history.Executables.Concat(next.Executables).ToArray();
+        Assert.Equal(
+            "active",
+            Assert.Single(all, value => value.ExecutableDigest == candidate.ExecutableDigest).LifecycleState);
+        Assert.Equal(
+            "inactive",
+            Assert.Single(all, value => value.ExecutableDigest == version.ActiveExecutableDigest).LifecycleState);
+        using var invalidLimit = await client.GetAsync($"{executablesPath}/history?limit=201");
+        Assert.Equal(HttpStatusCode.BadRequest, invalidLimit.StatusCode);
+        using var invalidCursor = await client.GetAsync($"{executablesPath}/history?cursor=invalid");
+        Assert.Equal(HttpStatusCode.BadRequest, invalidCursor.StatusCode);
+        using var unknownContract = await client.GetAsync(executablesPath
+            .Replace("worker.batchSize", "unknown.contract", StringComparison.Ordinal) + "/history");
+        Assert.Equal(HttpStatusCode.NotFound, unknownContract.StatusCode);
+
+        using var retryRequest = JsonRequest(
+            HttpMethod.Post,
+            $"{executablesPath}/{candidate.ExecutableDigest}/activate",
+            JsonSerializer.Serialize(activation, StrictJson.Options));
+        using var retryResponse = await client.SendAsync(retryRequest);
+        await AssertProblemAsync(
+            retryResponse,
+            HttpStatusCode.Conflict,
+            ProblemTypes.ActivationConflict);
+    }
+
+    [Fact]
     public async Task ActivationWorkerActivatesNewestEligibleAnalysisCandidate()
     {
         var activities = new ConcurrentBag<Activity>();

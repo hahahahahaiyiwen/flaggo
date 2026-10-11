@@ -108,12 +108,7 @@ impl ToolHandler for AnalysisToolHandler {
                 self.tools.run_sql(sql).await.map_err(tool_error)?
             }
             AnalysisToolKind::ProposeExecutable => {
-                let rules = invocation.arguments.get("rules").cloned().ok_or_else(|| {
-                    CopilotError::with_message(
-                        ErrorKind::InvalidConfig,
-                        "propose_executable requires rules",
-                    )
-                })?;
+                let rules = proposal_rules(&invocation.arguments)?;
                 serde_json::to_value(
                     self.tools
                         .propose_executable(rules)
@@ -175,7 +170,7 @@ pub(super) fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
         ),
         tool(
             PROPOSE_EXECUTABLE_TOOL,
-            "Validate and persist exactly one inactive Candidate for this cycle.",
+            "Validate and persist exactly one inactive Candidate for a supported executable change. Do not call for noChange or noCandidate.",
             json!({
                 "type": "object",
                 "additionalProperties": false,
@@ -192,6 +187,20 @@ pub(super) fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
             tools,
         ),
     ]
+}
+
+fn proposal_rules(arguments: &Value) -> Result<Value, CopilotError> {
+    let rules = arguments
+        .get("rules")
+        .and_then(Value::as_array)
+        .filter(|rules| !rules.is_empty())
+        .ok_or_else(|| {
+            CopilotError::with_message(
+                ErrorKind::InvalidConfig,
+                "propose_executable requires at least one rule",
+            )
+        })?;
+    Ok(Value::Array(rules.clone()))
 }
 
 fn tool(
@@ -218,7 +227,7 @@ mod tests {
 
     use super::{
         BUILTIN_TOOL_NAMES, CHECK_CYCLE_STATUS_TOOL, REGISTERED_ANALYSIS_TOOL_NAMES,
-        available_tools, is_analysis_permission,
+        available_tools, is_analysis_permission, proposal_rules,
     };
 
     #[test]
@@ -276,5 +285,16 @@ mod tests {
             }),
             ..PermissionRequestData::default()
         }));
+    }
+
+    #[test]
+    fn rejects_empty_executable_proposals() {
+        let error = proposal_rules(&json!({"rules": []}))
+            .expect_err("empty rules must not represent a proposal");
+
+        assert_eq!(
+            error.to_string(),
+            "propose_executable requires at least one rule"
+        );
     }
 }

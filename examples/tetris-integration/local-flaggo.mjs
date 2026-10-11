@@ -152,7 +152,7 @@ export async function startLocalFlaggoHosts({
         FLAGGO_ANALYSIS_GITHUB_TOKEN: githubToken,
         FLAGGO_ANALYSIS_LOG_SESSION_EVENTS: "true",
         FLAGGO_ANALYSIS_POLL_INTERVAL_MS: "1000",
-        FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: "300",
+        FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: "600",
         FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.asyncAnalysisWorkspace,
         FLAGGO_CONTRACT_CATALOG_URL:
           `${hosts.contractUrl}/v3/decision-contract-catalog/current`,

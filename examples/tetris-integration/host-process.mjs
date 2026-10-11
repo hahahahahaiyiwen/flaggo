@@ -5,6 +5,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 
 const dynamicLoopbackUrl = "http://127.0.0.1:0";
 const signalExitCodes = new Map([
@@ -20,6 +21,12 @@ export class IntegrationSignalError extends Error {
     this.signal = signal;
     this.exitCode = exitCode;
   }
+}
+
+export function formatIntegrationError(error) {
+  return error instanceof Error
+    ? inspect(error, { colors: false, depth: null })
+    : String(error);
 }
 
 export function createHostLifecycle({
@@ -199,19 +206,14 @@ export function createHostLifecycle({
 
         while (hosts.length > 0) {
           const batch = hosts.splice(0).reverse();
-          const results = await Promise.allSettled(
-            batch.map(async (host) => {
+          for (const host of batch) {
+            try {
               await host.stop();
-            }),
-          );
-          for (let index = 0; index < results.length; index += 1) {
-            const result = results[index];
-            if (result.status === "rejected") {
-              const host = batch[index];
+            } catch (error) {
               cleanupFailures.push(
                 new Error(
                   `Failed to stop integration host '${host.name ?? "unnamed"}'.`,
-                  { cause: result.reason },
+                  { cause: error },
                 ),
               );
             }
@@ -669,6 +671,9 @@ export function startManagedProcess(
   let stopPromise;
   return {
     name,
+    get pid() {
+      return child.pid;
+    },
     get exited() {
       return exited;
     },
@@ -815,8 +820,8 @@ export function createRustHostEnvironment(
 ) {
   return {
     ...parentEnvironment,
-    ...configuration,
     FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS: "127.0.0.1:0",
+    ...configuration,
   };
 }
 

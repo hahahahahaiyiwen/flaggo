@@ -5,6 +5,7 @@ import {
   LocalDropIntervalProvider,
   localDropInterval,
   RollingDropIntervalContext,
+  validDropInterval,
   type DropIntervalContext,
   type DropIntervalProvider,
   type DropIntervalSelection,
@@ -14,6 +15,7 @@ import {
   type GameSnapshot,
   type GameUpdate,
   type TetrisGameOptions,
+  type TetrisPlanningState,
 } from "./game.js";
 
 export type TetrisSessionCommand =
@@ -41,6 +43,8 @@ export interface TetrisSessionOptions {
   readonly game?: TetrisSessionGameOptions;
   readonly instrumentation?: TetrisSessionInstrumentation;
   readonly now?: () => number;
+  readonly fallbackIntervalMs?: number;
+  readonly policyApplication?: "immediate" | "piece-boundary";
 }
 
 export interface TetrisSessionState extends GameSnapshot {
@@ -48,6 +52,7 @@ export interface TetrisSessionState extends GameSnapshot {
   readonly sessionId: string;
   readonly status: TetrisSessionStatus;
   readonly dropInterval: DropIntervalSelection;
+  readonly pendingDropInterval?: DropIntervalSelection;
 }
 
 export interface TetrisSessionTransition {
@@ -56,11 +61,12 @@ export interface TetrisSessionTransition {
   readonly state: TetrisSessionState;
   readonly update?: GameUpdate;
   readonly policyContext?: DropIntervalContext;
-  readonly reason?: "closed" | "inactive" | "in-flight" | "cancelled";
+  readonly reason?: "closed" | "inactive" | "in-flight" | "cancelled" | "queued";
 }
 
 export interface TetrisSessionApi {
   snapshot(): TetrisSessionState;
+  planningState(): TetrisPlanningState;
   dispatch(command: TetrisSessionCommand): TetrisSessionTransition;
   refreshPolicy(signal?: AbortSignal): Promise<TetrisSessionTransition>;
   cancelPolicyRefresh(): boolean;
@@ -92,6 +98,10 @@ export class TetrisSession implements TetrisSessionApi {
   private readonly provider: DropIntervalProvider;
   private readonly sessionId: string;
   private readonly instrumentation: TetrisSessionInstrumentation | undefined;
+  private readonly fallbackIntervalMs: number | undefined;
+  private readonly policyApplication: "immediate" | "piece-boundary";
+  private pendingSelection: DropIntervalSelection | undefined;
+  private freshPiece = true;
   private game: TetrisGame;
   private observationWindow: RollingDropIntervalContext;
   private lastObservedAt: number;
@@ -106,13 +116,24 @@ export class TetrisSession implements TetrisSessionApi {
     this.now = options.now ?? Date.now;
     this.provider = options.provider ?? new LocalDropIntervalProvider();
     this.instrumentation = options.instrumentation;
+    if (
+      options.fallbackIntervalMs !== undefined
+      && !validDropInterval(options.fallbackIntervalMs)
+    ) {
+      throw new RangeError("The fallback interval must satisfy the drop-interval bounds.");
+    }
+    this.fallbackIntervalMs = options.fallbackIntervalMs;
+    this.policyApplication = options.policyApplication ?? "immediate";
+    if (this.policyApplication !== "immediate" && this.policyApplication !== "piece-boundary") {
+      throw new RangeError("Policy application must be immediate or piece-boundary.");
+    }
     this.sessionId = this.gameOptions.sessionId ?? `tetris-${randomUUID()}`;
     this.lastObservedAt = this.currentTime();
     this.game = this.createGame(this.lastObservedAt);
     this.observationWindow = this.createObservationWindow(
       this.lastObservedAt,
     );
-    this.selection = localSelection(this.game.level);
+    this.selection = this.localSelection();
     this.instrumentation?.sessionStarted(this.snapshot());
   }
 
@@ -124,7 +145,14 @@ export class TetrisSession implements TetrisSessionApi {
       sessionId: game.dropObservation.sessionId,
       status: this.status(),
       dropInterval: { ...this.selection },
+      ...(this.pendingSelection === undefined
+        ? {}
+        : { pendingDropInterval: { ...this.pendingSelection } }),
     };
+  }
+
+  planningState(): TetrisPlanningState {
+    return this.game.planningState();
   }
 
   dispatch(command: TetrisSessionCommand): TetrisSessionTransition {
@@ -208,7 +236,7 @@ export class TetrisSession implements TetrisSessionApi {
         const error = result.error;
         const message = error instanceof Error ? error.message : String(error);
         return this.applyPolicySelection({
-          intervalMs: localDropInterval(this.game.level),
+          intervalMs: this.localInterval(),
           source: "local-fallback",
           status: `provider error: ${message}`,
         }, context);
@@ -234,9 +262,10 @@ export class TetrisSession implements TetrisSessionApi {
   }
 
   cancelPolicyRefresh(): boolean {
-    if (this.policyRefresh === undefined) return false;
+    if (this.policyRefresh === undefined && this.pendingSelection === undefined) return false;
     this.policyGeneration += 1;
-    this.policyRefresh.controller.abort();
+    this.pendingSelection = undefined;
+    this.policyRefresh?.controller.abort();
     this.policyRefresh = undefined;
     return true;
   }
@@ -282,6 +311,9 @@ export class TetrisSession implements TetrisSessionApi {
     this.lastObservedAt = observedAt;
 
     let selectionChanged = false;
+    if (update.changed || update.recoveryFailureRecorded) {
+      this.freshPiece = update.locked && !update.gameOver;
+    }
     if (
       update.locked
       && (
@@ -291,10 +323,15 @@ export class TetrisSession implements TetrisSessionApi {
     ) {
       const next = {
         ...this.selection,
-        intervalMs: localDropInterval(this.game.level),
+        intervalMs: this.localInterval(),
       };
       selectionChanged = !sameSelection(this.selection, next);
       this.selection = next;
+    }
+    if (update.locked && !update.gameOver && this.pendingSelection !== undefined) {
+      selectionChanged = !sameSelection(this.selection, this.pendingSelection);
+      this.selection = this.pendingSelection;
+      this.pendingSelection = undefined;
     }
     if (update.gameOver) this.cancelPolicyRefresh();
 
@@ -358,7 +395,8 @@ export class TetrisSession implements TetrisSessionApi {
     this.game = this.createGame(observedAt);
     this.lastObservedAt = observedAt;
     this.observationWindow = this.createObservationWindow(observedAt);
-    this.selection = localSelection(this.game.level);
+    this.selection = this.localSelection();
+    this.freshPiece = true;
     this.revisionValue += 1;
     return this.transition(command, true);
   }
@@ -370,8 +408,19 @@ export class TetrisSession implements TetrisSessionApi {
     const next = updatedSelection(
       this.selection,
       refreshed,
-      this.game.level,
+      this.localInterval(),
     );
+    if (!validDropInterval(next.intervalMs)) {
+      throw new RangeError("The selected interval must satisfy the drop-interval bounds.");
+    }
+    if (this.policyApplication === "piece-boundary" && !this.freshPiece) {
+      this.pendingSelection = next;
+      this.revisionValue += 1;
+      return this.transition("refresh-policy", true, {
+        policyContext: context,
+        reason: "queued",
+      });
+    }
     const changed = !sameSelection(this.selection, next);
     this.selection = next;
     if (changed) this.revisionValue += 1;
@@ -451,20 +500,26 @@ export class TetrisSession implements TetrisSessionApi {
       throw new Error("The Tetris session is closed.");
     }
   }
-}
 
-function localSelection(currentLevel: number): DropIntervalSelection {
-  return {
-    intervalMs: localDropInterval(currentLevel),
-    source: "local",
-    status: "local gravity policy",
-  };
+  private localInterval(): number {
+    return this.fallbackIntervalMs ?? localDropInterval(this.game.level);
+  }
+
+  private localSelection(): DropIntervalSelection {
+    return {
+      intervalMs: this.localInterval(),
+      source: "local",
+      status: this.fallbackIntervalMs === undefined
+        ? "local gravity policy"
+        : "fixed local gravity policy",
+    };
+  }
 }
 
 function updatedSelection(
   current: DropIntervalSelection,
   refreshed: DropIntervalSelection,
-  currentLevel: number,
+  localIntervalMs: number,
 ): DropIntervalSelection {
   if (
     refreshed.source !== "local-fallback"
@@ -477,12 +532,12 @@ function updatedSelection(
         || refreshed.source === "local-fallback"
       ? {
         ...refreshed,
-        intervalMs: localDropInterval(currentLevel),
+        intervalMs: localIntervalMs,
       }
       : { ...refreshed };
   }
   return {
-    intervalMs: current.intervalMs,
+    ...current,
     source: "flaggo-cached",
     status: `retained after refresh failure: ${refreshed.status}`,
   };
@@ -494,5 +549,8 @@ function sameSelection(
 ): boolean {
   return left.intervalMs === right.intervalMs
     && left.source === right.source
-    && left.status === right.status;
+    && left.status === right.status
+    && left.exposureId === right.exposureId
+    && left.contractDigest === right.contractDigest
+    && left.executableDigest === right.executableDigest;
 }

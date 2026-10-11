@@ -24,6 +24,9 @@ import {
 import {
   createFlaggoDropIntervalProvider,
 } from "../dist/flaggo/flaggo-provider.js";
+import { createExperienceRecorder, TetrisExperience } from "../dist/flaggo/experience.js";
+import { SequencePieceSource } from "../dist/flaggo/game.js";
+import { TetrisSession } from "../dist/flaggo/session.js";
 
 const contractDigest =
   "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -56,7 +59,7 @@ const context = {
   sessionId: "provider-test",
 };
 
-function decisionResponse(result, evaluation = { source: "rule", rule: "high-pressure" }) {
+function decisionResponse(result, evaluation = { source: "rule", rule: "explore-fast-gravity" }) {
   return new Response(JSON.stringify({
     contractDigest,
     executableDigest,
@@ -68,21 +71,72 @@ function decisionResponse(result, evaluation = { source: "rule", rule: "high-pre
   });
 }
 
-test("Flaggo provider maps game context and returns decision provenance", async () => {
-  let request;
+function harness(configuration, onWindow) {
+  let clock = 0;
+  let session;
+  const experience = new TetrisExperience(
+    { dataset: "training", origin: "greedy", clock: "virtual" }, onWindow);
   const provider = createFlaggoDropIntervalProvider({
     runtimeConfig,
     retry: { maxAttempts: 1 },
+    ...configuration,
+    experience,
+    state: () => session.snapshot(),
+    now: () => clock,
+  });
+  session = new TetrisSession({
+    provider,
+    game: { pieceSource: new SequencePieceSource(["O"]), sessionId: context.sessionId },
+    fallbackIntervalMs: 1_000,
+    policyApplication: "piece-boundary",
+    now: () => clock,
+  });
+  experience.observe(session.snapshot(), clock);
+  return {
+    provider,
+    session,
+    experience,
+    at(value) { clock = value; },
+    command(command) {
+      const transition = session.dispatch(command);
+      experience.observe(transition.state, clock, transition);
+      return transition;
+    },
+    async refresh() {
+      const transition = await session.refreshPolicy();
+      experience.observe(transition.state, clock, transition);
+      return transition;
+    },
+    close() {
+      session.close();
+      experience.observe(session.snapshot(), clock);
+    },
+  };
+}
+
+test("Flaggo provider maps twelve adaptive attributes and reserves exposure correlation", async () => {
+  let request;
+  const h = harness({
+    random: () => 0.25,
     fetch: async (input, init) => {
       request = { input, init };
-      return decisionResponse(850);
+      return decisionResponse(200);
     },
   });
-
-  assert.deepEqual(await provider.select(context), {
-    intervalMs: 850,
+  h.at(1_000);
+  h.command("hard-drop");
+  h.at(2_000);
+  h.command("hard-drop");
+  h.at(3_500);
+  const selection = await h.provider.select(context);
+  assert.match(selection.exposureId, /^exposure-/u);
+  assert.deepEqual({ ...selection, exposureId: undefined }, {
+    intervalMs: 200,
     source: "flaggo",
-    status: "rule high-pressure",
+    status: "rule explore-fast-gravity",
+    exposureId: undefined,
+    contractDigest,
+    executableDigest,
   });
   assert.match(
     String(request.input),
@@ -97,15 +151,22 @@ test("Flaggo provider maps game context and returns decision provenance", async 
     {
       board_pressure_mean_5s: 0.8,
       board_pressure_max_5s: 0.9,
-      current_level: 8,
+      hard_drop_ratio_5s: 1,
       placement_time_mean_ms_5s: 1_600,
-      recovery_failures_5s: 3,
       pieces_locked_5s: 2,
+      active_play_ms_5s: 3_500,
+      challenge_balance_5s: 1_500 / 3_500,
+      lines_cleared_5s: 0,
+      game_over_count_5s: 0,
+      current_drop_interval_ms: 1_000,
       session_id: "provider-test",
+      exposure_id: selection.exposureId,
       _random: undefined,
     },
   );
-  assert.equal(typeof body.attributes._random, "number");
+  assert.equal(Object.keys(body.attributes).length, 13);
+  assert.equal(body.attributes._random, 0.25);
+  h.close();
 });
 
 test("Flaggo provider emits application metrics, logs, and a correlated decision span", async () => {
@@ -139,19 +200,21 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
   assert.equal(otelContext.setGlobalContextManager(contextManager), true);
 
   try {
-    const provider = createFlaggoDropIntervalProvider({
-      runtimeConfig,
-      retry: { maxAttempts: 1 },
-      fetch: async () => decisionResponse(850),
+    const h = harness({
+      fetch: async () => decisionResponse(200),
       telemetry: {
         flaggoLogger: loggerProvider.getLogger("@flaggo/sdk", "0.2.0"),
         logger: loggerProvider.getLogger("tetris.policy"),
-        meter: meterProvider.getMeter("tetris.policy"),
         tracer: tracerProvider.getTracer("tetris.policy"),
       },
-    });
+    }, createExperienceRecorder(meterProvider.getMeter("tetris.experience")));
 
-    assert.equal((await provider.select(context)).intervalMs, 850);
+    assert.equal((await h.refresh()).state.dropInterval.intervalMs, 200);
+    h.at(1_000);
+    h.command("hard-drop");
+    h.at(3_000);
+    h.command("pause");
+    h.close();
     await Promise.all([
       loggerProvider.forceFlush(),
       meterProvider.forceFlush(),
@@ -195,7 +258,11 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
     const span = spanExporter.getFinishedSpans()[0];
     assert.ok(span);
     assert.equal(span.name, "tetris.drop_interval.select");
-    assert.equal(span.attributes["tetris.drop_interval.ms"], 850);
+    assert.equal(span.attributes["tetris.drop_interval.ms"], 200);
+    assert.equal(
+      decisionRecord?.attributes["flaggo.correlation.exposure_id"],
+      applicationRecord?.attributes["tetris.exposure.id"],
+    );
     assert.equal(
       Object.hasOwn(span.attributes, "flaggo.contract.digest"),
       false,
@@ -215,12 +282,10 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
       )
     );
     assert.deepEqual(metricNames.sort(), [
-      "tetris.board_pressure_max_5s",
-      "tetris.board_pressure_mean_5s",
-      "tetris.current_level",
-      "tetris.pieces_locked_5s",
-      "tetris.placement_time_mean_ms_5s",
-      "tetris.recovery_failures_5s",
+      "tetris.experience.active_play_ms",
+      "tetris.experience.challenge_balance",
+      "tetris.experience.game_over_count",
+      "tetris.experience.lines_cleared",
     ]);
   } finally {
     await Promise.all([
@@ -233,31 +298,63 @@ test("Flaggo provider emits application metrics, logs, and a correlated decision
   }
 });
 
-test("Flaggo provider visibly falls back to the local application policy", async () => {
-  const provider = createFlaggoDropIntervalProvider({
-    runtimeConfig,
-    retry: { maxAttempts: 1 },
+test("Flaggo failure retains actual applied gravity instead of using level", async () => {
+  const h = harness({
     fetch: async () => {
       throw new TypeError("connection refused");
     },
   });
 
-  const selection = await provider.select(context);
-  assert.equal(selection.intervalMs, 400);
+  const selection = await h.provider.select(context);
+  assert.equal(selection.intervalMs, 1_000);
   assert.equal(selection.source, "local-fallback");
+  assert.equal(selection.exposureId, undefined);
   assert.match(selection.status, /^Flaggo unavailable: /u);
   assert.match(selection.status, /could not reach the service/u);
+  h.close();
 });
 
-test("Flaggo provider rejects unusable results through local fallback", async () => {
-  const provider = createFlaggoDropIntervalProvider({
-    runtimeConfig,
-    retry: { maxAttempts: 1 },
+test("Flaggo provider rejects unusable results without registering an exposure", async () => {
+  const h = harness({
     fetch: async () => decisionResponse(825, { source: "default" }),
   });
 
-  const selection = await provider.select(context);
-  assert.equal(selection.intervalMs, 400);
+  const selection = await h.provider.select(context);
+  assert.equal(selection.intervalMs, 1_000);
   assert.equal(selection.source, "local-fallback");
+  assert.equal(selection.exposureId, undefined);
   assert.match(selection.status, /outside the contract bounds/u);
+  h.close();
+});
+
+test("cached failures preserve the applied exposure and its outcome window", async () => {
+  let requests = 0;
+  const windows = [];
+  const h = harness({
+    fetch: async () => {
+      if (++requests === 1) return decisionResponse(200);
+      throw new TypeError("connection refused");
+    },
+  }, (window) => windows.push(window));
+  const applied = (await h.refresh()).state.dropInterval;
+  h.at(1_000);
+  h.command("hard-drop");
+  const cached = (await h.refresh()).state.dropInterval;
+  assert.equal(cached.source, "flaggo-cached");
+  assert.equal(cached.intervalMs, 200);
+  assert.equal(cached.exposureId, applied.exposureId);
+  assert.equal(cached.contractDigest, contractDigest);
+  assert.equal(cached.executableDigest, executableDigest);
+  h.at(2_000);
+  h.close();
+  assert.ok(windows.every((window) => window.input.exposure_id === applied.exposureId));
+  assert.equal(windows.reduce((sum, window) => sum + window.activePlayMs, 0), 2_000);
+});
+
+test("aborted requests do not become successful fallback decisions", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const h = harness({ fetch: async () => assert.fail("No transport after cancellation.") });
+  await assert.rejects(() => h.provider.select(context, controller.signal));
+  h.close();
 });

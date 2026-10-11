@@ -295,6 +295,115 @@
         }
       }
     },
+    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "listDecisionExecutables",
+        "summary": "Get active authority and list inactive Candidates for one contract version.",
+        "description": "Returns the active executable in full plus a stable cursor-paginated page of Candidate executables ordered by createdAt descending and executableDigest descending. This management view does not authorize an implicit runtime digest.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionExecutableCatalog"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/history": {
+      "get": {
+        "tags": ["decision-contracts"],
+        "operationId": "listDecisionExecutableHistory",
+        "summary": "List all retained executable lifecycle states for one contract version.",
+        "description": "Returns active, candidate, and inactive executable records, ordered by createdAt descending and executableDigest descending with cursor pagination. This is a live listing, not an immutable snapshot across pages. History does not grant runtime authority or make inactive executables eligible for Candidate activation. Use the executable catalog for current authority.",
+        "parameters": [
+          {"$ref": "#/components/parameters/ContractNamePath"},
+          {"$ref": "#/components/parameters/ContractDigestPath"},
+          {"$ref": "#/components/parameters/PageLimitQuery"},
+          {"$ref": "#/components/parameters/PageCursorQuery"},
+          {"$ref": "#/components/parameters/CorrelationIdHeader"}
+        ],
+        "responses": {
+          "200": {"$ref": "#/components/responses/DecisionExecutableHistory"},
+          "400": {"$ref": "#/components/responses/Problem"},
+          "404": {"$ref": "#/components/responses/Problem"},
+          "503": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate": {
+      "post": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "activateDecisionExecutableCandidate",
+        "summary": "Activate one Candidate with optimistic concurrency.",
+        "description": "Atomically verifies that the named contract version is still current, the selected executable is still a Candidate at the expected state version, and runtime authority still matches the expected executable digest and state version. A conflict yields 409 without changing authority. Success activates the selected Candidate and resolves other pending Candidates for the contract name as inactive.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/ExecutableDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/DecisionExecutableActivation"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionExecutableActivation"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "tags": [
@@ -384,11 +493,21 @@
           "$ref": "../schemas/management-models-v3.schema.json#/$defs/Sha256Digest"
         }
       },
+      "ExecutableDigestPath": {
+        "name": "executableDigest",
+        "in": "path",
+        "required": true,
+        "description": "Exact immutable executable digest.",
+        "schema": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
       "PageLimitQuery": {
         "name": "limit",
         "in": "query",
         "required": false,
-        "description": "Maximum number of versions to return.",
+        "description": "Maximum number of resources to return.",
         "schema": {
           "type": "integer",
           "minimum": 1,
@@ -463,6 +582,31 @@
           "application/json": {
             "schema": {
               "$ref": "../schemas/management-models-v3.schema.json#/$defs/AnalysisCandidateSubmission"
+            }
+          }
+        }
+      },
+      "DecisionExecutableHistory": {
+        "description": "One page of retained active, candidate, and inactive executable records.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionExecutableHistory"
+            }
+          }
+        }
+      },
+      "DecisionExecutableActivation": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionExecutableActivationRequest"
             }
           }
         }
@@ -561,6 +705,36 @@
           "application/json": {
             "schema": {
               "$ref": "../schemas/management-models-v3.schema.json#/$defs/AnalysisCandidateResult"
+            }
+          }
+        }
+      },
+      "DecisionExecutableCatalog": {
+        "description": "Current runtime authority and one page of inactive Candidates for an exact contract version.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionExecutableCatalog"
+            }
+          }
+        }
+      },
+      "DecisionExecutableActivation": {
+        "description": "The newly active executable and the authority it replaced.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionExecutableActivationResult"
             }
           }
         }

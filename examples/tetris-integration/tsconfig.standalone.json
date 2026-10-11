@@ -9,9 +9,12 @@
     ]
   },
   "include": [
+    "src/autonomous-session.ts",
     "src/drop-interval.ts",
     "src/game.ts",
+    "src/greedy-player.ts",
     "src/main.ts",
+    "src/realtime-autonomous-session.ts",
     "src/session.ts",
     "src/terminal.ts"
   ],

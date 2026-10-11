@@ -53,6 +53,26 @@ removed.
 
 ## Quickstart
 
+Run the browser playground to play Tetris and observe a complete local
+decision/evidence/analysis/activation loop:
+
+```powershell
+npm ci
+dotnet restore Flaggo.slnx --configfile NuGet.config
+$env:FLAGGO_ANALYSIS_GITHUB_TOKEN = (gh auth token)
+npm run tetris:playground
+```
+
+The default live mode uses production Copilot analysis and requires a token
+with Copilot access (`FLAGGO_ANALYSIS_GITHUB_TOKEN`, `GH_TOKEN`, or
+`GITHUB_TOKEN`). Play the dominant human game and start up to three real-time
+greedy players. Use `--mode=benchmark` for the separate credential-free,
+deterministic controlled comparison. The launcher starts pinned Collector and
+Grafana LGTM containers plus all real Flaggo services and prints dynamic
+loopback URLs. See the
+[playground guide](examples/tetris-playground/README.md) for the telemetry
+boundary, Copilot mode, retained diagnostics, and verification workflow.
+
 Run the interactive Tetris example against real local Contract, Decision, and
 OTel Ingestion services:
 

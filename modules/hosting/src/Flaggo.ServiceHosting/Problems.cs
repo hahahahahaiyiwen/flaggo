@@ -19,6 +19,7 @@ public static class ProblemTypes
     public const string StaleContractDigest = Root + "stale-contract-digest";
     public const string CandidateAdmissionConflict = Root + "candidate-admission-conflict";
     public const string ActivationConflict = Root + "activation-conflict";
+    public const string ExecutableNotFound = Root + "executable-not-found";
     public const string UnsupportedMediaType = Root + "unsupported-media-type";
     public const string InvalidRuntimeInput = Root + "invalid-runtime-input";
     public const string RateLimited = Root + "rate-limited";

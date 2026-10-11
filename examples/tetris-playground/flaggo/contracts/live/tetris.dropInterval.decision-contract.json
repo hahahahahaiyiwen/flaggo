@@ -1,0 +1,181 @@
+{
+  "name": "tetris.dropInterval",
+  "expression_syntax": "flaggo.cel/v1",
+  "attributes": [
+    {
+      "name": "board_pressure_mean_5s",
+      "schema": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    {
+      "name": "board_pressure_max_5s",
+      "schema": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    {
+      "name": "hard_drop_ratio_5s",
+      "schema": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    {
+      "name": "placement_time_mean_ms_5s",
+      "schema": { "type": "number", "minimum": 0 }
+    },
+    {
+      "name": "pieces_locked_5s",
+      "schema": { "type": "integer", "minimum": 0 }
+    },
+    {
+      "name": "active_play_ms_5s",
+      "schema": { "type": "number", "minimum": 0, "maximum": 5000 }
+    },
+    {
+      "name": "challenge_balance_5s",
+      "schema": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    {
+      "name": "lines_cleared_5s",
+      "schema": { "type": "integer", "minimum": 0 }
+    },
+    {
+      "name": "game_over_count_5s",
+      "schema": { "type": "integer", "minimum": 0 }
+    },
+    {
+      "name": "current_drop_interval_ms",
+      "schema": { "type": "number", "minimum": 200, "maximum": 1500, "multipleOf": 50 }
+    },
+    {
+      "name": "session_id",
+      "schema": { "type": "string", "minLength": 1 }
+    },
+    {
+      "name": "exposure_id",
+      "schema": { "type": "string", "minLength": 1 }
+    }
+  ],
+  "result": {
+    "schema": { "type": "number", "minimum": 200, "maximum": 1500, "multipleOf": 50 },
+    "default": 800
+  },
+  "authoredExecutable": {
+    "rules": [
+      {
+        "name": "retain-current-without-observations",
+        "when": { "expression": "attributes.active_play_ms_5s == 0.0 || attributes.pieces_locked_5s == 0" },
+        "return": { "expression": "attributes.current_drop_interval_ms" }
+      },
+      {
+        "name": "explore-fast-gravity",
+        "when": { "expression": "attributes._random < 0.2" },
+        "return": { "value": 200 }
+      },
+      {
+        "name": "explore-400ms-gravity",
+        "when": { "expression": "attributes._random < 0.4" },
+        "return": { "value": 400 }
+      },
+      {
+        "name": "explore-600ms-gravity",
+        "when": { "expression": "attributes._random < 0.6" },
+        "return": { "value": 600 }
+      },
+      {
+        "name": "explore-800ms-gravity",
+        "when": { "expression": "attributes._random < 0.8" },
+        "return": { "value": 800 }
+      },
+      {
+        "name": "explore-slow-gravity",
+        "when": { "expression": "true" },
+        "return": { "value": 1000 }
+      }
+    ]
+  },
+  "learning": {
+    "policy": {
+      "mode": "auto-activation",
+      "evaluate": { "interval": "PT2S" }
+    },
+    "evidence": [
+      {
+        "name": "challenge_balance",
+        "description": "Live population learning from genuine concurrent human and independently paced greedy Tetris games. Accept completed outcome windows with tetris.experience.dataset=live, tetris.experience.clock=wall, and tetris.player.origin=human or greedy. Both origins are eligible; ongoing games need not end, and there is no nine-completed-episode gate. Greedy-bot evidence is an intentional proxy for choosing the human-facing policy. Human comparison data is not required; bot-only or bot-dominated evidence can support a Candidate. Report origin contributions separately and describe the result as model-based policy learning, not measured human preference or verified human enjoyment. Maximize active-time-weighted balance in the inclusive settled-board-height pressure band 0.15..0.45. Deduplicate four-gauge windows by tetris.experience.window.id. Establish actual successful SDK selections by session AND exposure IDs and verify that scored outcomes belong to the applied result; unapplied selections have no outcomes. Establish these associations once for the eligible evidence set, rather than repeating the join in every aggregate. SDK receipts do not contain input JSON: immutable before-call pressure, hard-drop ratio, locked-piece count and active duration are tetris.input.* point metadata, not forward outcomes. Exclude no-history selections (before-call active duration or piece count zero) from comparisons and guardrail assessment, including startup 800ms selections. History-bearing 800ms exploration is eligible under the same checks as other intervals. Require positive scored duration for balance and rate denominators; retain actual game-over counts for eligible exposures, including zero-duration terminal points. Require at least three distinct applied exposures per observed interval used to justify a proposal in the population it changes; repeated exports and multiple slices of one exposure are not additional exposures. This minimum applies to observed supporting data, not to a previously unobserved proposed interval. A global choice may compare all eligible windows in the observed population; contextual rules require matching gameplay-context cohorts and the same exposure minimum for observed supporting intervals within each changed cohort. Do not require contextual splits for a global choice. The authored 200/400/600/800/1000ms arms are initial exploration, not a Candidate whitelist. Candidates may choose any result-schema-valid interval: 200..1500ms in 50ms steps, including previously unobserved values such as 500 or 700ms. Use eligible observed outcomes and explicit interpolation, extrapolation, or gameplay-mechanism reasoning to justify an inferred interval; do not assume the faster arm wins or that outcomes vary linearly with the interval. Use gameplay context, not origin, IDs or piece seeds, as rule features. Weight by active duration without artificial human/bot balancing. Preserve the no-observations retain-current rule and objective guardrails for the affected population. Proactively propose a narrow change when eligible comparisons or an evidence-based inference support a positive expected duration-weighted balance gain and expected satisfaction of both guardrails in that population. In findings, distinguish measured results from predictions. For an unobserved interval, explain the expected objective effect and each guardrail, identify supporting observations, assumptions, uncertainty and competing explanations, and state that its outcomes and guardrail satisfaction are not empirically verified before auto-activation. Do not present predicted gains or guardrail rates as measured results or proven safety. Treat a Candidate as a testable hypothesis: a modest positive observed gain, variability between exposures, bot-only sampling, or lack of statistical significance do not independently block a Candidate once the applicable evidence and guardrail reasoning requirements pass. Unobserved status alone is not a reason for No Candidate. Unresolved eligibility, insufficient observed support for the inference, material ambiguity about its rationale, or measured or predicted guardrail violations for the proposed behavior mean No Candidate. Missing direct outcomes for a proposed interval do not by themselves block an evidence-based hypothesis. Return No Change only when eligible comparisons support retaining the active policy; aggregate guardrail success alone is not sufficient. Do not invent outcomes, force a winner, or claim held-out improvement. No new exploration scheduler or hidden baseline reset is required. Training/virtual-clock and held-out evaluation evidence do not belong to this live fit.",
+        "attribute": "challenge_balance_5s",
+        "correlateBy": ["session_id", "exposure_id"],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.challenge_balance",
+          "metricKind": "gauge",
+          "unit": "1",
+          "correlation": {
+            "session_id": { "location": "signal", "attribute": "tetris.session.id" },
+            "exposure_id": { "location": "signal", "attribute": "tetris.exposure.id" }
+          }
+        }
+      },
+      {
+        "name": "lines_cleared",
+        "description": "Actual cleared lines in this completed exposure slice. Normalize by active_play for lines per minute; input pressure is not a line-clear reward.",
+        "attribute": "lines_cleared_5s",
+        "correlateBy": ["session_id", "exposure_id"],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.lines_cleared",
+          "metricKind": "gauge",
+          "unit": "{line}",
+          "correlation": {
+            "session_id": { "location": "signal", "attribute": "tetris.session.id" },
+            "exposure_id": { "location": "signal", "attribute": "tetris.exposure.id" }
+          }
+        }
+      },
+      {
+        "name": "game_over_count",
+        "description": "Actual game-over events in this completed exposure slice. A terminal tag does not establish that the final decision alone caused failure.",
+        "attribute": "game_over_count_5s",
+        "correlateBy": ["session_id", "exposure_id"],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.game_over_count",
+          "metricKind": "gauge",
+          "unit": "{game}",
+          "correlation": {
+            "session_id": { "location": "signal", "attribute": "tetris.session.id" },
+            "exposure_id": { "location": "signal", "attribute": "tetris.exposure.id" }
+          }
+        }
+      },
+      {
+        "name": "active_play",
+        "description": "Active game-clock milliseconds in this completed slice, at most 5000. Weight balance and normalize count rates by this duration. Zero-duration points can carry terminal/completion facts but are not zero-quality samples.",
+        "attribute": "active_play_ms_5s",
+        "correlateBy": ["session_id", "exposure_id"],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.active_play_ms",
+          "metricKind": "gauge",
+          "unit": "ms",
+          "correlation": {
+            "session_id": { "location": "signal", "attribute": "tetris.session.id" },
+            "exposure_id": { "location": "signal", "attribute": "tetris.exposure.id" }
+          }
+        }
+      }
+    ],
+    "objective": {
+      "primary": { "evidence": "challenge_balance", "direction": "maximize" },
+      "guardrails": [
+        {
+          "name": "continued-line-clearing",
+          "expression": "sum(evidence.lines_cleared) * 60000 >= sum(evidence.active_play)"
+        },
+        {
+          "name": "bounded-game-over-rate",
+          "expression": "sum(evidence.game_over_count) * 60000 <= 2 * sum(evidence.active_play)"
+        }
+      ]
+    }
+  }
+}

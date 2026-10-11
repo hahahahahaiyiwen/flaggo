@@ -31,6 +31,21 @@ The canonical cross-app lifecycle is documented in
 
 ## Boundaries
 
+Materialized numeric attributes use JSON numbers: OTel `int64` values retain
+their exact signed integer value and declared type, while finite doubles retain
+their numeric value and exact bit representation. Genuine strings, including
+`"0"`, remain strings. Non-finite doubles retain their bits without a numeric
+`value`; they must not be interpreted as zero. Integer metric points, exemplars,
+histogram counts and buckets also use JSON numbers. Timestamp and identity
+metadata retain their existing representation.
+
+This is an Evidence Store projection, not a rewrite of the raw OTLP inbox.
+SQL `json_extract` returns native numbers for numeric attributes, so zero and
+positive-value comparisons do not require casts. JSON consumers must preserve
+64-bit integer precision rather than coercing all numbers to doubles.
+Decoder, identity and projection versions distinguish the new representation;
+no in-place conversion of retained run databases is performed.
+
 Evidence Materializer does not:
 
 - accept or acknowledge OTLP requests;

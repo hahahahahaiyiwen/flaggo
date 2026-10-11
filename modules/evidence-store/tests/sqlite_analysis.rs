@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, path::Path, time::Duration};
+use std::{num::NonZeroU32, path::Path, str::FromStr, time::Duration};
 
 use chrono::{DateTime, Utc};
 use flaggo_evidence_store::{
@@ -8,7 +8,145 @@ use flaggo_evidence_store::{
     ForwardMaterializationKey, MaterializerVersions, ObservationWatermark, SourceKey,
     SqliteEvidenceAnalysisStore, SqliteEvidenceStore,
 };
+use flaggo_raw_otlp_inbox::{
+    DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression,
+    OtlpWireEncoding, RawOtlpInbox, RawOtlpInboxLimits, SqliteRawOtlpInbox,
+};
 use sha2::{Digest, Sha256};
+use sqlx::{
+    Connection,
+    sqlite::{SqliteConnectOptions, SqliteConnection},
+};
+
+#[tokio::test]
+async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
+    let directory = tempfile::tempdir().expect("temporary shared database");
+    let database_url = sqlite_url(&directory.path().join("flaggo.db"));
+    let inbox = SqliteRawOtlpInbox::connect(&database_url, RawOtlpInboxLimits::default())
+        .await
+        .expect("inbox");
+    let writer = SqliteEvidenceStore::connect(&database_url)
+        .await
+        .expect("writer");
+    writer
+        .commit(commit(1, observation("first", 100, 1)))
+        .await
+        .expect("seed");
+    let options = SqliteConnectOptions::from_str(&database_url)
+        .expect("URL")
+        .read_only(true);
+    let mut reader = SqliteConnection::connect_with(&options)
+        .await
+        .expect("analysis connection");
+    sqlx::query("BEGIN")
+        .execute(&mut reader)
+        .await
+        .expect("read transaction");
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM evidence_observations")
+        .fetch_one(&mut reader)
+        .await
+        .expect("establish read snapshot");
+    assert_eq!(count, 1);
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        inbox
+            .append(NewRawOtlpBatch {
+                signal: OtlpSignal::Logs,
+                wire_encoding: OtlpWireEncoding::ProtobufJson,
+                transport_compression: OtlpTransportCompression::Identity,
+                otlp_profile_version: DEFAULT_OTLP_PROFILE_VERSION.parse().expect("profile"),
+                payload: br#"{"resourceLogs":[]}"#.to_vec(),
+            })
+            .await
+            .expect("ingestion while analysis reads");
+        writer
+            .commit(commit(2, observation("second", 100, 2)))
+            .await
+            .expect("materialization while analysis reads");
+    })
+    .await
+    .expect("writers must not wait for analysis to finish");
+    assert_eq!(writer.inspect().await.expect("health").observation_count, 2);
+    let frozen: i64 = sqlx::query_scalar("SELECT count(*) FROM evidence_observations")
+        .fetch_one(&mut reader)
+        .await
+        .expect("frozen snapshot");
+    assert_eq!(frozen, 1);
+    sqlx::query("ROLLBACK")
+        .execute(&mut reader)
+        .await
+        .expect("release snapshot");
+    let current: i64 = sqlx::query_scalar("SELECT count(*) FROM evidence_observations")
+        .fetch_one(&mut reader)
+        .await
+        .expect("next snapshot");
+    assert_eq!(current, 2);
+    reader.close().await.expect("close reader");
+    inbox.close().await;
+    writer.close().await;
+}
+
+#[tokio::test]
+async fn query_timeout_interrupts_sqlite_and_releases_the_connection() {
+    let directory = tempfile::tempdir().expect("temporary database");
+    let database_url = sqlite_url(&directory.path().join("evidence.db"));
+    let writer = SqliteEvidenceStore::connect(&database_url)
+        .await
+        .expect("writer");
+    let mut seed = commit(1, observation("first", 100, 1));
+    seed.observations = (0..100)
+        .map(|index| EvidenceObservationWrite {
+            observation: observation(&format!("row-{index}"), 100, index),
+            candidate_ordinal: u32::try_from(index).expect("ordinal"),
+        })
+        .collect();
+    writer.commit(seed).await.expect("seed");
+    let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
+        .await
+        .expect("reader");
+    let watermark = reader.capture_watermark().await.expect("watermark");
+    let started = std::time::Instant::now();
+    let result = reader
+        .query(
+            &scope(),
+            EvidenceQueryRequest {
+                sql: "SELECT count(*) FROM observations a CROSS JOIN observations b \
+              CROSS JOIN observations c CROSS JOIN observations d"
+                    .to_owned(),
+                cutoff_unix_nano: 100,
+                watermark,
+                limits: EvidenceQueryLimits {
+                    timeout: Duration::from_millis(20),
+                    ..limits()
+                },
+            },
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(EvidenceStoreError::QueryLimit("time"))
+    ));
+    for _ in 0..3 {
+        reader
+            .query(
+                &scope(),
+                EvidenceQueryRequest {
+                    sql: "SELECT count(*) AS samples FROM observations".to_owned(),
+                    cutoff_unix_nano: 100,
+                    watermark,
+                    limits: limits(),
+                },
+            )
+            .await
+            .expect("connection reusable after timeout");
+    }
+    reader.close().await;
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "SQLite work must stop, not just its waiter"
+    );
+    writer.close().await;
+}
 
 #[tokio::test]
 async fn freezes_queries_at_the_committed_cutoff_and_watermark() {

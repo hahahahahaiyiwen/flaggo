@@ -129,7 +129,7 @@ fields plus a bounded diagnostic preview.
 | `FLAGGO_ANALYSIS_POLL_INTERVAL_MS` | `5000` | Catalog, eligibility, and supersession polling interval |
 | `FLAGGO_ANALYSIS_QUERY_MAX_ROWS` | `1000` | Maximum rows returned by one evidence query |
 | `FLAGGO_ANALYSIS_QUERY_MAX_BYTES` | `1048576` | Maximum encoded result bytes per evidence query |
-| `FLAGGO_ANALYSIS_QUERY_TIMEOUT_MS` | `10000` | Evidence-query and local HTTP timeout |
+| `FLAGGO_ANALYSIS_QUERY_TIMEOUT_MS` | `20000` | Evidence-query and local HTTP timeout |
 | `FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS` | `1200` | Maximum Copilot attempt duration |
 | `FLAGGO_ANALYSIS_YIELD_GRACE_SECONDS` | `30` | Checkpoint grace period for supersession and shutdown |
 

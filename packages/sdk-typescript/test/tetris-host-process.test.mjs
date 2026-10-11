@@ -266,6 +266,25 @@ describe("Tetris integration host lifecycle", () => {
     });
   });
 
+  it("finishes dependent host shutdown before stopping its provider", async () => {
+    let gatewayClosed = false;
+    const order = [];
+    const lifecycle = createHostLifecycle({
+      removeRunDirectory: async () => { order.push("removed"); },
+    });
+    lifecycle.trackHost(host("collector", async () => {
+      expect(gatewayClosed).toBe(true);
+      order.push("collector");
+    }));
+    lifecycle.trackHost(host("gateway", async () => {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+      gatewayClosed = true;
+      order.push("gateway");
+    }));
+    await lifecycle.cleanup();
+    expect(order).toEqual(["gateway", "collector", "removed"]);
+  });
+
   it("stops every host and removes the run directory when one stop rejects", async () => {
     const stopped = [];
     let removed = false;

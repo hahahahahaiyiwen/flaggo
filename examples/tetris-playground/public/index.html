@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Flaggo Tetris Playground</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">Flaggo local control plane</p>
+        <h1>Tetris closed-loop playground</h1>
+      </div>
+      <div class="header-observer">
+        <span id="connection" class="connection reconnecting">Connecting</span>
+        <div id="services" class="health-strip" aria-label="Service health"></div>
+      </div>
+      <a id="grafana-link" class="grafana-link" href="#" target="_blank" rel="noreferrer">
+        Grafana ↗
+      </a>
+    </header>
+
+    <main class="playground-grid">
+      <section class="application-pane" aria-label="Tetris application">
+        <article class="surface application-card">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Application</p>
+              <h2>Playable Tetris</h2>
+            </div>
+            <span id="game-status" class="badge">Playing</span>
+          </div>
+
+          <div class="game-stage">
+            <div class="board-wrap">
+              <div id="board" class="board" aria-label="Tetris board"></div>
+              <div id="board-overlay" class="board-overlay"></div>
+            </div>
+            <aside class="game-sidebar">
+              <div class="live-policy">
+                <span>Live gravity</span>
+                <strong><span id="app-drop-interval">-</span> ms</strong>
+                <small id="app-decision-source">Waiting for Flaggo</small>
+              </div>
+              <dl class="game-stats">
+                <div><dt>Score</dt><dd id="score">0</dd></div>
+                <div><dt>Lines</dt><dd id="lines">0</dd></div>
+                <div><dt>Level</dt><dd id="level">0</dd></div>
+                <div><dt>Piece</dt><dd id="piece">-</dd></div>
+              </dl>
+            </aside>
+          </div>
+
+          <div class="controls" aria-label="Tetris controls">
+            <button data-command="move-left" title="Move left" aria-label="Move left">←</button>
+            <button data-command="rotate-clockwise" title="Rotate" aria-label="Rotate">↻</button>
+            <button data-command="move-right" title="Move right" aria-label="Move right">→</button>
+            <button data-command="soft-drop" title="Soft drop" aria-label="Soft drop">↓</button>
+            <button data-command="hard-drop" title="Hard drop" aria-label="Hard drop">⇣</button>
+            <button data-command="pause" title="Pause" aria-label="Pause">Ⅱ</button>
+            <button data-command="resume" title="Resume" aria-label="Resume">▶</button>
+            <button data-command="restart" title="Restart" aria-label="Restart">↺</button>
+          </div>
+          <p class="key-hint">
+            Arrows move and rotate · Space hard-drops · P pauses · R restarts
+          </p>
+        </article>
+
+        <article id="bots-panel" class="surface bots-panel" hidden>
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Live population</p>
+              <h2>Autonomous players <span id="bot-count" class="badge">0 running</span></h2>
+            </div>
+            <div class="button-row">
+              <button id="bots-start" class="primary">Start all</button>
+              <button id="bots-stop">Stop all</button>
+              <button id="bots-toggle" aria-expanded="true">Collapse</button>
+            </div>
+          </div>
+          <nav id="bots-pagination" class="bot-pagination" aria-label="Autonomous session browsing">
+            <button id="bots-previous" aria-label="Previous autonomous sessions" aria-controls="bot-grid" disabled>&#8592;</button>
+            <span id="bots-range" aria-live="polite"></span>
+            <button id="bots-next" aria-label="Next autonomous sessions" aria-controls="bot-grid" disabled>&#8594;</button>
+          </nav>
+          <div id="bot-grid" class="bot-grid"></div>
+          <div id="population-results" class="population-results"></div>
+          <p class="key-hint">Real-time greedy players share evidence and authority, not game state.</p>
+        </article>
+
+        <article id="benchmark-panel" class="surface demo-card" hidden>
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Guided comparison</p>
+              <h2>Learn adaptive gravity</h2>
+            </div>
+            <div class="button-row">
+              <button id="demo-run" class="primary">Run demo</button>
+              <button id="demo-cancel" disabled>Cancel</button>
+            </div>
+          </div>
+          <div id="demo"></div>
+        </article>
+      </section>
+
+      <section class="cycle-stack" aria-label="Flaggo control-loop cycles">
+        <article class="surface cycle-lane decision-lane">
+          <div class="lane-heading">
+            <div>
+              <p class="eyebrow">Decision delivery cycle</p>
+              <h2>Decision → executable authority</h2>
+            </div>
+            <span class="lane-number">01</span>
+          </div>
+          <div class="decision-lane-grid">
+            <section class="lane-section">
+              <div class="session-inspector-heading">
+                <h3>Session decision</h3>
+                <select id="session-select" aria-label="Inspect session">
+                  <option value="human">Human</option>
+                </select>
+              </div>
+              <div id="decision"></div>
+            </section>
+            <section class="lane-section executable-section">
+              <h3>Executable authority</h3>
+              <div id="executables"></div>
+            </section>
+          </div>
+        </article>
+
+        <article class="surface cycle-lane collection-lane">
+          <div class="lane-heading">
+            <div>
+              <p class="eyebrow">Data collection cycle</p>
+              <h2>OTLP Inbox → EvidenceStore</h2>
+            </div>
+            <span class="lane-number">02</span>
+          </div>
+          <div id="evidence"></div>
+        </article>
+
+        <article class="surface cycle-lane analysis-lane">
+          <div class="lane-heading">
+            <div>
+              <p class="eyebrow">Data analysis cycle</p>
+              <h2>Observed analysis activity</h2>
+            </div>
+            <div class="analysis-lane-status">
+              <span id="analysis-feed-status" class="live-feed-indicator">Live telemetry</span>
+              <span class="lane-number">03</span>
+            </div>
+          </div>
+          <div class="telemetry-board">
+            <div class="telemetry-toolbar" aria-label="Analysis telemetry filters">
+              <label>
+                <input id="filter-not-eligible" type="checkbox">
+                Not eligible
+              </label>
+              <label>
+                <input type="checkbox" data-analysis-phase="analysis" checked>
+                Analysis
+              </label>
+              <label>
+                <input type="checkbox" data-analysis-phase="candidate" checked>
+                Candidate
+              </label>
+              <label>
+                <input type="checkbox" data-analysis-phase="activation" checked>
+                Activation
+              </label>
+              <span id="analysis-filter-count" class="filter-count"></span>
+            </div>
+            <div id="backend-failures" class="backend-failures"></div>
+            <div class="timeline-heading" aria-hidden="true">
+              <span>Time</span>
+              <span>Phase</span>
+              <span>Event</span>
+              <span>Service</span>
+              <span>Trace</span>
+            </div>
+            <div id="timeline" class="timeline" aria-live="polite"></div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <dialog id="executable-dialog" class="executable-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Executable authority</p>
+          <h2 id="executable-title">Decision executable</h2>
+        </div>
+        <button id="executable-close" class="icon-button" aria-label="Close executable detail">
+          ×
+        </button>
+      </div>
+      <div id="executable-detail"></div>
+    </dialog>
+
+    <dialog id="health-dialog" class="health-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Service health</p>
+          <h2 id="health-title">Flaggo service</h2>
+        </div>
+        <button id="health-close" class="icon-button" aria-label="Close service health">
+          ×
+        </button>
+      </div>
+      <div id="health-detail"></div>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

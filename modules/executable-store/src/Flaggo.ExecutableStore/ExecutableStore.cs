@@ -25,6 +25,18 @@ public interface IExecutableStore
         string contractDigest,
         CancellationToken cancellationToken = default);
 
+    Task<ExecutablePage> ListCandidatesAsync(
+        string contractDigest,
+        int pageSize,
+        string? cursor,
+        CancellationToken cancellationToken = default);
+
+    Task<ExecutablePage> ListExecutablesAsync(
+        string contractDigest,
+        int pageSize,
+        string? cursor,
+        CancellationToken cancellationToken = default);
+
     Task<ActivationResult> ActivateAsync(
         string contractDigest,
         string executableDigest,
@@ -34,6 +46,10 @@ public interface IExecutableStore
     Task<ActivationResult> ActivateIfNoneAsync(
         string contractDigest,
         string executableDigest,
+        CancellationToken cancellationToken = default);
+
+    Task<CandidateActivationResult> ActivateCandidateAsync(
+        CandidateActivationCommand command,
         CancellationToken cancellationToken = default);
 
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
@@ -80,11 +96,28 @@ public sealed record AnalysisCandidateStoreResult(
     ExecutableLifecycleState LifecycleState,
     bool Created);
 
+public sealed record ExecutablePage(
+    IReadOnlyList<StoredExecutable> Executables,
+    string? NextCursor);
+
 public sealed record ActivationResult(
     string ExecutableDigest,
     string? PreviousExecutableDigest,
     long StateVersion,
     bool Changed);
+
+public sealed record CandidateActivationCommand(
+    string ContractName,
+    string ContractDigest,
+    string ExecutableDigest,
+    long ExpectedCandidateStateVersion,
+    ExecutableLifecycleToken ExpectedActiveExecutable);
+
+public sealed record CandidateActivationResult(
+    string ExecutableDigest,
+    string PreviousExecutableDigest,
+    long StateVersion,
+    int SupersededCandidateCount);
 
 public sealed class ExecutableNotFoundException(
     string executableDigest)
@@ -103,6 +136,24 @@ public sealed class ActivationConflictException(
     : Exception(
         $"Active executable changed: expected '{expectedExecutableDigest ?? "<none>"}', "
         + $"found '{actualExecutableDigest ?? "<none>"}'.");
+
+public sealed class CandidateActivationConflictException(
+    string executableDigest,
+    long expectedStateVersion,
+    ExecutableLifecycleState actualState,
+    long actualStateVersion)
+    : Exception(
+        $"Candidate '{executableDigest}' changed: expected candidate state version "
+        + $"'{expectedStateVersion}', found '{actualState}' state version "
+        + $"'{actualStateVersion}'.");
+
+public sealed class ActivationContractConflictException(
+    string contractName,
+    string expectedContractDigest,
+    string? actualContractDigest)
+    : Exception(
+        $"Contract '{contractName}' current digest changed: expected "
+        + $"'{expectedContractDigest}', found '{actualContractDigest ?? "<none>"}'.");
 
 public sealed class CandidateAdmissionConflictException(
     string workspaceId,

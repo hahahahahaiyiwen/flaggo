@@ -193,6 +193,10 @@ async fn run(observability: MaterializerObservability) -> Result<(), Box<dyn Err
                                         %snapshot.newest_evidence_observed_at_unix_nano,
                                     "flaggo.materializer.evidence_freshness_ms" =
                                         snapshot.evidence_freshness_milliseconds,
+                                    "flaggo.materializer.evidence.observation_count" =
+                                        health.evidence_store.observation_count,
+                                    "flaggo.materializer.evidence.provenance_count" =
+                                        health.evidence_store.provenance_count,
                                 },
                                 "Evidence Materializer page committed"
                             );

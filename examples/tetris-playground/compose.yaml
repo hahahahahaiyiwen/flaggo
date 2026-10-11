@@ -1,0 +1,34 @@
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.35.0
+    environment:
+      ENABLE_LOGS_OTELCOL: "true"
+    ports:
+      - "127.0.0.1:${FLAGGO_PLAYGROUND_GRAFANA_PORT}:3000"
+      - "127.0.0.1:${FLAGGO_PLAYGROUND_LOKI_PORT}:3100"
+      - "127.0.0.1:${FLAGGO_PLAYGROUND_TEMPO_PORT}:3200"
+      - "127.0.0.1:${FLAGGO_PLAYGROUND_PROMETHEUS_PORT}:9090"
+    volumes:
+      - type: bind
+        source: ${FLAGGO_PLAYGROUND_LGTM_DATA}
+        target: /data
+
+  collector:
+    image: otel/opentelemetry-collector:0.162.0
+    command:
+      - --config=/etc/otelcol/config.yaml
+    depends_on:
+      - lgtm
+    environment:
+      FLAGGO_OTLP_INGESTION_ENDPOINT: ${FLAGGO_OTLP_INGESTION_ENDPOINT}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${FLAGGO_PLAYGROUND_APPLICATION_OTLP_PORT}:4318"
+      - "127.0.0.1:${FLAGGO_PLAYGROUND_INTERNAL_OTLP_PORT}:4319"
+      - "127.0.0.1:${FLAGGO_PLAYGROUND_COLLECTOR_HEALTH_PORT}:13133"
+    volumes:
+      - type: bind
+        source: ./otel-collector.yaml
+        target: /etc/otelcol/config.yaml
+        read_only: true

@@ -550,6 +550,75 @@ export interface AnalysisCandidateResult {
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "ManagedDecisionExecutable".
+ */
+export interface ManagedDecisionExecutable {
+  contractDigest: Sha256Digest;
+  executableDigest: Sha256Digest;
+  lifecycleState: "active" | "candidate" | "inactive";
+  stateVersion: number;
+  createdAt: string;
+  activatedAt?: string;
+  executable: DecisionExecutable;
+  provenance?: JsonValue;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "DecisionExecutableCatalog".
+ */
+export interface DecisionExecutableCatalog {
+  contractName: DecisionName;
+  contractDigest: Sha256Digest;
+  activeExecutable: ManagedDecisionExecutable;
+  /**
+   * Inactive Candidates ordered by createdAt descending and executableDigest descending.
+   */
+  candidates: ManagedDecisionExecutable[];
+  /**
+   * Opaque cursor for the next Candidate page, or null when this is the final page.
+   */
+  nextCursor: string | null;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "DecisionExecutableHistory".
+ */
+export interface DecisionExecutableHistory {
+  contractName: DecisionName;
+  contractDigest: Sha256Digest;
+  /**
+   * Retained active, candidate, and inactive executables ordered by createdAt descending and executableDigest descending.
+   */
+  executables: ManagedDecisionExecutable[];
+  /**
+   * Opaque cursor for the next history page, or null when this is the final page.
+   */
+  nextCursor: string | null;
+}
+/**
+ * Optimistic-concurrency fence over both current runtime authority and the selected Candidate.
+ *
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "DecisionExecutableActivationRequest".
+ */
+export interface DecisionExecutableActivationRequest {
+  expectedActiveExecutableDigest: Sha256Digest;
+  expectedActiveStateVersion: number;
+  expectedCandidateStateVersion: number;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * via the `definition` "DecisionExecutableActivationResult".
+ */
+export interface DecisionExecutableActivationResult {
+  contractName: DecisionName;
+  contractDigest: Sha256Digest;
+  executable: ManagedDecisionExecutable;
+  previousExecutableDigest: Sha256Digest;
+  supersededCandidateCount: number;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
  * via the `definition` "ValidationIssue".
  */
 export interface ValidationIssue {
