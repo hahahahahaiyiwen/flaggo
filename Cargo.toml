@@ -3,6 +3,7 @@ members = [
     "apps/async-analysis",
     "apps/evidence-materializer",
     "apps/otel-ingestion",
+    "examples/tetris-playground/analysis",
     "modules/analysis-agent",
     "modules/analysis-domain",
     "modules/analysis-workspace",

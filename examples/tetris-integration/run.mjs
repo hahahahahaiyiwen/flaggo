@@ -27,8 +27,6 @@ for (const argument of process.argv.slice(2)) {
   }
 }
 const analysisEnabled = process.argv.includes("--analysis");
-const analysisCohortSize = 10;
-const analysisOutcomeDelayMilliseconds = 5_250;
 const analysisSessionEventMaxBytes = 16 * 1024;
 const runDirectory = resolve(
   repositoryRoot,
@@ -66,7 +64,7 @@ async function runIntegration(lifecycle) {
     host: materializer,
     startup: materializerStartup,
   } = await hosts.startEvidenceMaterializer();
-  assert.equal(materializerStartup.activeRoutes, 2);
+  assert.equal(materializerStartup.activeRoutes, 4);
   assert.equal(materializerStartup.currentContracts, 1);
   assert.deepEqual(materializerStartup.evidenceStore, {
     conflictCount: 0,
@@ -103,11 +101,17 @@ async function runIntegration(lifecycle) {
   };
 
   const [
+    { adaptiveDemoProtocol, scenarioPieceSource, seededRandom },
+    { runAutonomousTetrisSession },
+    { createExperienceRecorder, TetrisExperience },
     { createFlaggoDropIntervalProvider },
     { SequencePieceSource },
     { TetrisTelemetryProviders },
     { TetrisSession },
   ] = await Promise.all([
+    import("./dist/flaggo/adaptive-protocol.js"),
+    import("./dist/flaggo/autonomous-session.js"),
+    import("./dist/flaggo/experience.js"),
     import("./dist/flaggo/flaggo-provider.js"),
     import("./dist/flaggo/game.js"),
     import("./dist/flaggo/otel.js"),
@@ -117,90 +121,122 @@ async function runIntegration(lifecycle) {
     capture: true,
     runtimeConfig: deployed.runtimeConfig,
   });
-  const provider = createFlaggoDropIntervalProvider({
-    runtimeConfig: deployed.runtimeConfig,
-    fetch: forwardingFetch,
-    telemetry: telemetry.policyInstrumentation,
-  });
-  const lowClock = deterministicClock();
-  const highClock = deterministicClock();
-  const expectedSessionIds = ["tetris-e2e-low", "tetris-e2e-high"];
-  const expectedPolicyDecisions = 2
-    + (analysisEnabled ? analysisCohortSize * 2 : 0);
-  const lowSession = new TetrisSession({
+  const recordExperience = createExperienceRecorder(telemetry.getMeter("tetris.experience"));
+  const episodes = [];
+  const expectedSessionIds = ["tetris-e2e-fast", "tetris-e2e-slow", "tetris-e2e-lifecycle"];
+
+  async function playEpisode({ sessionId, seed, dataset, random }) {
+    let state;
+    let clock = 0;
+    let policyDecisions = 0;
+    const experience = new TetrisExperience(
+      { dataset, origin: "greedy", clock: "virtual" }, recordExperience);
+    const provider = createFlaggoDropIntervalProvider({
+      runtimeConfig: deployed.runtimeConfig,
+      fetch: forwardingFetch,
+      telemetry: telemetry.policyInstrumentation,
+      experience,
+      state: () => {
+        assert.ok(state, "Observe the autonomous session before deciding.");
+        return state;
+      },
+      now: () => clock,
+      random,
+    });
+    const result = await runAutonomousTetrisSession({
+      sessionId,
+      durationMs: adaptiveDemoProtocol.durationMs,
+      reactionDelayMs: adaptiveDemoProtocol.reactionDelayMs,
+      commandIntervalMs: adaptiveDemoProtocol.commandIntervalMs,
+      pieceSource: scenarioPieceSource(seed),
+      instrumentation: telemetry.sessionInstrumentation,
+      provider,
+      signal: lifecycle.signal,
+      onState(value, now, transition) {
+        state = value;
+        clock = now;
+        experience.observe(value, now, transition);
+        if (transition?.operation === "refresh-policy") {
+          assert.equal(value.dropInterval.source, "flaggo", value.dropInterval.status);
+          assert.equal(value.pendingDropInterval, undefined);
+          policyDecisions += 1;
+        }
+      },
+    });
+    const totals = experience.totals();
+    assert.equal(totals.activePlayMs, result.elapsedMs);
+    assert.equal(totals.linesCleared, result.state.lines);
+    assert.equal(totals.gameOvers, result.state.gameOver ? 1 : 0);
+    assert.ok(result.piecesLocked > 0);
+    experience.completeEpisode();
+    episodes.push({
+      sessionId,
+      dataset,
+      totals,
+      policyDecisions,
+      intervalMs: result.state.dropInterval.intervalMs,
+      piecesLocked: result.piecesLocked,
+      hardDrops: result.hardDrops,
+    });
+  }
+
+  const lifecycleClock = deterministicClock();
+  const lifecycleSession = new TetrisSession({
     game: {
       pieceSource: new SequencePieceSource(["O"]),
-      sessionId: "tetris-e2e-low",
+      sessionId: "tetris-e2e-lifecycle",
     },
     instrumentation: telemetry.sessionInstrumentation,
-    now: lowClock.now,
-    provider,
+    now: lifecycleClock.now,
+    fallbackIntervalMs: 800,
   });
-  const highSession = new TetrisSession({
-    game: {
-      pieceSource: new SequencePieceSource(["O"]),
-      sessionId: "tetris-e2e-high",
-    },
-    instrumentation: telemetry.sessionInstrumentation,
-    now: highClock.now,
-    provider,
-  });
-  let lowPolicy;
-  let highPolicy;
   let telemetrySummary;
   try {
-    lowSession.dispatch("pause");
-    lowSession.dispatch("resume");
-    for (const horizontalOffset of [-4, -2, 0, 2, 4]) {
-      moveHorizontally(lowSession, horizontalOffset);
-      lowClock.advance(200);
-      lowSession.dispatch("hard-drop");
+    await playEpisode({
+      sessionId: "tetris-e2e-fast", seed: 11, dataset: "evaluation", random: () => 0.25,
+    });
+    await playEpisode({
+      sessionId: "tetris-e2e-slow", seed: 29, dataset: "evaluation", random: () => 0.75,
+    });
+    assert.equal(episodes[0].intervalMs, 200);
+    assert.equal(episodes[1].intervalMs, 1_000);
+
+    lifecycleSession.dispatch("pause");
+    lifecycleSession.dispatch("resume");
+    lifecycleSession.dispatch("restart");
+    moveHorizontally(lifecycleSession, -4);
+    for (let failure = 0; failure < 3; failure += 1) {
+      assert.equal(lifecycleSession.dispatch("move-left").update.recoveryFailureRecorded, true);
     }
-    assert.equal(lowSession.snapshot().lines, 2);
-    lowPolicy = await lowSession.refreshPolicy(lifecycle.signal);
-
-    highSession.dispatch("restart");
-    moveHorizontally(highSession, -4);
-    highSession.dispatch("move-left");
-    highSession.dispatch("move-left");
-    highSession.dispatch("move-left");
-    highClock.advance(1_600);
-    highSession.dispatch("hard-drop");
-    highPolicy = await highSession.refreshPolicy(lifecycle.signal);
-
-    assert.equal(lowPolicy.state.dropInterval.intervalMs, 750);
-    assert.equal(lowPolicy.state.dropInterval.source, "flaggo");
-    assert.equal(lowPolicy.policyContext?.sessionId, "tetris-e2e-low");
-    assert.equal(lowPolicy.policyContext?.piecesLocked5s, 5);
-    assert.equal(highPolicy.state.dropInterval.intervalMs, 850);
-    assert.equal(highPolicy.state.dropInterval.source, "flaggo");
-    assert.equal(highPolicy.policyContext?.sessionId, "tetris-e2e-high");
-    assert.equal(highPolicy.policyContext?.recoveryFailures5s, 3);
+    lifecycleSession.dispatch("restart");
+    for (const horizontalOffset of [-4, -2, 0, 2, 4]) {
+      moveHorizontally(lifecycleSession, horizontalOffset);
+      lifecycleClock.advance(200);
+      lifecycleSession.dispatch("hard-drop");
+    }
+    assert.equal(lifecycleSession.snapshot().lines, 2);
 
     if (analysisEnabled) {
-      expectedSessionIds.push(...await emitAnalysisEvidenceCohort({
-        SequencePieceSource,
-        TetrisSession,
-        forceFlush: () => telemetry.forceFlush(),
-        instrumentation: telemetry.sessionInstrumentation,
-        provider,
-        signal: lifecycle.signal,
-        size: analysisCohortSize,
-      }));
+      for (const seed of adaptiveDemoProtocol.trainingSeeds) {
+        const sessionId = `tetris-training-${seed}`;
+        await playEpisode({
+          sessionId, seed, dataset: "training", random: seededRandom(seed ^ 0x5F3759DF),
+        });
+        expectedSessionIds.push(sessionId);
+      }
     }
 
-    lowSession.close();
-    highSession.close();
+    lifecycleSession.close();
     await telemetry.forceFlush();
     telemetrySummary = assertTelemetry({
       telemetry,
       proxy,
-      expectedPolicyDecisions,
+      expectedPolicyDecisions: episodes.reduce((sum, episode) => sum + episode.policyDecisions, 0),
       expectedSessionIds,
+      expectedEvidenceSessions: episodes.map((episode) => episode.sessionId),
     });
   } finally {
-    lowSession.close();
-    highSession.close();
+    lifecycleSession.close();
     await telemetry.shutdown();
   }
   const storedInbox = await assertRawOtlpInboxStorage({
@@ -214,30 +250,36 @@ async function runIntegration(lifecycle) {
     signal: lifecycle.signal,
   });
 
+  const expectedPolicyDecisions = episodes.reduce((sum, episode) => sum + episode.policyDecisions, 0);
   assert.equal(capturedDecisions.length, expectedPolicyDecisions);
-  const decisionsBySession = new Map(
-    capturedDecisions.map((decision) => [
-      decision.request.attributes.session_id,
-      decision,
-    ]),
-  );
-  const lowDecision = decisionsBySession.get("tetris-e2e-low");
-  const highDecision = decisionsBySession.get("tetris-e2e-high");
-  assert.ok(lowDecision);
-  assert.ok(highDecision);
-  assert.equal(lowDecision.response.result, 750);
-  assert.deepEqual(
-    lowDecision.response.evaluation,
-    { source: "rule", rule: "low-pressure" },
-  );
-  assert.equal(highDecision.response.result, 850);
-  assert.deepEqual(
-    highDecision.response.evaluation,
-    { source: "rule", rule: "high-pressure" },
-  );
+  assert.ok(expectedPolicyDecisions > 4);
+  const fastDecision = capturedDecisions.find((decision) =>
+    decision.response.evaluation.rule === "explore-fast-gravity");
+  const slowDecision = capturedDecisions.find((decision) =>
+    decision.response.evaluation.rule === "explore-slow-gravity");
+  assert.ok(fastDecision);
+  assert.ok(slowDecision);
+  const exposureIds = new Set();
   for (const decision of capturedDecisions) {
     assert.deepEqual(Object.keys(decision.request), ["attributes"]);
-    assert.equal(typeof decision.request.attributes._random, "number");
+    const attributes = decision.request.attributes;
+    assert.deepEqual(Object.keys(attributes).sort(), [
+      "_random", "active_play_ms_5s", "board_pressure_max_5s", "board_pressure_mean_5s",
+      "challenge_balance_5s", "current_drop_interval_ms", "exposure_id",
+      "game_over_count_5s", "hard_drop_ratio_5s", "lines_cleared_5s",
+      "pieces_locked_5s", "placement_time_mean_ms_5s", "session_id",
+    ]);
+    assert.equal(typeof attributes._random, "number");
+    assert.equal(exposureIds.has(attributes.exposure_id), false);
+    exposureIds.add(attributes.exposure_id);
+    const noObservations = attributes.active_play_ms_5s === 0 || attributes.pieces_locked_5s === 0;
+    assert.equal(decision.response.result, noObservations
+      ? attributes.current_drop_interval_ms : attributes._random < 0.5 ? 200 : 1_000);
+    assert.deepEqual(decision.response.evaluation, {
+      source: "rule",
+      rule: noObservations ? "retain-current-without-observations"
+        : attributes._random < 0.5 ? "explore-fast-gravity" : "explore-slow-gravity",
+    });
     assert.equal(
       decision.response.contractDigest,
       deployed.deployment.contractDigest,
@@ -250,29 +292,29 @@ async function runIntegration(lifecycle) {
     assertNoRetiredRuntimeFields(decision.response);
   }
 
-  const restHigh = await postDecisionRest({
+  const restSlow = await postDecisionRest({
     fetch: hosts.fetch,
     decisionUrl: hosts.decisionUrl,
     contractName: deployed.contract.name,
     contractDigest: deployed.deployment.contractDigest,
-    attributes: highDecision.request.attributes,
+    attributes: slowDecision.request.attributes,
     signal: lifecycle.signal,
   });
-  const restLow = await postDecisionRest({
+  const restFast = await postDecisionRest({
     fetch: hosts.fetch,
     decisionUrl: hosts.decisionUrl,
     contractName: deployed.contract.name,
     contractDigest: deployed.deployment.contractDigest,
-    attributes: lowDecision.request.attributes,
+    attributes: fastDecision.request.attributes,
     signal: lifecycle.signal,
   });
-  assertEquivalentDecision(restHigh, highDecision.response);
-  assertEquivalentDecision(restLow, lowDecision.response);
+  assertEquivalentDecision(restSlow, slowDecision.response);
+  assertEquivalentDecision(restFast, fastDecision.response);
 
   const analysis = analysisEnabled
-    ? await runAsyncAnalysisCandidateCheck({
+    ? await runAsyncAnalysisActivationCheck({
       activeExecutableDigest: deployed.deployment.activeExecutableDigest,
-      attributes: highDecision.request.attributes,
+      attributes: slowDecision.request.attributes,
       contractDigest: deployed.deployment.contractDigest,
       contractName: deployed.contract.name,
       hosts,
@@ -288,14 +330,14 @@ async function runIntegration(lifecycle) {
       decisionUrl: hosts.decisionUrl,
       contractName: deployed.contract.name,
       contractDigest: deployed.deployment.contractDigest,
-      attributes: highDecision.request.attributes,
+      attributes: slowDecision.request.attributes,
       signal: lifecycle.signal,
     })
   );
   await hosts.contract.stop();
   await hosts.otelIngestion.stop();
   await assertPersistedTetrisEvidence({
-    analysisCohortSize: analysisEnabled ? analysisCohortSize : 0,
+    expectations: { decisionCount: expectedPolicyDecisions, episodes },
     contractDigest: deployed.deployment.contractDigest,
     databaseUrl: hosts.databaseUrl,
     executableDigest: deployed.deployment.activeExecutableDigest,
@@ -355,25 +397,21 @@ async function runIntegration(lifecycle) {
       reopenedEvidence.materialization.evidenceFreshnessMilliseconds,
     ),
   );
-  const restartedHigh = await postDecisionRest({
+  const restartedDecision = await postDecisionRest({
     fetch: restartedHosts.fetch,
     decisionUrl: restartedHosts.decisionUrl,
     contractName: deployed.contract.name,
     contractDigest: deployed.deployment.contractDigest,
-    attributes: highDecision.request.attributes,
+    attributes: slowDecision.request.attributes,
     signal: lifecycle.signal,
   });
-  assertEquivalentDecision(restartedHigh, highDecision.response);
+  assertEquivalentDecision(restartedDecision, analysis?.decisionAfterActivation ?? slowDecision.response);
 
   process.stdout.write(`${JSON.stringify({
     status: "passed",
     contractDigest: deployed.deployment.contractDigest,
     executableDigest: deployed.deployment.activeExecutableDigest,
-    headlessSessions: {
-      high: highPolicy.state.dropInterval.intervalMs,
-      low: lowPolicy.state.dropInterval.intervalMs,
-      lowLinesCleared: lowPolicy.state.lines,
-    },
+    headlessSessions: episodes,
     telemetry: telemetrySummary,
     rawOtlpInbox: {
       liveTransportConformance: true,
@@ -390,19 +428,19 @@ async function runIntegration(lifecycle) {
     },
     materialization: reopenedEvidence.materialization,
     restParity: {
-      high: restHigh.result,
-      low: restLow.result,
+      fast: restFast.result,
+      slow: restSlow.result,
     },
     ...(analysis === undefined ? {} : { asyncAnalysis: analysis }),
     restartPersistence: {
-      high: restartedHigh.result,
-      executableDigest: restartedHigh.executableDigest,
+      result: restartedDecision.result,
+      executableDigest: restartedDecision.executableDigest,
     },
     retiredRuntimeFields: "absent",
   }, null, 2)}\n`);
 }
 
-async function runAsyncAnalysisCandidateCheck({
+async function runAsyncAnalysisActivationCheck({
   activeExecutableDigest,
   attributes,
   contractDigest,
@@ -453,27 +491,51 @@ async function runAsyncAnalysisCandidateCheck({
     },
   );
 
-  const decisionAfterCandidate = await postDecisionRest({
-    fetch: hosts.fetch,
-    decisionUrl: hosts.decisionUrl,
-    contractName,
-    contractDigest,
-    attributes,
-    signal: lifecycle.signal,
-  });
-  assert.equal(
-    decisionAfterCandidate.executableDigest,
-    activeExecutableDigest,
-    "An inactive Candidate must not replace the active executable.",
-  );
   await host.stop();
+  const deadline = Date.now() + 30_000;
+  let decisionAfterActivation;
+  while (Date.now() < deadline) {
+    const decision = await postDecisionRest({
+      fetch: hosts.fetch,
+      decisionUrl: hosts.decisionUrl,
+      contractName,
+      contractDigest,
+      attributes,
+      signal: lifecycle.signal,
+    });
+    if (decision.executableDigest === candidateExecutableDigest) {
+      decisionAfterActivation = decision;
+      break;
+    }
+    await delay(250, undefined, { signal: lifecycle.signal });
+  }
+  assert.ok(decisionAfterActivation, "The admitted adaptive Candidate must actually activate.");
+  for (const intervalMs of [200, 800, 1_500]) {
+    for (const history of [
+      { active_play_ms_5s: 0, pieces_locked_5s: 1 },
+      { active_play_ms_5s: 5_000, pieces_locked_5s: 0 },
+    ]) {
+      const retained = await postDecisionRest({
+        fetch: hosts.fetch,
+        decisionUrl: hosts.decisionUrl,
+        contractName,
+        contractDigest,
+        attributes: { ...attributes, ...history, current_drop_interval_ms: intervalMs },
+        signal: lifecycle.signal,
+      });
+      assert.equal(retained.executableDigest, candidateExecutableDigest);
+      assert.equal(retained.result, intervalMs, "Learning must preserve actual gravity without data.");
+    }
+  }
   const sessionDiagnostics = await assertAnalysisSessionDiagnostics(
     hosts.paths.asyncAnalysisLog,
   );
   return {
-    activeExecutableDigest,
+    authoredExecutableDigest: activeExecutableDigest,
+    activeExecutableDigest: candidateExecutableDigest,
     candidateExecutableDigest,
-    candidatePersistedInactive: true,
+    candidateActivated: true,
+    decisionAfterActivation,
     cycleId: entry["flaggo.analysis.cycle.id"],
     sessionDiagnostics,
   };
@@ -540,6 +602,7 @@ function assertTelemetry({
   proxy,
   expectedPolicyDecisions,
   expectedSessionIds,
+  expectedEvidenceSessions,
 }) {
   const events = telemetry.events;
   const eventNames = new Set(events.map((event) => event.eventName));
@@ -654,7 +717,7 @@ function assertTelemetry({
   );
   assert.ok(
     recovery.metric.dataPoints.some((point) =>
-      point.attributes["tetris.session.id"] === "tetris-e2e-high"
+      point.attributes["tetris.session.id"] === "tetris-e2e-lifecycle"
     ),
   );
   assert.deepEqual(
@@ -665,10 +728,16 @@ function assertTelemetry({
     ),
     new Set(expectedSessionIds),
   );
-  assert.ok(metrics.some(({ metric: value, scope }) =>
-    value.descriptor.name === "tetris.board_pressure_mean_5s"
-    && scope === "tetris.policy"
-  ));
+  for (const name of ["challenge_balance", "lines_cleared", "game_over_count", "active_play_ms"]) {
+    const evidence = metric(metrics, `tetris.experience.${name}`);
+    assert.equal(evidence.scope, "tetris.experience");
+    assert.deepEqual(new Set(evidence.metric.dataPoints.map(
+      (point) => point.attributes["tetris.session.id"])), new Set(expectedEvidenceSessions));
+    assert.ok(evidence.metric.dataPoints.every((point) =>
+      typeof point.attributes["tetris.exposure.id"] === "string"
+      && typeof point.attributes["tetris.experience.window.id"] === "string"
+      && point.attributes["tetris.experience.clock"] === "virtual"));
+  }
 
   assert.ok(proxy.requests.length >= 3);
   assert.deepEqual(
@@ -705,74 +774,6 @@ function deterministicClock() {
       current += milliseconds;
     },
   };
-}
-
-async function emitAnalysisEvidenceCohort({
-  SequencePieceSource,
-  TetrisSession,
-  forceFlush,
-  instrumentation,
-  provider,
-  signal,
-  size,
-}) {
-  const sessionIds = [];
-  for (let index = 0; index < size; index += 1) {
-    const suffix = String(index + 1).padStart(2, "0");
-    const scenarios = [
-      {
-        boardPressure: 0.749,
-        expectedIntervalMs: 750,
-        sessionId: `tetris-cohort-a-${suffix}`,
-      },
-      {
-        boardPressure: 0.751,
-        expectedIntervalMs: 850,
-        sessionId: `tetris-cohort-b-${suffix}`,
-      },
-    ];
-
-    const evaluatedScenarios = [];
-    for (const scenario of scenarios) {
-      const selection = await provider.select({
-        boardPressureMean5s: scenario.boardPressure,
-        boardPressureMax5s: 0.8,
-        currentLevel: 0,
-        placementTimeMeanMs5s: 0,
-        recoveryFailures5s: 0,
-        piecesLocked5s: 0,
-        sessionId: scenario.sessionId,
-      }, signal);
-      assert.equal(selection.intervalMs, scenario.expectedIntervalMs);
-      evaluatedScenarios.push({
-        ...scenario,
-        placementTimeMs: selection.intervalMs + index * 4,
-      });
-    }
-    await forceFlush();
-    await delay(analysisOutcomeDelayMilliseconds, undefined, { signal });
-
-    for (const scenario of evaluatedScenarios) {
-      const clock = deterministicClock();
-      const session = new TetrisSession({
-        game: {
-          pieceSource: new SequencePieceSource(["O"]),
-          sessionId: scenario.sessionId,
-        },
-        instrumentation,
-        now: clock.now,
-        provider,
-      });
-      try {
-        clock.advance(scenario.placementTimeMs);
-        session.dispatch("hard-drop");
-      } finally {
-        session.close();
-      }
-      sessionIds.push(scenario.sessionId);
-    }
-  }
-  return sessionIds;
 }
 
 function moveHorizontally(session, offset) {
@@ -915,7 +916,7 @@ function assertMaterializationHealth(health) {
 }
 
 async function assertPersistedTetrisEvidence({
-  analysisCohortSize: expectedAnalysisCohortSize,
+  expectations,
   contractDigest,
   databaseUrl,
   executableDigest,
@@ -944,8 +945,7 @@ async function assertPersistedTetrisEvidence({
           FLAGGO_TETRIS_CONTRACT_DIGEST: contractDigest,
           FLAGGO_TETRIS_EVIDENCE_DATABASE_URL: databaseUrl,
           FLAGGO_TETRIS_EXECUTABLE_DIGEST: executableDigest,
-          FLAGGO_TETRIS_ANALYSIS_COHORT_SIZE:
-            String(expectedAnalysisCohortSize),
+          FLAGGO_TETRIS_EVIDENCE_EXPECTATIONS: JSON.stringify(expectations),
         },
         maxBuffer: 10 * 1024 * 1024,
         signal,

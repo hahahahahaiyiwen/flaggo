@@ -375,6 +375,105 @@ public sealed record AnalysisCandidateResult
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ManagedDecisionExecutable
+{
+    [JsonPropertyName("contractDigest")]
+    public required string ContractDigest { get; init; }
+
+    [JsonPropertyName("executableDigest")]
+    public required string ExecutableDigest { get; init; }
+
+    [JsonPropertyName("lifecycleState")]
+    public required string LifecycleState { get; init; }
+
+    [JsonPropertyName("stateVersion")]
+    public required long StateVersion { get; init; }
+
+    [JsonPropertyName("createdAt")]
+    public required DateTimeOffset CreatedAt { get; init; }
+
+    [JsonPropertyName("activatedAt")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? ActivatedAt { get; init; }
+
+    [JsonPropertyName("executable")]
+    public required DecisionExecutable Executable { get; init; }
+
+    [JsonPropertyName("provenance")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? Provenance { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DecisionExecutableCatalog
+{
+    [JsonPropertyName("contractName")]
+    public required string ContractName { get; init; }
+
+    [JsonPropertyName("contractDigest")]
+    public required string ContractDigest { get; init; }
+
+    [JsonPropertyName("activeExecutable")]
+    public required ManagedDecisionExecutable ActiveExecutable { get; init; }
+
+    [JsonPropertyName("candidates")]
+    public required IReadOnlyList<ManagedDecisionExecutable> Candidates { get; init; }
+
+    [JsonPropertyName("nextCursor")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public string? NextCursor { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DecisionExecutableHistory
+{
+    [JsonPropertyName("contractName")]
+    public required string ContractName { get; init; }
+
+    [JsonPropertyName("contractDigest")]
+    public required string ContractDigest { get; init; }
+
+    [JsonPropertyName("executables")]
+    public required IReadOnlyList<ManagedDecisionExecutable> Executables { get; init; }
+
+    [JsonPropertyName("nextCursor")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public string? NextCursor { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DecisionExecutableActivationRequest
+{
+    [JsonPropertyName("expectedActiveExecutableDigest")]
+    public required string ExpectedActiveExecutableDigest { get; init; }
+
+    [JsonPropertyName("expectedActiveStateVersion")]
+    public required long ExpectedActiveStateVersion { get; init; }
+
+    [JsonPropertyName("expectedCandidateStateVersion")]
+    public required long ExpectedCandidateStateVersion { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DecisionExecutableActivationResult
+{
+    [JsonPropertyName("contractName")]
+    public required string ContractName { get; init; }
+
+    [JsonPropertyName("contractDigest")]
+    public required string ContractDigest { get; init; }
+
+    [JsonPropertyName("executable")]
+    public required ManagedDecisionExecutable Executable { get; init; }
+
+    [JsonPropertyName("previousExecutableDigest")]
+    public required string PreviousExecutableDigest { get; init; }
+
+    [JsonPropertyName("supersededCandidateCount")]
+    public required int SupersededCandidateCount { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ExecutableRule
 {
     [JsonPropertyName("name")]

@@ -222,9 +222,13 @@ public sealed class ContractServiceObservability
                 or FormatException => ("invalid", "validation"),
             ContractVersionNotFoundException => ("invalid", "not_found"),
             StaleContractDigestException => ("stale", "conflict"),
+            ExecutableNotFoundException
+                or ExecutableContractMismatchException => ("invalid", "not_found"),
             CandidateAdmissionConflictException
                 or CandidateLifecycleConflictException => ("conflict", "conflict"),
-            ActivationConflictException => ("conflict", "conflict"),
+            ActivationConflictException
+                or CandidateActivationConflictException
+                or ActivationContractConflictException => ("conflict", "conflict"),
             ContractNameAuthorityConflictException => ("conflict", "conflict"),
             SqliteException or IOException => ("unavailable", "dependency"),
             TimeoutException => ("unavailable", "timeout"),

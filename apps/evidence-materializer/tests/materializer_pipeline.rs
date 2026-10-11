@@ -1,14 +1,17 @@
 use std::{
-    num::NonZeroU16,
+    num::{NonZeroU16, NonZeroU32},
     str::FromStr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use chrono::{DateTime, TimeDelta, Utc};
 use flaggo_evidence_materializer::{CompiledContractCatalog, EvidenceMaterializer, decode_batch};
 use flaggo_evidence_store::{
-    AuthorityScope, EvidenceMaterializationCommit, EvidenceStore, ForwardMaterializationKey,
-    MaterializerVersions, SqliteEvidenceStore,
+    AuthorityScope, EvidenceAnalysisStore, EvidenceMaterializationCommit, EvidenceQueryLimits,
+    EvidenceQueryRequest, EvidenceQueryScope, EvidenceSignal, EvidenceSourceSelector,
+    EvidenceStore, ForwardMaterializationKey, MaterializerVersions, SqliteEvidenceAnalysisStore,
+    SqliteEvidenceStore,
 };
 use flaggo_raw_otlp_inbox::{
     DEFAULT_OTLP_PROFILE_VERSION, InboxClock, NewRawOtlpBatch, OtlpProfileVersion, OtlpSignal,
@@ -39,6 +42,123 @@ const CONTRACT_DIGEST_ONE: &str =
     "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const CONTRACT_DIGEST_TWO: &str =
     "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+
+#[tokio::test]
+async fn materialized_numeric_attributes_support_sql_eligibility_without_casts() {
+    let fixture = Fixture::new().await;
+    let kv = |key: &str, value| KeyValue {
+        key: key.to_owned(),
+        value: Some(AnyValue { value: Some(value) }),
+        ..Default::default()
+    };
+    let records: Vec<_> = [(0, 81.5114), (2, 0.0), (2, 81.5114)]
+        .into_iter()
+        .map(|(pieces, duration)| LogRecord {
+            attributes: vec![
+                kv(
+                    "tetris.input.pieces_locked_5s",
+                    any_value::Value::IntValue(pieces),
+                ),
+                kv(
+                    "tetris.input.active_play_ms_5s",
+                    any_value::Value::DoubleValue(duration),
+                ),
+                kv(
+                    "numeric-looking-string",
+                    any_value::Value::StringValue("0".to_owned()),
+                ),
+                kv("maximum", any_value::Value::IntValue(i64::MAX)),
+                kv("minimum", any_value::Value::IntValue(i64::MIN)),
+            ],
+            ..application_log()
+        })
+        .collect();
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, records.clone())
+        .await;
+    fixture
+        .append_logs(OtlpWireEncoding::Protobuf, records)
+        .await;
+    let original: Vec<_> = fixture
+        .inbox
+        .read_after(None, NonZeroU16::new(10).unwrap())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|batch| batch.payload)
+        .collect();
+    let catalog = log_contract_catalog(CONTRACT_DIGEST_ONE);
+    let materializer = EvidenceMaterializer::new(
+        fixture.inbox.clone(),
+        fixture.store.clone(),
+        NonZeroU16::new(10).unwrap(),
+    );
+    let committed = materializer.run_once(&catalog).await.unwrap();
+    assert_eq!(committed.observations_created, 3);
+    assert_eq!(committed.duplicate_observations, 3);
+    let database_url = format!(
+        "sqlite://{}",
+        fixture._directory.path().join("telemetry.db").display()
+    );
+    let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
+        .await
+        .unwrap();
+    let scope = EvidenceQueryScope {
+        authority: authority("local", "test-app", "test-env"),
+        contract_digest: CONTRACT_DIGEST_ONE.to_owned(),
+        sources: vec![EvidenceSourceSelector {
+            signal: EvidenceSignal::Log,
+            instrumentation_scope: "demo.logs".to_owned(),
+            signal_name: "demo.latency".to_owned(),
+            metric_kind: None,
+            metric_unit: None,
+            parent_span_name: None,
+        }],
+    };
+    let result = reader.query(&scope, EvidenceQueryRequest {
+        sql: "SELECT
+            json_extract(payload_json, '$.signal.payload.attributes[0].value.value') AS pieces,
+            json_extract(payload_json, '$.signal.payload.attributes[1].value.value') AS duration,
+            json_extract(payload_json, '$.signal.payload.attributes[2].value.value') AS text_zero,
+            json_extract(payload_json, '$.signal.payload.attributes[3].value.value') AS maximum,
+            json_extract(payload_json, '$.signal.payload.attributes[4].value.value') AS minimum,
+            json_extract(payload_json, '$.signal.payload.attributes[0].value.value') = 0
+                OR json_extract(payload_json, '$.signal.payload.attributes[1].value.value') = 0 AS no_history,
+            json_extract(payload_json, '$.signal.payload.attributes[0].value.value') > 0
+                AND json_extract(payload_json, '$.signal.payload.attributes[1].value.value') > 0 AS eligible
+            FROM observations ORDER BY pieces, duration".to_owned(),
+        cutoff_unix_nano: 2_000,
+        watermark: reader.capture_watermark().await.unwrap(),
+        limits: EvidenceQueryLimits {
+            max_rows: NonZeroU32::new(10).unwrap(), max_bytes: 16_384,
+            timeout: Duration::from_secs(5),
+        },
+    }).await.unwrap();
+    assert_eq!(result.rows.len(), 3);
+    for (index, row) in result.rows.iter().enumerate() {
+        assert_eq!(row["pieces"], json!(if index == 0 { 0 } else { 2 }));
+        assert_eq!(
+            row["duration"],
+            json!(if index == 1 { 0.0 } else { 81.5114 })
+        );
+        assert_eq!(row["text_zero"], json!("0"));
+        assert_eq!(row["maximum"], json!(i64::MAX));
+        assert_eq!(row["minimum"], json!(i64::MIN));
+        assert_eq!(row["no_history"], json!(i64::from(index != 2)));
+        assert_eq!(row["eligible"], json!(i64::from(index == 2)));
+    }
+    let retained: Vec<_> = fixture
+        .inbox
+        .read_after(None, NonZeroU16::new(10).unwrap())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|batch| batch.payload)
+        .collect();
+    assert_eq!(retained, original);
+    reader.close().await;
+    fixture.close().await;
+}
 
 #[tokio::test]
 async fn decodes_every_signal_shape_from_both_wire_encodings() {

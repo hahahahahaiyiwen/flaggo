@@ -191,6 +191,73 @@ app.MapPost(
         });
 
 app.MapGet(
+        "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables",
+        async (
+            string contractName,
+            string contractDigest,
+            int? limit,
+            string? cursor,
+            HttpContext context,
+            IContractLifecycle lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var catalog = await lifecycle.ListExecutablesAsync(
+                contractName,
+                contractDigest,
+                limit ?? 50,
+                cursor,
+                cancellationToken);
+            return catalog is null
+                ? NotFound(context)
+                : Results.Json(catalog, StrictJson.Options);
+        });
+
+app.MapGet(
+        "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/history",
+        async (
+            string contractName,
+            string contractDigest,
+            int? limit,
+            string? cursor,
+            HttpContext context,
+            IContractLifecycle lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var history = await lifecycle.ListExecutableHistoryAsync(
+                contractName,
+                contractDigest,
+                limit ?? 50,
+                cursor,
+                cancellationToken);
+            return history is null
+                ? NotFound(context)
+                : Results.Json(history, StrictJson.Options);
+        });
+
+app.MapPost(
+        "/v3/decision-contracts/{contractName}/versions/{contractDigest}"
+        + "/executables/{executableDigest}/activate",
+        async (
+            string contractName,
+            string contractDigest,
+            string executableDigest,
+            HttpContext context,
+            IContractLifecycle lifecycle,
+            CancellationToken cancellationToken) =>
+        {
+            var request = await HttpJson.ReadAsync<DecisionExecutableActivationRequest>(
+                context.Request,
+                cancellationToken);
+            var result = await lifecycle.ActivateExecutableAsync(
+                contractName,
+                contractDigest,
+                executableDigest,
+                request,
+                cancellationToken);
+            return Results.Json(result, StrictJson.Options);
+        });
+
+app.MapGet(
     "/health/live",
     (TimeProvider timeProvider) => Results.Json(
         new LivenessResult
@@ -337,6 +404,13 @@ static async Task WriteExceptionAsync(HttpContext context)
                 ProblemTypes.CandidateAdmissionConflict,
                 "Candidate lifecycle conflict",
                 conflict.Message),
+        ExecutableNotFoundException or ExecutableContractMismatchException =>
+            ProblemResults.Create(
+                context,
+                StatusCodes.Status404NotFound,
+                ProblemTypes.ExecutableNotFound,
+                "Decision executable not found",
+                "The requested executable does not exist for this contract version."),
         ArgumentException or FormatException =>
             ProblemResults.Create(
                 context,
@@ -351,6 +425,13 @@ static async Task WriteExceptionAsync(HttpContext context)
                 ProblemTypes.ActivationConflict,
                 "Activation conflict",
                 "Runtime authority changed before the requested activation completed."),
+        CandidateActivationConflictException or ActivationContractConflictException =>
+            ProblemResults.Create(
+                context,
+                StatusCodes.Status409Conflict,
+                ProblemTypes.ActivationConflict,
+                "Activation conflict",
+                "Executable lifecycle state changed before the requested activation completed."),
         SqliteException or IOException or TimeoutException =>
             ProblemResults.Create(
                 context,
@@ -378,9 +459,13 @@ static async Task WriteExceptionAsync(HttpContext context)
         and not StaleContractDigestException
         and not CandidateAdmissionConflictException
         and not CandidateLifecycleConflictException
+        and not ExecutableNotFoundException
+        and not ExecutableContractMismatchException
         and not ArgumentException
         and not FormatException
-        and not ActivationConflictException)
+        and not ActivationConflictException
+        and not CandidateActivationConflictException
+        and not ActivationContractConflictException)
     {
         logger.LogError(exception, "Unhandled Contract Service failure.");
     }

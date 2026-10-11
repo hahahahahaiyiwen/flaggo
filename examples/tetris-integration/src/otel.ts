@@ -1,5 +1,6 @@
-import { context } from "@opentelemetry/api";
+import { context, type Meter } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { AggregationTemporalityPreference } from "@opentelemetry/exporter-metrics-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
   InMemoryLogRecordExporter,
@@ -70,7 +71,7 @@ export class TetrisTelemetryProviders {
       ? new InMemoryLogRecordExporter()
       : undefined;
     this.metricExporter = options.capture === true
-      ? new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE)
+      ? new InMemoryMetricExporter(AggregationTemporality.DELTA)
       : undefined;
     this.spanExporter = options.capture === true
       ? new InMemorySpanExporter()
@@ -95,6 +96,7 @@ export class TetrisTelemetryProviders {
       readers: [
         createFlaggoMetricReader({
           runtimeConfig: options.runtimeConfig,
+          temporalityPreference: AggregationTemporalityPreference.DELTA,
           periodic: { exportIntervalMillis: 5_000 },
         }),
         ...(this.metricExporter === undefined
@@ -134,7 +136,6 @@ export class TetrisTelemetryProviders {
     this.policyInstrumentation = {
       flaggoLogger: this.loggerProvider.getLogger("@flaggo/sdk", SDK_VERSION),
       logger: this.loggerProvider.getLogger(tetrisPolicyInstrumentationScope),
-      meter: this.meterProvider.getMeter(tetrisPolicyInstrumentationScope),
       tracer: this.tracerProvider.getTracer(tetrisPolicyInstrumentationScope),
     };
     this.sessionInstrumentation = createTetrisSessionInstrumentation({
@@ -154,6 +155,10 @@ export class TetrisTelemetryProviders {
 
   get spans(): readonly ReadableSpan[] {
     return this.spanExporter?.getFinishedSpans() ?? [];
+  }
+
+  getMeter(scope: string): Meter {
+    return this.meterProvider.getMeter(scope);
   }
 
   async forceFlush(): Promise<void> {

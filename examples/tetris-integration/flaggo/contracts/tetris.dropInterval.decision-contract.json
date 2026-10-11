@@ -19,39 +19,75 @@
       }
     },
     {
-      "name": "current_level",
+      "name": "hard_drop_ratio_5s",
       "schema": {
-        "type": "integer",
+        "type": "number",
         "minimum": 0,
-        "maximum": 20
+        "maximum": 1
       }
     },
     {
       "name": "placement_time_mean_ms_5s",
       "schema": {
         "type": "number",
-        "minimum": 0,
-        "maximum": 60000
-      }
-    },
-    {
-      "name": "recovery_failures_5s",
-      "schema": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 100
+        "minimum": 0
       }
     },
     {
       "name": "pieces_locked_5s",
       "schema": {
         "type": "integer",
+        "minimum": 0
+      }
+    },
+    {
+      "name": "active_play_ms_5s",
+      "schema": {
+        "type": "number",
         "minimum": 0,
-        "maximum": 100
+        "maximum": 5000
+      }
+    },
+    {
+      "name": "challenge_balance_5s",
+      "schema": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    {
+      "name": "lines_cleared_5s",
+      "schema": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    {
+      "name": "game_over_count_5s",
+      "schema": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    {
+      "name": "current_drop_interval_ms",
+      "schema": {
+        "type": "number",
+        "minimum": 200,
+        "maximum": 1500,
+        "multipleOf": 50
       }
     },
     {
       "name": "session_id",
+      "schema": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    {
+      "name": "exposure_id",
       "schema": {
         "type": "string",
         "minLength": 1
@@ -70,21 +106,30 @@
   "authoredExecutable": {
     "rules": [
       {
-        "name": "high-pressure",
+        "name": "retain-current-without-observations",
         "when": {
-          "expression": "attributes.board_pressure_mean_5s >= 0.75 || attributes.board_pressure_max_5s >= 0.9 || attributes.recovery_failures_5s >= 3"
+          "expression": "attributes.active_play_ms_5s == 0.0 || attributes.pieces_locked_5s == 0"
         },
         "return": {
-          "value": 850
+          "expression": "attributes.current_drop_interval_ms"
         }
       },
       {
-        "name": "low-pressure",
+        "name": "explore-fast-gravity",
         "when": {
-          "expression": "attributes.board_pressure_mean_5s < 0.75 && attributes.board_pressure_max_5s < 0.9 && attributes.recovery_failures_5s < 3"
+          "expression": "attributes._random < 0.5"
         },
         "return": {
-          "value": 750
+          "value": 200
+        }
+      },
+      {
+        "name": "explore-slow-gravity",
+        "when": {
+          "expression": "true"
+        },
+        "return": {
+          "value": 1000
         }
       }
     ]
@@ -93,46 +138,110 @@
     "policy": {
       "mode": "auto-activation",
       "evaluate": {
-        "interval": "PT1M"
+        "interval": "PT2S"
       }
     },
     "evidence": [
       {
-        "name": "placement_time",
-        "attribute": "placement_time_mean_ms_5s",
+        "name": "challenge_balance",
+        "description": "Fraction of active game-clock time with settled-board-height pressure in the inclusive 0.15..0.45 band. Maximize this model proxy, not placement speed or unverified human enjoyment. Weight every completed window by active_play. Every four-gauge window is identified by tetris.experience.window.id; deduplicate re-exports. SDK receipts identify actual selected results but do not contain input JSON: before-call pressure, hard-drop ratio, and piece count are immutable tetris.input.* point metadata, not forward outcomes. Correlate session AND exposure IDs; unapplied receipts have no outcomes. Guided training uses nine independent completed greedy episodes, 3000ms reaction and 200ms command cadence, at most 120000ms each. Require all nine completion markers (tetris.experience.episode_complete) and at least three distinct applied exposures per interval in each proposed context cohort before selecting a contextual policy. Use only dataset=training for the guided comparison; held-out games are not exported. Compare empirical choices from the authored 200/1000ms arms; do not assume the smaller interval wins. Preserve the no-observations retain-current rule. If observations are insufficient, ambiguous, or unsafe, return no Candidate.",
+        "attribute": "challenge_balance_5s",
         "correlateBy": [
-          "session_id"
+          "session_id",
+          "exposure_id"
         ],
         "source": {
           "kind": "metric",
-          "scope": "tetris.engine",
-          "name": "tetris.placement_time",
-          "metricKind": "histogram",
-          "unit": "ms",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.challenge_balance",
+          "metricKind": "gauge",
+          "unit": "1",
           "correlation": {
             "session_id": {
               "location": "signal",
               "attribute": "tetris.session.id"
+            },
+            "exposure_id": {
+              "location": "signal",
+              "attribute": "tetris.exposure.id"
             }
           }
         }
       },
       {
-        "name": "recovery_failure",
-        "attribute": "recovery_failures_5s",
+        "name": "lines_cleared",
+        "description": "Actual cleared lines in this completed exposure slice. Normalize by active_play for lines per minute; input pressure is not a line-clear reward.",
+        "attribute": "lines_cleared_5s",
         "correlateBy": [
-          "session_id"
+          "session_id",
+          "exposure_id"
         ],
         "source": {
           "kind": "metric",
-          "scope": "tetris.engine",
-          "name": "tetris.recovery_failure",
-          "metricKind": "sum",
-          "unit": "{failure}",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.lines_cleared",
+          "metricKind": "gauge",
+          "unit": "{line}",
           "correlation": {
             "session_id": {
               "location": "signal",
               "attribute": "tetris.session.id"
+            },
+            "exposure_id": {
+              "location": "signal",
+              "attribute": "tetris.exposure.id"
+            }
+          }
+        }
+      },
+      {
+        "name": "game_over_count",
+        "description": "Actual game-over events in this completed exposure slice. A terminal tag does not establish that the final decision alone caused failure.",
+        "attribute": "game_over_count_5s",
+        "correlateBy": [
+          "session_id",
+          "exposure_id"
+        ],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.game_over_count",
+          "metricKind": "gauge",
+          "unit": "{game}",
+          "correlation": {
+            "session_id": {
+              "location": "signal",
+              "attribute": "tetris.session.id"
+            },
+            "exposure_id": {
+              "location": "signal",
+              "attribute": "tetris.exposure.id"
+            }
+          }
+        }
+      },
+      {
+        "name": "active_play",
+        "description": "Active game-clock milliseconds in this completed slice, at most 5000. Weight balance and normalize count rates by this duration. Zero-duration points can carry terminal/completion facts but are not zero-quality samples.",
+        "attribute": "active_play_ms_5s",
+        "correlateBy": [
+          "session_id",
+          "exposure_id"
+        ],
+        "source": {
+          "kind": "metric",
+          "scope": "tetris.experience",
+          "name": "tetris.experience.active_play_ms",
+          "metricKind": "gauge",
+          "unit": "ms",
+          "correlation": {
+            "session_id": {
+              "location": "signal",
+              "attribute": "tetris.session.id"
+            },
+            "exposure_id": {
+              "location": "signal",
+              "attribute": "tetris.exposure.id"
             }
           }
         }
@@ -140,13 +249,17 @@
     ],
     "objective": {
       "primary": {
-        "evidence": "placement_time",
-        "direction": "minimize"
+        "evidence": "challenge_balance",
+        "direction": "maximize"
       },
       "guardrails": [
         {
-          "name": "no-recovery-failures",
-          "expression": "sum(evidence.recovery_failure) <= 0"
+          "name": "continued-line-clearing",
+          "expression": "sum(evidence.lines_cleared) * 60000 >= sum(evidence.active_play)"
+        },
+        {
+          "name": "bounded-game-over-rate",
+          "expression": "sum(evidence.game_over_count) * 60000 <= 2 * sum(evidence.active_play)"
         }
       ]
     }

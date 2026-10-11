@@ -612,6 +612,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "flaggo-raw-otlp-inbox",
  "futures-util",
  "serde",
  "serde_json",
@@ -685,6 +686,22 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "flaggo-tetris-playground-analysis"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "flaggo-analysis-agent",
+ "flaggo-analysis-domain",
+ "flaggo-analysis-workspace",
+ "flaggo-async-analysis",
+ "flaggo-service-observability",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -70,4 +70,8 @@ Return exactly one structured outcome with a concise, non-empty explanation:
 - `superseded` only after `check_cycle_status` returns
   `contractSuperseded`; or
 - `failure` for a terminal analysis failure.
+
+Call `propose_executable` only for a supported `candidate` outcome. Do not
+call it for `noChange` or `noCandidate`; an empty `rules` array is not an
+outcome marker.
 </cycle_outcome>

@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   createRustHostEnvironment,
   createStructuredLogObserver,
+  formatIntegrationError,
   parseMaterializationHealth,
   parseListeningUrl,
   rustBinaryPath,
@@ -79,6 +80,20 @@ test("materialization telemetry projects worker health", () => {
   );
 });
 
+test("cleanup diagnostics include aggregate children and nested causes", () => {
+  const cause = Object.assign(new Error("Log file is still open."), { code: "EBUSY" });
+  const error = new AggregateError([
+    new Error("Failed to stop integration host 'gateway'.", { cause }),
+    new Error("Failed to remove the integration run directory."),
+  ], "Tetris integration cleanup failed.");
+  const formatted = formatIntegrationError(error);
+  assert.match(formatted, /Tetris integration cleanup failed/u);
+  assert.match(formatted, /Failed to stop integration host 'gateway'/u);
+  assert.match(formatted, /Log file is still open/u);
+  assert.match(formatted, /EBUSY/u);
+  assert.match(formatted, /Failed to remove the integration run directory/u);
+});
+
 test("Rust binary paths are platform-specific", () => {
   const root = resolve("repository");
 
@@ -108,6 +123,18 @@ test("Rust host environment requests an ephemeral loopback port", () => {
     FLAGGO_DATABASE_URL: "sqlite://flaggo.db",
     FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS: "127.0.0.1:0",
   });
+});
+
+test("Rust host environment accepts an explicit loopback port", () => {
+  const environment = createRustHostEnvironment(
+    { FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS: "127.0.0.1:14318" },
+    {},
+  );
+
+  assert.equal(
+    environment.FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS,
+    "127.0.0.1:14318",
+  );
 });
 
 test("SQLite URLs preserve absolute local paths", () => {

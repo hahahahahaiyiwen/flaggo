@@ -29,6 +29,9 @@ export interface DropIntervalSelection {
   readonly intervalMs: number;
   readonly source: DropIntervalSource;
   readonly status: string;
+  readonly exposureId?: string;
+  readonly contractDigest?: string;
+  readonly executableDigest?: string;
 }
 
 export interface DropIntervalProvider {

@@ -56,6 +56,30 @@ decomposition, typed decoding, route construction, relevance selection,
 deduplication, and the query-ready Evidence Store projection. Async analysis
 owns semantic interpretation and correlation.
 
+The query-ready projection represents numeric OTel attributes as JSON numbers
+with their declared type: `int64` remains an exact integer, and finite doubles
+retain numeric values plus exact bits. Actual strings remain strings, including
+numeric-looking text. Non-finite doubles expose bits without a numeric value,
+not a zero or null-valued substitute. Integer metric measurements and counts
+are likewise numeric; timestamp and identity metadata retain their existing
+encoding. Raw inbox bytes remain unchanged. Consumers must preserve integer
+precision, and SQL comparisons can use native numeric values without casts.
+Representation changes are versioned; retained databases are not migrated.
+
+### SQLite concurrency
+
+The local stack uses one SQLite file for the logically separate inbox,
+Evidence Store, contract store, and executable store. Writable stores enable
+WAL mode; the Rust stores retain `synchronous=FULL`. Analysis connections are
+read-only and do not change the journal mode. An open analysis read snapshot
+must not prevent ingestion or materialization from committing new data.
+Writers still serialize, and long-lived readers can delay WAL checkpointing.
+
+Analysis SQL uses both an asynchronous timeout and a SQLite progress handler
+that interrupts execution at the query deadline. The handler is removed before
+a pooled connection is reused. This bounds SQLite execution, not merely the
+caller waiting for it; it does not make expensive queries efficient.
+
 The SDK does not make the Decision Service persist a decision session and does
 not require a synchronous exposure-confirmation call.
 

@@ -227,6 +227,101 @@ test("policy refresh pauses and retains the latest successful result", async () 
   await session;
 });
 
+test("adaptive terminal observes lifecycle and applies mid-piece gravity only after locking", async () => {
+  const terminal = terminalStreams();
+  const states = [];
+  let now = 0;
+  let decisions = 0;
+  const session = runTerminalTetris({
+    input: terminal.input,
+    output: terminal.output,
+    now: () => now,
+    game: { pieceSource: new SequencePieceSource(["O"]) },
+    fallbackIntervalMs: 800,
+    policyApplication: "piece-boundary",
+    policyRefreshIntervalMs: 20,
+    provider: {
+      async select() {
+        decisions += 1;
+        return {
+          intervalMs: decisions === 1 ? 1_000 : 200,
+          exposureId: `terminal-exposure-${decisions}`,
+          source: "flaggo",
+          status: "adaptive",
+        };
+      },
+    },
+    onState(state, at, transition) { states.push({ state, at, transition }); },
+  });
+  try {
+    await waitFor(() => states.some(({ state }) => state.dropInterval.intervalMs === 1_000));
+    assert.equal(states[0].state.dropInterval.intervalMs, 800);
+    now = 1_000;
+    terminal.input.emit("keypress", "", { name: "left" });
+    await waitFor(() => states.at(-1).state.pendingDropInterval?.intervalMs === 200);
+    assert.equal(states.at(-1).state.dropInterval.intervalMs, 1_000);
+    const exposure = states.at(-1).state.pendingDropInterval.exposureId;
+    now = 2_000;
+    terminal.input.emit("keypress", "", { name: "space" });
+    assert.equal(states.at(-1).state.dropInterval.intervalMs, 200);
+    assert.equal(states.at(-1).state.dropInterval.exposureId, exposure);
+    assert.equal(states.at(-1).transition.update.locked, true);
+    terminal.input.emit("keypress", "", { name: "p" });
+    assert.equal(states.at(-1).state.status, "paused");
+    terminal.input.emit("keypress", "", { name: "p" });
+    assert.equal(states.at(-1).state.status, "playing");
+    terminal.input.emit("keypress", "", { name: "r" });
+    assert.equal(states.at(-1).state.dropInterval.intervalMs, 800);
+  } finally {
+    terminal.input.emit("keypress", "", { name: "q" });
+    await session;
+  }
+  assert.equal(states.at(-1).state.status, "closed");
+  assert.equal(states.at(-1).at, 2_000);
+  assert.deepEqual(terminal.rawModes, [true, false]);
+});
+
+test("terminal surfaces policy observation errors and restores terminal state", async () => {
+  const terminal = terminalStreams();
+  await assert.rejects(runTerminalTetris({
+    input: terminal.input,
+    output: terminal.output,
+    provider: {
+      async select() { return { intervalMs: 800, source: "flaggo", status: "test" }; },
+    },
+    onState(_state, _at, transition) {
+      if (transition?.operation === "refresh-policy") throw new Error("Invalid exposure.");
+    },
+  }), /Invalid exposure/u);
+  assert.deepEqual(terminal.rawModes, [true, false]);
+  assert.match(terminal.rendered(), /\u001b\[\?25h/u);
+});
+
+for (const failure of ["startup", "command", "close"]) {
+  test(`terminal restores state when ${failure} observation fails`, async () => {
+    const terminal = terminalStreams();
+    const session = runTerminalTetris({
+      input: terminal.input,
+      output: terminal.output,
+      onState(state, _at, transition) {
+        if (
+          (failure === "startup" && transition === undefined && state.status === "playing")
+          || (failure === "command" && transition?.operation === "hard-drop")
+          || (failure === "close" && state.status === "closed")
+        ) throw new Error(`${failure} observation failed`);
+      },
+    });
+    const rejection = assert.rejects(session, new RegExp(`${failure} observation failed`, "u"));
+    if (failure !== "startup") {
+      await waitFor(() => terminal.rendered().includes("PLAYING"));
+      terminal.input.emit("keypress", "", { name: failure === "close" ? "q" : "space" });
+    }
+    await rejection;
+    assert.deepEqual(terminal.rawModes, [true, false]);
+    assert.match(terminal.rendered(), /\u001b\[\?25h/u);
+  });
+}
+
 test("standalone build has no Flaggo SDK dependency", async () => {
   for (
     const file of [

@@ -41,10 +41,12 @@ async function play(lifecycle) {
 
   const [
     { createFlaggoDropIntervalProvider },
+    { createExperienceRecorder, TetrisExperience },
     { TetrisTelemetryProviders },
     { runTerminalTetris },
   ] = await Promise.all([
     import("./dist/flaggo/flaggo-provider.js"),
+    import("./dist/flaggo/experience.js"),
     import("./dist/flaggo/otel.js"),
     import("./dist/flaggo/terminal.js"),
   ]);
@@ -52,15 +54,30 @@ async function play(lifecycle) {
     runtimeConfig: deployed.runtimeConfig,
   });
   try {
+    let state;
+    const experience = new TetrisExperience({ dataset: "live", origin: "human", clock: "wall" },
+      createExperienceRecorder(telemetry.getMeter("tetris.experience")));
     const provider = createFlaggoDropIntervalProvider({
       runtimeConfig: deployed.runtimeConfig,
       fetch: hosts.fetch,
       telemetry: telemetry.policyInstrumentation,
+      experience,
+      state: () => {
+        if (state === undefined) throw new Error("Observe terminal state before deciding.");
+        return state;
+      },
+      now: Date.now,
     });
     await runTerminalTetris({
       instrumentation: telemetry.sessionInstrumentation,
       provider,
       signal: lifecycle.signal,
+      fallbackIntervalMs: 800,
+      policyApplication: "piece-boundary",
+      onState(value, now, transition) {
+        state = value;
+        experience.observe(value, now, transition);
+      },
     });
   } finally {
     try {

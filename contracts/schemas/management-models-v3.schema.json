@@ -999,6 +999,171 @@
         }
       }
     },
+    "ManagedDecisionExecutable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractDigest",
+        "executableDigest",
+        "lifecycleState",
+        "stateVersion",
+        "createdAt",
+        "executable"
+      ],
+      "properties": {
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "executableDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "lifecycleState": {
+          "type": "string",
+          "enum": [
+            "active",
+            "candidate",
+            "inactive"
+          ]
+        },
+        "stateVersion": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "activatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "executable": {
+          "$ref": "#/$defs/DecisionExecutable"
+        },
+        "provenance": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      }
+    },
+    "DecisionExecutableCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractName",
+        "contractDigest",
+        "activeExecutable",
+        "candidates",
+        "nextCursor"
+      ],
+      "properties": {
+        "contractName": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "activeExecutable": {
+          "$ref": "#/$defs/ManagedDecisionExecutable"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManagedDecisionExecutable"
+          },
+          "description": "Inactive Candidates ordered by createdAt descending and executableDigest descending."
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Opaque cursor for the next Candidate page, or null when this is the final page."
+        }
+      }
+    },
+    "DecisionExecutableHistory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractName",
+        "contractDigest",
+        "executables",
+        "nextCursor"
+      ],
+      "properties": {
+        "contractName": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "executables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManagedDecisionExecutable"
+          },
+          "description": "Retained active, candidate, and inactive executables ordered by createdAt descending and executableDigest descending."
+        },
+        "nextCursor": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Opaque cursor for the next history page, or null when this is the final page."
+        }
+      }
+    },
+    "DecisionExecutableActivationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedActiveExecutableDigest",
+        "expectedActiveStateVersion",
+        "expectedCandidateStateVersion"
+      ],
+      "properties": {
+        "expectedActiveExecutableDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "expectedActiveStateVersion": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedCandidateStateVersion": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "Optimistic-concurrency fence over both current runtime authority and the selected Candidate."
+    },
+    "DecisionExecutableActivationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractName",
+        "contractDigest",
+        "executable",
+        "previousExecutableDigest",
+        "supersededCandidateCount"
+      ],
+      "properties": {
+        "contractName": {
+          "$ref": "#/$defs/DecisionName"
+        },
+        "contractDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "executable": {
+          "$ref": "#/$defs/ManagedDecisionExecutable"
+        },
+        "previousExecutableDigest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "supersededCandidateCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "ValidationIssue": {
       "type": "object",
       "additionalProperties": false,

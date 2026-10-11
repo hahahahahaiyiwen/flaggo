@@ -1,0 +1,78 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp/application:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  otlp/internal:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4319
+
+processors:
+  batch:
+    send_batch_size: 256
+    timeout: 250ms
+
+exporters:
+  otlphttp/flaggo:
+    endpoint: ${env:FLAGGO_OTLP_INGESTION_ENDPOINT}
+    retry_on_failure:
+      enabled: true
+  otlphttp/lgtm:
+    endpoint: http://lgtm:4318
+    retry_on_failure:
+      enabled: true
+
+service:
+  extensions:
+    - health_check
+  pipelines:
+    logs/application:
+      receivers:
+        - otlp/application
+      processors:
+        - batch
+      exporters:
+        - otlphttp/flaggo
+        - otlphttp/lgtm
+    metrics/application:
+      receivers:
+        - otlp/application
+      processors:
+        - batch
+      exporters:
+        - otlphttp/flaggo
+        - otlphttp/lgtm
+    traces/application:
+      receivers:
+        - otlp/application
+      processors:
+        - batch
+      exporters:
+        - otlphttp/flaggo
+        - otlphttp/lgtm
+    logs/internal:
+      receivers:
+        - otlp/internal
+      processors:
+        - batch
+      exporters:
+        - otlphttp/lgtm
+    metrics/internal:
+      receivers:
+        - otlp/internal
+      processors:
+        - batch
+      exporters:
+        - otlphttp/lgtm
+    traces/internal:
+      receivers:
+        - otlp/internal
+      processors:
+        - batch
+      exporters:
+        - otlphttp/lgtm

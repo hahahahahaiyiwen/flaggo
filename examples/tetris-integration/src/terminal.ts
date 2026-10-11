@@ -2,28 +2,27 @@ import { emitKeypressEvents, type Key } from "node:readline";
 
 import {
   dropIntervalRefreshIntervalMs,
-  type DropIntervalProvider,
   type DropIntervalSelection,
 } from "./drop-interval.js";
 import type { GameSnapshot } from "./game.js";
 import {
   TetrisSession,
   type TetrisSessionCommand,
-  type TetrisSessionGameOptions,
-  type TetrisSessionInstrumentation,
+  type TetrisSessionOptions,
   type TetrisSessionState,
   type TetrisSessionTransition,
 } from "./session.js";
 
-export interface TerminalTetrisOptions {
-  readonly provider?: DropIntervalProvider;
+export interface TerminalTetrisOptions extends TetrisSessionOptions {
   readonly signal?: AbortSignal;
   readonly input?: NodeJS.ReadStream;
   readonly output?: NodeJS.WriteStream;
-  readonly game?: TetrisSessionGameOptions;
-  readonly instrumentation?: TetrisSessionInstrumentation;
-  readonly now?: () => number;
   readonly policyRefreshIntervalMs?: number;
+  readonly onState?: (
+    state: TetrisSessionState,
+    observedAtMs: number,
+    transition?: TetrisSessionTransition,
+  ) => void;
 }
 
 const clearScreen = "\u001b[2J\u001b[H";
@@ -100,11 +99,35 @@ export async function runTerminalTetris(
       ? {}
       : { instrumentation: options.instrumentation }),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.fallbackIntervalMs === undefined
+      ? {} : { fallbackIntervalMs: options.fallbackIntervalMs }),
+    ...(options.policyApplication === undefined
+      ? {} : { policyApplication: options.policyApplication }),
   });
   let gravityTimer: ReturnType<typeof setTimeout> | undefined;
   let policyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let resolveStopped: (() => void) | undefined;
+  let rejectStopped: ((error: unknown) => void) | undefined;
+  const stoppedPromise = new Promise<void>((resolve, reject) => {
+    resolveStopped = resolve;
+    rejectStopped = reject;
+  });
+
+  const observe = (transition?: TetrisSessionTransition): boolean => {
+    try {
+      options.onState?.(
+        transition?.state ?? session.snapshot(),
+        (options.now ?? Date.now)(),
+        transition,
+      );
+      return true;
+    } catch (error) {
+      rejectStopped?.(error);
+      stop();
+      return false;
+    }
+  };
 
   const render = (state: TetrisSessionState = session.snapshot()): void => {
     output.write(renderTerminal(state, state.dropInterval));
@@ -122,6 +145,7 @@ export async function runTerminalTetris(
     if (gravityTimer !== undefined) clearTimeout(gravityTimer);
     stopPolicyRefresh();
     session.close();
+    observe();
     input.removeListener("keypress", onKeypress);
     options.signal?.removeEventListener("abort", stop);
     input.setRawMode?.(false);
@@ -145,7 +169,13 @@ export async function runTerminalTetris(
     const state = session.snapshot();
     if (stopped || state.status !== "playing") return;
     void session.refreshPolicy(options.signal).then((transition) => {
-      if (!stopped && transition.changed) render(transition.state);
+      if (!stopped) {
+        if (!observe(transition)) return;
+        if (transition.changed) render(transition.state);
+      }
+    }).catch((error: unknown) => {
+      rejectStopped?.(error);
+      stop();
     });
   };
 
@@ -167,6 +197,7 @@ export async function runTerminalTetris(
   };
 
   const afterTransition = (transition: TetrisSessionTransition): void => {
+    if (!observe(transition)) return;
     if (transition.state.gameOver) stopPolicyRefresh();
     if (transition.changed) render(transition.state);
   };
@@ -174,6 +205,7 @@ export async function runTerminalTetris(
   const restart = (): void => {
     stopPolicyRefresh();
     const transition = session.dispatch("restart");
+    if (!observe(transition)) return;
     render(transition.state);
     scheduleGravity();
     startPolicyRefresh();
@@ -182,6 +214,7 @@ export async function runTerminalTetris(
   const togglePaused = (): void => {
     const command = session.snapshot().paused ? "resume" : "pause";
     const transition = session.dispatch(command);
+    if (!observe(transition)) return;
     if (transition.state.paused) {
       stopPolicyRefresh();
     } else {
@@ -224,14 +257,13 @@ export async function runTerminalTetris(
   input.on("keypress", onKeypress);
   options.signal?.addEventListener("abort", stop, { once: true });
   output.write(hideCursor);
-  render();
-  scheduleGravity();
-  startPolicyRefresh();
+  if (observe()) {
+    render();
+    scheduleGravity();
+    startPolicyRefresh();
+  }
 
-  await new Promise<void>((resolve) => {
-    resolveStopped = resolve;
-    if (stopped) resolve();
-  });
+  await stoppedPromise;
 }
 
 function gameCommand(key: Key): TetrisSessionCommand | undefined {

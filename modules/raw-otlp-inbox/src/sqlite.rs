@@ -10,7 +10,9 @@ use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow, SqliteSynchronous},
+    sqlite::{
+        SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous,
+    },
 };
 
 use crate::{
@@ -102,6 +104,7 @@ impl SqliteRawOtlpInbox {
             .map_err(RawOtlpInboxError::unavailable)?
             .create_if_missing(true)
             .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal)
             .busy_timeout(BUSY_TIMEOUT)
             .synchronous(SqliteSynchronous::Full);
         let pool = SqlitePoolOptions::new()

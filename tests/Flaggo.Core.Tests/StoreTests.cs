@@ -11,6 +11,28 @@ public sealed class StoreTests
 {
     private static readonly AuthorityScope Scope = new("local", "checkout", "production");
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WritableStoresInitializeWal(bool contractStore)
+    {
+        using var database = new TemporaryDatabase();
+        if (contractStore)
+        {
+            await new SqliteContractVersionStore(database.ConnectionString).InitializeAsync();
+        }
+        else
+        {
+            await new SqliteExecutableStore(database.ConnectionString).InitializeAsync();
+        }
+
+        await using var connection = new SqliteConnection(database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode;";
+        Assert.Equal("wal", await command.ExecuteScalarAsync());
+    }
+
     [Fact]
     public async Task ContractVersionsAreImmutableAndPersistent()
     {
@@ -359,6 +381,153 @@ public sealed class StoreTests
         Assert.Equal(
             3,
             (await store.GetAsync(replacement.ExecutableDigest))!.StateVersion);
+    }
+
+    [Fact]
+    public async Task CandidateListUsesStableCursorPagination()
+    {
+        using var database = new TemporaryDatabase();
+        var store = new SqliteExecutableStore(database.ConnectionString);
+        await store.InitializeAsync();
+        var contract = CreateContract(100);
+        var createdAt = new DateTimeOffset(2026, 3, 3, 10, 0, 0, TimeSpan.Zero);
+        var candidates = new[]
+        {
+            CreateCandidate(contract, variant: 1, createdAt),
+            CreateCandidate(contract, variant: 2, createdAt.AddMinutes(1)),
+            CreateCandidate(contract, variant: 3, createdAt.AddMinutes(2))
+        };
+        foreach (var candidate in candidates)
+        {
+            await store.PutCandidateAsync(candidate);
+        }
+
+        var first = await store.ListCandidatesAsync(
+            candidates[0].Executable.ContractDigest,
+            2,
+            cursor: null);
+        var second = await store.ListCandidatesAsync(
+            candidates[0].Executable.ContractDigest,
+            2,
+            first.NextCursor);
+
+        Assert.Equal(
+            [candidates[2].ExecutableDigest, candidates[1].ExecutableDigest],
+            first.Executables.Select(candidate => candidate.ExecutableDigest));
+        Assert.NotNull(first.NextCursor);
+        Assert.Equal(
+            candidates[0].ExecutableDigest,
+            Assert.Single(second.Executables).ExecutableDigest);
+        Assert.Null(second.NextCursor);
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => store.ListCandidatesAsync(
+                candidates[0].Executable.ContractDigest,
+                2,
+                "not-a-cursor"));
+    }
+
+    [Fact]
+    public async Task ExecutableHistoryIncludesAllStatesWithStablePagination()
+    {
+        using var database = new TemporaryDatabase();
+        var store = new SqliteExecutableStore(database.ConnectionString);
+        await store.InitializeAsync();
+        var contract = CreateContract(100);
+        var createdAt = new DateTimeOffset(2026, 3, 3, 10, 0, 0, TimeSpan.Zero);
+        var records = Enumerable.Range(1, 3)
+            .Select(variant => CreateCandidate(contract, variant, createdAt))
+            .ToArray();
+        foreach (var record in records)
+        {
+            await store.PutCandidateAsync(record);
+        }
+        var other = CreateCandidate(CreateContract(200), variant: 1, createdAt);
+        await store.PutCandidateAsync(other);
+        var contractDigest = records[0].Executable.ContractDigest;
+        await store.ActivateAsync(contractDigest, records[0].ExecutableDigest);
+        await store.ActivateAsync(contractDigest, records[1].ExecutableDigest);
+
+        var first = await store.ListExecutablesAsync(contractDigest, 2, cursor: null);
+        var second = await store.ListExecutablesAsync(contractDigest, 2, first.NextCursor);
+        var all = first.Executables.Concat(second.Executables).ToArray();
+        Assert.Equal(
+            records.Select(record => record.ExecutableDigest).OrderDescending(StringComparer.Ordinal),
+            all.Select(record => record.ExecutableDigest));
+        Assert.Equal(3, all.Select(record => record.ExecutableDigest).Distinct().Count());
+        Assert.Equal(
+            [ExecutableLifecycleState.Candidate, ExecutableLifecycleState.Active, ExecutableLifecycleState.Inactive],
+            all.Select(record => record.State).Order());
+        Assert.NotNull(first.NextCursor);
+        Assert.Null(second.NextCursor);
+        Assert.Equal(
+            records[2].ExecutableDigest,
+            Assert.Single((await store.ListCandidatesAsync(contractDigest, 2, null)).Executables).ExecutableDigest);
+        Assert.Empty((await store.ListExecutablesAsync("sha256:" + new string('0', 64), 2, null)).Executables);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            store.ListExecutablesAsync(contractDigest, 2, "invalid"));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            store.ListExecutablesAsync(contractDigest, 201, null));
+    }
+
+    [Fact]
+    public async Task ManualCandidateActivationUsesLifecycleTokensAndSupersedesBacklog()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        var executableStore = new SqliteExecutableStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        await executableStore.InitializeAsync();
+        var accepted = CreateAcceptedVersion(
+            100,
+            new DateTimeOffset(2026, 3, 3, 10, 0, 0, TimeSpan.Zero));
+        await contractStore.PutAsync(accepted);
+        await contractStore.SetCurrentAsync(
+            accepted.Contract.Name,
+            accepted.ContractDigest);
+        var initial = CreateCandidate(accepted.Contract, variant: 1);
+        var selected = CreateCandidate(accepted.Contract, variant: 2);
+        var superseded = CreateCandidate(accepted.Contract, variant: 3);
+        await executableStore.PutCandidateAsync(initial);
+        await executableStore.PutAnalysisCandidateAsync(
+            selected,
+            CreateAdmission(selected, "manual-selected"));
+        await executableStore.PutAnalysisCandidateAsync(
+            superseded,
+            CreateAdmission(superseded, "manual-superseded"));
+        var active = await executableStore.ActivateAsync(
+            accepted.ContractDigest,
+            initial.ExecutableDigest);
+
+        var result = await executableStore.ActivateCandidateAsync(
+            new CandidateActivationCommand(
+                accepted.Contract.Name,
+                accepted.ContractDigest,
+                selected.ExecutableDigest,
+                ExpectedCandidateStateVersion: 0,
+                ExpectedActiveExecutable: new ExecutableLifecycleToken(
+                    initial.ExecutableDigest,
+                    active.StateVersion)));
+
+        Assert.Equal(initial.ExecutableDigest, result.PreviousExecutableDigest);
+        Assert.Equal(2, result.StateVersion);
+        Assert.Equal(1, result.SupersededCandidateCount);
+        Assert.Equal(
+            selected.ExecutableDigest,
+            (await executableStore.GetActiveAsync(accepted.ContractDigest))!
+                .ExecutableDigest);
+        Assert.Equal(
+            ExecutableLifecycleState.Inactive,
+            (await executableStore.GetAsync(superseded.ExecutableDigest))!.State);
+        await Assert.ThrowsAsync<CandidateActivationConflictException>(
+            () => executableStore.ActivateCandidateAsync(
+                new CandidateActivationCommand(
+                    accepted.Contract.Name,
+                    accepted.ContractDigest,
+                    superseded.ExecutableDigest,
+                    ExpectedCandidateStateVersion: 0,
+                    ExpectedActiveExecutable: new ExecutableLifecycleToken(
+                        selected.ExecutableDigest,
+                        result.StateVersion))));
     }
 
     [Fact]

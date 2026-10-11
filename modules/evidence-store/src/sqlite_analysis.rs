@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ops::ControlFlow,
     str::FromStr,
+    time::Instant,
 };
 
 use async_trait::async_trait;
@@ -78,6 +79,12 @@ impl SqliteEvidenceAnalysisStore {
                         .execute(connection)
                         .await?;
                     Ok(())
+                })
+            })
+            .after_release(|connection, _| {
+                Box::pin(async move {
+                    connection.lock_handle().await?.remove_progress_handler();
+                    Ok(true)
                 })
             })
             .connect_with(options)
@@ -188,17 +195,35 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
             .push_bind(i64::from(request.limits.max_rows.get()) + 1);
 
         let query = builder.build();
+        let started = Instant::now();
+        let timeout = request.limits.timeout;
         let future = async {
-            let mut stream = query.fetch(&self.pool);
+            let mut connection = self
+                .pool
+                .acquire()
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+            connection
+                .lock_handle()
+                .await
+                .map_err(EvidenceStoreError::unavailable)?
+                .set_progress_handler(1_000, move || started.elapsed() < timeout);
+            let mut stream = query.fetch(&mut *connection);
             let mut columns = Vec::new();
             let mut rows = Vec::new();
             let mut observation_ids = BTreeSet::new();
             let mut result_bytes = 0usize;
-            while let Some(row) = stream
-                .try_next()
-                .await
-                .map_err(EvidenceStoreError::unavailable)?
-            {
+            while let Some(row) = stream.try_next().await.map_err(|error| {
+                if started.elapsed() >= timeout
+                    && error
+                        .as_database_error()
+                        .is_some_and(|database| database.code().as_deref() == Some("9"))
+                {
+                    EvidenceStoreError::QueryLimit("time")
+                } else {
+                    EvidenceStoreError::unavailable(error)
+                }
+            })? {
                 if rows.len() >= request.limits.max_rows.get() as usize {
                     return Err(EvidenceStoreError::QueryLimit("row"));
                 }

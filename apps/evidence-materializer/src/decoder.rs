@@ -505,7 +505,7 @@ fn number_point_json(value: &NumberDataPoint) -> Value {
             None => Value::Null,
             Some(number_data_point::Value::AsDouble(value)) => double_json(value),
             Some(number_data_point::Value::AsInt(value)) => {
-                json!({ "int64": value.to_string() })
+                json!({ "int64": value })
             }
         }
     })
@@ -514,8 +514,8 @@ fn number_point_json(value: &NumberDataPoint) -> Value {
 fn histogram_point_json(value: &HistogramDataPoint) -> Value {
     json!({
         "attributes": attributes_json(&value.attributes),
-        "bucketCounts": value.bucket_counts.iter().map(u64::to_string).collect::<Vec<_>>(),
-        "count": value.count.to_string(),
+        "bucketCounts": value.bucket_counts,
+        "count": value.count,
         "exemplars": value.exemplars.iter().map(exemplar_json).collect::<Vec<_>>(),
         "explicitBounds": value.explicit_bounds.iter().copied().map(double_json).collect::<Vec<_>>(),
         "flags": value.flags,
@@ -530,7 +530,7 @@ fn histogram_point_json(value: &HistogramDataPoint) -> Value {
 fn exponential_histogram_point_json(value: &ExponentialHistogramDataPoint) -> Value {
     json!({
         "attributes": attributes_json(&value.attributes),
-        "count": value.count.to_string(),
+        "count": value.count,
         "exemplars": value.exemplars.iter().map(exemplar_json).collect::<Vec<_>>(),
         "flags": value.flags,
         "max": value.max.map(double_json),
@@ -541,14 +541,14 @@ fn exponential_histogram_point_json(value: &ExponentialHistogramDataPoint) -> Va
         "startTimeUnixNano": value.start_time_unix_nano.to_string(),
         "sum": value.sum.map(double_json),
         "timeUnixNano": value.time_unix_nano.to_string(),
-        "zeroCount": value.zero_count.to_string(),
+        "zeroCount": value.zero_count,
         "zeroThreshold": double_json(value.zero_threshold)
     })
 }
 
 fn exponential_buckets_json(value: &exponential_histogram_data_point::Buckets) -> Value {
     json!({
-        "bucketCounts": value.bucket_counts.iter().map(u64::to_string).collect::<Vec<_>>(),
+        "bucketCounts": value.bucket_counts,
         "offset": value.offset
     })
 }
@@ -556,7 +556,7 @@ fn exponential_buckets_json(value: &exponential_histogram_data_point::Buckets) -
 fn summary_point_json(value: &SummaryDataPoint) -> Value {
     json!({
         "attributes": attributes_json(&value.attributes),
-        "count": value.count.to_string(),
+        "count": value.count,
         "flags": value.flags,
         "quantileValues": value.quantile_values.iter().map(|quantile| json!({
             "quantile": double_json(quantile.quantile),
@@ -577,7 +577,7 @@ fn exemplar_json(value: &Exemplar) -> Value {
         "value": match value.value {
             None => Value::Null,
             Some(exemplar::Value::AsDouble(value)) => double_json(value),
-            Some(exemplar::Value::AsInt(value)) => json!({ "int64": value.to_string() })
+            Some(exemplar::Value::AsInt(value)) => json!({ "int64": value })
         }
     })
 }
@@ -598,6 +598,46 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn integer_measurements_and_counts_are_json_numbers_without_precision_loss() {
+        let point = number_point_json(&NumberDataPoint {
+            value: Some(number_data_point::Value::AsInt(i64::MAX)),
+            ..Default::default()
+        });
+        assert_eq!(point["value"]["int64"].as_i64(), Some(i64::MAX));
+        let exemplar = exemplar_json(&Exemplar {
+            value: Some(exemplar::Value::AsInt(i64::MIN)),
+            ..Default::default()
+        });
+        assert_eq!(exemplar["value"]["int64"].as_i64(), Some(i64::MIN));
+        let histogram = histogram_point_json(&HistogramDataPoint {
+            count: u64::MAX,
+            bucket_counts: vec![u64::MAX],
+            ..Default::default()
+        });
+        assert_eq!(histogram["count"].as_u64(), Some(u64::MAX));
+        assert_eq!(histogram["bucketCounts"][0].as_u64(), Some(u64::MAX));
+        let exponential = exponential_histogram_point_json(&ExponentialHistogramDataPoint {
+            count: 4,
+            zero_count: 3,
+            positive: Some(exponential_histogram_data_point::Buckets {
+                bucket_counts: vec![1],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert_eq!(exponential["count"], 4);
+        assert_eq!(exponential["zeroCount"], 3);
+        assert_eq!(exponential["positive"]["bucketCounts"][0], 1);
+        assert_eq!(
+            summary_point_json(&SummaryDataPoint {
+                count: 2,
+                ..Default::default()
+            })["count"],
+            2
+        );
+    }
 
     #[test]
     fn finite_doubles_keep_exact_bits_and_expose_queryable_values() {

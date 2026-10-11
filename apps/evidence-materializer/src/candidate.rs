@@ -122,7 +122,7 @@ pub(crate) fn any_value_json(value: &AnyValue) -> Value {
             json!({ "type": "bool", "value": value })
         }
         Some(any_value::Value::IntValue(value)) => {
-            json!({ "type": "int64", "value": value.to_string() })
+            json!({ "type": "int64", "value": value })
         }
         Some(any_value::Value::DoubleValue(value)) => {
             let mut encoded = json!({
@@ -221,6 +221,51 @@ mod tests {
     use super::any_value_json;
 
     #[test]
+    fn numeric_values_remain_typed_and_exact_while_strings_remain_strings() {
+        for integer in [
+            i64::MIN,
+            -9_007_199_254_740_993,
+            0,
+            9_007_199_254_740_993,
+            i64::MAX,
+        ] {
+            let encoded = any_value_json(&AnyValue {
+                value: Some(any_value::Value::IntValue(integer)),
+            });
+            let roundtrip: serde_json::Value =
+                serde_json::from_slice(&serde_json::to_vec(&encoded).unwrap()).unwrap();
+            assert_eq!(roundtrip["type"], "int64");
+            assert_eq!(roundtrip["value"].as_i64(), Some(integer));
+        }
+        let text = any_value_json(&AnyValue {
+            value: Some(any_value::Value::StringValue("0".to_owned())),
+        });
+        assert_eq!(text, json!({ "type": "string", "value": "0" }));
+        for number in [
+            0.0,
+            -0.0,
+            81.5114,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            let encoded = any_value_json(&AnyValue {
+                value: Some(any_value::Value::DoubleValue(number)),
+            });
+            assert_eq!(encoded["type"], "double");
+            assert_eq!(encoded["bits"], format!("{:016x}", number.to_bits()));
+            if number.is_finite() {
+                assert_eq!(
+                    encoded["value"].as_f64().unwrap().to_bits(),
+                    number.to_bits()
+                );
+            } else {
+                assert!(encoded.get("value").is_none());
+            }
+        }
+    }
+
+    #[test]
     fn canonicalizes_every_recursive_any_value_variant_without_precision_loss() {
         let value = AnyValue {
             value: Some(any_value::Value::KvlistValue(KeyValueList {
@@ -279,7 +324,7 @@ mod tests {
                             "value": [
                                 { "type": "string", "value": "value" },
                                 { "type": "bool", "value": true },
-                                { "type": "int64", "value": "-9223372036854775808" },
+                                { "type": "int64", "value": i64::MIN },
                                 {
                                     "bits": "8000000000000000",
                                     "type": "double",

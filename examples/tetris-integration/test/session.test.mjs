@@ -373,6 +373,46 @@ test("session uses one validated start timestamp", () => {
   );
 });
 
+test("fixed local fallback stays level-independent", () => {
+  const session = new TetrisSession({
+    game: { pieceSource: new SequencePieceSource(["O"]) },
+    fallbackIntervalMs: 1_000,
+  });
+  for (let lines = 0; lines < 10; lines += 2) clearTwoLinesWithOPieces(session);
+  assert.equal(session.snapshot().level, 1);
+  assert.equal(session.snapshot().dropInterval.intervalMs, 1_000);
+  session.dispatch("restart");
+  assert.equal(session.snapshot().dropInterval.intervalMs, 1_000);
+  session.close();
+});
+
+test("cached failure retains the applied exposure identity", async () => {
+  let calls = 0;
+  const session = new TetrisSession({
+    provider: {
+      async select() {
+        if (++calls > 1) throw new Error("offline");
+        return { intervalMs: 750, source: "flaggo", status: "test", exposureId: "applied-1" };
+      },
+    },
+  });
+  await session.refreshPolicy();
+  const cached = await session.refreshPolicy();
+  assert.equal(cached.state.dropInterval.source, "flaggo-cached");
+  assert.equal(cached.state.dropInterval.intervalMs, 750);
+  assert.equal(cached.state.dropInterval.exposureId, "applied-1");
+  session.close();
+});
+
+test("invalid Flaggo intervals fail before changing applied gravity", async () => {
+  const session = new TetrisSession({
+    provider: { async select() { return { intervalMs: 825, source: "flaggo", status: "invalid" }; } },
+  });
+  await assert.rejects(session.refreshPolicy(), /selected interval/u);
+  assert.equal(session.snapshot().dropInterval.intervalMs, 800);
+  session.close();
+});
+
 function moveHorizontally(session, offset) {
   const command = offset < 0 ? "move-left" : "move-right";
   for (let count = 0; count < Math.abs(offset); count += 1) {

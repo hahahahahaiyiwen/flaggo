@@ -30,6 +30,8 @@ Thumbs.db
 node_modules/
 dist/
 coverage/
+playwright-report/
+test-results/
 
 # .NET artifacts
 bin/

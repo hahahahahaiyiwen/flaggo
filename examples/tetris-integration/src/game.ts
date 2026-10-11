@@ -12,11 +12,29 @@ interface Coordinate {
   readonly y: number;
 }
 
-interface ActivePiece {
+export interface TetrisPiecePose {
   readonly kind: TetrominoKind;
   readonly rotation: number;
   readonly x: number;
   readonly y: number;
+}
+
+export type TetrisPlacementCommand =
+  | "move-left"
+  | "move-right"
+  | "rotate-clockwise"
+  | "hard-drop";
+
+export interface TetrisPlanningState {
+  readonly board: Board;
+  readonly activePiece: Readonly<TetrisPiecePose>;
+  readonly pieceSequence: number;
+}
+
+export interface TetrisPlacement {
+  readonly commands: readonly TetrisPlacementCommand[];
+  readonly board: Board;
+  readonly linesCleared: number;
 }
 
 export interface PieceSource {
@@ -167,11 +185,88 @@ function emptyBoard(): BoardCell[][] {
   );
 }
 
-function cells(piece: ActivePiece): readonly Coordinate[] {
+function cells(piece: Readonly<TetrisPiecePose>): readonly Coordinate[] {
   return rotations[piece.kind][piece.rotation]!.map((cell) => ({
     x: piece.x + cell.x,
     y: piece.y + cell.y,
   }));
+}
+
+function collidesWithBoard(
+  board: Board,
+  piece: Readonly<TetrisPiecePose>,
+): boolean {
+  return cells(piece).some((cell) =>
+    cell.x < 0
+    || cell.x >= boardWidth
+    || cell.y >= boardHeight
+    || (cell.y >= 0 && board[cell.y]![cell.x] !== null));
+}
+
+function rotatedPiece(
+  board: Board,
+  piece: Readonly<TetrisPiecePose>,
+): TetrisPiecePose | undefined {
+  const rotation = (piece.rotation + 1) % 4;
+  for (const offset of [0, -1, 1, -2, 2]) {
+    const candidate = { ...piece, rotation, x: piece.x + offset };
+    if (!collidesWithBoard(board, candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function clearedBoard(board: Board): { board: BoardCell[][]; lines: number } {
+  const remaining = board.filter((row) => row.some((cell) => cell === null));
+  const lines = boardHeight - remaining.length;
+  return {
+    board: [
+      ...Array.from({ length: lines }, () => Array<BoardCell>(boardWidth).fill(null)),
+      ...remaining.map((row) => [...row]),
+    ],
+    lines,
+  };
+}
+
+export function enumerateTetrisPlacements(
+  state: TetrisPlanningState,
+): readonly TetrisPlacement[] {
+  const queue: Array<{
+    piece: Readonly<TetrisPiecePose>;
+    commands: readonly TetrisPlacementCommand[];
+  }> = [{ piece: state.activePiece, commands: [] }];
+  const visited = new Set<string>();
+  const placements: TetrisPlacement[] = [];
+  for (let index = 0; index < queue.length; index += 1) {
+    const { piece, commands } = queue[index]!;
+    const key = `${piece.x}:${piece.y}:${piece.rotation}`;
+    if (visited.has(key) || collidesWithBoard(state.board, piece)) continue;
+    visited.add(key);
+    let landing = { ...piece };
+    while (!collidesWithBoard(state.board, { ...landing, y: landing.y + 1 })) {
+      landing = { ...landing, y: landing.y + 1 };
+    }
+    const projected = state.board.map((row) => [...row]);
+    for (const cell of cells(landing)) {
+      if (cell.y < 0) throw new Error("A planned placement extends above the board.");
+      projected[cell.y]![cell.x] = landing.kind;
+    }
+    const cleared = clearedBoard(projected);
+    placements.push({
+      commands: [...commands, "hard-drop"],
+      board: cleared.board,
+      linesCleared: cleared.lines,
+    });
+    for (const [command, candidate] of [
+      ["move-left", { ...piece, x: piece.x - 1 }],
+      ["move-right", { ...piece, x: piece.x + 1 }],
+      ["rotate-clockwise", rotatedPiece(state.board, piece)],
+    ] as const) {
+      if (candidate !== undefined && !collidesWithBoard(state.board, candidate)) {
+        queue.push({ piece: candidate, commands: [...commands, command] });
+      }
+    }
+  }
+  return placements;
 }
 
 export class TetrisGame {
@@ -179,7 +274,8 @@ export class TetrisGame {
   private readonly pieceSource: PieceSource;
   private readonly now: () => number;
   private readonly sessionId: string;
-  private active: ActivePiece;
+  private active: TetrisPiecePose;
+  private pieceSequence = 0;
   private spawnedAt: number;
   private currentRecoveryFailures = 0;
   private recentPlacementTimeMs = 0;
@@ -234,17 +330,10 @@ export class TetrisGame {
 
   rotateClockwise(): GameUpdate {
     if (!this.canAct()) return this.update(false);
-    const rotation = (this.active.rotation + 1) % 4;
-    for (const offset of [0, -1, 1, -2, 2]) {
-      const candidate = {
-        ...this.active,
-        rotation,
-        x: this.active.x + offset,
-      };
-      if (!this.collides(candidate)) {
-        this.active = candidate;
-        return this.update(true);
-      }
+    const candidate = rotatedPiece(this.board, this.active);
+    if (candidate !== undefined) {
+      this.active = candidate;
+      return this.update(true);
     }
     this.currentRecoveryFailures += 1;
     return this.update(false, { recoveryFailureRecorded: true });
@@ -320,6 +409,14 @@ export class TetrisGame {
     };
   }
 
+  planningState(): TetrisPlanningState {
+    return {
+      board: this.board.map((row) => [...row]),
+      activePiece: { ...this.active },
+      pieceSequence: this.pieceSequence,
+    };
+  }
+
   private canAct(): boolean {
     return !this.pausedValue && !this.gameOverValue;
   }
@@ -364,6 +461,7 @@ export class TetrisGame {
     );
     this.currentRecoveryFailures = 0;
     this.active = this.newPiece(this.pieceSource.next());
+    this.pieceSequence += 1;
     this.spawnedAt = now;
     if (this.collides(this.active)) this.gameOverValue = true;
     return this.update(true, {
@@ -377,32 +475,17 @@ export class TetrisGame {
   }
 
   private clearLines(): number {
-    const remaining = this.board.filter(
-      (row) => !row.every((cell) => cell !== null),
-    );
-    const cleared = boardHeight - remaining.length;
-    this.board.splice(
-      0,
-      this.board.length,
-      ...Array.from(
-        { length: cleared },
-        () => Array<BoardCell>(boardWidth).fill(null),
-      ),
-      ...remaining,
-    );
-    this.lineCount += cleared;
-    return cleared;
+    const cleared = clearedBoard(this.board);
+    this.board.splice(0, this.board.length, ...cleared.board);
+    this.lineCount += cleared.lines;
+    return cleared.lines;
   }
 
-  private collides(piece: ActivePiece): boolean {
-    return cells(piece).some((cell) =>
-      cell.x < 0
-      || cell.x >= boardWidth
-      || cell.y >= boardHeight
-      || (cell.y >= 0 && this.board[cell.y]![cell.x] !== null));
+  private collides(piece: TetrisPiecePose): boolean {
+    return collidesWithBoard(this.board, piece);
   }
 
-  private newPiece(kind: TetrominoKind): ActivePiece {
+  private newPiece(kind: TetrominoKind): TetrisPiecePose {
     return {
       kind,
       rotation: 0,

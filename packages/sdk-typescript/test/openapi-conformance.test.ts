@@ -121,6 +121,9 @@ describe("OpenAPI shared-contract alignment", () => {
       "/v3/decision-contracts/{contractName}/versions",
       "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
       "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables",
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/history",
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate",
       "/health/live",
       "/health/ready",
     ]);
@@ -257,6 +260,70 @@ describe("OpenAPI shared-contract alignment", () => {
       );
     }
 
+    const listExecutables = operation(
+      management,
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables",
+      "get",
+    );
+    expect(listExecutables.operationId).toBe("listDecisionExecutables");
+    expect(listExecutables.security).toBeUndefined();
+    expectParameters(listExecutables, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/ContractDigestPath",
+      "#/components/parameters/PageLimitQuery",
+      "#/components/parameters/PageCursorQuery",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(listExecutables.responses["200"]?.$ref).toBe(
+      "#/components/responses/DecisionExecutableCatalog",
+    );
+
+    const activateExecutable = operation(
+      management,
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate",
+      "post",
+    );
+    const history = operation(
+      management,
+      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/history",
+      "get",
+    );
+    expect(history.operationId).toBe("listDecisionExecutableHistory");
+    expectParameters(history, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/ContractDigestPath",
+      "#/components/parameters/PageLimitQuery",
+      "#/components/parameters/PageCursorQuery",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(history.responses["200"]?.$ref).toBe(
+      "#/components/responses/DecisionExecutableHistory",
+    );
+    expectRequired(managementModels.$defs!.DecisionExecutableHistory!, [
+      "contractName", "contractDigest", "executables", "nextCursor",
+    ]);
+    expect(activateExecutable.operationId).toBe(
+      "activateDecisionExecutableCandidate",
+    );
+    expect(activateExecutable.security).toBeUndefined();
+    expectParameters(activateExecutable, [
+      "#/components/parameters/ContractNamePath",
+      "#/components/parameters/ContractDigestPath",
+      "#/components/parameters/ExecutableDigestPath",
+      "#/components/parameters/CorrelationIdHeader",
+    ]);
+    expect(activateExecutable.requestBody?.$ref).toBe(
+      "#/components/requestBodies/DecisionExecutableActivation",
+    );
+    expect(activateExecutable.responses["200"]?.$ref).toBe(
+      "#/components/responses/DecisionExecutableActivation",
+    );
+    for (const status of ["400", "404", "409", "415", "503"]) {
+      expect(activateExecutable.responses[status]?.$ref).toBe(
+        "#/components/responses/Problem",
+      );
+    }
+
     expect(
       management.components.requestBodies.DecisionContract!.content?.[
         "application/json"
@@ -316,6 +383,39 @@ describe("OpenAPI shared-contract alignment", () => {
       "createdAt",
       "created",
     ]);
+    expectRequired(managementModels.$defs!.ManagedDecisionExecutable!, [
+      "contractDigest",
+      "executableDigest",
+      "lifecycleState",
+      "stateVersion",
+      "createdAt",
+      "executable",
+    ]);
+    expectRequired(managementModels.$defs!.DecisionExecutableCatalog!, [
+      "contractName",
+      "contractDigest",
+      "activeExecutable",
+      "candidates",
+      "nextCursor",
+    ]);
+    expectRequired(
+      managementModels.$defs!.DecisionExecutableActivationRequest!,
+      [
+        "expectedActiveExecutableDigest",
+        "expectedActiveStateVersion",
+        "expectedCandidateStateVersion",
+      ],
+    );
+    expectRequired(
+      managementModels.$defs!.DecisionExecutableActivationResult!,
+      [
+        "contractName",
+        "contractDigest",
+        "executable",
+        "previousExecutableDigest",
+        "supersededCandidateCount",
+      ],
+    );
   });
 
   it("documents Contract Service health probes", () => {

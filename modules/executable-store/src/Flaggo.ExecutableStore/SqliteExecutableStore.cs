@@ -1,5 +1,6 @@
 using System.Data;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Flaggo.Contract;
 using Flaggo.Expressions;
@@ -32,6 +33,11 @@ public sealed class SqliteExecutableStore :
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
+        await using (var journal = connection.CreateCommand())
+        {
+            journal.CommandText = "PRAGMA journal_mode = WAL;";
+            await journal.ExecuteNonQueryAsync(cancellationToken);
+        }
         await using (var versionTable = connection.CreateCommand())
         {
             versionTable.CommandText =
@@ -622,6 +628,90 @@ public sealed class SqliteExecutableStore :
             : null;
     }
 
+    public Task<ExecutablePage> ListCandidatesAsync(
+        string contractDigest,
+        int pageSize,
+        string? cursor,
+        CancellationToken cancellationToken = default) =>
+        ListAsync(contractDigest, pageSize, cursor, "candidate", cancellationToken);
+
+    public Task<ExecutablePage> ListExecutablesAsync(
+        string contractDigest,
+        int pageSize,
+        string? cursor,
+        CancellationToken cancellationToken = default) =>
+        ListAsync(contractDigest, pageSize, cursor, null, cancellationToken);
+
+    private async Task<ExecutablePage> ListAsync(
+        string contractDigest,
+        int pageSize,
+        string? cursor,
+        string? lifecycleState,
+        CancellationToken cancellationToken)
+    {
+        if (pageSize is < 1 or > 200)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(pageSize),
+                "Page size must be between 1 and 200.");
+        }
+
+        (DateTimeOffset CreatedAt, string ExecutableDigest)? boundary =
+            cursor is null ? null : DecodeExecutableCursor(cursor);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT executable_digest, contract_digest, executable_json,
+                   checked_executable_json, provenance_json, lifecycle_state,
+                   state_version, created_at, activated_at
+            FROM decision_executables
+            WHERE contract_digest = $contractDigest
+              AND ($lifecycleState IS NULL OR lifecycle_state = $lifecycleState)
+              AND (
+                    $cursorCreatedAt IS NULL
+                    OR created_at < $cursorCreatedAt
+                    OR (
+                        created_at = $cursorCreatedAt
+                        AND executable_digest < $cursorDigest
+                    )
+                  )
+            ORDER BY created_at DESC, executable_digest DESC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$contractDigest", contractDigest);
+        command.Parameters.AddWithValue(
+            "$lifecycleState",
+            lifecycleState is null ? DBNull.Value : lifecycleState);
+        command.Parameters.AddWithValue(
+            "$cursorCreatedAt",
+            boundary is null ? DBNull.Value : FormatTime(boundary.Value.CreatedAt));
+        command.Parameters.AddWithValue(
+            "$cursorDigest",
+            boundary is null ? DBNull.Value : boundary.Value.ExecutableDigest);
+        command.Parameters.AddWithValue("$limit", pageSize + 1);
+
+        var executables = new List<StoredExecutable>(pageSize + 1);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            executables.Add(
+                ReadExecutable(reader, reader.GetString(0), columnOffset: 1));
+        }
+
+        string? nextCursor = null;
+        if (executables.Count > pageSize)
+        {
+            executables.RemoveAt(pageSize);
+            var last = executables[^1];
+            nextCursor = EncodeExecutableCursor(
+                last.CreatedAt,
+                last.ExecutableDigest);
+        }
+
+        return new ExecutablePage(executables, nextCursor);
+    }
+
     public async Task<ActivationResult> ActivateAsync(
         string contractDigest,
         string executableDigest,
@@ -644,6 +734,123 @@ public sealed class SqliteExecutableStore :
             enforceExpectedActive: true,
             expectedActiveExecutableDigest: null,
             cancellationToken: cancellationToken);
+
+    public async Task<CandidateActivationResult> ActivateCandidateAsync(
+        CandidateActivationCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateCandidateActivationCommand(command);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(
+            IsolationLevel.Serializable,
+            deferred: false);
+        var sqliteTransaction = (SqliteTransaction)transaction;
+        var candidate = await ReadCandidateIdentityAsync(
+            connection,
+            sqliteTransaction,
+            command.ExecutableDigest,
+            cancellationToken);
+        if (candidate is null)
+        {
+            throw new ExecutableNotFoundException(command.ExecutableDigest);
+        }
+
+        if (!string.Equals(
+                candidate.Value.ContractDigest,
+                command.ContractDigest,
+                StringComparison.Ordinal))
+        {
+            throw new ExecutableContractMismatchException(
+                command.ExecutableDigest,
+                command.ContractDigest,
+                candidate.Value.ContractDigest);
+        }
+
+        if (candidate.Value.State != ExecutableLifecycleState.Candidate
+            || candidate.Value.StateVersion != command.ExpectedCandidateStateVersion)
+        {
+            throw new CandidateActivationConflictException(
+                command.ExecutableDigest,
+                command.ExpectedCandidateStateVersion,
+                candidate.Value.State,
+                candidate.Value.StateVersion);
+        }
+
+        var currentContractDigest = await ReadCurrentContractDigestAsync(
+            connection,
+            sqliteTransaction,
+            command.ContractName,
+            cancellationToken);
+        if (!string.Equals(
+                currentContractDigest,
+                command.ContractDigest,
+                StringComparison.Ordinal))
+        {
+            throw new ActivationContractConflictException(
+                command.ContractName,
+                command.ContractDigest,
+                currentContractDigest);
+        }
+
+        var active = await ReadActiveIdentity(
+            connection,
+            sqliteTransaction,
+            command.ContractDigest,
+            cancellationToken);
+        if (!LifecycleTokensMatch(active, command.ExpectedActiveExecutable))
+        {
+            throw new ActivationConflictException(
+                command.ExpectedActiveExecutable.ExecutableDigest,
+                active?.ExecutableDigest);
+        }
+
+        if (active is null
+            || !await DeactivateExpectedAsync(
+                connection,
+                sqliteTransaction,
+                command.ContractDigest,
+                active.Value.ExecutableDigest,
+                active.Value.StateVersion,
+                cancellationToken))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new ActivationConflictException(
+                command.ExpectedActiveExecutable.ExecutableDigest,
+                active?.ExecutableDigest);
+        }
+
+        var nextStateVersion = Math.Max(
+            active.Value.StateVersion,
+            command.ExpectedCandidateStateVersion) + 1;
+        if (!await ActivateExpectedCandidateAsync(
+                connection,
+                sqliteTransaction,
+                command.ExecutableDigest,
+                command.ExpectedCandidateStateVersion,
+                nextStateVersion,
+                cancellationToken))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new CandidateActivationConflictException(
+                command.ExecutableDigest,
+                command.ExpectedCandidateStateVersion,
+                candidate.Value.State,
+                candidate.Value.StateVersion);
+        }
+
+        var superseded = await SupersedeOtherCandidatesAsync(
+            connection,
+            sqliteTransaction,
+            command.ContractName,
+            command.ExecutableDigest,
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new CandidateActivationResult(
+            command.ExecutableDigest,
+            active.Value.ExecutableDigest,
+            nextStateVersion,
+            superseded);
+    }
 
     private async Task<ActivationResult> ActivateCoreAsync(
         string contractDigest,
@@ -780,6 +987,28 @@ public sealed class SqliteExecutableStore :
         }
     }
 
+    private static void ValidateCandidateActivationCommand(
+        CandidateActivationCommand command)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.ContractName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.ContractDigest);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.ExecutableDigest);
+        if (command.ExpectedCandidateStateVersion < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(command),
+                "Expected Candidate state version cannot be negative.");
+        }
+
+        if (command.ExpectedActiveExecutable.StateVersion < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(command),
+                "Expected active state version cannot be negative.");
+        }
+    }
+
     private static async Task<(
         ExecutableLifecycleState State,
         long StateVersion,
@@ -825,6 +1054,41 @@ public sealed class SqliteExecutableStore :
                 $"Unknown executable lifecycle state '{invalid}'.")
         };
         return (state, reader.GetInt64(1), ParseTime(reader.GetString(2)));
+    }
+
+    private static async Task<(
+        string ContractDigest,
+        ExecutableLifecycleState State,
+        long StateVersion)?> ReadCandidateIdentityAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string executableDigest,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            SELECT contract_digest, lifecycle_state, state_version
+            FROM decision_executables
+            WHERE executable_digest = $executableDigest;
+            """;
+        command.Parameters.AddWithValue("$executableDigest", executableDigest);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var state = reader.GetString(1) switch
+        {
+            "candidate" => ExecutableLifecycleState.Candidate,
+            "active" => ExecutableLifecycleState.Active,
+            "inactive" => ExecutableLifecycleState.Inactive,
+            var invalid => throw new InvalidDataException(
+                $"Unknown executable lifecycle state '{invalid}'.")
+        };
+        return (reader.GetString(0), state, reader.GetInt64(2));
     }
 
     private static async Task<string?> ReadCurrentContractDigestAsync(
@@ -1380,6 +1644,51 @@ public sealed class SqliteExecutableStore :
 
     private static string FormatTime(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    private static string EncodeExecutableCursor(
+        DateTimeOffset createdAt,
+        string executableDigest)
+    {
+        var payload = Encoding.UTF8.GetBytes(
+            $"{FormatTime(createdAt)}\n{executableDigest}");
+        return Convert.ToBase64String(payload)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
+    private static (DateTimeOffset CreatedAt, string ExecutableDigest)
+        DecodeExecutableCursor(string cursor)
+    {
+        try
+        {
+            var padded = cursor.Replace('-', '+').Replace('_', '/');
+            padded = padded.PadRight((padded.Length + 3) / 4 * 4, '=');
+            var payload = Encoding.UTF8.GetString(Convert.FromBase64String(padded));
+            var separator = payload.IndexOf('\n');
+            if (separator <= 0)
+            {
+                throw new FormatException("Cursor separator is missing.");
+            }
+
+            var createdAt = ParseTime(payload[..separator]);
+            var digest = payload[(separator + 1)..];
+            if (!ContractDigests.IsSha256Digest(digest))
+            {
+                throw new FormatException("Cursor digest is invalid.");
+            }
+
+            return (createdAt, digest);
+        }
+        catch (Exception exception) when (
+            exception is FormatException or ArgumentException)
+        {
+            throw new ArgumentException(
+                "Invalid executable cursor.",
+                nameof(cursor),
+                exception);
+        }
+    }
 
     private static DateTimeOffset ParseTime(string value) =>
         DateTimeOffset.ParseExact(
