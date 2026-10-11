@@ -586,6 +586,18 @@
           }
         }
       },
+      "DecisionExecutableActivation": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionExecutableActivationRequest"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
       "DecisionExecutableHistory": {
         "description": "One page of retained active, candidate, and inactive executable records.",
         "headers": {
@@ -601,18 +613,6 @@
           }
         }
       },
-      "DecisionExecutableActivation": {
-        "required": true,
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "../schemas/management-models-v3.schema.json#/$defs/DecisionExecutableActivationRequest"
-            }
-          }
-        }
-      }
-    },
-    "responses": {
       "DecisionContractVersion": {
         "description": "One immutable accepted DecisionContract version that is runtime-ready.",
         "headers": {
