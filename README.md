@@ -1,60 +1,71 @@
 # Flaggo
 
-Flaggo is a decisioning system for bounded runtime variables. It gives
-application code an explicit way to deploy a versioned `DecisionContract`,
-activate one immutable `DecisionExecutable`, and request a deterministic
-result for an exact contract version.
+**An evidence-driven control plane for runtime decisions, with asynchronous AI
+learning and deterministic online evaluation.**
 
-The current stack implements complete SDK input construction, contract
-acceptance, default and deterministic authored-executable generation, atomic
-activation, stateless runtime evaluation, direct OTLP ingestion, a bounded Raw
-OTLP Inbox, and forward-only Evidence Materialization. Evidence correlation
-and asynchronous evidence-based generation remain planned.
+Making a configuration configurable is only the first step. Improving it
+usually requires a separate loop: collect telemetry, analyze outcomes, choose
+a change, and roll it out. Those steps often span tools and teams, leaving
+runtime behavior configurable but manually optimized.
 
-## Target product model
+Flaggo explores closing that loop for selected runtime decisions. Teams define
+a versioned decision contract: its inputs, valid outputs, objectives, and
+guardrails. Applications request decisions and retain ownership of applying
+them. Asynchronous analysis uses decision receipts and application telemetry
+to propose new executables, which must pass validation and activation before
+influencing runtime behavior.
+
+**AI proposes the behavior; deterministic executables serve runtime requests.**
+The online path does not invoke an LLM or wait for analysis. It evaluates the
+immutable executable active for the requested contract version.
+
+## How the loop works
 
 ```text
-DecisionContract
-  -> Contract Acceptance
-  -> Executable Generation
-  -> CandidateExecutable
-  -> Activation
-  -> ActiveExecutable
-
-ActiveExecutable + complete RuntimeInput
-  -> deterministic RuntimeDecision
-
-decision receipt + application telemetry
-  -> Raw OTLP Inbox
-  -> Evidence Store
-  -> planned Async Analysis
-  -> CandidateExecutable
-  -> Contract Service validation and activation
+Define a decision contract
+          |
+          v
+Evaluate the active executable --> Application applies the result
+          ^                                  |
+          |                                  v
+Validate and activate <-- Agent proposes <-- Analyze observed outcomes
 ```
 
-Activation is the only transition that grants runtime authority. The initial
-learning declaration uses `mode: auto-activation` to define how a future valid
-evidence-generated candidate would attempt activation. Async Analysis cannot
-write runtime authority directly; runtime reads only the activation mapping.
+Decision contracts make the delegated interface and intent explicit.
+Immutable executable identities make behavior traceable. Activation is the
+only transition that grants runtime authority: generating a Candidate does
+not make it active, and analysis cannot write runtime authority directly.
 
-The repository implements this v3 model through Contract Service, Decision
-Service, OTel Ingestion, Evidence Materializer, reusable domain/store modules,
-the TypeScript SDK, and real-host examples. The pre-v3 service stack has been
-removed.
+The current stack supports contract deployment, authored executables,
+deterministic evaluation, telemetry ingestion, evidence materialization,
+asynchronous Copilot analysis, Candidate admission, and auto-activation.
+The live learning loop proposes testable changes; it does not guarantee
+improvement or prove that observed outcomes transfer to every future context.
 
-## Start here
+## Where Flaggo fits
 
-- [Documentation home](docs/README.md)
-- [Manifesto](docs/MANIFESTO.md)
-- [Application boundaries and lifecycle](docs/design/architecture/APP_BOUNDARIES.md)
-- [Architecture overview](docs/design/architecture/OVERVIEW.md)
-- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
-- [Contributing](CONTRIBUTING.md)
+Flaggo is for contextual, high-change runtime choices where explicit contracts,
+observable outcomes, and governed activation are better than fixed thresholds
+or manually operated configuration. Feature-flag and configuration-like
+decisions are one application of this model, not its entire purpose.
 
-## Quickstart
+It is not a general-purpose agent task runner, an LLM call on every request,
+or a replacement for application execution. Not every branch should become
+a decision call, and not every decision needs AI. The application still owns
+what happens after receiving a result.
+
+## Try the playground
+
+![Flaggo Tetris playground showing gameplay, executable authority, and asynchronous analysis](image.png)
+
+*Flaggo in action: human and autonomous gameplay produce evidence;
+asynchronous analysis proposes decision executables, which gain runtime
+authority after validation and activation. Tetris demonstrates the control
+loop, not a proven optimal policy.*
 
 Run the browser playground to play Tetris and observe a complete local
-decision/evidence/analysis/activation loop:
+decision/evidence/analysis/activation loop. Tetris demonstrates the architecture;
+it is not the product boundary.
 
 ```powershell
 npm ci
@@ -65,39 +76,25 @@ npm run tetris:playground
 
 The default live mode uses production Copilot analysis and requires a token
 with Copilot access (`FLAGGO_ANALYSIS_GITHUB_TOKEN`, `GH_TOKEN`, or
-`GITHUB_TOKEN`). Play the dominant human game and start up to three real-time
-greedy players. Use `--mode=benchmark` for the separate credential-free,
+`GITHUB_TOKEN`). Play the human game alongside ten autonomous greedy-player
+slots, with three bot sessions visible at a time. Use `--mode=benchmark` for the separate credential-free,
 deterministic controlled comparison. The launcher starts pinned Collector and
 Grafana LGTM containers plus all real Flaggo services and prints dynamic
 loopback URLs. See the
 [playground guide](examples/tetris-playground/README.md) for the telemetry
 boundary, Copilot mode, retained diagnostics, and verification workflow.
 
-Run the interactive Tetris example against real local Contract, Decision, and
-OTel Ingestion services:
+For a terminal integration, see the
+[interactive Tetris guide](examples/tetris-integration/README.md).
 
-```powershell
-npm ci
-dotnet restore Flaggo.slnx --configfile NuGet.config
-npm run tetris:flaggo
-```
+## Learn more
 
-The launcher builds the .NET Contract and Decision services and Rust OTel
-Ingestion, creates an isolated SQLite database, deploys the Tetris contract,
-and removes its local state when the game exits. Tetris-owned OpenTelemetry
-providers export application logs, metrics, and traces directly to ingestion.
-No cloud account or Collector process is required.
-
-Validate the executable contracts independently:
-
-```powershell
-python -m pip install -r contracts\conformance\requirements.txt
-python tools\dev.py check
-```
-
-`python tools\dev.py serve` starts only the fixture server used for contract
-and SDK conformance development; it does not start Contract Service or
-Decision Service.
+- [Manifesto](docs/MANIFESTO.md): purpose, principles, and product boundaries
+- [Documentation home](docs/README.md): product and technical guides
+- [Architecture overview](docs/design/architecture/OVERVIEW.md)
+- [Application boundaries and lifecycle](docs/design/architecture/APP_BOUNDARIES.md)
+- [Project roadmap](https://github.com/users/hahahahahaiyiwen/projects/3)
+- [Contributing](CONTRIBUTING.md): development and verification
 
 ## Repository layout
 
