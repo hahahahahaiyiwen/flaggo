@@ -2,6 +2,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 
 import {
   loadPlaygroundConfiguration,
@@ -12,6 +13,7 @@ import type { TetrisSessionCommand } from "./types.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const publicDirectory = resolve(sourceDirectory, "../public");
+diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 const configuration = loadPlaygroundConfiguration();
 const playground = new TetrisPlayground(configuration);
 const clients = new Set<ServerResponse>();

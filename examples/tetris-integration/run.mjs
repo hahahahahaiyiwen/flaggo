@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
+import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 
 import {
   createHostLifecycle,
@@ -18,6 +19,7 @@ import { deployTetrisContract } from "./deploy-contract.mjs";
 import { startLocalFlaggoHosts } from "./local-flaggo.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
+diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 const repositoryRoot = resolve(exampleDirectory, "../..");
 const execFileAsync = promisify(execFile);
 const supportedArguments = new Set(["--analysis"]);

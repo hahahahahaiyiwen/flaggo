@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 
 import {
   createHostLifecycle,
@@ -11,6 +12,7 @@ import { deployTetrisContract } from "./deploy-contract.mjs";
 import { startLocalFlaggoHosts } from "./local-flaggo.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
+diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 const repositoryRoot = resolve(exampleDirectory, "../..");
 const runDirectory = resolve(
   repositoryRoot,

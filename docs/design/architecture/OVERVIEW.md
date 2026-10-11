@@ -180,7 +180,7 @@ analysis dependency.
 ## Data ownership
 
 The complete ownership matrix, including Raw OTLP Inbox, materializer
-checkpoint and catalog cache, Evidence Store, and planned analysis provenance,
+checkpoint and catalog cache, Evidence Store, and analysis provenance,
 is defined in
 [Application boundaries and lifecycle](APP_BOUNDARIES.md#durable-state-ownership).
 The core online authority data is:

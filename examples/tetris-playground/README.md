@@ -430,3 +430,79 @@ $env:FLAGGO_ANALYSIS_GITHUB_TOKEN = (gh auth token)
 npm run test:tetris-playground:live
 cargo test --locked -p flaggo-tetris-playground-analysis
 ```
+
+### Phase 4 exit verification
+
+The cloud-free exit check uses the deterministic benchmark, not hosted Copilot:
+
+```powershell
+npm.cmd run test:tetris-playground:e2e -- --repeat-each=2
+```
+
+Each repetition launches a fresh isolated stack, learns and auto-activates a
+distinct executable, verifies matched held-out gameplay, and checks SDK/direct
+REST parity for two scored contexts. It verifies exact contract/Candidate
+identity, cycle/attempt provenance, immutable cutoff and watermark, and
+registered metrics from every service. Bounded Loki queries and exact Tempo
+trace reads verify log/trace correlation from all five services. A rejected
+OTLP media type and an activation state conflict exercise representative
+failure telemetry without replacing active authority.
+
+The test discovers its own host addresses from startup records and its own
+Compose port bindings; semantic assertions use public runtime, management,
+and telemetry-backend APIs, not direct database access. Attachments include
+the terminal snapshot, final `adaptive-evaluation.json` with runtime
+configuration and parity responses, and `service-telemetry.json`. Failed runs
+also attach bounded analysis diagnostics. Shutdown must exit normally, make
+the gateway unreachable, and remove the test's specific run directory before
+the next repetition. User-retained runs in other worktrees are untouched.
+
+On 2026-10-11, both clean repetitions passed with the following fixed identities:
+
+| Artifact | Digest |
+| --- | --- |
+| Deployed benchmark contract | `sha256:f276a971660fad5bf88f6b0149652012b5761b9d9ba14fc811cbbb727a9d0457` |
+| Authored baseline | `sha256:a10d8890f38c0d750727e47228654504660920fd3ed4025e60e02522bac7fbfa` |
+| Admitted and activated learned executable | `sha256:20ea5398cc29820219bb2327f75185b83975a947b3a482f071113f58d2b79af8` |
+
+The successful cycles were `8bb9ee4b-15c2-4c05-8111-019d170dfc10` and
+`8ab00dd1-531f-4ef2-a476-25d482c5dd57`, with cutoffs
+`2026-10-11T22:20:19.5967624Z` and `2026-10-11T22:22:06.2070213Z`;
+both captured watermark `784`. The local launcher configuration is defined in
+`local-stack.mjs`: materializer polling `25ms`, catalog refresh `1s`, analysis
+polling `250ms`, one agent, Contract Service activation polling `250ms`, and
+internal metric export `500ms`. Application OTLP collection remains `5s`.
+
+| Matched held-out measure | Baseline | Learned |
+| --- | --- | --- |
+| Active-time-weighted balance | 52.46% | 84.83% |
+| Lines/minute | 1.54 | 4.67 |
+| Active survival time | 194800ms | 360000ms |
+| Game overs in three episodes | 3 | 0 |
+
+This is a 32.37-percentage-point measured gain under the fixed greedy-player
+protocol, not proof of human enjoyment or a continuous optimum.
+
+The approved export-failure requirement is diagnostics and failure
+isolation/recovery, not exact browser exporter status. Application entrypoints
+enable the standard OTel console logger at ERROR level; gateway errors are
+captured in `playground-gateway.log`, independently of the failing OTLP path.
+The terminal and real-host integration entrypoints use the same diagnostic
+configuration. The browser shows measured backlog/freshness, failed or
+superseded analysis, rejected activation, stale backend collection, and
+recovery without inferring client transport success or failure.
+
+`tetris-integration/test/otel.test.mjs` injects a non-retryable HTTP `400` at a
+local metric export boundary and verifies actual standard console diagnostics.
+The same test exercises the real Tetris session and SDK/provider with a fixed
+HTTP decision response: gameplay and policy refresh continue, the applied
+executable/interval remain unchanged, and no management/activation request is
+made. After transport recovery, new completed windows export successfully,
+without replaying the failed delta window. This is an application-boundary
+failure test, not a failure injected into the real-service browser run; the
+real-service authority and activation checks above remain separate.
+
+An ingestion `415` or stale Loki query is not terminal client-export evidence.
+Production authentication, durable client export replay, statistical safety,
+rollout control, and granular agent-action observability remain outside this
+exit verification.

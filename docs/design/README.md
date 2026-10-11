@@ -15,7 +15,7 @@ ActiveExecutable + complete RuntimeInput
 RuntimeDecision receipt + application telemetry
   -> OTLP ingestion
   -> forward-only evidence materialization
-  -> planned asynchronous analysis
+  -> asynchronous bounded evidence analysis
   -> immutable candidate proposal
   -> Contract Service validation and activation
 ```
@@ -31,9 +31,11 @@ is not a runtime operand.
 [Phase 3 implementation scope](PHASE_3.md) records the earlier management and
 runtime milestone. The current stack also implements direct OTLP ingestion, a
 bounded Raw OTLP Inbox, forward-only Evidence Materialization, and durable
-Evidence Store observations. Async Analysis, evidence correlation, and learned
-candidate generation remain planned. The GitHub Project and native issue graph
-are the roadmap authority.
+Evidence Store observations, Async Analysis, Candidate admission, and
+auto-activation. Application-owned exposure/outcome correlation is interpreted
+by analysis, not guaranteed by ingestion. The
+[Tetris playground](../../examples/tetris-playground/README.md) verifies the
+local loop. The GitHub Project and native issue graph are the roadmap authority.
 
 ## Architecture
 
@@ -70,9 +72,10 @@ documents explain the target ownership and invariants behind those contracts.
 | Decision Service | Resolve the executable active for an exact requested digest and return a bounded decision without semantic request persistence |
 | OTel Ingestion | Validate OTLP transport and append complete requests to the bounded Raw OTLP Inbox before acknowledgement |
 | Evidence Materializer | Read retained inbox batches forward and persist query-ready observations, provenance, diagnostics, conflicts, catalog cache, and checkpoint |
+| Async Analysis | Read a bounded immutable evidence snapshot, persist analysis provenance, and submit Candidates without writing runtime authority |
 
 The app-local operational contracts are indexed in
-[`apps/README.md`](../../apps/README.md). Async Analysis can extend the existing
+[`apps/README.md`](../../apps/README.md). Async Analysis uses the existing
 candidate-validation-and-activation boundary without changing runtime identity
 or writing runtime authority directly.
 

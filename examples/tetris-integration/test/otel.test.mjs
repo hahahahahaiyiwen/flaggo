@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import test from "node:test";
+import { context as otelContext, diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 
-import { createExperienceRecorder } from "../dist/flaggo/experience.js";
+import { createExperienceRecorder, TetrisExperience } from "../dist/flaggo/experience.js";
+import { createFlaggoDropIntervalProvider } from "../dist/flaggo/flaggo-provider.js";
+import { SequencePieceSource } from "../dist/flaggo/game.js";
+import { TetrisSession } from "../dist/flaggo/session.js";
 import { TetrisTelemetryProviders } from "../dist/flaggo/otel.js";
 
 test("Tetris exports new windows only, preserving all four gauges, retries, and shutdown flushing",
@@ -131,6 +135,119 @@ test("Tetris exports new windows only, preserving all four gauges, retries, and 
         scope.metrics.filter((metric) => metric.descriptor.name.startsWith("tetris.experience."))
           .flatMap((metric) => metric.dataPoints)));
     assert.equal(captured.length, expected.size * 4, "capture reader also avoids repeated windows");
+  });
+
+test("terminal metric export is diagnosed without changing gameplay or authority and new windows recover",
+  { timeout: 15_000 }, async (context) => {
+    const errors = [];
+    context.mock.method(process.stderr, "write", (chunk) => {
+      errors.push(String(chunk));
+      return true;
+    });
+    otelContext.disable();
+    diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
+    context.after(() => diag.disable());
+    const contractDigest = `sha256:${"a".repeat(64)}`;
+    const executableDigest = `sha256:${"b".repeat(64)}`;
+    const requests = [];
+    const attempts = [];
+    const accepted = [];
+    let fail = true;
+    const server = createServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      requests.push(request.url);
+      if (request.url.endsWith("/decisions")) {
+        response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+          contractDigest, executableDigest, result: 1_000,
+          evaluation: { source: "rule", rule: "fixed-active-policy" },
+        }));
+        return;
+      }
+      if (request.url === "/v1/metrics") {
+        const payload = JSON.parse(Buffer.concat(chunks).toString());
+        attempts.push(payload);
+        if (fail) {
+          response.writeHead(400, { "Content-Type": "application/json" })
+            .end(JSON.stringify({ code: 3, message: "injected terminal metric export failure" }));
+          return;
+        }
+        accepted.push(payload);
+      }
+      response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    context.after(() => new Promise((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())));
+    const url = `http://127.0.0.1:${server.address().port}`;
+    const runtimeConfig = {
+      format: "flaggo.runtime-config/v1",
+      authority: { tenant: "local", application: "tetris", environment: "export-failure" },
+      services: { contractServiceUrl: url, decisionServiceUrl: url, otlpIngestionUrl: url },
+      bindings: { "tetris.dropInterval": { contractDigest } },
+    };
+    const telemetry = new TetrisTelemetryProviders({ runtimeConfig });
+    context.after(() => telemetry.shutdown());
+    let clock = 0;
+    let session;
+    const experience = new TetrisExperience(
+      { dataset: "live", origin: "human", clock: "virtual" },
+      createExperienceRecorder(telemetry.getMeter("tetris.experience")),
+    );
+    const provider = createFlaggoDropIntervalProvider({
+      runtimeConfig,
+      experience, state: () => session.snapshot(), now: () => clock,
+    });
+    session = new TetrisSession({
+      game: { pieceSource: new SequencePieceSource(["O"]), sessionId: "export-failure" },
+      provider, now: () => clock, fallbackIntervalMs: 800,
+    });
+    context.after(() => session.close());
+    const command = (name) => {
+      const transition = session.dispatch(name);
+      experience.observe(transition.state, clock, transition);
+      return transition.state;
+    };
+    experience.observe(session.snapshot(), clock);
+    await session.refreshPolicy();
+    command("hard-drop");
+    const applied = session.snapshot().dropInterval;
+    assert.equal(applied.executableDigest, executableDigest);
+    clock = 5_000;
+    command("move-left");
+    const before = session.snapshot();
+    await telemetry.forceFlush();
+    assert.deepEqual(session.snapshot(), before, "export cannot mutate session or applied authority");
+    assert.equal(attempts.length, 1, "non-retryable failure terminates the collection");
+    assert.equal(accepted.length, 0);
+    assert.equal(otlpPoints(attempts[0]).length, 4);
+    assert.ok(errors.some((message) =>
+      message.includes("metrics export failed") && message.includes("Bad Request")),
+    `terminal failure must reach console diagnostics: ${JSON.stringify(errors)}`);
+    const failedIds = otlpPoints(attempts[0]).map((point) =>
+      attribute(point, "tetris.experience.window.id"));
+    const revision = command("hard-drop").revision;
+    assert.ok(revision > before.revision, "gameplay continues while exports fail");
+    assert.deepEqual(session.snapshot().dropInterval, applied);
+    const refreshed = await session.refreshPolicy();
+    assert.equal(refreshed.state.dropInterval.executableDigest, executableDigest);
+    assert.equal(refreshed.state.dropInterval.intervalMs, 1_000);
+    fail = false;
+    clock = 10_000;
+    command("move-right");
+    const errorsBeforeRecovery = errors.length;
+    await telemetry.forceFlush();
+    assert.equal(accepted.length, 1);
+    const recovered = otlpPoints(accepted[0]);
+    assert.ok(recovered.length >= 4);
+    assert.ok(recovered.every((point) =>
+      !failedIds.includes(attribute(point, "tetris.experience.window.id"))),
+    "successful later collections do not replay lost delta windows");
+    assert.equal(errors.length, errorsBeforeRecovery);
+    assert.equal(session.snapshot().dropInterval.executableDigest, executableDigest);
+    assert.ok(requests.every((path) => path.startsWith("/v1/") || path.endsWith("/decisions")),
+      "export failure must not trigger a management or activation request");
   });
 
 function otlpPoints(payload) {

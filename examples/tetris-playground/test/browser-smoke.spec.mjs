@@ -497,6 +497,47 @@ test("renders split control lanes with health, executables, pipeline, and filter
   await expect.poll(() => commands.includes("/api/demo/run")).toBe(true);
 });
 
+test("shows backlog, superseded and failed analysis, failed activation, and recovery", async ({ page }) => {
+  await page.goto(baseUrl);
+  await expect(page.locator("#connection")).toHaveText("Live");
+  const events = [
+    ["superseded", "analysis", "flaggo.analysis.cycle.completed", "superseded"],
+    ["analysis-failure", "analysis", "flaggo.analysis.cycle.failed", "recoverable"],
+    ["activation-failure", "activation", "flaggo.activation.rejected", "conflict"],
+  ].map(([id, phase, name, outcome], index) => ({
+    id, phase, name, outcome,
+    observedAt: new Date(Date.parse(snapshot.observedAt) + index * 1_000).toISOString(),
+    service: phase === "analysis" ? "flaggo-async-analysis" : "flaggo-contract-service",
+    signal: "log",
+    title: `${name}: ${outcome}`,
+    attributes: {},
+  }));
+  publishState({
+    ...snapshot,
+    evidence: { ...snapshot.evidence, pendingBatches: 12, evidenceFreshnessMs: 30_000, stale: true },
+    timeline: events,
+  });
+  await expect(page.locator("#evidence")).toContainText("12 pending");
+  await expect(page.locator("#evidence")).toContainText("30.0s freshness");
+  await expect(page.locator("#timeline")).toContainText("superseded");
+  await expect(page.locator("#timeline")).toContainText("flaggo.analysis.cycle.failed");
+  await expect(page.locator("#timeline")).toContainText("flaggo.activation.rejected");
+  await expect(page.locator("#executables .executable-option").first()
+    .locator(".executable-state")).toHaveText("Active");
+  publishState({
+    ...snapshot,
+    timeline: [...events, {
+      ...events[1], id: "analysis-recovery",
+      observedAt: new Date(Date.parse(snapshot.observedAt) + 10_000).toISOString(),
+      name: "flaggo.analysis.cycle.completed", outcome: "no_candidate",
+      title: "analysis cycle completed: no_candidate",
+    }],
+  });
+  await expect(page.locator("#evidence")).toContainText("0 pending");
+  await expect(page.locator(".timeline-event").first()).toContainText("no_candidate");
+  await expect(page.locator("#timeline")).toContainText("flaggo.analysis.cycle.failed");
+});
+
 test("executable clicks and open details survive gameplay updates and catalogue recovery", async ({ page }) => {
   await page.goto(baseUrl);
   const row = page.locator(".executable-option").nth(1);

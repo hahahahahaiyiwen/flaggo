@@ -70,10 +70,20 @@ The optional in-memory capture reader uses delta collection as well.
 Counters and histograms also use delta exports; up/down counters remain
 cumulative according to the standard exporter preference.
 
+The Flaggo terminal and real-host integration entrypoints enable the standard
+OTel console diagnostic logger at ERROR level. Terminal exporter failures are
+therefore visible on stderr without depending on the failed export path.
+The shared provider does not configure a process-global logger on behalf of
+its callers.
+
 Transport remains best-effort with the existing bounded OTLP retries.
 Force-flush and shutdown collect pending recordings. A terminal export failure
 is reported through the existing OTel error handler, but the failed collection
 is not replayed by subsequent collections; there is no durable client outbox.
+The local HTTP regression injects a terminal metric export failure, verifies
+console diagnostics and unchanged gameplay/applied authority, then verifies
+successful export of fresh windows after recovery without replaying lost
+windows. Export diagnostics do not grant or change runtime authority.
 
 `createFlaggoResource` attaches `flaggo.tenant`, `flaggo.application`, and
 `flaggo.environment` from the generated runtime configuration to the one
@@ -103,7 +113,7 @@ Application-owned logs and spans do not carry a contract name or digest. The
 SDK-owned `flaggo.decision.received` event is the exact decision-provenance
 record; application evidence candidates are reusable domain observations.
 
-The metric catalog separates future evidence from operational telemetry:
+The metric catalog separates learning evidence from operational telemetry:
 
 | Metrics | Attributes and purpose |
 | --- | --- |
@@ -205,7 +215,7 @@ monotonic elapsed time. Gravity and fixed player commands continue while a
 policy request is pending; there is at most one request in flight and
 mid-piece responses wait for a lock. Scheduled gravity wins ties. Cancellation,
 normal completion, and failure close the session. The runner owns one episode,
-not continuous repetition; the playground owns its three live slots.
+not continuous repetition; the playground owns its ten live slots.
 
 For lower-level drivers, `session.planningState()` exposes an immutable
 settled-board/piece-pose snapshot. `enumerateTetrisPlacements` uses the game's
