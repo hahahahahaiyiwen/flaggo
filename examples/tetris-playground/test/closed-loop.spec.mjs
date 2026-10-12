@@ -240,6 +240,102 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   };
   const tempoUrl = endpoint("3200/tcp");
   const lokiUrl = endpoint("3100/tcp");
+  const actionProfile = JSON.parse(await readFile(
+    resolve(exampleDirectory, "..", "..", "contracts", "otel",
+      "flaggo-service-observability-profile-v1.json"), "utf8",
+  ));
+  let actionLogs;
+  const actionPath = testInfo.outputPath("analysis-actions.json");
+  await expect.poll(async () => {
+    const response = await page.request.get(`${lokiUrl}/loki/api/v1/query_range?${new URLSearchParams({
+      query: `{service_name="flaggo-async-analysis"} | flaggo_analysis_cycle_id = "${provenance.cycleId}" | event_name =~ "flaggo.analysis.action.(started|completed)"`,
+      start: String(BigInt(Date.parse(state.demo.startedAt) - 60_000) * 1_000_000n),
+      limit: "500",
+      direction: "forward",
+    })}`);
+    expect(response.ok(), await response.text()).toBe(true);
+    actionLogs = parseLokiResponse(await response.json());
+    const completed = actionLogs.filter((log) =>
+      log.eventName === "flaggo.analysis.action.completed");
+    return ["session.start", "session.run", "evidence.describe", "evidence.cutoff",
+      "evidence.sql", "artifact.write", "proposal.submit"].every((kind) =>
+      completed.some((log) => log.attributes["flaggo.analysis.action.kind"] === kind));
+  }, { timeout: 60_000, message: "Candidate cycle must export granular action observations" }).toBe(true)
+    .finally(async () => {
+      await writeFile(actionPath, JSON.stringify(actionLogs ?? [], null, 2), "utf8");
+      await testInfo.attach("analysis-actions", { path: actionPath });
+    });
+  const actionDefinitions = new Map(actionProfile.logEvents
+    .filter((event) => event.eventName.startsWith("flaggo.analysis.action."))
+    .map((event) => [event.eventName, event]));
+  const attributeDefinitions = new Map(actionProfile.attributes.map((field) => [field.name, field]));
+  for (const log of actionLogs) {
+    const definition = actionDefinitions.get(log.eventName);
+    expect(definition).toBeDefined();
+    const allowed = new Set([
+      ...definition.requiredAttributes, ...definition.conditionalAttributes.map((field) => field.name),
+    ]);
+    for (const name of definition.requiredAttributes) {
+      expect(log.attributes[name], `Missing ${name}`).toBeDefined();
+    }
+    for (const [name, value] of Object.entries(log.attributes)) {
+      if (!name.startsWith("flaggo.")) continue;
+      expect(allowed.has(name), `Unexpected action attribute ${name}`).toBe(true);
+      const field = attributeDefinitions.get(name);
+      if (field.allowedValues !== undefined) expect(field.allowedValues).toContain(value);
+      if (field.type === "int64") {
+        expect(["string", "number"]).toContain(typeof value);
+        if (typeof value === "string") expect(value).toMatch(/^(0|[1-9]\d*)$/u);
+        const measured = Number(value);
+        expect(Number.isSafeInteger(measured), `${name} must encode an integer`).toBe(true);
+        expect(measured).toBeGreaterThanOrEqual(0);
+      } else {
+        expect(typeof value).toBe("string");
+        expect(Buffer.byteLength(value, "utf8")).toBeLessThanOrEqual(256);
+      }
+      expect(field.metricDimension).toBe(false);
+    }
+    expect(log.attributes["flaggo.contract.digest"]).toBe(active.contractDigest);
+    expect(log.attributes["flaggo.analysis.cycle.id"]).toBe(provenance.cycleId);
+    expect(log.attributes["flaggo.analysis.attempt.id"]).toBe(provenance.attemptId);
+    expect(log.attributes["flaggo.analysis.action.id"]).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(log.traceId).toMatch(/^[0-9a-f]{32}$/u);
+  }
+  const sqlActions = actionLogs.filter((log) =>
+    log.eventName === "flaggo.analysis.action.completed"
+    && log.attributes["flaggo.analysis.action.kind"] === "evidence.sql"
+    && log.attributes["flaggo.analysis.action.outcome"] === "success");
+  expect(sqlActions.length).toBeGreaterThan(0);
+  for (const log of sqlActions) {
+    expect(log.attributes["flaggo.analysis.query.digest"]).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(Date.parse(log.attributes["flaggo.analysis.snapshot.cutoff"]))
+      .toBe(Date.parse(provenance.evidenceCutoff));
+    expect(Number(log.attributes["flaggo.analysis.snapshot.watermark"])).toBe(provenance.evidenceWatermark);
+    expect(Number(log.attributes["flaggo.analysis.result.rows"])).toBeGreaterThan(0);
+    expect(Number(log.attributes["flaggo.analysis.result.bytes"])).toBeGreaterThan(0);
+  }
+  const cycleSelection = JSON.stringify([active.contractDigest, provenance.cycleId]);
+  await expect.poll(() => page.locator("#analysis-cycle option")
+    .evaluateAll((options) => options.map((option) => option.value)),
+  { timeout: 30_000 }).toContain(cycleSelection);
+  await page.locator("#analysis-cycle").selectOption(cycleSelection);
+  await page.locator("#analysis-attempt").selectOption(provenance.attemptId);
+  const inspectedSqlId = sqlActions[0].attributes["flaggo.analysis.action.id"];
+  const inspectedSql = page.locator(`.analysis-action[data-action-id="${inspectedSqlId}"]`);
+  await expect(inspectedSql).toBeVisible({ timeout: 30_000 });
+  await inspectedSql.locator("summary").click();
+  await expect(inspectedSql).toHaveAttribute("open", "");
+  for (const label of ["Duration (ms)", "Rows", "Bytes", "Query digest", "Cutoff", "Watermark"]) {
+    await expect(inspectedSql).toContainText(label);
+  }
+  await expect(inspectedSql.locator(".action-trace")).toBeVisible();
+  await expect.poll(async () => {
+    const response = await page.request.get(`${playgroundUrl}/api/state`);
+    state = await response.json();
+    return state.analysisActions.actions.some((action) =>
+      action.actionId === inspectedSqlId && action.cycleId === provenance.cycleId
+      && action.attemptId === provenance.attemptId && action.outcome === "success");
+  }, { timeout: 30_000 }).toBe(true);
   const telemetry = {};
   await expect.poll(async () => {
     await Promise.all(state.services.map(async ({ name }) => {
@@ -282,7 +378,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     });
   await writeFile(evaluationPath, JSON.stringify({
     ...state, exitVerification: {
-      runtimeConfig, decisions, telemetry,
+      runtimeConfig, decisions, telemetry, actionLogs,
       rejectedActivation: await conflict.json(), rejectedExport: await rejectedExport.json(),
     },
   }, null, 2), "utf8");

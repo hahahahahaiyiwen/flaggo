@@ -16,7 +16,6 @@ pub const MAX_AGENTS_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_MAX_AGENTS";
 pub const POLL_INTERVAL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_POLL_INTERVAL_MS";
 pub const MODEL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_MODEL";
 pub const GITHUB_TOKEN_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_GITHUB_TOKEN";
-pub const LOG_SESSION_EVENTS_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_LOG_SESSION_EVENTS";
 pub const QUERY_MAX_ROWS_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_MAX_ROWS";
 pub const QUERY_MAX_BYTES_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_MAX_BYTES";
 pub const QUERY_TIMEOUT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_TIMEOUT_MS";
@@ -44,7 +43,6 @@ pub struct AnalysisServiceConfig {
     pub skill_directory: PathBuf,
     pub model: Option<String>,
     pub github_token: Option<String>,
-    pub log_session_events: bool,
     pub max_agents: NonZeroUsize,
     pub poll_interval: Duration,
     pub query_max_rows: NonZeroU32,
@@ -107,7 +105,6 @@ impl AnalysisServiceConfig {
             skill_directory,
             model,
             github_token: optional_nonempty(GITHUB_TOKEN_ENVIRONMENT_VARIABLE)?,
-            log_session_events: parse_bool(LOG_SESSION_EVENTS_ENVIRONMENT_VARIABLE, false)?,
             max_agents,
             poll_interval: duration_millis(
                 POLL_INTERVAL_ENVIRONMENT_VARIABLE,
@@ -147,16 +144,6 @@ fn optional_nonempty(name: &str) -> Result<Option<String>, String> {
         }
         Ok(value) => Ok(Some(value)),
         Err(env::VarError::NotPresent) => Ok(None),
-        Err(error) => Err(format!("{name} is not valid Unicode: {error}")),
-    }
-}
-
-fn parse_bool(name: &str, default: bool) -> Result<bool, String> {
-    match env::var(name) {
-        Ok(value) => value
-            .parse()
-            .map_err(|error| format!("{name} must be true or false: {error}")),
-        Err(env::VarError::NotPresent) => Ok(default),
         Err(error) => Err(format!("{name} is not valid Unicode: {error}")),
     }
 }

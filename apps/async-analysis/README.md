@@ -98,22 +98,17 @@ child process:
 
 ```powershell
 $env:FLAGGO_ANALYSIS_GITHUB_TOKEN = gh auth token
-$env:FLAGGO_ANALYSIS_LOG_SESSION_EVENTS = 'true'
 try {
   cargo run -p flaggo-async-analysis
 } finally {
   Remove-Item Env:\FLAGGO_ANALYSIS_GITHUB_TOKEN -ErrorAction SilentlyContinue
-  Remove-Item Env:\FLAGGO_ANALYSIS_LOG_SESSION_EVENTS -ErrorAction SilentlyContinue
 }
 ```
 
 The token is held in process memory and is never included in structured
-startup or session logs. Session-event logging is opt-in because assistant
-messages and tool payloads can contain analysis evidence. Sensitive-key values
-are redacted before events are emitted as
-`async_analysis.agent_session_event`. Each `sessionEvent` is capped at 16 KiB;
-truncated events include `flaggoTruncation` metadata and retain identifying
-fields plus a bounded diagnostic preview.
+startup or action logs. Analysis progress uses allowlisted action metadata
+through standard service telemetry, not raw provider session messages or
+tool payloads. There is no separate session-event logging switch.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -124,7 +119,6 @@ fields plus a bounded diagnostic preview.
 | `FLAGGO_ANALYSIS_COPILOT_HOME` | `./flaggo-analysis-copilot` | Isolated local Copilot runtime state |
 | `FLAGGO_ANALYSIS_MODEL` | Copilot SDK default | Optional exact Copilot model ID |
 | `FLAGGO_ANALYSIS_GITHUB_TOKEN` | logged-in `gh` user | Optional in-memory GitHub credential |
-| `FLAGGO_ANALYSIS_LOG_SESSION_EVENTS` | `false` | Emit redacted model and tool session events |
 | `FLAGGO_ANALYSIS_MAX_AGENTS` | `1` | Concurrent worker and agent-session limit |
 | `FLAGGO_ANALYSIS_POLL_INTERVAL_MS` | `5000` | Catalog, eligibility, and supersession polling interval |
 | `FLAGGO_ANALYSIS_QUERY_MAX_ROWS` | `1000` | Maximum rows returned by one evidence query |
@@ -148,9 +142,56 @@ OTLP/HTTP binary Protobuf when the standard
 configuration fails startup, exporter unavailability does not change analysis
 outcomes, and shutdown performs a bounded provider flush. Prompts, evidence,
 model output, credentials, and workspace content are excluded from service
-telemetry. Opt-in `async_analysis.agent_session_event` diagnostics remain
-direct bounded console output and are not sent through the service's OTLP
-pipeline.
+telemetry.
+
+### Observed action progress
+
+`flaggo.analysis.action.started` and `flaggo.analysis.action.completed` logs
+describe meaningful operations inside an attempt; `flaggo.analysis.action`
+spans provide measured duration and trace correlation. Session start/run,
+evidence discovery/cutoff/SQL, artifact inspection/edits and proposal submission
+share one provider-neutral vocabulary. Deterministic providers use the same
+trusted capability boundaries as Copilot. Provider-only observations are
+reported only when supported by actual SDK signals. The current Copilot SDK
+does not supply reliably paired concrete request start/terminal signals, so
+`provider.request` timing is unavailable. Session activity or a gap between
+tools must not be displayed as measured model waiting.
+
+Each invocation has a generated action UUID and exact contract/cycle/attempt
+correlation. A failed query and a later retry remain separate actions. SQL
+details expose a digest, committed cutoff/watermark, duration, and actual
+returned rows/encoded bytes, never SQL or result data. Artifact references use
+content digests and sizes instead of paths/content; append describes the
+appended fragment, not the resulting full file. Internal `.copilot`/`.git`
+content accesses and metadata-only operations are excluded. Result rows are not scanned
+observations; watermark is snapshot identity, not query work measured.
+
+The registered field and outcome allowlists are defined by
+[internal service observability](../../docs/design/architecture/OBSERVABILITY.md)
+and its machine-readable profile. Action metadata and identities are not
+metric dimensions. No private reasoning, model text, arbitrary free-text
+summaries or provider payload mirror is emitted.
+
+### Troubleshooting progress
+
+In the playground, inspect the selected cycle and attempt before interpreting
+the latest action. An expensive SQL query can return a small result: measured
+duration and returned bytes describe different things. Explicit timeout/error
+observations remain visible even if the next query succeeds.
+
+A session with no recent tool action is not automatically waiting for a model;
+use an actual provider request observation when available. A missing action
+completion means completion was not observed, not success or a proven hung
+worker. Backend freshness/errors are separate from action outcomes. During a
+backend outage the UI retains bounded last-known data, marks it stale, and
+refreshes it on recovery. Trace links inspect standard backend data, not the
+Evidence Store or local provider logs.
+
+Telemetry is best effort with bounded export/query/history limits. A hard
+process loss may leave starts without terminals. Existing durable cycle state
+still governs scheduling and recovery; telemetry does not change Candidate
+admission, activation or runtime authority. Live authenticated Copilot tests
+are optional; deterministic integration tests cover the full action path.
 
 ## Durable cycle behavior
 

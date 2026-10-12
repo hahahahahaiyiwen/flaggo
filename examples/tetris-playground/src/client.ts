@@ -1,4 +1,7 @@
 import type {
+  AnalysisAction,
+  AnalysisActionsView,
+  AnalysisSelection,
   ClosedLoopEvent,
   DemoStage,
   ManagedExecutableView,
@@ -7,6 +10,7 @@ import type {
   TetrisSessionCommand,
   SessionView,
 } from "./types.js";
+import { createAnalysisActionsView, matchesAnalysisSelection } from "./analysis-actions.js";
 
 const stageOrder: readonly DemoStage[] = [
   "baseline",
@@ -48,6 +52,12 @@ const visibleAnalysisPhases = new Set<AnalysisPhase>([
   "candidate",
   "activation",
 ]);
+let selectedAnalysisCycle: string | undefined;
+let selectedAnalysisAttempt: string | undefined;
+let actionInspectionPending = false;
+let actionInspectionError: string | undefined;
+let inspectedAnalysis: { selection: AnalysisSelection; view: AnalysisActionsView } | undefined;
+const actionRows = new Map<string, HTMLDetailsElement>();
 
 const connection = requiredElement("connection");
 const board = requiredElement("board");
@@ -80,6 +90,29 @@ const botPagination = requiredElement("bots-pagination");
 const botRange = requiredElement("bots-range");
 const botPrevious = requiredButton("bots-previous");
 const botNext = requiredButton("bots-next");
+const analysisCycle = requiredSelect("analysis-cycle");
+const analysisAttempt = requiredSelect("analysis-attempt");
+const analysisRefresh = requiredButton("analysis-refresh");
+const analysisActions = requiredElement("analysis-actions");
+const analysisActionStatus = requiredElement("analysis-action-status");
+const analysisLatestAction = requiredElement("analysis-latest-action");
+analysisCycle.addEventListener("change", () => {
+  selectedAnalysisCycle = analysisCycle.value;
+  selectedAnalysisAttempt = undefined;
+  inspectedAnalysis = undefined;
+  actionInspectionError = undefined;
+  if (latest !== undefined) renderAnalysisActions(latest);
+  void refreshAnalysisActions();
+});
+analysisAttempt.addEventListener("change", () => {
+  selectedAnalysisAttempt = analysisAttempt.value;
+  inspectedAnalysis = undefined;
+  actionInspectionError = undefined;
+  if (latest !== undefined) renderAnalysisActions(latest);
+  void refreshAnalysisActions();
+});
+analysisRefresh.addEventListener("click", () => void refreshAnalysisActions());
+window.setInterval(() => void refreshAnalysisActions(), 5_000);
 const sessionSelectElement = requiredElement("session-select");
 if (!(sessionSelectElement instanceof HTMLSelectElement)) {
   throw new Error("Element '#session-select' must be a selector.");
@@ -203,6 +236,7 @@ window.addEventListener("keydown", (event) => {
     || event.target instanceof HTMLSelectElement
     || (event.target instanceof HTMLElement && event.target.isContentEditable)
     || (event.target instanceof HTMLElement && event.target.closest("#bots-pagination") !== null)
+    || (event.target instanceof HTMLElement && event.target.closest("#analysis-action-panel") !== null)
     || executableDialog.open || healthDialog.open
     || (event.target instanceof HTMLButtonElement && (event.key === " " || event.key === "Enter"))
   ) {
@@ -238,6 +272,7 @@ function render(snapshot: PlaygroundSnapshot): void {
   renderBots(snapshot);
   renderDecision(snapshot);
   renderExecutables(snapshot);
+  renderAnalysisActions(snapshot);
   renderServices(snapshot.services);
   renderEvidence(snapshot);
   requiredElement("benchmark-panel").hidden = snapshot.mode !== "benchmark";
@@ -266,6 +301,177 @@ function render(snapshot: PlaygroundSnapshot): void {
     "app-decision-source",
     game.dropInterval.status,
   );
+}
+
+function requiredSelect(id: string): HTMLSelectElement {
+  const element = requiredElement(id);
+  if (!(element instanceof HTMLSelectElement)) throw new Error(`Element '#${id}' must be a selector.`);
+  return element;
+}
+
+function analysisCycleKey(action: Pick<AnalysisSelection, "contractDigest" | "cycleId">): string {
+  return JSON.stringify([action.contractDigest, action.cycleId]);
+}
+
+function renderAnalysisActions(snapshot: PlaygroundSnapshot): void {
+  const globalView = snapshot.analysisActions;
+  const cycles = new Map<string, AnalysisAction>();
+  for (const action of [...globalView.actions, ...(inspectedAnalysis?.view.actions ?? [])]) {
+    const key = analysisCycleKey(action);
+    if (!cycles.has(key)) cycles.set(key, action);
+  }
+  if (selectedAnalysisCycle === undefined) selectedAnalysisCycle = cycles.keys().next().value;
+  const options = [...cycles].map(([value, action]) => ({
+    value, label: `${action.cycleId} · ${shortDigest(action.contractDigest)}`,
+  }));
+  if (selectedAnalysisCycle !== undefined && !cycles.has(selectedAnalysisCycle)) {
+    options.push({ value: selectedAnalysisCycle, label: "Selected cycle outside retained sample" });
+  }
+  updateActionOptions(analysisCycle, options, selectedAnalysisCycle, "No observed cycles");
+  const cycleActions = [...globalView.actions, ...(inspectedAnalysis?.view.actions ?? [])].filter((action) =>
+    analysisCycleKey(action) === selectedAnalysisCycle);
+  const attempts = [...new Set(cycleActions.map((action) => action.attemptId))];
+  if (selectedAnalysisAttempt === undefined) selectedAnalysisAttempt = attempts[0];
+  if (selectedAnalysisAttempt !== undefined && !attempts.includes(selectedAnalysisAttempt)) {
+    attempts.push(selectedAnalysisAttempt);
+  }
+  updateActionOptions(analysisAttempt, attempts.map((value) => ({ value, label: value })),
+    selectedAnalysisAttempt, "No observed attempts");
+  let view = globalView;
+  if (inspectedAnalysis !== undefined
+    && analysisCycleKey(inspectedAnalysis.selection) === selectedAnalysisCycle
+    && inspectedAnalysis.selection.attemptId === selectedAnalysisAttempt) {
+    view = createAnalysisActionsView({
+      logs: [], observations: globalView.observations,
+      previous: inspectedAnalysis.view, selection: inspectedAnalysis.selection,
+      now: new Date(inspectedAnalysis.view.lastSuccessfulPollAt ?? snapshot.observedAt),
+      ...(inspectedAnalysis.view.error === undefined ? {} : { error: inspectedAnalysis.view.error }),
+    });
+    inspectedAnalysis = { ...inspectedAnalysis, view };
+  }
+  const actions = view.actions.filter((action) =>
+    analysisCycleKey(action) === selectedAnalysisCycle && action.attemptId === selectedAnalysisAttempt);
+  analysisRefresh.disabled = selectedAnalysisCycle === undefined
+    || selectedAnalysisAttempt === undefined || actionInspectionPending;
+  analysisActionStatus.dataset.status = actionInspectionError === undefined ? view.status : "stale";
+  analysisActionStatus.textContent = [
+    actionInspectionError ?? (view.status === "stale"
+      ? view.error ?? "Action telemetry stale; retaining latest observed facts."
+      : view.status === "loading" ? "Waiting for action telemetry" : "Action telemetry current"),
+    `Last successful poll: ${view.lastSuccessfulPollAt ?? "none"}`,
+    `${actions.length} observed actions; limits ${view.observationLimit} events / ${view.actionLimit} actions`,
+    ...(view.limited ? ["Sample limit reached / retained history truncated"] : []),
+  ].join(" · ");
+  const newest = actions[0];
+  analysisLatestAction.textContent = newest === undefined
+    ? "No actions observed for this selection."
+    : `Latest observed action: ${newest.kind} · ${newest.outcome ?? newest.status} · ${newest.latestObservedAt}`;
+  const keys = new Set(actions.map((action) => action.key));
+  for (const [key, row] of actionRows) {
+    if (keys.has(key)) continue;
+    row.remove();
+    actionRows.delete(key);
+  }
+  actions.forEach((action, index) => {
+    let row = actionRows.get(action.key);
+    if (row === undefined) {
+      row = document.createElement("details");
+      row.className = "analysis-action";
+      row.dataset.actionId = action.actionId;
+      row.dataset.actionKey = action.key;
+      row.append(document.createElement("summary"), document.createElement("div"));
+      actionRows.set(action.key, row);
+    }
+    row.dataset.status = action.status;
+    const summary = row.querySelector("summary")!;
+    const title = `${action.kind} · ${action.outcome ?? action.status}`;
+    if (summary.textContent !== title) summary.textContent = title;
+    const detail = row.lastElementChild!;
+    const html = actionDetail(action, snapshot.urls.grafana);
+    if (detail.innerHTML !== html) detail.innerHTML = html;
+    if (analysisActions.children[index] !== row) {
+      analysisActions.insertBefore(row, analysisActions.children[index] ?? null);
+    }
+  });
+}
+
+function updateActionOptions(
+  select: HTMLSelectElement,
+  options: readonly { readonly value: string; readonly label: string }[],
+  selected: string | undefined,
+  empty: string,
+): void {
+  const html = options.length === 0 ? `<option value="">${escapeHtml(empty)}</option>`
+    : options.map((option) => `<option value="${escapeHtml(option.value)}">${
+      escapeHtml(option.label)}</option>`).join("");
+  if (select.innerHTML !== html) select.innerHTML = html;
+  select.value = selected ?? "";
+}
+
+function actionDetail(action: AnalysisAction, grafana: string): string {
+  const fields: readonly [string, string | number | undefined][] = [
+    ["Contract", action.contractName], ["Contract digest", action.contractDigest],
+    ["Cycle", action.cycleId], ["Attempt", action.attemptId], ["Action", action.actionId],
+    ["Start", action.startedAt ?? "Start not observed"],
+    ["Completion", action.completedAt ?? action.status],
+    ["Duration (ms)", action.attributes["flaggo.analysis.action.duration_ms"]],
+    ["Rows", action.attributes["flaggo.analysis.result.rows"]],
+    ["Bytes", action.attributes["flaggo.analysis.result.bytes"]],
+    ["Query digest", action.attributes["flaggo.analysis.query.digest"]],
+    ["Artifact digest", action.attributes["flaggo.analysis.artifact.digest"]],
+    ["Cutoff", action.attributes["flaggo.analysis.snapshot.cutoff"]],
+    ["Watermark", action.attributes["flaggo.analysis.snapshot.watermark"]],
+    ["Tool call", action.attributes["flaggo.analysis.tool_call.id"]],
+    ["Session digest", action.attributes["flaggo.analysis.session.id"]],
+    ["Failure category", action.attributes["flaggo.failure.category"]],
+  ];
+  const traceUrl = new URL("explore", grafana.endsWith("/") ? grafana : `${grafana}/`);
+  traceUrl.searchParams.set("left", JSON.stringify({
+    datasource: "tempo", queries: [{ query: action.traceId, queryType: "traceql" }],
+  }));
+  return `<dl>${fields.filter(([, value]) => value !== undefined).map(([name, value]) =>
+    `<div><dt>${escapeHtml(name)}</dt><dd>${escapeHtml(String(value))}</dd></div>`).join("")}</dl>`
+    + (action.traceId === undefined ? "<p>Trace not observed</p>"
+      : `<a class="action-trace" href="${escapeHtml(traceUrl.toString())}" target="_blank" rel="noopener noreferrer">Open trace ${escapeHtml(shortId(action.traceId))}</a>`);
+}
+
+async function refreshAnalysisActions(): Promise<void> {
+  if (actionInspectionPending || selectedAnalysisCycle === undefined
+    || selectedAnalysisAttempt === undefined) return;
+  const [contractDigest, cycleId] = JSON.parse(selectedAnalysisCycle) as [string, string];
+  const selection = { contractDigest, cycleId, attemptId: selectedAnalysisAttempt };
+  const params = new URLSearchParams(selection);
+  actionInspectionPending = true;
+  if (latest !== undefined) renderAnalysisActions(latest);
+  try {
+    const response = await fetch(`/api/analysis/actions?${params}`, { signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) throw new Error("Action inspection backend unavailable; retaining latest observed facts.");
+    const view: AnalysisActionsView = await response.json();
+    if (selectedAnalysisCycle === JSON.stringify([contractDigest, cycleId])
+      && selectedAnalysisAttempt === selection.attemptId) {
+      const previous = inspectedAnalysis !== undefined
+        && matchesAnalysisSelection(inspectedAnalysis.selection, selection)
+        ? inspectedAnalysis.view : undefined;
+      inspectedAnalysis = { selection, view: createAnalysisActionsView({
+        logs: [], observations: view.observations, selection,
+        ...(previous === undefined ? {} : { previous }),
+        now: new Date(view.lastSuccessfulPollAt ?? latest?.observedAt ?? new Date().toISOString()),
+        queryLimited: view.limited,
+        ...(view.error === undefined ? {} : { error: view.error }),
+      }) };
+      actionInspectionError = undefined;
+    }
+  } catch {
+    if (selectedAnalysisCycle === JSON.stringify([contractDigest, cycleId])
+      && selectedAnalysisAttempt === selection.attemptId) {
+      actionInspectionError = "Action inspection backend unavailable; retaining latest observed facts.";
+    }
+  } finally {
+    actionInspectionPending = false;
+    if (latest !== undefined) renderAnalysisActions(latest);
+    if (selectedAnalysisCycle !== JSON.stringify([contractDigest, cycleId])
+      || selectedAnalysisAttempt !== selection.attemptId) void refreshAnalysisActions();
+  }
 }
 
 function renderBoard(snapshot: PlaygroundSnapshot): void {

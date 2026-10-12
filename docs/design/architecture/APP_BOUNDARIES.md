@@ -230,6 +230,10 @@ availability, evidence freshness, or learning success.
   current forward-checkpoint design.
 - Async Analysis uses durable claims to remain single-flight per contract
   digest across worker instances.
+- Analysis progress is best-effort service telemetry emitted at trusted session,
+  evidence, workspace and provider boundaries. Its bounded action timeline is
+  not durable scheduling state and cannot grant runtime authority. See
+  [internal service observability](OBSERVABILITY.md#analysis-progress).
 - Contract Service activation workers may run on multiple instances; lifecycle
   version comparisons make one transition win while conflicting workers yield.
 

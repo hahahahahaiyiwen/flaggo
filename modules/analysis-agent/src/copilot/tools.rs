@@ -9,8 +9,10 @@ use github_copilot_sdk::{
     types::{PermissionRequestData, PermissionRequestKind, Tool, ToolInvocation, ToolResult},
 };
 use serde_json::{Value, json};
+use tracing::Instrument as _;
 
 use crate::AnalysisTools;
+use crate::action::ToolCorrelation;
 
 const BUILTIN_TOOL_NAMES: &[&str] = &["view", "edit", "rg", "glob", "skill"];
 pub const CHECK_CYCLE_STATUS_TOOL: &str = "check_cycle_status";
@@ -64,11 +66,22 @@ enum AnalysisToolKind {
 struct AnalysisToolHandler {
     kind: AnalysisToolKind,
     tools: Arc<dyn AnalysisTools>,
+    parent: tracing::Span,
 }
 
 #[async_trait]
 impl ToolHandler for AnalysisToolHandler {
     async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, CopilotError> {
+        let correlation =
+            ToolCorrelation::new(&invocation.tool_call_id, invocation.session_id.as_ref());
+        correlation
+            .scope(self.call_inner(invocation).instrument(self.parent.clone()))
+            .await
+    }
+}
+
+impl AnalysisToolHandler {
+    async fn call_inner(&self, invocation: ToolInvocation) -> Result<ToolResult, CopilotError> {
         let result = match self.kind {
             AnalysisToolKind::CheckCycleStatus => {
                 serde_json::to_value(self.tools.check_cycle_status().await.map_err(tool_error)?)?
@@ -213,7 +226,11 @@ fn tool(
     Tool::new(name)
         .with_description(description)
         .with_parameters(parameters)
-        .with_handler(Arc::new(AnalysisToolHandler { kind, tools }))
+        .with_handler(Arc::new(AnalysisToolHandler {
+            kind,
+            tools,
+            parent: tracing::Span::current(),
+        }))
 }
 
 fn tool_error(error: AnalysisError) -> CopilotError {
@@ -296,5 +313,56 @@ mod tests {
             error.to_string(),
             "propose_executable requires at least one rule"
         );
+    }
+
+    #[tokio::test]
+    async fn scopes_real_sdk_handler_identities_to_the_actual_capability_without_duplicates() {
+        use github_copilot_sdk::{tool::ToolHandler as _, types::ToolInvocation};
+        let capture = crate::telemetry_support::Capture::default();
+        capture
+            .run(async {
+                let specification = crate::provider::tests::test_spec();
+                let handler = super::AnalysisToolHandler {
+                    kind: super::AnalysisToolKind::Describe,
+                    tools: specification.tools,
+                    parent: tracing::info_span!("cycle"),
+                };
+                let invocation: ToolInvocation = serde_json::from_value(json!({
+                    "sessionId": "private session token",
+                    "toolCallId": "private \n☃ tool id",
+                    "toolName": "describe",
+                    "arguments": {"untrusted": "private provider JSON"}
+                }))
+                .unwrap();
+                handler.call(invocation).await.unwrap();
+            })
+            .await;
+        let events = capture.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        for event in events.iter() {
+            assert_eq!(
+                event.fields["flaggo.analysis.action.kind"],
+                "evidence.describe"
+            );
+            assert_eq!(
+                event.fields["flaggo.analysis.session.id"],
+                flaggo_analysis_workspace::sha256_digest(b"private session token")
+            );
+            assert_eq!(
+                event.fields["flaggo.analysis.tool_call.id"],
+                flaggo_analysis_workspace::sha256_digest("private \n☃ tool id".as_bytes())
+            );
+            assert!(
+                !serde_json::to_string(&event.fields)
+                    .unwrap()
+                    .contains("private")
+            );
+        }
+        let spans = capture.spans.lock().unwrap();
+        let action = spans
+            .values()
+            .find(|span| span.name == "flaggo.analysis.action")
+            .unwrap();
+        assert_eq!(spans[&action.parent.unwrap()].name, "cycle");
     }
 }

@@ -41,6 +41,8 @@ import {
   type ObserverView,
 } from "./observer.js";
 import type {
+  AnalysisActionsView,
+  AnalysisSelection,
   ClosedLoopEvent,
   DecisionView,
   DemoStage,
@@ -56,6 +58,7 @@ import type {
 } from "./types.js";
 import { TetrisPopulation, type SessionProviderContext } from "./population.js";
 import { PlaygroundRequestError } from "./errors.js";
+import { createAnalysisActionsView, validAnalysisSelection } from "./analysis-actions.js";
 
 type TetrisBindings = {
   readonly "tetris.dropInterval": RuntimeContractBinding;
@@ -192,7 +195,11 @@ export class TetrisPlayground {
       readiness: {},
       now: new Date(),
     });
-    this.observer = { ...this.observer, activity: { status: "loading" } };
+    this.observer = {
+      ...this.observer,
+      activity: { status: "loading" },
+      analysisActions: { ...this.observer.analysisActions, status: "loading" },
+    };
     this.telemetry = new TetrisTelemetryProviders({
       runtimeConfig: configuration.runtimeConfig,
     });
@@ -228,6 +235,7 @@ export class TetrisPlayground {
       observedAt: new Date().toISOString(),
       mode: this.mode,
       ...this.population.snapshot(),
+      analysisActions: this.observer.analysisActions,
       executables: this.executables,
       demo: this.demo,
       services: this.observer.services,
@@ -239,6 +247,34 @@ export class TetrisPlayground {
       backendFailures: this.telemetryResult.failures,
       urls: { grafana: this.grafanaUrl },
     };
+  }
+
+  async inspectAnalysis(selection: AnalysisSelection): Promise<AnalysisActionsView> {
+    if (!validAnalysisSelection(selection)) {
+      throw new PlaygroundRequestError(400, "Invalid analysis telemetry selection.");
+    }
+    let logs: TelemetryQueryResult["logs"] = [];
+    let queryLimited = false;
+    let error: string | undefined;
+    try {
+      const result = await this.lgtm.queryAnalysisActions(this.startedAt, selection);
+      logs = result.logs;
+      queryLimited = result.limited;
+    } catch {
+      error = "Loki action telemetry unavailable; retaining latest observed facts.";
+    }
+    const now = new Date();
+    const inspected = createAnalysisActionsView({
+      logs, now, previous: this.observer.analysisActions, selection,
+      queryLimited, ...(error === undefined ? {} : { error }),
+    });
+    const analysisActions = createAnalysisActionsView({
+      logs, now, previous: this.observer.analysisActions,
+      queryLimited, ...(error === undefined ? {} : { error }),
+    });
+    this.observer = { ...this.observer, analysisActions };
+    this.changed();
+    return inspected;
   }
 
   command(command: TetrisSessionCommand): PlaygroundSnapshot {

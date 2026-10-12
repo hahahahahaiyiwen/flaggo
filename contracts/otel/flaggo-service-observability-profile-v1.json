@@ -194,6 +194,126 @@
       "description": "Exact analysis-agent attempt identity."
     },
     {
+      "name": "flaggo.analysis.action.id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "correlation-identifier",
+      "metricDimension": false,
+      "description": "Generated UUID for one observed action; retries use distinct identities."
+    },
+    {
+      "name": "flaggo.analysis.action.kind",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "bounded-operation",
+      "metricDimension": false,
+      "allowedValues": [
+        "session.start",
+        "session.run",
+        "provider.request",
+        "evidence.describe",
+        "evidence.cutoff",
+        "evidence.sql",
+        "artifact.read",
+        "artifact.write",
+        "artifact.append",
+        "proposal.submit"
+      ],
+      "description": "Trusted execution boundary, not agent-authored narration or an inferred reasoning state."
+    },
+    {
+      "name": "flaggo.analysis.action.outcome",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "bounded-outcome",
+      "metricDimension": false,
+      "allowedValues": [
+        "running",
+        "success",
+        "failed",
+        "timeout",
+        "cancelled",
+        "interrupted",
+        "superseded",
+        "handoff",
+        "no_change",
+        "no_candidate"
+      ],
+      "description": "Observed action state. Missing terminal telemetry is unknown, not a terminal outcome."
+    },
+    {
+      "name": "flaggo.analysis.action.duration_ms",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Nonnegative monotonic-clock duration measured at the emitting boundary."
+    },
+    {
+      "name": "flaggo.analysis.query.digest",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "SHA-256 digest of requested SQL; never SQL text or query parameters."
+    },
+    {
+      "name": "flaggo.analysis.snapshot.cutoff",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "Committed RFC 3339 evidence cutoff for this action, when known."
+    },
+    {
+      "name": "flaggo.analysis.snapshot.watermark",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Committed evidence watermark; not a measurement of rows scanned."
+    },
+    {
+      "name": "flaggo.analysis.result.rows",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Number of rows actually returned by a successful SQL query, not observations scanned."
+    },
+    {
+      "name": "flaggo.analysis.result.bytes",
+      "type": "int64",
+      "cardinality": "unbounded",
+      "classification": "aggregate",
+      "metricDimension": false,
+      "description": "Actual query result bytes or artifact content bytes at the observed boundary; never payload content."
+    },
+    {
+      "name": "flaggo.analysis.artifact.digest",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "domain-identifier",
+      "metricDimension": false,
+      "description": "SHA-256 of successfully read/written content or appended fragment, not the resulting complete file after append; no raw path or content."
+    },
+    {
+      "name": "flaggo.analysis.tool_call.id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "correlation-identifier",
+      "metricDimension": false,
+      "description": "Provider tool-call identity when observed; bounded ASCII identity of at most 128 bytes."
+    },
+    {
+      "name": "flaggo.analysis.session.id",
+      "type": "string",
+      "cardinality": "unbounded",
+      "classification": "correlation-identifier",
+      "metricDimension": false,
+      "description": "SHA-256 reference to a provider session when observed; no raw provider payload."
+    },
+    {
       "name": "flaggo.operation.name",
       "type": "string",
       "cardinality": "bounded",
@@ -870,6 +990,73 @@
       ]
     },
     {
+      "name": "flaggo.analysis.action",
+      "kind": "internal",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "purpose": "Measure one trusted session, provider, evidence, artifact, or proposal action within an analysis attempt.",
+      "requiredAttributes": [
+        "flaggo.contract.name",
+        "flaggo.contract.digest",
+        "flaggo.analysis.cycle.id",
+        "flaggo.analysis.attempt.id",
+        "flaggo.analysis.action.id",
+        "flaggo.analysis.action.kind",
+        "flaggo.analysis.action.outcome",
+        "flaggo.analysis.action.duration_ms"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.analysis.query.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.snapshot.cutoff",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.snapshot.watermark",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.result.rows",
+          "when": "when-success"
+        },
+        {
+          "name": "flaggo.analysis.result.bytes",
+          "when": "when-success"
+        },
+        {
+          "name": "flaggo.analysis.artifact.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.tool_call.id",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.session.id",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "success",
+        "failed",
+        "timeout",
+        "cancelled",
+        "interrupted",
+        "superseded",
+        "handoff",
+        "no_change",
+        "no_candidate"
+      ]
+    },
+    {
       "name": "flaggo.analysis.cycle",
       "kind": "internal",
       "scopes": [
@@ -914,6 +1101,119 @@
     }
   ],
   "logEvents": [
+    {
+      "eventName": "flaggo.analysis.action.started",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "purpose": "Observe an action beginning without depending on eventual span export or claiming complete workflow history.",
+      "requiredAttributes": [
+        "flaggo.contract.name",
+        "flaggo.contract.digest",
+        "flaggo.analysis.cycle.id",
+        "flaggo.analysis.attempt.id",
+        "flaggo.analysis.action.id",
+        "flaggo.analysis.action.kind",
+        "flaggo.analysis.action.outcome"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.analysis.query.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.snapshot.cutoff",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.snapshot.watermark",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.artifact.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.tool_call.id",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.session.id",
+          "when": "when-known"
+        }
+      ],
+      "outcomes": [
+        "running"
+      ]
+    },
+    {
+      "eventName": "flaggo.analysis.action.completed",
+      "minimumSeverity": "info",
+      "scopes": [
+        "flaggo.async-analysis"
+      ],
+      "purpose": "Observe an explicit terminal action result, including failures and interruption, without exporting tool inputs or outputs.",
+      "requiredAttributes": [
+        "flaggo.contract.name",
+        "flaggo.contract.digest",
+        "flaggo.analysis.cycle.id",
+        "flaggo.analysis.attempt.id",
+        "flaggo.analysis.action.id",
+        "flaggo.analysis.action.kind",
+        "flaggo.analysis.action.outcome",
+        "flaggo.analysis.action.duration_ms"
+      ],
+      "conditionalAttributes": [
+        {
+          "name": "flaggo.analysis.query.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.snapshot.cutoff",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.snapshot.watermark",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.result.rows",
+          "when": "when-success"
+        },
+        {
+          "name": "flaggo.analysis.result.bytes",
+          "when": "when-success"
+        },
+        {
+          "name": "flaggo.analysis.artifact.digest",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.tool_call.id",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.analysis.session.id",
+          "when": "when-known"
+        },
+        {
+          "name": "flaggo.failure.category",
+          "when": "when-error"
+        }
+      ],
+      "outcomes": [
+        "success",
+        "failed",
+        "timeout",
+        "cancelled",
+        "interrupted",
+        "superseded",
+        "handoff",
+        "no_change",
+        "no_candidate"
+      ]
+    },
     {
       "eventName": "flaggo.service.started",
       "minimumSeverity": "info",

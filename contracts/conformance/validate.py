@@ -74,6 +74,53 @@ class Report:
         self.errors.append(message)
 
 
+def validate_analysis_action_guards(profile: dict, registry: Registry, rep: Report) -> None:
+    mutations = [
+        ("missing action identity", "logEvents", "eventName",
+         "flaggo.analysis.action.started", "requiredAttributes",
+         "flaggo.analysis.action.id", "remove"),
+        ("missing measured duration", "spans", "name",
+         "flaggo.analysis.action", "requiredAttributes",
+         "flaggo.analysis.action.duration_ms", "remove"),
+        ("invented thinking state", "attributes", "name",
+         "flaggo.analysis.action.outcome", "allowedValues", "thinking", "append"),
+        ("fabricated start success", "logEvents", "eventName",
+         "flaggo.analysis.action.started", "outcomes", "success", "append"),
+        ("wrong producer scope", "logEvents", "eventName",
+         "flaggo.analysis.action.completed", "scopes",
+         ["flaggo.decision-service"], "set"),
+        ("unbounded metric dimension", "attributes", "name",
+         "flaggo.analysis.query.digest", "metricDimension", True, "set"),
+        ("unregistered action detail", "logEvents", "eventName",
+         "flaggo.analysis.action.completed", "conditionalAttributes",
+         {"name": "flaggo.executable.digest", "when": "when-known"}, "append"),
+    ]
+    for label, section, key, name, field, value, operation in mutations:
+        modified = deepcopy(profile)
+        definition = next(
+            (item for item in modified.get(section, []) if item.get(key) == name),
+            None,
+        )
+        if definition is None:
+            rep.fail(f"analysis-action guard '{label}': missing baseline definition")
+            continue
+        if operation == "set":
+            definition[field] = value
+        elif operation == "append":
+            definition[field].append(value)
+        elif value in definition.get(field, []):
+            definition[field].remove(value)
+        else:
+            rep.fail(f"analysis-action guard '{label}': missing baseline attribute")
+            continue
+        negative = Report()
+        validate_service_observability_profile(modified, registry, negative)
+        rep.check(
+            bool(negative.errors),
+            f"analysis-action guard '{label}': invalid profile was accepted",
+        )
+
+
 def reject_duplicate_object_keys(pairs: list[tuple[str, object]]) -> dict:
     value = {}
     for key, item in pairs:
@@ -289,6 +336,11 @@ def validate_service_observability_profile(
         "flaggo.batch.id",
         "flaggo.analysis.cycle.id",
         "flaggo.analysis.attempt.id",
+        "flaggo.analysis.action.id",
+        "flaggo.analysis.query.digest",
+        "flaggo.analysis.artifact.digest",
+        "flaggo.analysis.tool_call.id",
+        "flaggo.analysis.session.id",
     }
     for name in exact_identifiers:
         definition = attributes_by_name.get(name)
@@ -362,8 +414,18 @@ def validate_service_observability_profile(
                 f"{context}: {signal_kind} '{name}' references unknown attributes "
                 f"{sorted(unknown_attributes)}",
             )
+            outcome_attribute = (
+                "flaggo.analysis.action.outcome"
+                if "flaggo.analysis.action.outcome" in required
+                else "flaggo.operation.outcome"
+            )
+            declared_outcomes = set(
+                attributes_by_name.get(outcome_attribute, {}).get(
+                    "allowedValues", []
+                )
+            )
             unknown_outcomes = (
-                set(definition.get("outcomes", [])) - bounded_outcomes
+                set(definition.get("outcomes", [])) - declared_outcomes
             )
             rep.check(
                 not unknown_outcomes,
@@ -382,6 +444,92 @@ def validate_service_observability_profile(
         "eventName",
         "log event",
     )
+
+    action_attributes = {
+        "flaggo.contract.name",
+        "flaggo.contract.digest",
+        "flaggo.analysis.cycle.id",
+        "flaggo.analysis.attempt.id",
+        "flaggo.analysis.action.id",
+        "flaggo.analysis.action.kind",
+        "flaggo.analysis.action.outcome",
+    }
+    action_kinds = {
+        "session.start", "session.run", "provider.request",
+        "evidence.describe", "evidence.cutoff", "evidence.sql",
+        "artifact.read", "artifact.write", "artifact.append", "proposal.submit",
+    }
+    terminal_outcomes = {
+        "success", "failed", "timeout", "cancelled", "interrupted",
+        "superseded", "handoff", "no_change", "no_candidate",
+    }
+    rep.check(
+        set(attributes_by_name.get("flaggo.analysis.action.kind", {}).get(
+            "allowedValues", []
+        )) == action_kinds,
+        f"{context}: action kinds must describe registered trusted boundaries",
+    )
+    rep.check(
+        set(attributes_by_name.get("flaggo.analysis.action.outcome", {}).get(
+            "allowedValues", []
+        )) == terminal_outcomes | {"running"},
+        f"{context}: action outcomes must distinguish starts and terminal observations",
+    )
+    for name, definition, terminal in [
+        ("flaggo.analysis.action", spans_by_name.get("flaggo.analysis.action", {}), True),
+        ("flaggo.analysis.action.started", logs_by_name.get("flaggo.analysis.action.started", {}), False),
+        ("flaggo.analysis.action.completed", logs_by_name.get("flaggo.analysis.action.completed", {}), True),
+    ]:
+        expected_attributes = action_attributes | (
+            {"flaggo.analysis.action.duration_ms"} if terminal else set()
+        )
+        rep.check(
+            set(definition.get("requiredAttributes", [])) == expected_attributes,
+            f"{context}: '{name}' requires exact action correlation and measured terminal duration",
+        )
+        rep.check(
+            set(definition.get("outcomes", [])) == (
+                terminal_outcomes if terminal else {"running"}
+            ),
+            f"{context}: '{name}' must not fabricate a terminal start or a running completion",
+        )
+        rep.check(
+            definition.get("scopes") == ["flaggo.async-analysis"],
+            f"{context}: '{name}' belongs to Async Analysis",
+        )
+    for name, definition in attributes_by_name.items():
+        if name.startswith("flaggo.analysis.") and name not in {
+            "flaggo.analysis.cycle.id", "flaggo.analysis.attempt.id"
+        }:
+            rep.check(
+                definition.get("metricDimension") is False,
+                f"{context}: action metadata '{name}' is not a metric dimension",
+            )
+    action_metadata = {
+        "flaggo.analysis.query.digest",
+        "flaggo.analysis.snapshot.cutoff",
+        "flaggo.analysis.snapshot.watermark",
+        "flaggo.analysis.result.rows",
+        "flaggo.analysis.result.bytes",
+        "flaggo.analysis.artifact.digest",
+        "flaggo.analysis.tool_call.id",
+        "flaggo.analysis.session.id",
+        "flaggo.failure.category",
+    }
+    for definition in [
+        spans_by_name.get("flaggo.analysis.action", {}),
+        logs_by_name.get("flaggo.analysis.action.started", {}),
+        logs_by_name.get("flaggo.analysis.action.completed", {}),
+    ]:
+        conditional = {
+            item.get("name")
+            for item in definition.get("conditionalAttributes", [])
+            if isinstance(item, dict)
+        }
+        rep.check(
+            conditional <= action_metadata,
+            f"{context}: action details may contain only allowlisted operational metadata",
+        )
 
     for name in {
         "flaggo.candidate.submit",
@@ -1502,6 +1650,9 @@ def main() -> int:
             service_observability_profile,
             registry,
             rep,
+        )
+        validate_analysis_action_guards(
+            service_observability_profile, registry, rep,
         )
 
     try:

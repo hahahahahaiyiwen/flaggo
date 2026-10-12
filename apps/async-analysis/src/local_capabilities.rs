@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_agent::{
     AnalysisCapabilityFactory, AnalysisRunStatus, AnalysisTools, YieldSignal,
+    action::{ActionKind, ActionObservation, ActionOutcome, FailureCategory},
 };
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisError, AttemptContext, CandidateRecord, EvidenceCutoff,
@@ -11,9 +12,11 @@ use flaggo_analysis_domain::{
 use flaggo_analysis_workspace::WorkspaceLease;
 use flaggo_evidence_store::{
     AuthorityScope, EvidenceAnalysisStore, EvidenceQueryLimits, EvidenceQueryRequest,
-    EvidenceQueryScope, EvidenceSignal, EvidenceSourceSelector, ObservationWatermark,
+    EvidenceQueryScope, EvidenceSignal, EvidenceSourceSelector, EvidenceStoreError,
+    ObservationWatermark,
 };
 use serde_json::{Value, json};
+use tracing::Instrument as _;
 
 use crate::{Clock, ContractService};
 
@@ -63,6 +66,7 @@ impl AnalysisCapabilityFactory for LocalCapabilityFactory {
             query_limits: self.query_limits,
             clock: Arc::clone(&self.clock),
             yield_signal: Arc::new(YieldSignal::default()),
+            parent: tracing::Span::current(),
         }))
     }
 }
@@ -77,6 +81,7 @@ struct LocalAnalysisTools {
     query_limits: EvidenceQueryLimits,
     clock: Arc<dyn Clock>,
     yield_signal: Arc<YieldSignal>,
+    parent: tracing::Span,
 }
 
 #[async_trait]
@@ -86,40 +91,54 @@ impl AnalysisTools for LocalAnalysisTools {
     }
 
     async fn commit_cutoff(&self, cutoff: DateTime<Utc>) -> Result<EvidenceCutoff, AnalysisError> {
-        self.ensure_not_yielding()?;
-        if cutoff > self.clock.now() {
-            return Err(AnalysisError::Evidence(
-                "evidence cutoff cannot be in the future".to_owned(),
-            ));
-        }
-        if let Some(existing) = self.workspace.cutoff(&self.context.cycle_id).await? {
-            if existing.cutoff != cutoff {
+        let mut action =
+            ActionObservation::start(&self.context, ActionKind::EvidenceCutoff, &self.parent);
+        let result = async {
+            self.ensure_not_yielding()?;
+            if cutoff > self.clock.now() {
                 return Err(AnalysisError::Evidence(
-                    "evidence cutoff is immutable for the cycle".to_owned(),
+                    "evidence cutoff cannot be in the future".to_owned(),
                 ));
             }
-            return Ok(existing);
+            if let Some(existing) = self.workspace.cutoff(&self.context.cycle_id).await? {
+                if existing.cutoff != cutoff {
+                    return Err(AnalysisError::Evidence(
+                        "evidence cutoff is immutable for the cycle".to_owned(),
+                    ));
+                }
+                return Ok(existing);
+            }
+            let watermark = self
+                .evidence_store
+                .capture_watermark()
+                .await
+                .map_err(evidence_error)?;
+            let committed = self
+                .workspace
+                .commit_cutoff(&self.context.cycle_id, cutoff, watermark.get())
+                .await?;
+            self.workspace
+                .append_audit(
+                    &self.context.cycle_id,
+                    "cutoff",
+                    serde_json::to_value(&committed).map_err(evidence_error)?,
+                )
+                .await?;
+            Ok(committed)
         }
-        let watermark = self
-            .evidence_store
-            .capture_watermark()
-            .await
-            .map_err(evidence_error)?;
-        let committed = self
-            .workspace
-            .commit_cutoff(&self.context.cycle_id, cutoff, watermark.get())
-            .await?;
-        self.workspace
-            .append_audit(
-                &self.context.cycle_id,
-                "cutoff",
-                serde_json::to_value(&committed).map_err(evidence_error)?,
-            )
-            .await?;
-        Ok(committed)
+        .instrument(action.span())
+        .await;
+        if let Ok(snapshot) = &result {
+            action.snapshot(snapshot);
+        }
+        action.finish_result(&result);
+        result
     }
 
     async fn describe(&self) -> Result<Value, AnalysisError> {
+        let mut action =
+            ActionObservation::start(&self.context, ActionKind::EvidenceDescribe, &self.parent);
+        let result = async {
         self.ensure_not_yielding()?;
         Ok(json!({
             "relation": "observations",
@@ -188,98 +207,130 @@ impl AnalysisTools for LocalAnalysisTools {
                 "resultBytesLimited": self.query_limits.max_bytes
             }
         }))
+        }.instrument(action.span()).await;
+        action.finish_result(&result);
+        result
     }
 
     async fn run_sql(&self, sql: &str) -> Result<Value, AnalysisError> {
-        self.ensure_not_yielding()?;
-        let cutoff = self
-            .workspace
-            .cutoff(&self.context.cycle_id)
-            .await?
-            .ok_or_else(|| {
-                AnalysisError::Evidence(
-                    "commit an evidence cutoff before querying observations".to_owned(),
+        let mut action =
+            ActionObservation::start(&self.context, ActionKind::EvidenceSql, &self.parent);
+        action.query(sql);
+        let span = action.span();
+        let result = async {
+            self.ensure_not_yielding()?;
+            let cutoff = self
+                .workspace
+                .cutoff(&self.context.cycle_id)
+                .await?
+                .ok_or_else(|| {
+                    AnalysisError::Evidence(
+                        "commit an evidence cutoff before querying observations".to_owned(),
+                    )
+                })?;
+            action.snapshot(&cutoff);
+            let cutoff_unix_nano =
+                u64::try_from(cutoff.cutoff.timestamp_nanos_opt().ok_or_else(|| {
+                    AnalysisError::Evidence(
+                        "evidence cutoff exceeds the supported timestamp range".to_owned(),
+                    )
+                })?)
+                .map_err(|_| {
+                    AnalysisError::Evidence("evidence cutoff predates the Unix epoch".to_owned())
+                })?;
+            let result = self
+                .evidence_store
+                .query(
+                    &self.scope,
+                    EvidenceQueryRequest {
+                        sql: sql.to_owned(),
+                        cutoff_unix_nano,
+                        watermark: ObservationWatermark::new(cutoff.watermark),
+                        limits: self.query_limits,
+                    },
                 )
-            })?;
-        let cutoff_unix_nano =
-            u64::try_from(cutoff.cutoff.timestamp_nanos_opt().ok_or_else(|| {
-                AnalysisError::Evidence(
-                    "evidence cutoff exceeds the supported timestamp range".to_owned(),
+                .await;
+            let result = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    let (outcome, category) = evidence_query_failure(&error);
+                    action.finish(outcome, Some(category));
+                    return Err(evidence_error(error));
+                }
+            };
+            action.result_size(result.rows.len(), result.result_bytes);
+            let result_value = serde_json::to_value(&result).map_err(evidence_error)?;
+            self.workspace
+                .append_audit(
+                    &self.context.cycle_id,
+                    "queries",
+                    json!({
+                        "requestedSql": sql,
+                        "result": result_value
+                    }),
                 )
-            })?)
-            .map_err(|_| {
-                AnalysisError::Evidence("evidence cutoff predates the Unix epoch".to_owned())
-            })?;
-        let result = self
-            .evidence_store
-            .query(
-                &self.scope,
-                EvidenceQueryRequest {
-                    sql: sql.to_owned(),
-                    cutoff_unix_nano,
-                    watermark: ObservationWatermark::new(cutoff.watermark),
-                    limits: self.query_limits,
-                },
-            )
-            .await
-            .map_err(evidence_error)?;
-        let result_value = serde_json::to_value(&result).map_err(evidence_error)?;
-        self.workspace
-            .append_audit(
-                &self.context.cycle_id,
-                "queries",
-                json!({
-                    "requestedSql": sql,
-                    "result": result_value
-                }),
-            )
-            .await?;
-        Ok(result_value)
+                .await?;
+            Ok(result_value)
+        }
+        .instrument(span)
+        .await;
+        action.finish_result(&result);
+        result
     }
 
     async fn propose_executable(&self, rules: Value) -> Result<CandidateRecord, AnalysisError> {
-        self.ensure_not_yielding()?;
-        let cutoff = self
-            .workspace
-            .cutoff(&self.context.cycle_id)
-            .await?
-            .ok_or_else(|| {
-                AnalysisError::Candidate(
-                    "commit an evidence cutoff before proposing an executable".to_owned(),
-                )
-            })?;
-        let proposal = self
-            .workspace
-            .prepare_candidate_proposal(&self.context.cycle_id, &self.context.attempt_id, rules)
-            .await?;
-        if let Some(candidate) = self
-            .workspace
-            .candidate_record(&self.context.cycle_id)
-            .await?
-        {
-            if candidate.analysis_manifest_digest != proposal.analysis_manifest_digest {
-                return Err(AnalysisError::InvalidState(
-                    "durable Candidate does not match the cycle proposal".to_owned(),
-                ));
+        let mut action =
+            ActionObservation::start(&self.context, ActionKind::ProposalSubmit, &self.parent);
+        let span = action.span();
+        let result = async {
+            self.ensure_not_yielding()?;
+            let cutoff = self
+                .workspace
+                .cutoff(&self.context.cycle_id)
+                .await?
+                .ok_or_else(|| {
+                    AnalysisError::Candidate(
+                        "commit an evidence cutoff before proposing an executable".to_owned(),
+                    )
+                })?;
+            action.snapshot(&cutoff);
+            let proposal = self
+                .workspace
+                .prepare_candidate_proposal(&self.context.cycle_id, &self.context.attempt_id, rules)
+                .await?;
+            if let Some(candidate) = self
+                .workspace
+                .candidate_record(&self.context.cycle_id)
+                .await?
+            {
+                if candidate.analysis_manifest_digest != proposal.analysis_manifest_digest {
+                    return Err(AnalysisError::InvalidState(
+                        "durable Candidate does not match the cycle proposal".to_owned(),
+                    ));
+                }
+                return Ok(candidate);
             }
-            return Ok(candidate);
-        }
 
-        let mut proposal_context = self.context.clone();
-        proposal_context.attempt_id = proposal.attempt_id;
-        let candidate = self
-            .contract_service
-            .submit_candidate(
-                &proposal_context,
-                proposal.rules,
-                &cutoff,
-                &proposal.analysis_manifest_digest,
-            )
-            .await?;
-        self.workspace
-            .record_candidate(&self.context.cycle_id, &candidate)
-            .await?;
-        Ok(candidate)
+            let mut proposal_context = self.context.clone();
+            proposal_context.attempt_id = proposal.attempt_id;
+            let candidate = self
+                .contract_service
+                .submit_candidate(
+                    &proposal_context,
+                    proposal.rules,
+                    &cutoff,
+                    &proposal.analysis_manifest_digest,
+                )
+                .await?;
+            self.workspace
+                .record_candidate(&self.context.cycle_id, &candidate)
+                .await?;
+            Ok(candidate)
+        }
+        .instrument(span)
+        .await;
+        action.finish_result(&result);
+        result
     }
 
     async fn proposed_candidate(&self) -> Result<Option<CandidateRecord>, AnalysisError> {
@@ -371,6 +422,25 @@ fn evidence_error(error: impl std::fmt::Display) -> AnalysisError {
     AnalysisError::Evidence(error.to_string())
 }
 
+fn evidence_query_failure(error: &EvidenceStoreError) -> (ActionOutcome, FailureCategory) {
+    match error {
+        EvidenceStoreError::QueryLimit("time") => {
+            (ActionOutcome::Timeout, FailureCategory::Timeout)
+        }
+        EvidenceStoreError::QueryLimit(_) => (ActionOutcome::Failed, FailureCategory::Capacity),
+        EvidenceStoreError::InvalidQuery(_) | EvidenceStoreError::InvalidWrite(_) => {
+            (ActionOutcome::Failed, FailureCategory::Validation)
+        }
+        EvidenceStoreError::CorruptData(_) => (ActionOutcome::Failed, FailureCategory::Integrity),
+        EvidenceStoreError::UnsupportedSchemaVersion { .. } => {
+            (ActionOutcome::Failed, FailureCategory::Configuration)
+        }
+        EvidenceStoreError::Unavailable { .. } => {
+            (ActionOutcome::Failed, FailureCategory::Dependency)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -406,6 +476,15 @@ mod tests {
     struct FakeEvidenceStore {
         captures: Mutex<u32>,
         requests: Mutex<Vec<(EvidenceQueryScope, EvidenceQueryRequest)>>,
+        behavior: QueryBehavior,
+    }
+
+    #[derive(Clone, Copy)]
+    enum QueryBehavior {
+        Success,
+        Timeout,
+        Invalid,
+        Pending,
     }
 
     #[async_trait]
@@ -429,6 +508,16 @@ mod tests {
                 .lock()
                 .expect("request lock")
                 .push((scope.clone(), request));
+            match self.behavior {
+                QueryBehavior::Timeout => return Err(EvidenceStoreError::QueryLimit("time")),
+                QueryBehavior::Invalid => {
+                    return Err(EvidenceStoreError::InvalidQuery(
+                        "private SQL token".to_owned(),
+                    ));
+                }
+                QueryBehavior::Pending => std::future::pending::<()>().await,
+                QueryBehavior::Success => {}
+            }
             Ok(EvidenceQueryResult {
                 normalized_sql: "SELECT count(*) AS count FROM observations".to_owned(),
                 columns: vec!["count".to_owned()],
@@ -558,6 +647,7 @@ mod tests {
         let evidence = Arc::new(FakeEvidenceStore {
             captures: Mutex::new(0),
             requests: Mutex::new(Vec::new()),
+            behavior: QueryBehavior::Success,
         });
         let clock: Arc<dyn Clock> = Arc::new(FixedClock(now));
         let factory = LocalCapabilityFactory::new(
@@ -701,6 +791,7 @@ mod tests {
         let evidence = Arc::new(FakeEvidenceStore {
             captures: Mutex::new(0),
             requests: Mutex::new(Vec::new()),
+            behavior: QueryBehavior::Success,
         });
         let factory = LocalCapabilityFactory::new(
             service,
@@ -763,5 +854,219 @@ mod tests {
             }
         );
         assert!(tools.describe().await.is_err());
+    }
+
+    async fn observed_tools(
+        behavior: QueryBehavior,
+    ) -> (tempfile::TempDir, Arc<dyn AnalysisTools>, DateTime<Utc>) {
+        let accepted_at = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).single().unwrap();
+        let now = accepted_at + chrono::Duration::hours(2);
+        let contract = contract(accepted_at);
+        let factory = LocalCapabilityFactory::new(
+            Arc::new(FakeContractService {
+                current: contract.clone(),
+                submissions: Mutex::new(Vec::new()),
+                now,
+            }),
+            Arc::new(FakeEvidenceStore {
+                captures: Mutex::new(0),
+                requests: Mutex::new(Vec::new()),
+                behavior,
+            }),
+            EvidenceQueryLimits {
+                max_rows: NonZeroU32::new(10).unwrap(),
+                max_bytes: 1024,
+                timeout: Duration::from_secs(1),
+            },
+            Arc::new(FixedClock(now)),
+        );
+        let directory = tempfile::tempdir_in(".").unwrap();
+        let workspaces = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let lease = workspaces.claim(&contract.name, "attempt-1").await.unwrap();
+        let cycle = ready(
+            lease
+                .prepare_cycle(&contract, &profile(), "attempt-1", now)
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        let tools = factory
+            .create(context(&cycle, "attempt-1"), contract, lease)
+            .await
+            .unwrap();
+        (directory, tools, now)
+    }
+
+    #[tokio::test]
+    async fn captures_actual_sql_results_committed_snapshot_and_proposal_without_contents() {
+        let capture = crate::telemetry_support::Capture::default();
+        capture
+            .run(async {
+                let parent = tracing::info_span!("cycle");
+                async {
+                    let (_directory, tools, now) = observed_tools(QueryBehavior::Success).await;
+                    tools.describe().await.unwrap();
+                    tools.commit_cutoff(now).await.unwrap();
+                    tools.commit_cutoff(now).await.unwrap();
+                    tools
+                        .run_sql("SELECT 'private SQL prompt' FROM observations")
+                        .await
+                        .unwrap();
+                    tools.propose_executable(json!([{
+                "name": "secret-rule", "when": {"expression": "true"}, "return": {"value": 5}
+            }])).await.unwrap();
+                }
+                .instrument(parent)
+                .await;
+            })
+            .await;
+        let events = capture.events.lock().unwrap();
+        let terminal: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.fields.get("event.name") == Some(&json!("flaggo.analysis.action.completed"))
+            })
+            .collect();
+        assert_eq!(terminal.len(), 5);
+        for event in &terminal {
+            assert_eq!(event.level, "INFO");
+            assert_eq!(event.target, "flaggo.async-analysis");
+            assert_eq!(event.fields["flaggo.analysis.action.outcome"], "success");
+            assert!(
+                event.fields["flaggo.analysis.action.duration_ms"]
+                    .as_u64()
+                    .is_some()
+            );
+            assert!(event.parent.is_some());
+        }
+        let sql = terminal
+            .iter()
+            .find(|event| event.fields["flaggo.analysis.action.kind"] == "evidence.sql")
+            .unwrap();
+        assert_eq!(
+            sql.fields["flaggo.analysis.query.digest"],
+            flaggo_analysis_workspace::sha256_digest(
+                b"SELECT 'private SQL prompt' FROM observations"
+            )
+        );
+        assert_eq!(sql.fields["flaggo.analysis.result.rows"], 1);
+        assert_eq!(sql.fields["flaggo.analysis.result.bytes"], 11);
+        assert_eq!(sql.fields["flaggo.analysis.snapshot.watermark"], 42);
+        assert_eq!(
+            sql.fields["flaggo.analysis.snapshot.cutoff"],
+            "2026-03-01T02:00:00+00:00"
+        );
+        for event in events.iter() {
+            let encoded = serde_json::to_string(&event.fields).unwrap();
+            assert!(!encoded.contains("private SQL prompt"));
+            assert!(!encoded.contains("secret-rule"));
+            assert!(!encoded.contains("normalizedSql"));
+            assert!(encoded.len() < 2048);
+        }
+        let spans = capture.spans.lock().unwrap();
+        for span in spans
+            .values()
+            .filter(|span| span.name == "flaggo.analysis.action")
+        {
+            assert!(span.closed);
+            assert_eq!(spans[&span.parent.unwrap()].name, "cycle");
+            assert_eq!(span.fields["flaggo.analysis.action.outcome"], "success");
+            assert!(
+                span.fields["flaggo.analysis.action.duration_ms"]
+                    .as_u64()
+                    .is_some()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn captures_typed_query_failures_and_observed_cancellation_before_string_conversion() {
+        for (behavior, outcome, category) in [
+            (QueryBehavior::Timeout, "timeout", "timeout"),
+            (QueryBehavior::Invalid, "failed", "validation"),
+            (QueryBehavior::Pending, "interrupted", "cancelled"),
+        ] {
+            let capture = crate::telemetry_support::Capture::default();
+            capture
+                .run(async {
+                    let (_directory, tools, now) = observed_tools(behavior).await;
+                    tools.commit_cutoff(now).await.unwrap();
+                    assert!(
+                        tokio::time::timeout(
+                            Duration::from_millis(10),
+                            tools.run_sql("SELECT 'private' FROM observations")
+                        )
+                        .await
+                        .map_or(true, |result| result.is_err())
+                    );
+                })
+                .await;
+            let events = capture.events.lock().unwrap();
+            let terminal = events
+                .iter()
+                .find(|event| {
+                    event.fields.get("event.name")
+                        == Some(&json!("flaggo.analysis.action.completed"))
+                        && event.fields.get("flaggo.analysis.action.kind")
+                            == Some(&json!("evidence.sql"))
+                })
+                .unwrap();
+            assert_eq!(terminal.fields["flaggo.analysis.action.outcome"], outcome);
+            assert_eq!(terminal.fields["flaggo.failure.category"], category);
+            assert!(
+                terminal.fields["flaggo.analysis.action.duration_ms"]
+                    .as_u64()
+                    .is_some()
+            );
+            assert!(!terminal.fields.contains_key("flaggo.analysis.result.rows"));
+            assert!(!terminal.fields.contains_key("flaggo.analysis.result.bytes"));
+            assert!(
+                !serde_json::to_string(&terminal.fields)
+                    .unwrap()
+                    .contains("private")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn emits_failed_precondition_and_proposal_actions_not_successful_method_labels() {
+        let capture = crate::telemetry_support::Capture::default();
+        capture
+            .run(async {
+                let (_directory, tools, now) = observed_tools(QueryBehavior::Success).await;
+                assert!(
+                    tools
+                        .commit_cutoff(now + chrono::Duration::seconds(1))
+                        .await
+                        .is_err()
+                );
+                assert!(tools.run_sql("SELECT 'private'").await.is_err());
+                assert!(
+                    tools
+                        .propose_executable(json!({"raw": "private"}))
+                        .await
+                        .is_err()
+                );
+                tools.yield_signal().request_shutdown().unwrap();
+                assert!(tools.describe().await.is_err());
+            })
+            .await;
+        let events = capture.events.lock().unwrap();
+        assert_eq!(events.len(), 8);
+        for terminal in events.iter().filter(|event| {
+            event.fields.get("event.name") == Some(&json!("flaggo.analysis.action.completed"))
+        }) {
+            assert_eq!(terminal.fields["flaggo.analysis.action.outcome"], "failed");
+            assert!(
+                terminal.fields["flaggo.failure.category"]
+                    .as_str()
+                    .is_some()
+            );
+            assert!(
+                !serde_json::to_string(&terminal.fields)
+                    .unwrap()
+                    .contains("private")
+            );
+        }
     }
 }

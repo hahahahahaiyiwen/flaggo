@@ -12,6 +12,8 @@
   Flaggo service-observability profile;
 - verifies service Resources, scopes, signal references, bounded metric
   dimensions, contract correlation, export isolation, redaction, and health;
+- verifies the analysis-action start/terminal contract, bounded kinds/outcomes,
+  exact correlation and exclusion of action metadata from metric dimensions;
 - checks OTLP JSON and gzip-compressed Protobuf fixtures against the profile;
 - rejects duplicate object keys, non-finite JSON numbers, and malformed
   RFC 3339 values;

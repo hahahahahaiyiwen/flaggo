@@ -152,6 +152,17 @@
               <span class="lane-number">03</span>
             </div>
           </div>
+          <section id="analysis-action-panel" class="analysis-action-panel" aria-label="Analysis action inspection">
+            <div class="action-selectors">
+              <label>Cycle <select id="analysis-cycle"><option value="">No observed cycles</option></select></label>
+              <label>Attempt <select id="analysis-attempt"><option value="">No observed attempts</option></select></label>
+              <button id="analysis-refresh" type="button">Refresh actions</button>
+            </div>
+            <p id="analysis-action-status" class="action-status" role="status"></p>
+            <p id="analysis-latest-action" class="action-latest"></p>
+            <div id="analysis-actions" class="analysis-actions"></div>
+            <p class="action-caveat">Observed facts only, not private reasoning. Completion not observed does not mean still running. Bounded telemetry samples are not a complete timeline.</p>
+          </section>
           <div class="telemetry-board">
             <div class="telemetry-toolbar" aria-label="Analysis telemetry filters">
               <label>

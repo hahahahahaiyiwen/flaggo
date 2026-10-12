@@ -1337,3 +1337,77 @@ code {
     max-height: 155px;
   }
 }
+.analysis-action-panel {
+  flex: none;
+  padding: 0.55rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--blue-line);
+  border-radius: 10px;
+  background: var(--blue-soft);
+}
+
+.cycle-lane.analysis-lane {
+  overflow-y: auto;
+}
+
+.analysis-lane .telemetry-board {
+  flex: 0 0 220px;
+}
+
+.action-selectors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.4rem;
+}
+
+.action-selectors label {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.65rem;
+}
+
+.action-selectors select {
+  max-width: 240px;
+  font-size: 0.65rem;
+}
+
+.action-status, .action-latest, .action-caveat {
+  margin: 0.4rem 0;
+  font-size: 0.65rem;
+  overflow-wrap: anywhere;
+}
+
+.action-status[data-status="stale"], .analysis-action[data-status="unknown/conflicting"] {
+  color: var(--pink-dark);
+}
+
+.analysis-actions {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.analysis-action {
+  padding: 0.35rem;
+  border-bottom: 1px solid var(--blue-line);
+  font-size: 0.7rem;
+}
+
+.analysis-action summary {
+  cursor: pointer;
+}
+
+.analysis-action dl div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+}
+
+.analysis-action dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: monospace;
+}

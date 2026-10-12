@@ -33,6 +33,9 @@ test("gateway serves state, commands, SSE, decisions, and graceful shutdown", {
   let failLogSample = false;
   let managementDelayMs = 0;
   let managementRequests = 0;
+  const actionQueries = [];
+  let floodActions = false;
+  const actionId = "00000000-0000-4000-8000-000000000001";
   const activityAt = String(BigInt(Date.now()) * 1_000_000n);
   const backend = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -134,14 +137,44 @@ test("gateway serves state, commands, SSE, decisions, and graceful shutdown", {
       if (failLogSample && url.searchParams.get("direction") === "forward") {
         return json(response, 503, { error: "Log sample unavailable." });
       }
+      const scoped = url.searchParams.get("query").includes("flaggo_analysis_cycle_id");
+      if (scoped) {
+        actionQueries.push(url.searchParams.get("query"));
+      }
+      const actionMetadata = {
+        otel_scope_name: "flaggo.async-analysis",
+        flaggo_contract_name: "tetris.dropInterval", flaggo_contract_digest: contractDigest,
+        flaggo_analysis_cycle_id: "cycle-1", flaggo_analysis_attempt_id: "attempt-1",
+        flaggo_analysis_action_id: actionId, flaggo_analysis_action_kind: "evidence.sql",
+        flaggo_analysis_query_digest: `sha256:${"4".repeat(64)}`,
+      };
       return json(response, 200, {
         status: "success",
         data: { resultType: "streams", result: emitActivity ? [{
           stream: { service_name: "flaggo-async-analysis" },
-          values: [[activityAt, "Completed analysis", {
+          values: [
+            ...(floodActions && !scoped ? Array.from({ length: 400 }, (_, index) => [
+              String(BigInt(activityAt) + BigInt(index + 1) * 1_000_000n), "Newer action", {
+                ...actionMetadata,
+                event_name: "flaggo.analysis.action.completed",
+                flaggo_analysis_action_id: `10000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+                flaggo_analysis_cycle_id: "newer-cycle",
+                flaggo_analysis_attempt_id: "newer-attempt",
+                flaggo_analysis_action_outcome: "success",
+                flaggo_analysis_action_duration_ms: "1",
+              },
+            ]) : []),
+            [activityAt, "Completed analysis", {
             event_name: "flaggo.analysis.cycle.completed",
             otel_scope_name: "flaggo.async-analysis",
             flaggo_operation_outcome: "no_candidate",
+          }], [activityAt, "PRIVATE prompt and SQL", {
+            ...actionMetadata, event_name: "flaggo.analysis.action.started",
+            flaggo_analysis_action_outcome: "running", private_prompt: "PRIVATE",
+          }], [activityAt, "PRIVATE dataset and provider logs", {
+            ...actionMetadata, event_name: "flaggo.analysis.action.completed",
+            flaggo_analysis_action_outcome: "success", flaggo_analysis_action_duration_ms: "5",
+            flaggo_analysis_result_rows: "2", private_dataset: "PRIVATE",
           }]],
         }] : [] },
       });
@@ -379,6 +412,16 @@ test("gateway serves state, commands, SSE, decisions, and graceful shutdown", {
     value.name === "flaggo.analysis.cycle.completed"
   );
   assert.ok(lastKnownAnalysis);
+  const params = new URLSearchParams({ contractDigest, cycleId: "cycle-1", attemptId: "attempt-1" });
+  const inspected = await fetchJson(`${gatewayUrl}/api/analysis/actions?${params}`);
+  assert.equal(inspected.actions.length, 1);
+  assert.equal(inspected.actions[0].actionId, actionId);
+  assert.equal(inspected.actions[0].outcome, "success");
+  assert.doesNotMatch(JSON.stringify(inspected), /PRIVATE|prompt|dataset/);
+  assert.ok(actionQueries.some((query) => query.includes(contractDigest)
+    && query.includes("cycle-1") && query.includes("attempt-1")));
+  assert.equal((await fetch(`${gatewayUrl}/api/analysis/actions?cycleId=invalid`)).status, 400);
+  assert.deepEqual((await fetchJson(`${gatewayUrl}/api/state`)).human.state, paused.human.state);
   emitActivity = false;
   failLogSample = true;
   await waitFor(async () => {
@@ -390,6 +433,8 @@ test("gateway serves state, commands, SSE, decisions, and graceful shutdown", {
   assert.deepEqual(stale.timeline.find((value) =>
     value.id === lastKnownAnalysis.id
   ), lastKnownAnalysis);
+  assert.equal(stale.analysisActions.status, "stale");
+  assert.equal(stale.analysisActions.actions[0].outcome, "success");
   emitActivity = true;
   failLogSample = false;
   await waitFor(async () => {
@@ -401,6 +446,8 @@ test("gateway serves state, commands, SSE, decisions, and graceful shutdown", {
     value.id === lastKnownAnalysis.id
   ).length, 1);
   assert.deepEqual(recovered.backendFailures, []);
+  assert.equal(recovered.analysisActions.status, "current");
+  assert.equal(recovered.analysisActions.actions.length, 1);
   const startBots = await fetch(`${gatewayUrl}/api/bots/start`, { method: "POST" });
   assert.equal(startBots.status, 202);
   await waitFor(async () => {
@@ -424,6 +471,22 @@ test("gateway serves state, commands, SSE, decisions, and graceful shutdown", {
   const oldHumanId = playing.human.state.sessionId;
   const restart = await fetch(`${gatewayUrl}/api/commands/restart`, { method: "POST" });
   assert.notEqual((await restart.json()).human.state.sessionId, oldHumanId);
+
+  floodActions = true;
+  await waitFor(async () => {
+    const current = await fetchJson(`${gatewayUrl}/api/state`);
+    return current.analysisActions.observations.length === 400
+      && current.analysisActions.actions.length === 200
+      && !current.analysisActions.actions.some((action) => action.actionId === actionId);
+  }, 5_000, () => output);
+  const olderInspection = await fetchJson(`${gatewayUrl}/api/analysis/actions?${params}`);
+  assert.equal(olderInspection.actions.length, 1);
+  assert.equal(olderInspection.actions[0].actionId, actionId);
+  assert.equal(olderInspection.actions[0].outcome, "success");
+  const capped = (await fetchJson(`${gatewayUrl}/api/state`)).analysisActions;
+  assert.equal(capped.observations.length, 400);
+  assert.equal(capped.actions.length, 200);
+  assert.equal(capped.actions.some((action) => action.actionId === actionId), false);
 
   const shutdown = await fetch(`${gatewayUrl}/api/shutdown`, {
     method: "POST",

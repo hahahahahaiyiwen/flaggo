@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_agent::{
     AgentPool, AgentRunOutcome, AgentSessionSpec, AnalysisCapabilityFactory, AnalysisTask,
+    ObservedWorkspaceFileSystem,
     context::{analysis_task_prompt, prepare_agent_workspace},
 };
 use flaggo_analysis_domain::{
@@ -252,6 +253,10 @@ impl AnalysisCoordinator {
             .filesystem(&cycle.cycle_id, &context.attempt_id)
             .await?;
         prepare_agent_workspace(filesystem.as_ref()).await?;
+        let filesystem = Arc::new(ObservedWorkspaceFileSystem::new(
+            filesystem,
+            context.clone(),
+        ));
         let task = AnalysisTask {
             prompt: analysis_task_prompt(&context),
         };
