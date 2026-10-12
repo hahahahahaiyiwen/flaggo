@@ -29,7 +29,6 @@ for (const argument of process.argv.slice(2)) {
   }
 }
 const analysisEnabled = process.argv.includes("--analysis");
-const analysisSessionEventMaxBytes = 16 * 1024;
 const runDirectory = resolve(
   repositoryRoot,
   ".flaggo",
@@ -484,15 +483,6 @@ async function runAsyncAnalysisActivationCheck({
   const candidateExecutableDigest = entry["flaggo.candidate.digest"];
   assert.match(candidateExecutableDigest, /^sha256:[0-9a-f]{64}$/u);
   assert.notEqual(candidateExecutableDigest, activeExecutableDigest);
-  await host.waitForStructuredLog(
-    (structured) =>
-      structured.event === "async_analysis.agent_session_event",
-    {
-      signal: lifecycle.signal,
-      timeoutMilliseconds: 10000,
-    },
-  );
-
   await host.stop();
   const deadline = Date.now() + 30_000;
   let decisionAfterActivation;
@@ -529,8 +519,8 @@ async function runAsyncAnalysisActivationCheck({
       assert.equal(retained.result, intervalMs, "Learning must preserve actual gravity without data.");
     }
   }
-  const sessionDiagnostics = await assertAnalysisSessionDiagnostics(
-    hosts.paths.asyncAnalysisLog,
+  const actionDiagnostics = await assertAnalysisActionDiagnostics(
+    hosts.paths.asyncAnalysisLog, entry["flaggo.analysis.cycle.id"],
   );
   return {
     authoredExecutableDigest: activeExecutableDigest,
@@ -539,44 +529,42 @@ async function runAsyncAnalysisActivationCheck({
     candidateActivated: true,
     decisionAfterActivation,
     cycleId: entry["flaggo.analysis.cycle.id"],
-    sessionDiagnostics,
+    actionDiagnostics,
   };
 }
 
-async function assertAnalysisSessionDiagnostics(logPath) {
+async function assertAnalysisActionDiagnostics(logPath, cycleId) {
   const entries = (await readFile(logPath, "utf8"))
     .split(/\r?\n/u)
     .filter((line) => line !== "")
     .map((line) => JSON.parse(line));
-  const sessionEvents = entries
-    .filter((entry) => entry.event === "async_analysis.agent_session_event")
-    .map((entry) => entry.sessionEvent);
-  assert.ok(sessionEvents.length > 0);
-
-  const sizes = sessionEvents.map((event) =>
-    Buffer.byteLength(JSON.stringify(event), "utf8")
-  );
-  assert.ok(sizes.every((size) => size <= analysisSessionEventMaxBytes));
-  const truncatedEvents = sessionEvents.filter((event) =>
-    Object.hasOwn(event, "flaggoTruncation")
-  );
-  assert.ok(
-    truncatedEvents.length > 0,
-    "The live session must exercise bounded diagnostic truncation.",
-  );
-  assert.ok(truncatedEvents.every((event) =>
-    event.flaggoTruncation.limitBytes === analysisSessionEventMaxBytes
-    && event.flaggoTruncation.originalBytes > 0
-    && event.flaggoTruncation.truncatedValues > 0
-  ));
-  assert.ok(truncatedEvents.some((event) =>
-    event.flaggoTruncation.originalBytes > analysisSessionEventMaxBytes
-  ));
-
+  const actions = entries.filter((entry) =>
+    ["flaggo.analysis.action.started", "flaggo.analysis.action.completed"]
+      .includes(entry["event.name"])
+    && entry["flaggo.analysis.cycle.id"] === cycleId);
+  assert.ok(actions.length > 0, "The live attempt must expose structured actions.");
+  const completed = actions.filter((entry) =>
+    entry["event.name"] === "flaggo.analysis.action.completed");
+  for (const kind of ["session.start", "session.run", "evidence.sql", "proposal.submit"]) {
+    assert.ok(completed.some((entry) => entry["flaggo.analysis.action.kind"] === kind),
+      `Missing observed ${kind} completion.`);
+  }
+  for (const entry of actions) {
+    assert.match(entry["flaggo.analysis.action.id"], /^[0-9a-f-]{36}$/u);
+    for (const [key, value] of Object.entries(entry)) {
+      if (key.startsWith("flaggo.") && typeof value === "string") {
+        assert.ok(Buffer.byteLength(value, "utf8") <= 256, `Unbounded attribute ${key}`);
+      }
+    }
+    if (entry["event.name"] === "flaggo.analysis.action.completed") {
+      assert.ok(Number.isSafeInteger(entry["flaggo.analysis.action.duration_ms"]));
+      assert.ok(entry["flaggo.analysis.action.duration_ms"] >= 0);
+    }
+  }
   return {
-    events: sessionEvents.length,
-    maxEventBytes: Math.max(...sizes),
-    truncatedEvents: truncatedEvents.length,
+    observations: actions.length,
+    completedActions: completed.length,
+    kinds: [...new Set(actions.map((entry) => entry["flaggo.analysis.action.kind"]))],
   };
 }
 

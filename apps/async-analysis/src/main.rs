@@ -44,7 +44,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
             CopilotRuntimeConfig {
                 base_directory: config.copilot_home.clone(),
                 github_token: config.github_token.clone(),
-                log_session_events: config.log_session_events,
             },
             config.model.clone(),
             config.skill_directory.clone(),

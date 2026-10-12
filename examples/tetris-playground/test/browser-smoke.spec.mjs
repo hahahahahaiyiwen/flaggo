@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
+import { createAnalysisActionsView } from "../dist/analysis-actions.js";
 
 const exampleDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -11,6 +12,7 @@ const exampleDirectory = resolve(
 );
 const eventClients = new Set();
 const commands = [];
+let inspectionSnapshot;
 let baseUrl;
 let server;
 
@@ -248,6 +250,10 @@ const snapshot = {
     labels: {},
   }],
   backendFailures: [],
+  analysisActions: {
+    status: "current", lastSuccessfulPollAt: "2025-10-09T08:53:20.123Z",
+    observations: [], actions: [], limited: false, observationLimit: 400, actionLimit: 200,
+  },
   urls: {
     grafana: "http://127.0.0.1:3210",
   },
@@ -275,6 +281,9 @@ test.beforeAll(async () => {
     if (request.method === "GET" && url.pathname === "/app.js") {
       return sendFile(response, "dist/client.js", "text/javascript");
     }
+    if (request.method === "GET" && url.pathname === "/analysis-actions.js") {
+      return sendFile(response, "dist/analysis-actions.js", "text/javascript");
+    }
     if (request.method === "GET" && url.pathname === "/api/events") {
       response.writeHead(200, {
         "Cache-Control": "no-cache",
@@ -284,6 +293,16 @@ test.beforeAll(async () => {
       eventClients.add(response);
       response.write(`event: state\ndata: ${JSON.stringify(snapshot)}\n\n`);
       request.once("close", () => eventClients.delete(response));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/analysis/actions") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      const selection = Object.fromEntries(url.searchParams);
+      const view = inspectionSnapshot.analysisActions;
+      response.end(JSON.stringify(createAnalysisActionsView({
+        logs: [], previous: view, selection, now: new Date(inspectionSnapshot.observedAt),
+        ...(view.error === undefined ? {} : { error: view.error }),
+      })));
       return;
     }
     if (request.method === "POST") {
@@ -315,6 +334,10 @@ test.afterAll(async () => {
       else reject(error);
     });
   });
+});
+
+test.beforeEach(() => {
+  inspectionSnapshot = snapshot;
 });
 
 test("continues showing newest activity after the visible history fills", async ({ page }) => {
@@ -366,6 +389,170 @@ test("continues showing newest activity after the visible history fills", async 
     .toHaveAttribute("data-event-id", "newest-not-eligible");
   await filter.uncheck();
   await expect(page.locator(".timeline-event").first()).toHaveAttribute("data-event-id", "rolling-77");
+});
+
+test("action inspection keeps selection, expanded details, and focus during gameplay SSE", async ({ page }) => {
+  const before = commands.length;
+  await page.goto(baseUrl);
+  await expect(page.locator("#connection")).toHaveText("Live");
+  const action = {
+    key: "cycle-1-attempt-1-action-1",
+    contractDigest: `sha256:${"0".repeat(64)}`, contractName: "tetris.dropInterval",
+    cycleId: "cycle-1", attemptId: "attempt-1",
+    actionId: "00000000-0000-4000-8000-000000000001", kind: "evidence.sql",
+    startedAt: "2025-10-09T08:53:19.123Z", latestObservedAt: "2025-10-09T08:53:20.123Z",
+    completedAt: "2025-10-09T08:53:20.123Z", status: "completed", outcome: "success",
+    attributes: {
+      "flaggo.analysis.action.duration_ms": 14, "flaggo.analysis.result.rows": 3,
+      "flaggo.analysis.result.bytes": 250, "flaggo.analysis.query.digest": `sha256:${"4".repeat(64)}`,
+      "flaggo.analysis.artifact.digest": `sha256:${"5".repeat(64)}`,
+      "flaggo.analysis.snapshot.watermark": 42, "flaggo.analysis.snapshot.cutoff": "2025-10-09T08:53:00Z",
+    },
+    traceId: "0123456789abcdef0123456789abcdef",
+  };
+  const otherAttempt = { ...action, key: "cycle-1-attempt-2", attemptId: "attempt-2",
+    actionId: "00000000-0000-4000-8000-000000000002", kind: "session.run",
+    completedAt: undefined, status: "completion not observed", outcome: undefined, attributes: {} };
+  const otherCycle = { ...action, key: "cycle-2", cycleId: "cycle-2" };
+  const view = { ...snapshot.analysisActions, actions: [action, otherAttempt, otherCycle] };
+  const initial = { ...snapshot, analysisActions: view };
+  publishState(initial);
+  await expect(page.locator(".analysis-action")).toHaveCount(1);
+  await expect(page.locator("#analysis-latest-action")).toContainText("evidence.sql");
+  const row = page.locator(".analysis-action").first();
+  const summary = row.locator("summary");
+  await summary.click();
+  await expect(row).toHaveAttribute("open", "");
+  await expect(row).toContainText("Duration (ms)");
+  await expect(row).toContainText("Rows");
+  await expect(row).toContainText("250");
+  await expect(row).toContainText(`sha256:${"4".repeat(64)}`);
+  await expect(row).toContainText("Watermark");
+  await expect(row.locator(".action-trace")).toHaveAttribute("href", /explore.*tempo/u);
+  await summary.focus();
+  await page.evaluate(() => {
+    window.inspectedActionNode = document.querySelector(".analysis-action");
+    window.inspectedSummaryNode = document.activeElement;
+  });
+  for (let index = 0; index < 4; index += 1) {
+    publishState({ ...initial, revision: 100 + index,
+      human: { ...snapshot.human, state: { ...snapshot.human.state, score: 100 + index } } });
+    await expect(page.locator("#score")).toHaveText(String(100 + index));
+  }
+  expect(await page.evaluate(() =>
+    window.inspectedActionNode === document.querySelector(".analysis-action")
+    && window.inspectedSummaryNode === document.activeElement)).toBe(true);
+  await expect(row).toHaveAttribute("open", "");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press(" ");
+  expect(commands.length).toBe(before);
+  await page.locator("#analysis-attempt").selectOption("attempt-2");
+  await expect(page.locator(".analysis-action")).toContainText("completion not observed");
+  publishState({ ...initial, analysisActions: { ...view, actions: [otherCycle, action, otherAttempt] } });
+  await expect(page.locator("#analysis-attempt")).toHaveValue("attempt-2");
+  await expect(page.locator("#analysis-cycle")).toHaveValue(JSON.stringify([action.contractDigest, "cycle-1"]));
+  await expect(page.locator(".analysis-action")).toContainText("session.run");
+});
+
+test("refreshed older actions survive capped SSE history and inspection outages", async ({ page }) => {
+  await page.goto(baseUrl);
+  await expect(page.locator("#connection")).toHaveText("Live");
+  const action = {
+    contractDigest: `sha256:${"0".repeat(64)}`, contractName: "tetris.dropInterval",
+    cycleId: "older-cycle", attemptId: "older-attempt",
+    actionId: "00000000-0000-4000-8000-000000000004", kind: "evidence.sql",
+    latestObservedAt: snapshot.observedAt, completedAt: snapshot.observedAt,
+    status: "completed", outcome: "success", attributes: {
+      "flaggo.analysis.action.duration_ms": 5, "flaggo.analysis.result.rows": 3,
+    },
+  };
+  publishState({ ...snapshot, analysisActions: { ...snapshot.analysisActions, actions: [action] } });
+  const scoped = inspectionSnapshot.analysisActions;
+  let unavailable = false;
+  await page.route("**/api/analysis/actions?*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify(unavailable ? {
+      ...scoped, observations: [], actions: [], status: "stale",
+      error: "Loki unavailable; retaining latest observed facts.",
+      lastSuccessfulPollAt: undefined,
+    } : scoped),
+  }));
+  await expect(page.locator("#analysis-cycle")).toHaveValue(
+    JSON.stringify([action.contractDigest, action.cycleId]));
+  const newer = Array.from({ length: 400 }, (_, index) => ({
+    ...action, cycleId: "newer-cycle", attemptId: "newer-attempt",
+    actionId: `10000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+    latestObservedAt: new Date(Date.parse(snapshot.observedAt) + index + 1).toISOString(),
+    completedAt: new Date(Date.parse(snapshot.observedAt) + index + 1).toISOString(),
+  }));
+  publishState({ ...snapshot, analysisActions: { ...snapshot.analysisActions, actions: newer } });
+  expect(inspectionSnapshot.analysisActions.observations).toHaveLength(400);
+  expect(inspectionSnapshot.analysisActions.actions).toHaveLength(200);
+  await expect(page.locator(".analysis-action")).toHaveCount(0);
+  await page.locator("#analysis-refresh").click();
+  const row = page.locator(`[data-action-id="${action.actionId}"]`);
+  await expect(row).toContainText("success");
+  await row.locator("summary").click();
+  await row.locator("summary").focus();
+  await page.evaluate(() => {
+    window.inspectedActionNode = document.querySelector(".analysis-action");
+    window.inspectedSummaryNode = document.activeElement;
+  });
+  publishState({ ...inspectionSnapshot, revision: 100,
+    human: { ...snapshot.human, state: { ...snapshot.human.state, score: 101 } } });
+  await expect(page.locator("#score")).toHaveText("101");
+  await expect(row).toHaveAttribute("open", "");
+  expect(await page.evaluate(() =>
+    window.inspectedActionNode === document.querySelector(".analysis-action")
+    && window.inspectedSummaryNode === document.activeElement)).toBe(true);
+  unavailable = true;
+  await page.locator("#analysis-refresh").click();
+  await expect(page.locator("#analysis-action-status")).toContainText("Loki unavailable");
+  await expect(row).toContainText("success");
+  await expect(row).toHaveAttribute("open", "");
+  unavailable = false;
+  await page.locator("#analysis-refresh").click();
+  await expect(page.locator("#analysis-action-status")).toContainText("current");
+  await page.locator("#analysis-cycle").selectOption(
+    JSON.stringify([action.contractDigest, "newer-cycle"]));
+  await expect(page.locator(`[data-action-id="${action.actionId}"]`)).toHaveCount(0);
+});
+
+test("action telemetry partial, conflicting, outage and recovery states remain factual", async ({ page }) => {
+  await page.goto(baseUrl);
+  await expect(page.locator("#connection")).toHaveText("Live");
+  const action = {
+    key: "terminal-only", contractDigest: `sha256:${"0".repeat(64)}`, contractName: "tetris.dropInterval",
+    cycleId: "cycle-terminal", attemptId: "attempt-terminal",
+    actionId: "00000000-0000-4000-8000-000000000003", kind: "artifact.write",
+    latestObservedAt: snapshot.observedAt, completedAt: snapshot.observedAt,
+    status: "completed", outcome: "failed", attributes: { "flaggo.analysis.action.duration_ms": 5 },
+  };
+  const view = { ...snapshot.analysisActions, actions: [action], limited: true };
+  publishState({ ...snapshot, analysisActions: view });
+  await page.locator(".analysis-action summary").click();
+  await expect(page.locator(".analysis-action")).toContainText("Start not observed");
+  await expect(page.locator("#analysis-action-status")).toContainText("limit reached");
+  const stale = { ...view, status: "stale", error: "Loki unavailable; retained facts." };
+  publishState({ ...snapshot, analysisActions: stale });
+  await expect(page.locator("#analysis-action-status")).toContainText("Loki unavailable");
+  await expect(page.locator(".analysis-action")).toContainText("failed");
+  await expect(page.locator(".analysis-action")).toHaveAttribute("open", "");
+  const conflict = { ...action, kind: "unknown/conflicting", status: "unknown/conflicting",
+    outcome: undefined, completedAt: undefined, attributes: {} };
+  publishState({ ...snapshot, analysisActions: { ...view, actions: [conflict] } });
+  await expect(page.locator("#analysis-action-status")).toContainText("current");
+  await expect(page.locator(".analysis-action")).toContainText("unknown/conflicting");
+  await expect(page.locator(".analysis-action")).not.toContainText("success");
+  await page.route("**/api/analysis/actions?*", (route) =>
+    route.fulfill({ status: 503, body: "PRIVATE backend error" }));
+  await page.locator("#analysis-refresh").click();
+  await expect(page.locator("#analysis-action-status")).toContainText("backend unavailable");
+  await expect(page.locator(".analysis-action")).toContainText("unknown/conflicting");
+  await expect(page.locator("#analysis-action-status")).not.toContainText("PRIVATE");
+  await page.unroute("**/api/analysis/actions?*");
+  await page.locator("#analysis-refresh").click();
+  await expect(page.locator("#analysis-action-status")).toContainText("current");
 });
 
 test("renders split control lanes with health, executables, pipeline, and filters", async ({
@@ -782,6 +969,36 @@ test("live gallery preserves the human board, keyboard ownership, and duration-w
 });
 
 function publishState(value) {
+  const view = value.analysisActions;
+  const observations = view.observations.length > 0 ? view.observations
+    : view.actions.flatMap((action) => {
+      const base = {
+        contractDigest: action.contractDigest, contractName: action.contractName,
+        cycleId: action.cycleId, attemptId: action.attemptId, actionId: action.actionId,
+        kind: action.kind === "unknown/conflicting" ? "artifact.write" : action.kind,
+        attributes: action.attributes, traceId: action.traceId,
+      };
+      return [
+        ...(action.startedAt === undefined ? [] : [{
+          ...base, event: "started", observedAt: action.startedAt, outcome: "running",
+        }]),
+        ...(action.outcome === undefined ? [] : [{
+          ...base, event: "completed", observedAt: action.completedAt,
+          outcome: action.outcome,
+        }]),
+        ...(action.status !== "unknown/conflicting" ? [] : ["success", "failed"].map((outcome) => ({
+          ...base, event: "completed", observedAt: action.latestObservedAt, outcome,
+        }))),
+      ];
+    });
+  value = { ...value, analysisActions: {
+    ...createAnalysisActionsView({
+      logs: [], observations, now: new Date(value.observedAt), queryLimited: view.limited,
+      ...(view.error === undefined ? {} : { error: view.error }),
+    }),
+    status: view.status,
+  } };
+  inspectionSnapshot = value;
   for (const client of eventClients) {
     client.write(`event: state\ndata: ${JSON.stringify(value)}\n\n`);
   }

@@ -30,17 +30,16 @@ use github_copilot_sdk::{
     types::{MessageOptions, SessionConfig, SystemMessageConfig},
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 pub mod tools;
 
 use tools::{available_tools, copilot_tools, is_analysis_permission};
 
-const SESSION_EVENT_MAX_ARRAY_ITEMS: usize = 32;
-const SESSION_EVENT_MAX_BYTES: usize = 16 * 1024;
-const SESSION_EVENT_MAX_STRING_BYTES: usize = 4 * 1024;
-const SESSION_EVENT_PREVIEW_BYTES: usize = 8 * 1024;
+/// SDK starts describe concrete calls, but terminals describe retrying dispatches;
+/// they cannot be paired into truthful concrete request actions.
+pub const PROVIDER_REQUEST_OBSERVABILITY_SUPPORTED: bool = false;
+
 pub struct CopilotAgentProvider {
     runtime: Arc<CopilotRuntime>,
     model: Option<String>,
@@ -53,7 +52,6 @@ pub struct CopilotAgentProvider {
 pub struct CopilotRuntimeConfig {
     pub base_directory: PathBuf,
     pub github_token: Option<String>,
-    pub log_session_events: bool,
 }
 
 impl CopilotAgentProvider {
@@ -86,7 +84,6 @@ impl AgentProvider for CopilotAgentProvider {
         &self,
         specification: AgentSessionSpec,
     ) -> Result<Arc<dyn AgentSession>, AnalysisError> {
-        let context = specification.context.clone();
         let tools = specification.tools;
         let filesystem: Arc<dyn SessionFsProvider> =
             Arc::new(CopilotWorkspaceFileSystem::new(specification.filesystem));
@@ -123,9 +120,7 @@ impl AgentProvider for CopilotAgentProvider {
             }
             Err(error) => return Err(agent_error(error)),
         };
-        if self.runtime.config.log_session_events {
-            log_session_events(&session, context, self.runtime.config.github_token.clone());
-        }
+
         Ok(Arc::new(CopilotAgentSession {
             session,
             client,
@@ -245,143 +240,6 @@ fn apply_model_selection(config: &mut SessionConfig, model: Option<&str>) {
     }
 }
 
-fn log_session_events(
-    session: &Session,
-    context: flaggo_analysis_domain::AttemptContext,
-    github_token: Option<String>,
-) {
-    let session_id = session.id().to_string();
-    let mut events = session.subscribe();
-    drop(tokio::spawn(async move {
-        while let Ok(event) = events.recv().await {
-            let event = serde_json::to_value(event).unwrap_or_else(|error| {
-                json!({
-                    "serializationError": error.to_string()
-                })
-            });
-            let event = sanitize_session_event(event, github_token.as_deref());
-            println!(
-                "{}",
-                json!({
-                    "attemptId": context.attempt_id,
-                    "contractDigest": context.contract.digest,
-                    "contractName": context.contract.name,
-                    "cycleId": context.cycle_id,
-                    "event": "async_analysis.agent_session_event",
-                    "sessionEvent": event,
-                    "sessionId": session_id,
-                    "workspaceId": context.workspace_id
-                })
-            );
-        }
-    }));
-}
-
-fn sanitize_session_event(mut event: Value, secret: Option<&str>) -> Value {
-    redact_sensitive_values(&mut event, secret);
-    let original_bytes = event.to_string().len();
-    let mut truncated_values = 0;
-    truncate_session_event_value(&mut event, &mut truncated_values);
-    if truncated_values == 0 && original_bytes <= SESSION_EVENT_MAX_BYTES {
-        return event;
-    }
-
-    let truncation = json!({
-        "limitBytes": SESSION_EVENT_MAX_BYTES,
-        "originalBytes": original_bytes,
-        "truncatedValues": truncated_values
-    });
-    if let Value::Object(fields) = &mut event {
-        fields.insert("flaggoTruncation".to_owned(), truncation.clone());
-    }
-    if event.to_string().len() <= SESSION_EVENT_MAX_BYTES {
-        return event;
-    }
-
-    let data_preview = event.get("data").map(Value::to_string).unwrap_or_default();
-    json!({
-        "type": bounded_event_field(&event, "type"),
-        "id": bounded_event_field(&event, "id"),
-        "parentId": bounded_event_field(&event, "parentId"),
-        "timestamp": bounded_event_field(&event, "timestamp"),
-        "dataPreview": truncate_text(&data_preview, SESSION_EVENT_PREVIEW_BYTES),
-        "flaggoTruncation": truncation
-    })
-}
-
-fn truncate_session_event_value(value: &mut Value, truncated_values: &mut usize) {
-    match value {
-        Value::Array(values) => {
-            if values.len() > SESSION_EVENT_MAX_ARRAY_ITEMS {
-                *truncated_values += values.len() - SESSION_EVENT_MAX_ARRAY_ITEMS;
-                values.truncate(SESSION_EVENT_MAX_ARRAY_ITEMS);
-            }
-            for value in values {
-                truncate_session_event_value(value, truncated_values);
-            }
-        }
-        Value::Object(values) => {
-            for value in values.values_mut() {
-                truncate_session_event_value(value, truncated_values);
-            }
-        }
-        Value::String(text) if text.len() > SESSION_EVENT_MAX_STRING_BYTES => {
-            *text = truncate_text(text, SESSION_EVENT_MAX_STRING_BYTES);
-            *truncated_values += 1;
-        }
-        _ => {}
-    }
-}
-
-fn bounded_event_field(event: &Value, name: &str) -> Option<String> {
-    event
-        .get(name)
-        .and_then(Value::as_str)
-        .map(|text| truncate_text(text, 256))
-}
-
-fn truncate_text(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_owned();
-    }
-    let suffix = format!("... [truncated from {} bytes]", text.len());
-    let mut end = max_bytes.saturating_sub(suffix.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{}", &text[..end], suffix)
-}
-
-fn redact_sensitive_values(value: &mut Value, secret: Option<&str>) {
-    match value {
-        Value::Array(values) => {
-            for value in values {
-                redact_sensitive_values(value, secret);
-            }
-        }
-        Value::Object(values) => {
-            for (key, value) in values {
-                let key = key.to_ascii_lowercase();
-                if key.contains("authorization")
-                    || key.contains("credential")
-                    || key.contains("secret")
-                    || key.contains("token")
-                {
-                    *value = Value::String("[redacted]".to_owned());
-                } else {
-                    redact_sensitive_values(value, secret);
-                }
-            }
-        }
-        Value::String(text)
-            if secret.is_some_and(|secret| !secret.is_empty() && text.contains(secret)) =>
-        {
-            *text = "[redacted]".to_owned();
-        }
-        _ => {}
-    }
-}
-
 #[async_trait]
 impl AgentSession for CopilotAgentSession {
     async fn run(&self, task: AnalysisTask) -> Result<AgentRunOutcome, AnalysisError> {
@@ -490,7 +348,6 @@ impl CopilotWorkspaceFileSystem {
 #[async_trait]
 impl SessionFsProvider for CopilotWorkspaceFileSystem {
     async fn read_file(&self, path: &str) -> Result<String, FsError> {
-        self.require_exists(path).await?;
         self.inner.read_text(path).await.map_err(fs_error)
     }
 
@@ -603,12 +460,8 @@ fn agent_error(error: impl std::fmt::Display) -> AnalysisError {
 #[cfg(test)]
 mod tests {
     use github_copilot_sdk::types::SessionConfig;
-    use serde_json::json;
 
-    use super::{
-        FinalOutcome, FinalOutcomeKind, SESSION_EVENT_MAX_BYTES, apply_model_selection,
-        redact_sensitive_values, sanitize_session_event,
-    };
+    use super::{FinalOutcome, FinalOutcomeKind, apply_model_selection};
     use crate::AgentRunOutcome;
 
     #[test]
@@ -668,49 +521,5 @@ mod tests {
         apply_model_selection(&mut pinned, Some("gpt-test"));
         assert_eq!(pinned.model.as_deref(), Some("gpt-test"));
         assert_eq!(pinned.allowed_models, Some(vec!["gpt-test".to_owned()]));
-    }
-
-    #[test]
-    fn redacts_sensitive_session_event_fields() {
-        let mut event = json!({
-            "data": {
-                "githubToken": "secret",
-                "nested": {"authorization": "Bearer secret"},
-                "content": "analysis result"
-            }
-        });
-        redact_sensitive_values(&mut event, Some("gho-secret"));
-        assert_eq!(event["data"]["githubToken"], "[redacted]");
-        assert_eq!(event["data"]["nested"]["authorization"], "[redacted]");
-        assert_eq!(event["data"]["content"], "analysis result");
-
-        let mut literal = json!({"message": "request failed for gho-secret"});
-        redact_sensitive_values(&mut literal, Some("gho-secret"));
-        assert_eq!(literal["message"], "[redacted]");
-    }
-
-    #[test]
-    fn bounds_large_session_events_with_diagnostic_context() {
-        let event = json!({
-            "type": "system.message",
-            "id": "event-1",
-            "timestamp": "2026-10-05T21:00:00Z",
-            "data": {
-                "content": "x".repeat(50_000),
-                "contentBlocks": (0..100)
-                    .map(|index| json!({"index": index, "content": "y".repeat(1_000)}))
-                    .collect::<Vec<_>>()
-            }
-        });
-
-        let bounded = sanitize_session_event(event, None);
-        assert!(bounded.to_string().len() <= SESSION_EVENT_MAX_BYTES);
-        assert_eq!(bounded["type"], "system.message");
-        assert_eq!(bounded["id"], "event-1");
-        assert!(
-            bounded["flaggoTruncation"]["originalBytes"]
-                .as_u64()
-                .is_some_and(|bytes| bytes > SESSION_EVENT_MAX_BYTES as u64)
-        );
     }
 }

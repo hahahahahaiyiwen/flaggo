@@ -390,9 +390,9 @@ contract, cycle, and Candidate correlations. `NoChange`, `NoCandidate`,
 handoff, failure, timeout, and provider errors fail the test.
 The test then verifies decisions and restart persistence use the activated
 Candidate and checks no-data retention across several actual current intervals.
-It also parses every structured live
-`sessionEvent`, requires each serialized event to remain at or below 16 KiB,
-and requires the broad real session to exercise `flaggoTruncation` metadata.
+It also verifies structured action observations for the Candidate-producing
+cycle, including session, SQL and proposal completions, measured durations and
+bounded metadata. Raw provider session payloads are not logged or required.
 Because model behavior is intentionally nondeterministic, this is an opt-in
 behavior-quality test rather than part of the deterministic application test
 suite. Candidate delivery alone does not prove better gameplay; the playground

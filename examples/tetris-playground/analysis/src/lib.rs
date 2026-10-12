@@ -61,6 +61,7 @@ impl AgentSession for TetrisPlaygroundAgentSession {
         if let Some(outcome) = self.yield_outcome().await? {
             return Ok(outcome);
         }
+        validate_evidence_capabilities(&self.tools.describe().await?)?;
         self.tools.commit_cutoff(chrono::Utc::now()).await?;
         let mut rows = Vec::new();
         let mut cursor = 0;
@@ -104,6 +105,22 @@ impl AgentSession for TetrisPlaygroundAgentSession {
     async fn close(&self) -> Result<(), AnalysisError> {
         Ok(())
     }
+}
+
+fn validate_evidence_capabilities(description: &Value) -> Result<(), AnalysisError> {
+    if description.get("relation").and_then(Value::as_str) != Some("observations")
+        || description
+            .get("queryCapabilities")
+            .and_then(|capabilities| capabilities.get("dialect"))
+            .and_then(Value::as_str)
+            != Some("sqlite")
+    {
+        return Err(AnalysisError::Evidence(
+            "Tetris playground analysis requires the observations relation and sqlite dialect"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn append_evidence_page(
@@ -156,7 +173,37 @@ impl TetrisPlaygroundAgentSession {
 mod tests {
     use serde_json::json;
 
-    use super::{EVIDENCE_PAGE_SIZE, append_evidence_page};
+    use super::{EVIDENCE_PAGE_SIZE, append_evidence_page, validate_evidence_capabilities};
+
+    #[test]
+    fn accepts_the_fixed_sql_evidence_capabilities() {
+        assert!(
+            validate_evidence_capabilities(&json!({
+                "relation": "observations",
+                "queryCapabilities": {"dialect": "sqlite"}
+            }))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_incompatible_or_missing_evidence_capabilities_with_a_bounded_error() {
+        for description in [
+            json!({}),
+            json!({"relation": "observations"}),
+            json!({"relation": "observations", "queryCapabilities": {"dialect": "postgres"}}),
+            json!({"relation": "private_relation", "queryCapabilities": {"dialect": "sqlite"}}),
+            json!({"relation": "observations", "queryCapabilities": {"dialect": true}}),
+        ] {
+            match validate_evidence_capabilities(&description) {
+                Err(flaggo_analysis_domain::AnalysisError::Evidence(message)) => assert_eq!(
+                    message,
+                    "Tetris playground analysis requires the observations relation and sqlite dialect"
+                ),
+                result => panic!("expected a bounded evidence error, got {result:?}"),
+            }
+        }
+    }
 
     #[test]
     fn reads_complete_bounded_pages_with_sequence_gaps() {

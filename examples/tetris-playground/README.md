@@ -226,6 +226,69 @@ collection explicitly shows **Stale / partial telemetry — retained history**
 with the error and last complete poll time. A successful poll restores the
 live indication; retained events keep their original observation timestamps.
 
+### Inspect analysis actions
+
+The analysis lane also exposes a read-only **Cycle / Attempt** selector and
+expandable action rows. Selection includes the contract digest, so identically
+named cycles from different contract versions do not merge. It remains pinned
+as new cycles arrive. Expanded rows and keyboard focus survive unrelated
+gameplay/SSE updates. Keyboard interaction in the inspection panel does not
+send gameplay commands, and inspecting an attempt cannot alter runtime authority.
+
+Trusted code emits `flaggo.analysis.action.started` and
+`flaggo.analysis.action.completed` in the existing `flaggo.async-analysis`
+scope, with `flaggo.analysis.action` spans for trace navigation. These travel
+through the existing Collector/Loki/Tempo pipeline, not a new store. The
+gateway reconstructs actions by **contract digest + cycle + attempt + UUID
+action ID**. Each logical retry has a separate action ID. Exact duplicate
+observations are ignored, arrival order is immaterial, and a terminal without
+a start is displayed with **Start not observed**, not a fabricated timestamp.
+Contradictory terminals produce **unknown/conflicting**, never chosen success.
+An unmatched start says **completion not observed**: it does not prove that
+work is still executing. A stale backend indication is separate from the
+observed execution outcome, retains last-known facts, and clears on recovery.
+
+Rows show only bounded, allowlisted facts: action kind/outcome, duration,
+result rows/bytes, query/artifact digests, snapshot cutoff/watermark, hashed
+provider session identity, bounded tool-call identity/failure category, and
+trace links. They never expose SQL, prompts, datasets, artifact paths,
+arbitrary summaries/errors, provider logs, or private reasoning. **Latest
+observed action** is literal; absent provider activity is not “thinking”.
+The current Copilot SDK does not reliably correlate concrete provider request
+starts and terminals; `provider.request` is therefore absent rather than
+fabricated. Other kinds appear only when trusted code observes their boundary:
+`session.start`, `session.run`, `evidence.describe`, `evidence.cutoff`,
+`evidence.sql`, `artifact.read`, `artifact.write`, `artifact.append`, and
+`proposal.submit`. Provider custom-tool notifications do not duplicate the
+trusted evidence/filesystem/proposal actions.
+
+Discovery uses a separate newest-action Loki sample, protected from gameplay
+log volume. The existing `/api/state` and SSE snapshots expose
+`analysisActions`; selecting/refreshing an attempt issues
+`GET /api/analysis/actions?contractDigest=…&cycleId=…&attemptId=…`.
+That endpoint filters the supported Loki range API by all three correlation
+fields. Automatic selected-attempt refresh is every five seconds. Queries
+cover this playground run within at most the latest hour, request at most
+400 events, and have the existing two-second backend deadline. The gateway
+retains at most 400 validated action observations and 200 reconstructed
+actions in memory; this is a bounded observation cache, not an authoritative
+execution store. A reached query/history limit is explicitly shown as
+**sample limit reached / retained history truncated**. Even below the limit,
+missing telemetry and retention mean the view is not a complete timeline.
+Evicted selections remain selected and can be refreshed, rather than silently
+switching attempts. Scoped results are filtered before bounding, independently
+of the global newest-action sample. The browser retains one selected-attempt
+view with the same 400-observation/200-action limits, consumes the scoped
+response directly, and merges matching SSE observations without letting newer
+unrelated attempts evict the inspected history. Switching selection clears that
+local view; a backend failure retains its last-known facts with explicit error
+state.
+
+Later concrete operations, such as Python evidence analysis or supervised
+proposal review, should emit the same bounded facts at their actual trusted
+boundaries when those operations exist. This playground adds neither
+speculative agent roles nor a generic extensibility/event framework.
+
 The header shows one health pill per service. Health derives from process
 liveness and public readiness, not recent telemetry activity. Click a pill to
 inspect process, readiness, last-signal age, and registered live metrics.
@@ -409,18 +472,23 @@ npm run test:tetris-playground
 The browser fixture covers the dominant human board, single-slot browsing
 across ten miniatures,
 session-local inspection, keyboard ownership, duration weighting, executable inspection and
-activation, health details, collection visualization, rolling telemetry, and
+activation, health details, collection visualization, rolling telemetry,
+cycle/attempt action selection, focus-preserving expansion, partial/conflicting
+actions, backend outage/recovery, and
 pending/successful/inconclusive comparison cards. The Docker-backed end-to-end
 test exercises the pinned containers and real services, checks actual held-out
 improvement and executable authority, attaches the evaluation snapshot, and
 verifies cleanup. The credentialed live smoke uses actual mixed-source wall-clock
-windows, receipt joins, and production Copilot SQL results; it does not require
+windows, receipt joins, and trusted production Copilot SQL action metadata; it does not require
 a Candidate or validate human preferences. It collects one minute of legal
 play, stops the bots, and leaves the human game paused or game over while
 shared analysis continues.
 The ten-minute observation budget is a test timeout, not a live latency guarantee.
-It attaches evidence and per-cycle SQL/completion summaries, retaining the full
-sanitized analysis log on failure. That smoke requires Node.js 22.13+ for the
+It attaches evidence and per-cycle bounded SQL action/completion metadata,
+without reading raw provider session logs or SQL result payloads. Action
+telemetry does not prove which result origins were returned: mixed origins
+are verified separately at the existing test-only evidence boundary.
+That smoke requires Node.js 22.13+ for the
 built-in `node:sqlite` module.
 
 ```powershell
@@ -504,5 +572,6 @@ real-service authority and activation checks above remain separate.
 
 An ingestion `415` or stale Loki query is not terminal client-export evidence.
 Production authentication, durable client export replay, statistical safety,
-rollout control, and granular agent-action observability remain outside this
-exit verification.
+and rollout control remain outside this exit verification. Bounded
+agent-action observability is verified separately without increasing those
+guarantees.

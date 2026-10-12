@@ -5,6 +5,7 @@ import type {
 } from "./backend.js";
 import type {
   ActivityFeedStatus,
+  AnalysisActionsView,
   ClosedLoopEvent,
   ClosedLoopPhase,
   ControlLoopMilestone,
@@ -15,6 +16,7 @@ import type {
   ReadinessState,
   ServiceStatus,
 } from "./types.js";
+import { createAnalysisActionsView } from "./analysis-actions.js";
 
 export interface ObserverInput {
   readonly telemetry: TelemetryQueryResult;
@@ -32,6 +34,7 @@ export interface ObserverView {
   readonly metrics: readonly MetricView[];
   readonly timeline: readonly ClosedLoopEvent[];
   readonly activity: ActivityFeedStatus;
+  readonly analysisActions: AnalysisActionsView;
 }
 
 const staleAfterMilliseconds = 15_000;
@@ -275,6 +278,14 @@ export function createObserverView(input: ObserverInput): ObserverView {
           `${failure.source}: ${failure.message}`
         ).join("; "),
       },
+    analysisActions: createAnalysisActionsView({
+      logs: input.telemetry.logs,
+      now: input.now,
+      ...(input.previous === undefined ? {} : { previous: input.previous.analysisActions }),
+      ...(input.telemetry.failures.some((failure) => failure.source === "loki")
+        ? { error: "Loki action telemetry unavailable; retaining latest observed facts." } : {}),
+      queryLimited: input.telemetry.actionQueryLimited === true,
+    }),
   };
 }
 

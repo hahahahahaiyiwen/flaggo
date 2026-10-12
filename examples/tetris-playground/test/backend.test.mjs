@@ -45,6 +45,7 @@ test("queries both ends of the bounded Loki range", async () => {
   const activityRequests = requests.filter((url) =>
     url.pathname === "/loki/api/v1/query_range"
     && url.searchParams.get("query").includes("event_name")
+    && !url.searchParams.get("query").includes("action")
   );
   assert.equal(activityRequests.length, 2);
   assert.ok(activityRequests.every((url) =>

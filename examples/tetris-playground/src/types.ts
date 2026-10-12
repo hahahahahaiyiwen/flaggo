@@ -200,6 +200,48 @@ export interface ActivityFeedStatus {
   readonly error?: string;
 }
 
+export interface AnalysisSelection {
+  readonly contractDigest: string;
+  readonly cycleId: string;
+  readonly attemptId: string;
+}
+
+export interface AnalysisActionObservation extends AnalysisSelection {
+  readonly actionId: string;
+  readonly contractName: string;
+  readonly kind: string;
+  readonly event: "started" | "completed";
+  readonly observedAt: string;
+  readonly outcome: string;
+  readonly attributes: Readonly<Record<string, string | number>>;
+  readonly traceId?: string;
+}
+
+export interface AnalysisAction extends AnalysisSelection {
+  readonly key: string;
+  readonly actionId: string;
+  readonly contractName: string;
+  readonly kind: string;
+  readonly latestObservedAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly status: "completion not observed" | "completed" | "unknown/conflicting";
+  readonly outcome?: string;
+  readonly attributes: Readonly<Record<string, string | number>>;
+  readonly traceId?: string;
+}
+
+export interface AnalysisActionsView {
+  readonly status: ActivityFeedStatus["status"];
+  readonly lastSuccessfulPollAt?: string;
+  readonly error?: string;
+  readonly observations: readonly AnalysisActionObservation[];
+  readonly actions: readonly AnalysisAction[];
+  readonly limited: boolean;
+  readonly observationLimit: number;
+  readonly actionLimit: number;
+}
+
 export interface PlaygroundUrls {
   readonly grafana: string;
 }
@@ -216,6 +258,7 @@ export interface PlaygroundSnapshot {
   readonly evidence: EvidenceProgress;
   readonly controlLoop: ControlLoopProgress;
   readonly activity: ActivityFeedStatus;
+  readonly analysisActions: AnalysisActionsView;
   readonly timeline: readonly ClosedLoopEvent[];
   readonly metrics: readonly MetricView[];
   readonly backendFailures: readonly BackendFailure[];

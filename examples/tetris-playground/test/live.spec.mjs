@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
@@ -19,15 +19,7 @@ test.afterAll(async () => {
   await rm(runDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
-test.afterEach(async ({}, testInfo) => {
-  if (testInfo.status === testInfo.expectedStatus || runDirectory === undefined) return;
-  const log = await readFile(resolve(runDirectory, "async-analysis.log"), "utf8");
-  const path = testInfo.outputPath("async-analysis.log");
-  await writeFile(path, log, "utf8");
-  await testInfo.attach("analysis-diagnostics", { path });
-});
-
-test("live human and ten real-time players feed actual Copilot SQL analysis", async ({ page }, testInfo) => {
+test("live human and ten real-time players feed observed Copilot evidence analysis", async ({ page }, testInfo) => {
   test.setTimeout(660_000);
   await page.goto(host.url);
   await expect(page.locator("#connection")).toHaveText("Live");
@@ -41,7 +33,7 @@ test("live human and ten real-time players feed actual Copilot SQL analysis", as
   let stopped = false;
   let stoppedHumanState;
   let evidence;
-  let analysis = { origins: new Set() };
+  let analysis = { sqlActions: [] };
   let current;
   let commandSequence = 0;
   while (Date.now() < deadline) {
@@ -70,10 +62,9 @@ test("live human and ten real-time players feed actual Copilot SQL analysis", as
       await page.request.post(`${host.url}/api/commands/hard-drop`);
     }
     evidence = readLiveEvidence(resolve(runDirectory, "flaggo.db"));
-    const log = await readFile(resolve(runDirectory, "async-analysis.log"), "utf8");
-    analysis = observedAnalysis(log);
+    analysis = observedAnalysis(current);
     if (stopped && evidence.origins.size === 2 && evidence.sessions.size >= 11
-      && analysis.origins.size === 2 && analysis.outcome !== undefined
+      && analysis.sqlActions.length > 0 && analysis.outcome !== undefined
       && [...evidence.windows.values()].every((window) => window.values.size === 4
         && evidence.receipts.get(`${window.session}|${window.exposure}`) === window.interval)) break;
     await page.waitForTimeout(1_000);
@@ -83,7 +74,7 @@ test("live human and ten real-time players feed actual Copilot SQL analysis", as
     origins: [...evidence.origins],
     windows: evidence.windows.size,
     sdkReceipts: evidence.receipts.size,
-    copilotSqlOrigins: [...analysis.origins],
+    copilotSqlActions: analysis.sqlActions,
     copilotCycle: { id: analysis.cycleId, outcome: analysis.outcome },
     copilotSqlCycles: analysis.sqlCycles,
     copilotCompletedCycles: analysis.completedCycles,
@@ -103,8 +94,13 @@ test("live human and ten real-time players feed actual Copilot SQL analysis", as
   await testInfo.attach("live-mixed-source-evidence", { path });
   expect([...evidence.origins].sort()).toEqual(["greedy", "human"]);
   expect(evidence.sessions.size).toBeGreaterThanOrEqual(11);
-  expect([...analysis.origins].sort(), "Actual run_sql results must contain both origins, not just contract guidance.")
-    .toEqual(["greedy", "human"]);
+  expect(analysis.sqlActions.length, "A trusted SQL action must complete in the observed cycle.").toBeGreaterThan(0);
+  for (const action of analysis.sqlActions) {
+    expect(action.attributes["flaggo.analysis.query.digest"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(action.attributes["flaggo.analysis.result.rows"]).toBeGreaterThanOrEqual(0);
+    expect(action.attributes["flaggo.analysis.snapshot.watermark"]).toBeGreaterThanOrEqual(0);
+    expect(action.attributes["flaggo.analysis.snapshot.cutoff"]).toBeDefined();
+  }
   expect(["candidate", "no_candidate", "no_change"]).toContain(analysis.outcome);
   expect(evidence.windows.size).toBeGreaterThanOrEqual(4);
   for (const window of evidence.windows.values()) {
@@ -182,45 +178,29 @@ function attribute(attributes, key) {
   return attribute.value.value ?? attribute.value.int64;
 }
 
-function observedAnalysis(log) {
-  const calls = new Map();
+function observedAnalysis(snapshot) {
   const byCycle = new Map();
   const completed = new Map();
-  const origins = new Set();
-  for (const line of log.split(/\r?\n/u)) {
-    if (!line.startsWith("{") || !line.endsWith("}")) continue;
-    const row = JSON.parse(line);
-    if (row["event.name"] === "flaggo.analysis.cycle.completed"
-      && ["candidate", "no_candidate", "no_change"].includes(row["flaggo.operation.outcome"])) {
-      completed.set(row["flaggo.analysis.cycle.id"], row["flaggo.operation.outcome"]);
-    }
-    const event = row.sessionEvent;
-    if (event === undefined) continue;
-    if (event.type === "tool.execution_start" && event.data?.toolName === "run_sql") {
-      calls.set(event.data.toolCallId, row.cycleId);
-    }
-    if (event.type === "tool.execution_complete" && calls.has(event.data?.toolCallId)
-      && event.data.success === true) {
-      const result = JSON.stringify(event.data.result)?.replaceAll("\\", "");
-      const cycleId = calls.get(event.data.toolCallId);
-      const cycleOrigins = byCycle.get(cycleId) ?? new Set();
-      for (const origin of ["human", "greedy"]) {
-        if (result?.includes(`"${origin}"`)) {
-          origins.add(origin);
-          cycleOrigins.add(origin);
-        }
-      }
-      byCycle.set(cycleId, cycleOrigins);
+  for (const event of snapshot.timeline) {
+    if (event.name === "flaggo.analysis.cycle.completed"
+      && ["candidate", "no_candidate", "no_change"].includes(event.outcome)) {
+      completed.set(event.attributes["flaggo.analysis.cycle.id"], event.outcome);
     }
   }
+  for (const action of snapshot.analysisActions.actions) {
+    if (action.kind !== "evidence.sql" || action.status !== "completed" || action.outcome !== "success") continue;
+    const actions = byCycle.get(action.cycleId) ?? [];
+    actions.push(action);
+    byCycle.set(action.cycleId, actions);
+  }
   const observed = {
-    origins,
-    sqlCycles: [...byCycle].map(([id, cycleOrigins]) => ({ id, origins: [...cycleOrigins] })),
+    sqlActions: [...byCycle.values()].flat(),
+    sqlCycles: [...byCycle].map(([id, actions]) => ({ id, count: actions.length })),
     completedCycles: [...completed].map(([id, outcome]) => ({ id, outcome })),
   };
   for (const [cycleId, outcome] of completed) {
-    const cycleOrigins = byCycle.get(cycleId);
-    if (cycleOrigins?.size === 2) return { ...observed, origins: cycleOrigins, cycleId, outcome };
+    const actions = byCycle.get(cycleId);
+    if (actions?.length > 0) return { ...observed, sqlActions: actions, cycleId, outcome };
   }
   return observed;
 }

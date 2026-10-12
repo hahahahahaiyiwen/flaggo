@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -10,7 +9,8 @@ const exampleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(exampleDirectory, "../..");
 
 export async function startPlaygroundFixture({ mode, analysisMode, retain = false }) {
-  const shutdownFile = resolve(tmpdir(), `flaggo-playground-${randomUUID()}.stop`);
+  await mkdir(resolve(repositoryRoot, ".flaggo"), { recursive: true });
+  const shutdownFile = resolve(repositoryRoot, ".flaggo", `playground-${randomUUID()}.stop`);
   let output = "";
   let retainedDirectory;
   const child = spawn(process.execPath, [
@@ -22,7 +22,6 @@ export async function startPlaygroundFixture({ mode, analysisMode, retain = fals
     cwd: repositoryRoot,
     env: {
       ...process.env,
-      FLAGGO_ANALYSIS_LOG_SESSION_EVENTS: String(analysisMode === "copilot"),
       FLAGGO_PLAYGROUND_SHUTDOWN_FILE: shutdownFile,
     },
     stdio: ["ignore", "pipe", "pipe"],

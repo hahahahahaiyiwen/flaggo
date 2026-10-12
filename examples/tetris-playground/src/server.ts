@@ -52,6 +52,14 @@ const server = createServer(async (request, response) => {
       json(response, 200, playground.snapshot());
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/analysis/actions") {
+      json(response, 200, await playground.inspectAnalysis({
+        contractDigest: url.searchParams.get("contractDigest") ?? "",
+        cycleId: url.searchParams.get("cycleId") ?? "",
+        attemptId: url.searchParams.get("attemptId") ?? "",
+      }));
+      return;
+    }
     if (request.method === "POST" && url.pathname === "/api/shutdown") {
       json(response, 202, { status: "stopping" });
       setImmediate(() => void close(0));
@@ -160,6 +168,10 @@ const server = createServer(async (request, response) => {
         resolve(publicDirectory, "styles.css"),
         "text/css",
       );
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/analysis-actions.js") {
+      await file(response, resolve(sourceDirectory, "analysis-actions.js"), "text/javascript");
       return;
     }
     json(response, 404, { error: "Route not found." });

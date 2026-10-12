@@ -1,8 +1,16 @@
+import { createHash } from "node:crypto";
 import type {
   BackendFailure,
   MetricView,
+  AnalysisSelection,
 } from "./types.js";
 import { activityLogNames } from "./observer.js";
+import {
+  actionAttributeNames,
+  actionLogNames,
+  actionObservationLimit,
+  validAnalysisSelection,
+} from "./analysis-actions.js";
 
 export interface TelemetryLog {
   readonly id: string;
@@ -32,6 +40,7 @@ export interface TelemetryQueryResult {
   readonly spans: readonly TelemetrySpan[];
   readonly metrics: readonly MetricView[];
   readonly failures: readonly BackendFailure[];
+  readonly actionQueryLimited?: boolean;
 }
 
 export interface LgtmEndpoints {
@@ -56,6 +65,7 @@ const knownAttributeNames = [
   "flaggo.batch.id",
   "flaggo.analysis.cycle.id",
   "flaggo.analysis.attempt.id",
+  ...actionAttributeNames,
   "flaggo.operation.name",
   "flaggo.operation.outcome",
   "flaggo.failure.category",
@@ -113,10 +123,11 @@ export class LgtmClient {
       this.queryLogs(since, signal),
       this.querySpans(since, signal),
       this.queryMetrics(signal),
+      this.queryAnalysisActions(since, undefined, signal),
     ]);
     const failures: BackendFailure[] = [];
     const observedAt = new Date().toISOString();
-    const sourceNames = ["loki", "tempo", "prometheus"] as const;
+    const sourceNames = ["loki", "tempo", "prometheus", "loki"] as const;
     for (let index = 0; index < operations.length; index += 1) {
       const operation = operations[index]!;
       if (operation.status === "rejected") {
@@ -128,12 +139,41 @@ export class LgtmClient {
       }
     }
     const logResult = settledValue(operations[0], { logs: [], failures: [] });
+    const actionResult = settledValue(operations[3], { logs: [], limited: false });
     return {
-      logs: logResult.logs,
+      logs: [...new Map([...logResult.logs, ...actionResult.logs]
+        .map((log) => [log.id, log])).values()],
       spans: settledValue(operations[1], []),
       metrics: settledValue(operations[2], []),
       failures: [...logResult.failures, ...failures],
+      actionQueryLimited: actionResult.limited,
     };
+  }
+
+  async queryAnalysisActions(
+    since: Date,
+    selection?: AnalysisSelection,
+    signal?: AbortSignal,
+  ): Promise<{ readonly logs: readonly TelemetryLog[]; readonly limited: boolean }> {
+    if (selection !== undefined && !validAnalysisSelection(selection)) {
+      throw new Error("Invalid analysis telemetry selection.");
+    }
+    let query = '{service_name="flaggo-async-analysis"} | event_name=~'
+      + JSON.stringify(actionLogNames.map((name) => name.replaceAll(".", "\\.")).join("|"));
+    if (selection !== undefined) {
+      query += ` | flaggo_contract_digest=${JSON.stringify(selection.contractDigest)}`
+        + ` | flaggo_analysis_cycle_id=${JSON.stringify(selection.cycleId)}`
+        + ` | flaggo_analysis_attempt_id=${JSON.stringify(selection.attemptId)}`;
+    }
+    const url = new URL("/loki/api/v1/query_range", this.endpoints.lokiUrl);
+    url.searchParams.set("query", query);
+    const start = Math.max(since.getTime(), Date.now() - 60 * 60 * 1_000);
+    url.searchParams.set("start", (BigInt(start) * 1_000_000n).toString());
+    url.searchParams.set("end", (BigInt(Date.now()) * 1_000_000n).toString());
+    url.searchParams.set("direction", "backward");
+    url.searchParams.set("limit", String(actionObservationLimit));
+    const logs = parseLokiResponse(await this.fetchJson(url, signal));
+    return { logs, limited: logs.length >= actionObservationLimit };
   }
 
   private async queryLogs(
@@ -222,7 +262,7 @@ export class LgtmClient {
     const body = await response.text();
     if (!response.ok) {
       throw new Error(
-        `${url.origin} returned HTTP ${response.status}: ${compact(body)}`,
+        `${url.origin} returned HTTP ${response.status}.`,
       );
     }
     try {
@@ -265,7 +305,10 @@ export function parseLokiResponse(value: unknown): readonly TelemetryLog[] {
       const spanId = stringValue(attributes.span_id ?? attributes.spanId);
       const severity = stringValue(attributes.severity_text);
       logs.push({
-        id: `log:${nanoseconds}:${service}:${eventName ?? line}`,
+        id: `log:${createHash("sha256").update(JSON.stringify([
+          nanoseconds, service, eventName ?? line,
+          Object.entries(attributes).sort(([left], [right]) => left.localeCompare(right)),
+        ])).digest("hex")}`,
         observedAt,
         service,
         ...(eventName === undefined ? {} : { eventName }),
@@ -452,13 +495,6 @@ function settledValue<T>(
   fallback: T,
 ): T {
   return result.status === "fulfilled" ? result.value : fallback;
-}
-
-function compact(value: string): string {
-  const normalized = value.replace(/\s+/gu, " ").trim();
-  return normalized.length <= 240
-    ? normalized
-    : `${normalized.slice(0, 237)}...`;
 }
 
 function errorMessage(error: unknown): string {
