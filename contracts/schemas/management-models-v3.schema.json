@@ -887,8 +887,6 @@
         "workspaceId",
         "cycleId",
         "attemptId",
-        "evidenceCutoff",
-        "evidenceWatermark",
         "analysisManifestDigest"
       ],
       "properties": {
@@ -906,19 +904,9 @@
           "minLength": 1,
           "maxLength": 256
         },
-        "evidenceCutoff": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Inclusive event-time cutoff frozen by the analysis cycle."
-        },
-        "evidenceWatermark": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Opaque Evidence Store observation watermark frozen by the analysis cycle."
-        },
         "analysisManifestDigest": {
           "$ref": "#/$defs/Sha256Digest",
-          "description": "Digest of the immutable analysis manifest persisted in the workspace."
+          "description": "Digest of the sealed analysis manifest persisted in the workspace, including saved datasets and query times. No cycle-wide evidence snapshot boundary is implied."
         }
       }
     },

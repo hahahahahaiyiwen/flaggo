@@ -419,8 +419,6 @@ function actionDetail(action: AnalysisAction, grafana: string): string {
     ["Bytes", action.attributes["flaggo.analysis.result.bytes"]],
     ["Query digest", action.attributes["flaggo.analysis.query.digest"]],
     ["Artifact digest", action.attributes["flaggo.analysis.artifact.digest"]],
-    ["Cutoff", action.attributes["flaggo.analysis.snapshot.cutoff"]],
-    ["Watermark", action.attributes["flaggo.analysis.snapshot.watermark"]],
     ["Tool call", action.attributes["flaggo.analysis.tool_call.id"]],
     ["Session digest", action.attributes["flaggo.analysis.session.id"]],
     ["Failure category", action.attributes["flaggo.failure.category"]],

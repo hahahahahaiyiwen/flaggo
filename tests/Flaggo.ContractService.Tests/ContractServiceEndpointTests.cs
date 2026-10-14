@@ -463,6 +463,15 @@ public sealed class ContractServiceEndpointTests
         var submission = CreateCandidateSubmission(
             cycleId: "cycle-1",
             returnValue: 5);
+        var serialized = JsonSerializer.Serialize(submission, StrictJson.Options);
+        using var submissionDocument = JsonDocument.Parse(serialized);
+        Assert.Equal(
+            ["workspaceId", "cycleId", "attemptId", "analysisManifestDigest"],
+            submissionDocument.RootElement.GetProperty("provenance")
+                .EnumerateObject().Select(property => property.Name).ToArray());
+        Assert.Equal(
+            submission.Provenance,
+            JsonSerializer.Deserialize<AnalysisCandidateSubmission>(serialized, StrictJson.Options)!.Provenance);
         var path =
             $"/v3/decision-contracts/worker.batchSize/versions/{version.ContractDigest}"
             + "/candidates";
@@ -506,6 +515,11 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(
             submission.Provenance.CycleId,
             persisted?.Provenance?.GetProperty("cycleId").GetString());
+        Assert.Equal(
+            submission.Provenance.AnalysisManifestDigest,
+            persisted?.Provenance?.GetProperty("analysisManifestDigest").GetString());
+        Assert.False(persisted!.Provenance!.Value.TryGetProperty("evidenceCutoff", out _));
+        Assert.False(persisted.Provenance.Value.TryGetProperty("evidenceWatermark", out _));
 
         factory.Clock.SetUtcNow(ContractServiceFactory.Now.AddMinutes(5));
         using var retryRequest = JsonRequest(
@@ -524,6 +538,62 @@ public sealed class ContractServiceEndpointTests
         Assert.Equal(
             activeDigest,
             (await store.GetActiveAsync(version.ContractDigest))?.ExecutableDigest);
+    }
+
+    [Theory]
+    [InlineData("workspaceId")]
+    [InlineData("analysisManifestDigest")]
+    [InlineData("cycleId")]
+    [InlineData("attemptId")]
+    public async Task AnalysisCandidateSubmissionValidatesManifestAndRunIdentity(string field)
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var version = await PutDefaultAsync(client, 3);
+        var submission = CreateCandidateSubmission("cycle-invalid", returnValue: 5);
+        var provenance = submission.Provenance;
+        submission = submission with
+        {
+            Provenance = field switch
+            {
+                "workspaceId" => provenance with { WorkspaceId = "not-a-digest" },
+                "analysisManifestDigest" => provenance with { AnalysisManifestDigest = "not-a-digest" },
+                "cycleId" => provenance with { CycleId = "" },
+                "attemptId" => provenance with { AttemptId = "" },
+                _ => throw new InvalidOperationException()
+            }
+        };
+        using var request = JsonRequest(
+            HttpMethod.Post,
+            $"/v3/decision-contracts/worker.batchSize/versions/{version.ContractDigest}/candidates",
+            JsonSerializer.Serialize(submission, StrictJson.Options));
+        using var response = await client.SendAsync(request);
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, ProblemTypes.InvalidRequest);
+    }
+
+    [Theory]
+    [InlineData("evidenceCutoff", "\"2026-08-01T11:59:00Z\"")]
+    [InlineData("evidenceWatermark", "42")]
+    public async Task AnalysisCandidateSubmissionRejectsRemovedSnapshotFields(
+        string field,
+        string jsonValue)
+    {
+        using var factory = new ContractServiceFactory();
+        using var client = factory.CreateClient();
+        var version = await PutDefaultAsync(client, 3);
+        var submission = CreateCandidateSubmission("cycle-legacy", returnValue: 5);
+        var provenance = JsonSerializer.SerializeToElement(submission.Provenance, StrictJson.Options)
+            .EnumerateObject().ToDictionary(property => property.Name, property => property.Value);
+        provenance.Add(field, JsonSerializer.Deserialize<JsonElement>(jsonValue));
+        var legacyJson = JsonSerializer.Serialize(new { rules = submission.Rules, provenance }, StrictJson.Options);
+        Assert.Throws<JsonException>(
+            () => JsonSerializer.Deserialize<AnalysisCandidateSubmission>(legacyJson, StrictJson.Options));
+        using var request = JsonRequest(
+            HttpMethod.Post,
+            $"/v3/decision-contracts/worker.batchSize/versions/{version.ContractDigest}/candidates",
+            legacyJson);
+        using var response = await client.SendAsync(request);
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, ProblemTypes.InvalidRequest);
     }
 
     [Fact]
@@ -1078,8 +1148,6 @@ public sealed class ContractServiceEndpointTests
                     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 CycleId = cycleId,
                 AttemptId = $"attempt-{cycleId}",
-                EvidenceCutoff = ContractServiceFactory.Now.AddMinutes(-1),
-                EvidenceWatermark = 42,
                 AnalysisManifestDigest =
                     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             }
@@ -1160,7 +1228,7 @@ public sealed class ContractServiceFactory : WebApplicationFactory<Program>
         new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
 
     private readonly string _databasePath =
-        Path.Combine(Path.GetTempPath(), $"flaggo-contract-service-{Guid.NewGuid():N}.db");
+        Path.Combine(AppContext.BaseDirectory, $"flaggo-contract-service-{Guid.NewGuid():N}.db");
 
     public MutableTimeProvider Clock { get; } = new(Now);
 

@@ -456,7 +456,7 @@ def validate_service_observability_profile(
     }
     action_kinds = {
         "session.start", "session.run", "provider.request",
-        "evidence.describe", "evidence.cutoff", "evidence.sql",
+        "evidence.describe", "evidence.sql", "python.run",
         "artifact.read", "artifact.write", "artifact.append", "proposal.submit",
     }
     terminal_outcomes = {
@@ -507,8 +507,6 @@ def validate_service_observability_profile(
             )
     action_metadata = {
         "flaggo.analysis.query.digest",
-        "flaggo.analysis.snapshot.cutoff",
-        "flaggo.analysis.snapshot.watermark",
         "flaggo.analysis.result.rows",
         "flaggo.analysis.result.bytes",
         "flaggo.analysis.artifact.digest",

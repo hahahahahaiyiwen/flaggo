@@ -71,8 +71,10 @@ In Windows PowerShell, use `npm.cmd` when forwarding launcher options so the
 
 Benchmark mode defaults to the example-owned deterministic `AgentProvider`.
 Use `--mode=benchmark --analysis=copilot` for a production-agent benchmark.
-Both providers use the real coordinator, immutable cutoff, bounded SQL tool,
-workspace, proposal, Candidate admission, and activation worker. The benchmark
+Both providers use the real coordinator, live scoped bounded SQL tool,
+workspace, proposal, Candidate admission, and activation worker. The deterministic
+provider discovers the SQL row ceiling through `describe` and pages at up to
+100 rows, reducing the page size when the configured ceiling is lower. The benchmark
 waits up to 45 seconds for deterministic activation or ten minutes for Copilot;
 Copilot attempts have a ten-minute deadline, with a twenty-second limit per
 evidence query. Live learning is ongoing and does
@@ -117,10 +119,10 @@ does not justify `noChange`; unresolved eligibility, insufficient support for
 an inference, material ambiguity in its rationale, or measured or predicted
 guardrail violations for the proposed behavior still mean `noCandidate`.
 
-Every query uses the cycle's immutable observation-time cutoff and captured
-materialization watermark. Earlier authorized history remains available, but
-an older observation materialized after snapshot capture waits for a later
-cycle. The cutoff is not the time analysis completes.
+Queries read live scoped evidence and save datasets with output-column metadata
+and execution times. The agent chooses time windows and a suitable lag for
+materialization delay. Older events arriving late can appear in subsequent
+queries; saved datasets remain available without automatically replaying them.
 
 ## Play and observe
 
@@ -249,7 +251,7 @@ work is still executing. A stale backend indication is separate from the
 observed execution outcome, retains last-known facts, and clears on recovery.
 
 Rows show only bounded, allowlisted facts: action kind/outcome, duration,
-result rows/bytes, query/artifact digests, snapshot cutoff/watermark, hashed
+result rows/bytes, query/artifact digests, hashed
 provider session identity, bounded tool-call identity/failure category, and
 trace links. They never expose SQL, prompts, datasets, artifact paths,
 arbitrary summaries/errors, provider logs, or private reasoning. **Latest
@@ -257,7 +259,7 @@ observed action** is literal; absent provider activity is not “thinking”.
 The current Copilot SDK does not reliably correlate concrete provider request
 starts and terminals; `provider.request` is therefore absent rather than
 fabricated. Other kinds appear only when trusted code observes their boundary:
-`session.start`, `session.run`, `evidence.describe`, `evidence.cutoff`,
+`session.start`, `session.run`, `evidence.describe`,
 `evidence.sql`, `artifact.read`, `artifact.write`, `artifact.append`, and
 `proposal.submit`. Provider custom-tool notifications do not duplicate the
 trusted evidence/filesystem/proposal actions.
@@ -510,7 +512,7 @@ npm.cmd run test:tetris-playground:e2e -- --repeat-each=2
 Each repetition launches a fresh isolated stack, learns and auto-activates a
 distinct executable, verifies matched held-out gameplay, and checks SDK/direct
 REST parity for two scored contexts. It verifies exact contract/Candidate
-identity, cycle/attempt provenance, immutable cutoff and watermark, and
+identity, cycle/attempt and sealed-manifest provenance, and
 registered metrics from every service. Bounded Loki queries and exact Tempo
 trace reads verify log/trace correlation from all five services. A rejected
 OTLP media type and an activation state conflict exercise representative
@@ -536,7 +538,9 @@ On 2026-10-11, both clean repetitions passed with the following fixed identities
 The successful cycles were `8bb9ee4b-15c2-4c05-8111-019d170dfc10` and
 `8ab00dd1-531f-4ef2-a476-25d482c5dd57`, with cutoffs
 `2026-10-11T22:20:19.5967624Z` and `2026-10-11T22:22:06.2070213Z`;
-both captured watermark `784`. The local launcher configuration is defined in
+both captured watermark `784` under the former frozen-snapshot implementation;
+these are historical verification records, not the current live-query contract.
+The local launcher configuration is defined in
 `local-stack.mjs`: materializer polling `25ms`, catalog refresh `1s`, analysis
 polling `250ms`, one agent, Contract Service activation polling `250ms`, and
 internal metric export `500ms`. Application OTLP collection remains `5s`.

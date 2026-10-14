@@ -1,77 +1,79 @@
 ---
 name: analysis-cycle-protocol
-description: Understand and safely execute one bounded Flaggo analysis cycle.
+description: Understand analysis-cycle identity, history, resumption, and outcomes.
 ---
 
 # Analysis cycle protocol
 
-## Load the cycle
+## Identify the cycle
 
 <cycle_context>
-1. Read `/workspace/contract.json` and `/workspace/cycle.json`.
-2. Read `/workspace/cutoff.json` when it exists, relevant files under
-   `/workspace/analysis` and `/workspace/handoffs`, and useful completed cycles
-   under `/workspace/history`.
-3. Treat the recorded identity, contract digest, authority, objective,
-   guardrails, and data sources as authoritative.
-4. Load `understand-decision-contract`, then `qualitative-analysis`.
+A workspace retains cycles for one contract name. Each cycle binds one
+accepted contract digest and its authority/source scope; an attempt is one
+execution of that cycle, not a new cycle.
+
+Use the bound task identity and read `/workspace/cycle.json` and
+`/workspace/contract.json`. Load `understand-decision-contract` for authored
+semantics, then `qualitative-analysis` for analytical method. The recorded
+contract and cycle identity are authoritative.
 </cycle_context>
 
-## Check cycle status
+## Find work products and resume
+
+<cycle_history>
+Current work products are under `/workspace/analysis`: findings in
+`findings.md`, query artifacts/history in `queries/`, execution records in
+`executions/`, and other scripts/modeling outputs. Checkpoints are under
+`/workspace/handoffs`.
+
+Other cycles are available read-only under `/workspace/history/<cycle-id>`,
+with the same relative layout. Inspect their `contract.json`, `cycle.json`,
+`outcome.json` when present before reusing work. Historical cycles may have
+different contract digests and evidence windows; saved datasets retain their
+original scope and query times. Files alone do not establish a completed outcome.
+
+On resumption, read existing findings, artifacts and checkpoints first.
+Continue unfinished work using saved datasets, or deliberately refresh evidence
+when needed. Live queries can see newly materialized observations; resumption
+does not restore a database snapshot. Reuse historical work only after checking
+its applicability to the current contract and analysis.
+</cycle_history>
+
+## Check status and checkpoint
 
 <cycle_status>
-Use `check_cycle_status` occasionally during long analysis and at natural
-boundaries such as before authoring an executable.
+Use `check_cycle_status` at natural boundaries, especially before submission.
+On `contractSuperseded`, stop analysis, complete the tagged sections in
+`/workspace/analysis/supersession.md`, and return `superseded`. On
+`serviceShutdown`, checkpoint unfinished work in
+`/workspace/handoffs/checkpoint.md` and return `handoff`.
 
-- On `contractSuperseded`, stop, complete the `reusable_work` and
-  `remaining_uncertainty` sections in
-  `/workspace/analysis/supersession.md`, then return `superseded`.
-- On `serviceShutdown`, complete the `completed_work` and `next_step` sections
-  in `/workspace/handoffs/checkpoint.md`, and return `handoff`.
-
-Only `contractSuperseded` returned by `check_cycle_status` establishes
-supersession.
+Only the coordinator status establishes supersession. The runtime owns cycle
+control records; do not edit them.
 </cycle_status>
-
-## Establish the evidence snapshot
-
-<evidence_snapshot>
-Call `describe`, then `commit_cutoff` before the first `run_sql`. Reuse the
-cutoff in `/workspace/cutoff.json`; otherwise commit an RFC 3339 time no later
-than now. All queries use that immutable cycle snapshot.
-</evidence_snapshot>
 
 ## Record the analysis
 
 <analysis_record>
 Before returning `candidate`, `noChange`, or `noCandidate`, complete every
 tagged section in `/workspace/analysis/findings.md` without removing its
-headings or XML tags:
-
-- `questions_and_queries`;
-- `observed_findings`;
-- `interpretation_and_uncertainty`;
-- `objective_and_guardrails`; and
-- `executable_conclusion`.
+headings or XML tags. Record supporting evidence, interpretation, uncertainty,
+guardrail reasoning and the executable conclusion.
 </analysis_record>
 
-## Finish the cycle
+## Return the attempt outcome
 
 <cycle_outcome>
-When evidence supports changing the executable, load `author-executable` and
-follow it before returning `candidate`.
-
-Return exactly one structured outcome with a concise, non-empty explanation:
+When proposing a change, load `author-executable`. Return one structured
+outcome with a concise, non-empty explanation:
 
 - `candidate` only after `propose_executable` succeeds;
-- `noChange` when sufficient data supports retaining the active executable;
-- `noCandidate` when the data is insufficient to choose an executable;
-- `handoff` when durable work remains or shutdown was requested;
-- `superseded` only after `check_cycle_status` returns
-  `contractSuperseded`; or
-- `failure` for a terminal analysis failure.
+- `noChange` when evidence supports retaining the active executable;
+- `noCandidate` when evidence cannot support a proposal;
+- `handoff` after checkpointing unfinished work for a later attempt;
+- `superseded` only after the coordinator reports `contractSuperseded`; or
+- `failure` when this attempt fails.
 
-Call `propose_executable` only for a supported `candidate` outcome. Do not
-call it for `noChange` or `noCandidate`; an empty `rules` array is not an
-outcome marker.
+Handoff or failure can leave the same cycle resumable. The runtime records
+the outcome and decides whether the cycle completes or continues.
 </cycle_outcome>

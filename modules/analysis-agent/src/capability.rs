@@ -1,13 +1,10 @@
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use flaggo_analysis_domain::{
-    AnalysisContract, AnalysisError, AttemptContext, CandidateRecord, EvidenceCutoff,
-};
+use flaggo_analysis_domain::{AnalysisContract, AnalysisError, AttemptContext, CandidateRecord};
 use flaggo_analysis_workspace::WorkspaceLease;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -68,17 +65,23 @@ impl YieldSignal {
 pub trait AnalysisTools: Send + Sync {
     async fn check_cycle_status(&self) -> Result<AnalysisRunStatus, AnalysisError>;
 
-    async fn commit_cutoff(&self, cutoff: DateTime<Utc>) -> Result<EvidenceCutoff, AnalysisError>;
-
     async fn describe(&self) -> Result<Value, AnalysisError>;
 
-    async fn run_sql(&self, sql: &str) -> Result<Value, AnalysisError>;
+    async fn run_sql(&self, sql: &str, row_limit: Option<u32>) -> Result<Value, AnalysisError>;
+
+    async fn code_interpreter(&self, input: PythonInput<'_>) -> Result<Value, AnalysisError>;
 
     async fn propose_executable(&self, rules: Value) -> Result<CandidateRecord, AnalysisError>;
 
     async fn proposed_candidate(&self) -> Result<Option<CandidateRecord>, AnalysisError>;
 
     fn yield_signal(&self) -> Arc<YieldSignal>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PythonInput<'a> {
+    ScriptPath(&'a str),
+    Code(&'a str),
 }
 
 #[async_trait]

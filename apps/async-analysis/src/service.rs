@@ -45,6 +45,7 @@ where
             timeout: config.query_timeout,
         },
         clock.clone(),
+        config.python.clone(),
     ));
     let coordinator = Arc::new(AnalysisCoordinator::new(
         contract_service,

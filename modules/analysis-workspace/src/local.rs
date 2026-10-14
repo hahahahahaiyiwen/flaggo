@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
-    CandidateRecord, CycleOutcome, EvidenceCutoff,
+    CandidateRecord, CycleOutcome,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -178,6 +178,12 @@ impl WorkspaceLease for LocalWorkspaceLease {
         &self.contract_name
     }
 
+    fn analysis_directory(&self, cycle_id: &str) -> Result<PathBuf, AnalysisError> {
+        self.require_active_cycle(cycle_id)?;
+        self.require_writable(cycle_id)?;
+        Ok(self.cycle_path(cycle_id).join("analysis"))
+    }
+
     async fn prepare_cycle(
         &self,
         contract: &AnalysisContract,
@@ -303,40 +309,6 @@ impl WorkspaceLease for LocalWorkspaceLease {
             state: Arc::clone(&self.state),
             io_gate: Arc::clone(&self.io_gate),
         }))
-    }
-
-    async fn commit_cutoff(
-        &self,
-        cycle_id: &str,
-        cutoff: DateTime<Utc>,
-        watermark: u64,
-    ) -> Result<EvidenceCutoff, AnalysisError> {
-        let _io_guard = mutex_lock(&self.io_gate)?;
-        self.require_active_cycle(cycle_id)?;
-        self.require_writable(cycle_id)?;
-        let path = self.cycle_path(cycle_id).join("cutoff.json");
-        let requested = EvidenceCutoff { cutoff, watermark };
-        if path.exists() {
-            let existing = read_json::<EvidenceCutoff>(&path)?;
-            if existing != requested {
-                return Err(AnalysisError::workspace(
-                    "evidence cutoff is immutable once committed",
-                ));
-            }
-            return Ok(existing);
-        }
-        write_json_atomic(&path, &requested)?;
-        Ok(requested)
-    }
-
-    async fn cutoff(&self, cycle_id: &str) -> Result<Option<EvidenceCutoff>, AnalysisError> {
-        validate_segment(cycle_id, "cycle ID")?;
-        let path = self.cycle_path(cycle_id).join("cutoff.json");
-        if path.exists() {
-            read_json(&path).map(Some)
-        } else {
-            Ok(None)
-        }
     }
 
     async fn append_audit(
@@ -1464,17 +1436,7 @@ mod tests {
                 .is_err()
         );
 
-        let cutoff = lease
-            .commit_cutoff(&preparation.cycle.cycle_id, now, 42)
-            .await
-            .expect("commit cutoff");
-        assert_eq!(cutoff.watermark, 42);
-        assert!(
-            lease
-                .commit_cutoff(&preparation.cycle.cycle_id, now, 43)
-                .await
-                .is_err()
-        );
+        assert!(!filesystem.exists("/workspace/cutoff.json").await.unwrap());
 
         let rules = json!([{"when": true, "then": {"delayMs": 5}}]);
         let proposal = lease

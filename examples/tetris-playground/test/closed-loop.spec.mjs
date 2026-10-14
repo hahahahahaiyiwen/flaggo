@@ -147,10 +147,8 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   expect(provenance.source).toBe("async-analysis");
   expect(provenance.cycleId).toMatch(/^[0-9a-f-]{36}$/u);
   expect(provenance.attemptId).toMatch(/^[0-9a-f-]{36}$/u);
-  expect(provenance.evidenceWatermark).toBeGreaterThan(0);
-  expect(Date.parse(provenance.evidenceCutoff)).toBeLessThanOrEqual(
-    Date.parse(active.createdAt),
-  );
+  expect(provenance.evidenceWatermark).toBeUndefined();
+  expect(provenance.evidenceCutoff).toBeUndefined();
   expect(provenance.analysisManifestDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
   expect(state.controlLoop.candidate.candidateDigest).toBe(learned.executableDigest);
   expect(state.controlLoop.activation.executableDigest).toBe(learned.executableDigest);
@@ -257,7 +255,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     actionLogs = parseLokiResponse(await response.json());
     const completed = actionLogs.filter((log) =>
       log.eventName === "flaggo.analysis.action.completed");
-    return ["session.start", "session.run", "evidence.describe", "evidence.cutoff",
+    return ["session.start", "session.run", "evidence.describe",
       "evidence.sql", "artifact.write", "proposal.submit"].every((kind) =>
       completed.some((log) => log.attributes["flaggo.analysis.action.kind"] === kind));
   }, { timeout: 60_000, message: "Candidate cycle must export granular action observations" }).toBe(true)
@@ -308,9 +306,8 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   expect(sqlActions.length).toBeGreaterThan(0);
   for (const log of sqlActions) {
     expect(log.attributes["flaggo.analysis.query.digest"]).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(Date.parse(log.attributes["flaggo.analysis.snapshot.cutoff"]))
-      .toBe(Date.parse(provenance.evidenceCutoff));
-    expect(Number(log.attributes["flaggo.analysis.snapshot.watermark"])).toBe(provenance.evidenceWatermark);
+    expect(log.attributes["flaggo.analysis.snapshot.cutoff"]).toBeUndefined();
+    expect(log.attributes["flaggo.analysis.snapshot.watermark"]).toBeUndefined();
     expect(Number(log.attributes["flaggo.analysis.result.rows"])).toBeGreaterThan(0);
     expect(Number(log.attributes["flaggo.analysis.result.bytes"])).toBeGreaterThan(0);
   }
@@ -325,9 +322,11 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   await expect(inspectedSql).toBeVisible({ timeout: 30_000 });
   await inspectedSql.locator("summary").click();
   await expect(inspectedSql).toHaveAttribute("open", "");
-  for (const label of ["Duration (ms)", "Rows", "Bytes", "Query digest", "Cutoff", "Watermark"]) {
+  for (const label of ["Duration (ms)", "Rows", "Bytes", "Query digest"]) {
     await expect(inspectedSql).toContainText(label);
   }
+  await expect(inspectedSql).not.toContainText("Cutoff");
+  await expect(inspectedSql).not.toContainText("Watermark");
   await expect(inspectedSql.locator(".action-trace")).toBeVisible();
   await expect.poll(async () => {
     const response = await page.request.get(`${playgroundUrl}/api/state`);

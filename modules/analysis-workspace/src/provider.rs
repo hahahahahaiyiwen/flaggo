@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
-    CandidateRecord, CycleOutcome, EvidenceCutoff,
+    CandidateRecord, CycleOutcome,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,6 +68,9 @@ pub trait WorkspaceLease: Send + Sync {
 
     fn contract_name(&self) -> &str;
 
+    /// Host working directory for trusted-local execution; not a sandbox.
+    fn analysis_directory(&self, cycle_id: &str) -> Result<PathBuf, AnalysisError>;
+
     async fn prepare_cycle(
         &self,
         contract: &AnalysisContract,
@@ -81,15 +84,6 @@ pub trait WorkspaceLease: Send + Sync {
         cycle_id: &str,
         attempt_id: &str,
     ) -> Result<Arc<dyn WorkspaceFileSystem>, AnalysisError>;
-
-    async fn commit_cutoff(
-        &self,
-        cycle_id: &str,
-        cutoff: DateTime<Utc>,
-        watermark: u64,
-    ) -> Result<EvidenceCutoff, AnalysisError>;
-
-    async fn cutoff(&self, cycle_id: &str) -> Result<Option<EvidenceCutoff>, AnalysisError>;
 
     async fn append_audit(
         &self,

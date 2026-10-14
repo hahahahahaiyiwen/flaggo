@@ -9,8 +9,9 @@ mod sqlite;
 mod sqlite_analysis;
 
 pub use analysis::{
-    EvidenceAnalysisStore, EvidenceQueryCapabilities, EvidenceQueryLimits, EvidenceQueryRequest,
-    EvidenceQueryResult, EvidenceQueryScope, EvidenceSourceSelector, ObservationWatermark,
+    EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryLimits,
+    EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope, EvidenceRelation,
+    EvidenceRelationColumn, EvidenceSourceSelector,
 };
 pub use sqlite::SqliteEvidenceStore;
 pub use sqlite_analysis::{SQLITE_EVIDENCE_QUERY_CAPABILITIES, SqliteEvidenceAnalysisStore};

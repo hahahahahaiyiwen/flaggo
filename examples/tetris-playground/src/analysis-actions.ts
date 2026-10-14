@@ -14,8 +14,8 @@ export const actionObservationLimit = 400;
 export const actionLimit = 200;
 const kinds = new Set([
   "session.start", "session.run", "provider.request", "evidence.describe",
-  "evidence.cutoff", "evidence.sql", "artifact.read", "artifact.write",
-  "artifact.append", "proposal.submit",
+  "evidence.sql", "artifact.read", "artifact.write",
+  "artifact.append", "proposal.submit", "python.run",
 ]);
 const outcomes = new Set([
   "success", "failed", "timeout", "cancelled", "interrupted", "superseded",
@@ -28,8 +28,7 @@ const rfc3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d
 export const actionAttributeNames = [
   "flaggo.analysis.action.id", "flaggo.analysis.action.kind",
   "flaggo.analysis.action.outcome", "flaggo.analysis.action.duration_ms",
-  "flaggo.analysis.query.digest", "flaggo.analysis.snapshot.cutoff",
-  "flaggo.analysis.snapshot.watermark", "flaggo.analysis.result.rows",
+  "flaggo.analysis.query.digest", "flaggo.analysis.result.rows",
   "flaggo.analysis.result.bytes", "flaggo.analysis.artifact.digest",
   "flaggo.analysis.tool_call.id", "flaggo.analysis.session.id",
 ] as const;
@@ -81,14 +80,10 @@ export function actionObservation(log: TelemetryLog): AnalysisActionObservation 
     const value = attrs[name];
     if (typeof value === "string" && digest.test(value)) attributes[name] = value;
   }
-  for (const name of ["flaggo.analysis.snapshot.watermark", "flaggo.analysis.result.rows",
+  for (const name of ["flaggo.analysis.result.rows",
     "flaggo.analysis.result.bytes"]) {
     const value = nonnegativeInteger(attrs[name]);
     if (value !== undefined) attributes[name] = value;
-  }
-  const cutoff = attrs["flaggo.analysis.snapshot.cutoff"];
-  if (typeof cutoff === "string" && validTimestamp(cutoff)) {
-    attributes["flaggo.analysis.snapshot.cutoff"] = cutoff;
   }
   const toolCall = attrs["flaggo.analysis.tool_call.id"];
   if (typeof toolCall === "string" && /^[\x21-\x7e]{1,128}$/u.test(toolCall)) {

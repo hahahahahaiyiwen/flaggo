@@ -85,8 +85,6 @@ public sealed record AnalysisCandidateAdmission(
     string ContractName,
     string ContractDigest,
     string ExecutableDigest,
-    DateTimeOffset EvidenceCutoff,
-    long EvidenceWatermark,
     string AnalysisManifestDigest,
     DateTimeOffset CreatedAt);
 

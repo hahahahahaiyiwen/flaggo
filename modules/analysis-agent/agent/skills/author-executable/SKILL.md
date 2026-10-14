@@ -49,8 +49,7 @@ expected objective effect, guardrail reasoning, and uncertainty.
 ## Submit the Candidate
 
 <candidate_submission>
-Call `check_cycle_status` before submission. Then call
-`propose_executable` with one complete `rules` array. The tool validates and
-persists an inactive Candidate. Submit one proposal for the cycle and return
-`candidate` only after the tool succeeds.
+Submit the supported rules through `propose_executable`; Candidate admission
+is not activation. Follow `analysis-cycle-protocol` for status checks,
+checkpointing and the attempt outcome.
 </candidate_submission>

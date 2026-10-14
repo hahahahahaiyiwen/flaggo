@@ -274,6 +274,19 @@ public sealed class StoreTests
         await Assert.ThrowsAsync<CandidateAdmissionConflictException>(
             () => store.PutAnalysisCandidateAsync(conflictingCandidate, conflict));
         Assert.Null(await store.GetAsync(conflictingCandidate.ExecutableDigest));
+
+        await Assert.ThrowsAsync<CandidateAdmissionConflictException>(
+            () => store.PutAnalysisCandidateAsync(
+                candidate,
+                admission with { AttemptId = "different-attempt" }));
+        await Assert.ThrowsAsync<CandidateAdmissionConflictException>(
+            () => store.PutAnalysisCandidateAsync(
+                candidate,
+                admission with
+                {
+                    AnalysisManifestDigest =
+                        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }));
     }
 
     [Fact]
@@ -975,8 +988,216 @@ public sealed class StoreTests
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(InitializeAsync);
         Assert.Equal(
             $"Unsupported {component} schema version 1; "
-            + $"expected {(component == "executable-store" ? 4 : 3)}.",
+            + $"expected {(component == "executable-store" ? 5 : 3)}.",
             exception.Message);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(6)]
+    public async Task InitializationRejectsUnsupportedExecutableSchemaVersions(int version)
+    {
+        using var database = new TemporaryDatabase();
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "CREATE TABLE flaggo_schema_versions (component TEXT PRIMARY KEY, version INTEGER NOT NULL); "
+            + $"INSERT INTO flaggo_schema_versions VALUES ('executable-store', {version});");
+        var store = new SqliteExecutableStore(database.ConnectionString);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => store.InitializeAsync());
+
+        Assert.Equal(
+            $"Unsupported executable-store schema version {version}; expected 5.",
+            exception.Message);
+        Assert.False(await store.IsAvailableAsync());
+    }
+
+    [Fact]
+    public async Task VersionFourMigrationPreservesAdmissionsProvenanceAndActivation()
+    {
+        using var database = new TemporaryDatabase();
+        var contractStore = new SqliteContractVersionStore(database.ConnectionString);
+        await contractStore.InitializeAsync();
+        var accepted = CreateAcceptedVersion(
+            100,
+            new DateTimeOffset(2026, 3, 3, 9, 0, 0, TimeSpan.Zero));
+        await contractStore.PutAsync(accepted);
+        await contractStore.SetCurrentAsync(accepted.Contract.Name, accepted.ContractDigest);
+        var candidate = CreateCandidate(accepted.Contract, variant: 3);
+        var admission = CreateAdmission(candidate, "legacy-cycle");
+        var provenance = JsonSerializer.SerializeToElement(new
+        {
+            source = "async-analysis",
+            workspaceId = admission.WorkspaceId,
+            cycleId = admission.CycleId,
+            attemptId = admission.AttemptId,
+            evidenceCutoff = candidate.CreatedAt.AddMinutes(-5),
+            evidenceWatermark = 42,
+            analysisManifestDigest = admission.AnalysisManifestDigest
+        });
+        candidate = candidate with { Provenance = provenance };
+        var active = CreateCandidate(accepted.Contract, variant: 1) with
+        {
+            State = ExecutableLifecycleState.Active,
+            StateVersion = 7,
+            ActivatedAt = candidate.CreatedAt.AddMinutes(-1),
+            Provenance = provenance
+        };
+        var inactive = CreateCandidate(accepted.Contract, variant: 2) with
+        {
+            State = ExecutableLifecycleState.Inactive,
+            StateVersion = 4,
+            ActivatedAt = candidate.CreatedAt.AddMinutes(-2),
+            Provenance = provenance
+        };
+        var activeAdmission = CreateAdmission(active, "legacy-active-cycle");
+        var inactiveAdmission = CreateAdmission(inactive, "legacy-inactive-cycle");
+        await CreateVersionFourFixtureAsync(
+            database.ConnectionString,
+            [(candidate, admission), (active, activeAdmission), (inactive, inactiveAdmission)]);
+        var store = new SqliteExecutableStore(database.ConnectionString);
+        Assert.False(await store.IsAvailableAsync());
+
+        await store.InitializeAsync();
+        await store.InitializeAsync();
+
+        Assert.True(await store.IsAvailableAsync());
+        Assert.True(await contractStore.IsAvailableAsync());
+        foreach (var (executable, expectedAdmission) in new[]
+                 {
+                     (candidate, admission),
+                     (active, activeAdmission),
+                     (inactive, inactiveAdmission)
+                 })
+        {
+            var persisted = await store.GetAsync(executable.ExecutableDigest);
+            Assert.NotNull(persisted);
+            Assert.Equal(executable.State, persisted.State);
+            Assert.Equal(executable.StateVersion, persisted.StateVersion);
+            Assert.Equal(executable.CreatedAt, persisted.CreatedAt);
+            Assert.Equal(executable.ActivatedAt, persisted.ActivatedAt);
+            Assert.Equal(provenance.GetRawText(), persisted.Provenance!.Value.GetRawText());
+            Assert.Equal(
+                JsonSerializer.Serialize(executable.Executable, StrictJson.Options),
+                JsonSerializer.Serialize(persisted.Executable, StrictJson.Options));
+            Assert.Equal(
+                JsonSerializer.Serialize(executable.CheckedExecutable, StrictJson.Options),
+                JsonSerializer.Serialize(persisted.CheckedExecutable, StrictJson.Options));
+            Assert.Equal(
+                expectedAdmission,
+                await ReadAnalysisAdmissionAsync(
+                    database.ConnectionString,
+                    expectedAdmission.WorkspaceId,
+                    expectedAdmission.CycleId));
+        }
+
+        await using (var connection = new SqliteConnection(database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT version FROM flaggo_schema_versions WHERE component = 'executable-store';";
+            Assert.Equal(5L, await command.ExecuteScalarAsync());
+            command.CommandText =
+                "SELECT name FROM pragma_table_info('analysis_candidate_admissions') ORDER BY cid;";
+            var columns = new List<string>();
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    columns.Add(reader.GetString(0));
+                }
+            }
+            Assert.Equal(
+                ["workspace_id", "cycle_id", "attempt_id", "contract_name", "contract_digest",
+                    "executable_digest", "analysis_manifest_digest", "created_at"],
+                columns);
+            command.CommandText =
+                """
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE type = 'index' AND name IN (
+                    'ix_analysis_candidates_contract', 'ix_analysis_candidates_executable');
+                """;
+            Assert.Equal(2L, await command.ExecuteScalarAsync());
+            command.CommandText = "PRAGMA foreign_key_check;";
+            Assert.Null(await command.ExecuteScalarAsync());
+        }
+
+        var retry = await store.PutAnalysisCandidateAsync(
+            candidate with { CreatedAt = candidate.CreatedAt.AddHours(1), Provenance = null },
+            admission with { CreatedAt = admission.CreatedAt.AddHours(1) });
+        Assert.False(retry.Created);
+        Assert.Equal(admission.CreatedAt, retry.CreatedAt);
+        Assert.Equal(ExecutableLifecycleState.Candidate, retry.LifecycleState);
+        var snapshot = Assert.Single((await store.ListPendingAsync(10)).Candidates);
+        Assert.Equal(admission, snapshot.Admission);
+        Assert.Equal(0, snapshot.CandidateStateVersion);
+        Assert.Equal(
+            new ExecutableLifecycleToken(active.ExecutableDigest, active.StateVersion),
+            snapshot.ActiveExecutable);
+        var resolution = await store.ResolveAsync(
+            new AnalysisCandidateResolutionCommand(
+                snapshot.Admission,
+                snapshot.CandidateStateVersion,
+                snapshot.ActiveExecutable,
+                AnalysisCandidateResolutionAction.Activate));
+        Assert.Equal(AnalysisCandidateResolutionOutcome.Activated, resolution.Outcome);
+        Assert.Equal(
+            candidate.ExecutableDigest,
+            (await store.GetActiveAsync(accepted.ContractDigest))!.ExecutableDigest);
+        var resolvedRetry = await store.PutAnalysisCandidateAsync(candidate, admission);
+        Assert.False(resolvedRetry.Created);
+        Assert.Equal(ExecutableLifecycleState.Active, resolvedRetry.LifecycleState);
+        Assert.Equal(admission.CreatedAt, resolvedRetry.CreatedAt);
+        Assert.Empty((await store.ListPendingAsync(10)).Candidates);
+
+        var newCandidate = CreateCandidate(accepted.Contract, variant: 4);
+        var newAdmission = CreateAdmission(newCandidate, "new-live-cycle");
+        Assert.True((await store.PutAnalysisCandidateAsync(newCandidate, newAdmission)).Created);
+        Assert.Equal(newAdmission, Assert.Single((await store.ListPendingAsync(10)).Candidates).Admission);
+    }
+
+    [Fact]
+    public async Task VersionFourMigrationFailureRollsBackSchemaAndAdmissions()
+    {
+        using var database = new TemporaryDatabase();
+        var candidate = CreateCandidate(CreateContract(100), variant: 1);
+        var admission = CreateAdmission(candidate, "legacy-cycle");
+        await CreateVersionFourFixtureAsync(database.ConnectionString, [(candidate, admission)]);
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            """
+            DROP INDEX ix_analysis_candidates_contract;
+            CREATE TABLE ix_analysis_candidates_contract (value TEXT);
+            """);
+        var store = new SqliteExecutableStore(database.ConnectionString);
+
+        await Assert.ThrowsAsync<SqliteException>(() => store.InitializeAsync());
+
+        await using var connection = new SqliteConnection(database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT version FROM flaggo_schema_versions WHERE component = 'executable-store';";
+        Assert.Equal(4L, await command.ExecuteScalarAsync());
+        command.CommandText =
+            "SELECT evidence_watermark FROM analysis_candidate_admissions WHERE cycle_id = 'legacy-cycle';";
+        Assert.Equal(42L, await command.ExecuteScalarAsync());
+        command.CommandText =
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_candidate_admissions_v5';";
+        Assert.Equal(0L, await command.ExecuteScalarAsync());
+
+        await ExecuteSqlAsync(
+            database.ConnectionString,
+            "DROP TABLE ix_analysis_candidates_contract;");
+        await store.InitializeAsync();
+        Assert.True(await store.IsAvailableAsync());
+        Assert.Equal(
+            admission,
+            await ReadAnalysisAdmissionAsync(
+                database.ConnectionString,
+                admission.WorkspaceId,
+                admission.CycleId));
     }
 
     [Fact]
@@ -999,7 +1220,7 @@ public sealed class StoreTests
             database.ConnectionString,
             "UPDATE flaggo_schema_versions SET version = 3 "
             + "WHERE component = 'contract-store'; "
-            + "UPDATE flaggo_schema_versions SET version = 5 "
+            + "UPDATE flaggo_schema_versions SET version = 6 "
             + "WHERE component = 'executable-store';");
         Assert.True(await contractStore.IsAvailableAsync());
         Assert.False(await executableStore.IsAvailableAsync());
@@ -1111,8 +1332,6 @@ public sealed class StoreTests
             contractName,
             candidate.Executable.ContractDigest,
             candidate.ExecutableDigest,
-            candidate.CreatedAt.AddMinutes(-5),
-            42,
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             candidate.CreatedAt);
 
@@ -1127,7 +1346,7 @@ public sealed class StoreTests
         command.CommandText =
             """
             SELECT attempt_id, contract_name, contract_digest, executable_digest,
-                   evidence_cutoff, evidence_watermark, analysis_manifest_digest, created_at
+                   analysis_manifest_digest, created_at
             FROM analysis_candidate_admissions
             WHERE workspace_id = $workspaceId
               AND cycle_id = $cycleId;
@@ -1143,13 +1362,9 @@ public sealed class StoreTests
                 reader.GetString(1),
                 reader.GetString(2),
                 reader.GetString(3),
+                reader.GetString(4),
                 DateTimeOffset.Parse(
-                    reader.GetString(4),
-                    System.Globalization.CultureInfo.InvariantCulture),
-                reader.GetInt64(5),
-                reader.GetString(6),
-                DateTimeOffset.Parse(
-                    reader.GetString(7),
+                    reader.GetString(5),
                     System.Globalization.CultureInfo.InvariantCulture))
             : null;
     }
@@ -1186,10 +1401,110 @@ public sealed class StoreTests
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task CreateVersionFourFixtureAsync(
+        string connectionString,
+        IReadOnlyList<(StoredExecutable Executable, AnalysisCandidateAdmission Admission)> records)
+    {
+        await ExecuteSqlAsync(
+            connectionString,
+            """
+            CREATE TABLE IF NOT EXISTS flaggo_schema_versions (
+                component TEXT PRIMARY KEY,
+                version INTEGER NOT NULL
+            );
+            INSERT INTO flaggo_schema_versions(component, version) VALUES ('executable-store', 4);
+            CREATE TABLE decision_executables (
+                executable_digest TEXT PRIMARY KEY,
+                contract_digest TEXT NOT NULL,
+                executable_json BLOB NOT NULL,
+                checked_executable_json BLOB NOT NULL,
+                provenance_json BLOB NULL,
+                lifecycle_state TEXT NOT NULL
+                    CHECK(lifecycle_state IN ('candidate', 'active', 'inactive')),
+                state_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                activated_at TEXT NULL
+            );
+            CREATE INDEX ix_executables_contract ON decision_executables(contract_digest);
+            CREATE UNIQUE INDEX ux_executables_one_active ON decision_executables(contract_digest)
+                WHERE lifecycle_state = 'active';
+            CREATE INDEX ix_executables_analysis_candidates
+                ON decision_executables(executable_digest, state_version)
+                WHERE lifecycle_state = 'candidate';
+            CREATE TABLE analysis_candidate_admissions (
+                workspace_id TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                contract_name TEXT NOT NULL,
+                contract_digest TEXT NOT NULL,
+                executable_digest TEXT NOT NULL,
+                evidence_cutoff TEXT NOT NULL,
+                evidence_watermark INTEGER NOT NULL CHECK(evidence_watermark > 0),
+                analysis_manifest_digest TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(workspace_id, cycle_id),
+                FOREIGN KEY(executable_digest) REFERENCES decision_executables(executable_digest)
+            );
+            CREATE INDEX ix_analysis_candidates_contract
+                ON analysis_candidate_admissions(contract_name, contract_digest, created_at);
+            CREATE INDEX ix_analysis_candidates_executable
+                ON analysis_candidate_admissions(
+                    executable_digest, contract_name, contract_digest, created_at DESC);
+            """);
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync();
+        foreach (var (executable, admission) in records)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                INSERT INTO decision_executables VALUES (
+                    $executableDigest, $contractDigest, $executable, $checked, $provenance,
+                    $state, $stateVersion, $createdAt, $activatedAt);
+                INSERT INTO analysis_candidate_admissions VALUES (
+                    $workspaceId, $cycleId, $attemptId, $contractName, $contractDigest,
+                    $executableDigest, $cutoff, 42, $manifestDigest, $createdAt);
+                """;
+            command.Parameters.AddWithValue("$executableDigest", executable.ExecutableDigest);
+            command.Parameters.AddWithValue("$contractDigest", admission.ContractDigest);
+            command.Parameters.AddWithValue(
+                "$executable",
+                JsonSerializer.SerializeToUtf8Bytes(executable.Executable, StrictJson.Options));
+            command.Parameters.AddWithValue(
+                "$checked",
+                JsonSerializer.SerializeToUtf8Bytes(executable.CheckedExecutable, StrictJson.Options));
+            command.Parameters.AddWithValue(
+                "$provenance",
+                executable.Provenance is { } provenance
+                    ? System.Text.Encoding.UTF8.GetBytes(provenance.GetRawText())
+                    : DBNull.Value);
+            command.Parameters.AddWithValue("$state", executable.State.ToString().ToLowerInvariant());
+            command.Parameters.AddWithValue("$stateVersion", executable.StateVersion);
+            command.Parameters.AddWithValue(
+                "$createdAt",
+                executable.CreatedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue(
+                "$activatedAt",
+                executable.ActivatedAt is { } activatedAt
+                    ? activatedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
+                    : DBNull.Value);
+            command.Parameters.AddWithValue("$workspaceId", admission.WorkspaceId);
+            command.Parameters.AddWithValue("$cycleId", admission.CycleId);
+            command.Parameters.AddWithValue("$attemptId", admission.AttemptId);
+            command.Parameters.AddWithValue("$contractName", admission.ContractName);
+            command.Parameters.AddWithValue(
+                "$cutoff",
+                executable.CreatedAt.AddMinutes(-5)
+                    .ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$manifestDigest", admission.AnalysisManifestDigest);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
     private sealed class TemporaryDatabase : IDisposable
     {
         private readonly string _path =
-            Path.Combine(Path.GetTempPath(), $"flaggo-{Guid.NewGuid():N}.db");
+            Path.Combine(AppContext.BaseDirectory, $"flaggo-{Guid.NewGuid():N}.db");
 
         public string ConnectionString => $"Data Source={_path};Pooling=False";
 
