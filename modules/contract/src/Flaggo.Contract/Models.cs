@@ -342,12 +342,6 @@ public sealed record AnalysisCandidateProvenance
     [JsonPropertyName("attemptId")]
     public required string AttemptId { get; init; }
 
-    [JsonPropertyName("evidenceCutoff")]
-    public required DateTimeOffset EvidenceCutoff { get; init; }
-
-    [JsonPropertyName("evidenceWatermark")]
-    public required long EvidenceWatermark { get; init; }
-
     [JsonPropertyName("analysisManifestDigest")]
     public required string AnalysisManifestDigest { get; init; }
 }

@@ -234,6 +234,13 @@ availability, evidence freshness, or learning success.
   evidence, workspace and provider boundaries. Its bounded action timeline is
   not durable scheduling state and cannot grant runtime authority. See
   [internal service observability](OBSERVABILITY.md#analysis-progress).
+- The local analysis prototype persists scoped SQL result files and runs saved
+  scripts using unsandboxed Python. Workspace owns durable files/state, the
+  application capability owns execution policy, and the Copilot adapter only
+  translates tool calls. Host working-directory access is an explicit trusted
+  local execution boundary, not a virtual-filesystem or network sandbox.
+  Python can bypass workspace write/sealing restrictions and access host
+  resources/services; runtime-authority confinement is not claimed.
 - Contract Service activation workers may run on multiple instances; lifecycle
   version comparisons make one transition win while conflicting workers yield.
 

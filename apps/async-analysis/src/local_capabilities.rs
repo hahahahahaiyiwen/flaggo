@@ -1,33 +1,39 @@
-use std::sync::Arc;
+use std::{
+    num::NonZeroU32,
+    path::{Component, Path},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use flaggo_analysis_agent::{
-    AnalysisCapabilityFactory, AnalysisRunStatus, AnalysisTools, YieldSignal,
+    AnalysisCapabilityFactory, AnalysisRunStatus, AnalysisTools, PythonInput, YieldSignal,
     action::{ActionKind, ActionObservation, ActionOutcome, FailureCategory},
 };
-use flaggo_analysis_domain::{
-    AnalysisContract, AnalysisError, AttemptContext, CandidateRecord, EvidenceCutoff,
-};
-use flaggo_analysis_workspace::WorkspaceLease;
+use flaggo_analysis_domain::{AnalysisContract, AnalysisError, AttemptContext, CandidateRecord};
+use flaggo_analysis_workspace::{WorkspaceFileSystem, WorkspaceLease, sha256_digest};
 use flaggo_evidence_store::{
     AuthorityScope, EvidenceAnalysisStore, EvidenceQueryLimits, EvidenceQueryRequest,
     EvidenceQueryScope, EvidenceSignal, EvidenceSourceSelector, EvidenceStoreError,
-    ObservationWatermark,
 };
 use serde_json::{Value, json};
 use tracing::Instrument as _;
 
-use crate::{Clock, ContractService};
+use crate::{
+    Clock, ContractService,
+    python::{ExecutionStatus, PythonConfig},
+};
 
 const DECISION_OBSERVATION_SCOPE: &str = "@flaggo/sdk";
 const DECISION_OBSERVATION_NAME: &str = "flaggo.decision.received";
+const DEFAULT_QUERY_ROWS: u32 = 100;
+const QUERY_HISTORY_PATH: &str = "queries/history.jsonl";
 
 pub struct LocalCapabilityFactory {
     contract_service: Arc<dyn ContractService>,
     evidence_store: Arc<dyn EvidenceAnalysisStore>,
     query_limits: EvidenceQueryLimits,
     clock: Arc<dyn Clock>,
+    python: PythonConfig,
 }
 
 impl LocalCapabilityFactory {
@@ -37,12 +43,14 @@ impl LocalCapabilityFactory {
         evidence_store: Arc<dyn EvidenceAnalysisStore>,
         query_limits: EvidenceQueryLimits,
         clock: Arc<dyn Clock>,
+        python: PythonConfig,
     ) -> Self {
         Self {
             contract_service,
             evidence_store,
             query_limits,
             clock,
+            python,
         }
     }
 }
@@ -67,6 +75,7 @@ impl AnalysisCapabilityFactory for LocalCapabilityFactory {
             clock: Arc::clone(&self.clock),
             yield_signal: Arc::new(YieldSignal::default()),
             parent: tracing::Span::current(),
+            python: self.python.clone(),
         }))
     }
 }
@@ -82,6 +91,7 @@ struct LocalAnalysisTools {
     clock: Arc<dyn Clock>,
     yield_signal: Arc<YieldSignal>,
     parent: tracing::Span,
+    python: PythonConfig,
 }
 
 #[async_trait]
@@ -90,77 +100,13 @@ impl AnalysisTools for LocalAnalysisTools {
         self.yield_signal.status()
     }
 
-    async fn commit_cutoff(&self, cutoff: DateTime<Utc>) -> Result<EvidenceCutoff, AnalysisError> {
-        let mut action =
-            ActionObservation::start(&self.context, ActionKind::EvidenceCutoff, &self.parent);
-        let result = async {
-            self.ensure_not_yielding()?;
-            if cutoff > self.clock.now() {
-                return Err(AnalysisError::Evidence(
-                    "evidence cutoff cannot be in the future".to_owned(),
-                ));
-            }
-            if let Some(existing) = self.workspace.cutoff(&self.context.cycle_id).await? {
-                if existing.cutoff != cutoff {
-                    return Err(AnalysisError::Evidence(
-                        "evidence cutoff is immutable for the cycle".to_owned(),
-                    ));
-                }
-                return Ok(existing);
-            }
-            let watermark = self
-                .evidence_store
-                .capture_watermark()
-                .await
-                .map_err(evidence_error)?;
-            let committed = self
-                .workspace
-                .commit_cutoff(&self.context.cycle_id, cutoff, watermark.get())
-                .await?;
-            self.workspace
-                .append_audit(
-                    &self.context.cycle_id,
-                    "cutoff",
-                    serde_json::to_value(&committed).map_err(evidence_error)?,
-                )
-                .await?;
-            Ok(committed)
-        }
-        .instrument(action.span())
-        .await;
-        if let Ok(snapshot) = &result {
-            action.snapshot(snapshot);
-        }
-        action.finish_result(&result);
-        result
-    }
-
     async fn describe(&self) -> Result<Value, AnalysisError> {
         let mut action =
             ActionObservation::start(&self.context, ActionKind::EvidenceDescribe, &self.parent);
         let result = async {
         self.ensure_not_yielding()?;
         Ok(json!({
-            "relation": "observations",
             "queryCapabilities": self.evidence_store.query_capabilities(),
-            "columns": [
-                "observation_sequence",
-                "observation_id",
-                "logical_source_id",
-                "content_digest",
-                "signal_type",
-                "instrumentation_scope",
-                "signal_name",
-                "metric_kind",
-                "metric_unit",
-                "parent_span_name",
-                "observed_at_unix_nano",
-                "observed_time_source",
-                "protocol_kind",
-                "decision_id",
-                "contract_digest",
-                "payload_json"
-            ],
             "contractName": self.contract.name,
             "contractDigest": self.contract.contract_digest,
             "authority": self.contract.authority,
@@ -202,9 +148,12 @@ impl AnalysisTools for LocalAnalysisTools {
             "rules": {
                 "readOnly": true,
                 "singleStatement": true,
-                "cutoffRequired": true,
+                "consistency": "live",
                 "resultRowsLimited": self.query_limits.max_rows.get(),
-                "resultBytesLimited": self.query_limits.max_bytes
+                "defaultRowLimit": DEFAULT_QUERY_ROWS.min(self.query_limits.max_rows.get()),
+                "resultBytesLimited": self.query_limits.max_bytes,
+                "queryTimeoutMs": self.query_limits.timeout.as_millis(),
+                "results": "run_sql returns metadata, not rows. resultPath and historyPath reference saved JSON results and query history, relative to the cycle analysis directory. totalRows is null when truncated."
             }
         }))
         }.instrument(action.span()).await;
@@ -212,68 +161,201 @@ impl AnalysisTools for LocalAnalysisTools {
         result
     }
 
-    async fn run_sql(&self, sql: &str) -> Result<Value, AnalysisError> {
+    async fn run_sql(&self, sql: &str, row_limit: Option<u32>) -> Result<Value, AnalysisError> {
         let mut action =
             ActionObservation::start(&self.context, ActionKind::EvidenceSql, &self.parent);
         action.query(sql);
         let span = action.span();
         let result = async {
             self.ensure_not_yielding()?;
-            let cutoff = self
-                .workspace
-                .cutoff(&self.context.cycle_id)
-                .await?
+            let row_limit =
+                row_limit.unwrap_or(DEFAULT_QUERY_ROWS.min(self.query_limits.max_rows.get()));
+            let row_limit = NonZeroU32::new(row_limit)
+                .filter(|limit| limit.get() <= self.query_limits.max_rows.get())
                 .ok_or_else(|| {
-                    AnalysisError::Evidence(
-                        "commit an evidence cutoff before querying observations".to_owned(),
-                    )
+                    AnalysisError::Evidence(format!(
+                        "row_limit must be between 1 and {}",
+                        self.query_limits.max_rows
+                    ))
                 })?;
-            action.snapshot(&cutoff);
-            let cutoff_unix_nano =
-                u64::try_from(cutoff.cutoff.timestamp_nanos_opt().ok_or_else(|| {
-                    AnalysisError::Evidence(
-                        "evidence cutoff exceeds the supported timestamp range".to_owned(),
-                    )
-                })?)
-                .map_err(|_| {
-                    AnalysisError::Evidence("evidence cutoff predates the Unix epoch".to_owned())
-                })?;
+            let filesystem = self
+                .workspace
+                .filesystem(&self.context.cycle_id, &self.context.attempt_id)
+                .await?;
+            let query_started_at = self.clock.now();
             let result = self
                 .evidence_store
                 .query(
                     &self.scope,
                     EvidenceQueryRequest {
                         sql: sql.to_owned(),
-                        cutoff_unix_nano,
-                        watermark: ObservationWatermark::new(cutoff.watermark),
-                        limits: self.query_limits,
+                        limits: EvidenceQueryLimits {
+                            max_rows: row_limit,
+                            ..self.query_limits
+                        },
                     },
                 )
                 .await;
+            let query_completed_at = self.clock.now();
             let result = match result {
                 Ok(result) => result,
                 Err(error) => {
                     let (outcome, category) = evidence_query_failure(&error);
+                    let record = json!({
+                        "queryId": uuid::Uuid::new_v4().to_string(),
+                        "requestedSql": sql,
+                        "recordedAt": self.clock.now(),
+                        "contractDigest": self.context.contract.digest,
+                        "queryStartedAt": query_started_at,
+                        "queryCompletedAt": query_completed_at,
+                        "rowLimit": row_limit.get(),
+                        "status": "failed",
+                        "diagnostic": error.to_string()
+                    });
+                    self.record_query(&filesystem, record).await?;
                     action.finish(outcome, Some(category));
                     return Err(evidence_error(error));
                 }
             };
             action.result_size(result.rows.len(), result.result_bytes);
-            let result_value = serde_json::to_value(&result).map_err(evidence_error)?;
-            self.workspace
-                .append_audit(
-                    &self.context.cycle_id,
-                    "queries",
-                    json!({
-                        "requestedSql": sql,
-                        "result": result_value
-                    }),
-                )
+            self.ensure_not_yielding()?;
+            let query_id = uuid::Uuid::new_v4().to_string();
+            let result_path = format!("queries/{query_id}.json");
+            let content = serde_json::to_string(&json!({
+                "queryId": query_id,
+                "contractDigest": self.context.contract.digest,
+                "queryStartedAt": query_started_at,
+                "queryCompletedAt": query_completed_at,
+                "normalizedSql": result.normalized_sql,
+                "columns": result.columns,
+                "rows": result.rows,
+                "observationIds": result.observation_ids,
+                "truncated": result.truncated
+            }))
+            .map_err(evidence_error)?;
+            filesystem
+                .write_text(&format!("/workspace/analysis/{result_path}"), &content)
                 .await?;
-            Ok(result_value)
+            let metadata = json!({
+                "queryId": query_id,
+                "resultPath": result_path,
+                "historyPath": QUERY_HISTORY_PATH,
+                "columns": result.columns,
+                "savedRows": result.rows.len(),
+                "totalRows": if result.truncated { None } else { Some(result.rows.len()) },
+                "truncated": result.truncated,
+                "rowLimit": row_limit.get(),
+                "resultBytes": content.len(),
+                "contentDigest": sha256_digest(content.as_bytes()),
+                "queryStartedAt": query_started_at,
+                "queryCompletedAt": query_completed_at
+            });
+            self.record_query(
+                &filesystem,
+                json!({
+                    "requestedSql": sql,
+                    "recordedAt": self.clock.now(),
+                    "status": "succeeded",
+                    "result": metadata
+                }),
+            )
+            .await?;
+            Ok(metadata)
         }
         .instrument(span)
         .await;
+        action.finish_result(&result);
+        result
+    }
+
+    async fn code_interpreter(&self, input: PythonInput<'_>) -> Result<Value, AnalysisError> {
+        let mut action =
+            ActionObservation::start(&self.context, ActionKind::PythonRun, &self.parent);
+        let span = action.span();
+        let result = async {
+            self.ensure_not_yielding()?;
+            let directory = self.workspace.analysis_directory(&self.context.cycle_id)?;
+            let filesystem = self.workspace.filesystem(&self.context.cycle_id, &self.context.attempt_id).await?;
+            let (script_path, source, source_directory) = match input {
+                PythonInput::ScriptPath(script_path) => {
+                    let relative_path = script_path.strip_prefix("/workspace/analysis/").unwrap_or(script_path);
+                    let path = Path::new(relative_path);
+                    if relative_path.is_empty() || relative_path.contains('\\') || path.components().any(|part| !matches!(part, Component::Normal(_))) {
+                        return Err(AnalysisError::Agent("script_path must identify a file in the cycle analysis directory using a POSIX path".to_owned()));
+                    }
+                    let source = filesystem.read_text(&format!("/workspace/analysis/{relative_path}")).await?;
+                    (Some(script_path), source, directory.join(path.parent().unwrap_or(Path::new(""))))
+                }
+                PythonInput::Code(code) => {
+                    if code.trim().is_empty() {
+                        return Err(AnalysisError::Agent("inline Python code cannot be empty".to_owned()));
+                    }
+                    (None, code.to_owned(), directory.clone())
+                }
+            };
+            action.artifact(&source);
+            let execution_id = uuid::Uuid::new_v4().to_string();
+            let execution_path = format!("executions/{execution_id}");
+            let code_path = format!("{execution_path}/script.py");
+            let runtime_path = format!("{execution_path}/runtime.json");
+            let record_path = format!("{execution_path}/result.json");
+            filesystem.write_text(&format!("/workspace/analysis/{code_path}"), &source).await?;
+            let submitted = json!({
+                "executionId": execution_id,
+                "scriptPath": script_path,
+                "codePath": code_path,
+                "codeDigest": sha256_digest(source.as_bytes()),
+                "configuredInterpreter": self.python.executable,
+                "contractDigest": self.context.contract.digest,
+                "cycleId": self.context.cycle_id,
+                "attemptId": self.context.attempt_id,
+                "submittedAt": self.clock.now()
+            });
+            self.workspace.append_audit(&self.context.cycle_id, "pythonSubmitted", submitted.clone()).await?;
+            let execution = self.python.run(
+                &directory,
+                &directory.join(&code_path),
+                &directory.join(&runtime_path),
+                &source_directory,
+                &self.yield_signal,
+            ).await;
+            let execution = match execution {
+                Ok(execution) => execution,
+                Err(error) => {
+                    let failed = json!({"submission": submitted, "status": "runnerFailed", "diagnostic": error.to_string()});
+                    filesystem.write_text(&format!("/workspace/analysis/{record_path}"), &serde_json::to_string(&failed).map_err(evidence_error)?).await?;
+                    self.workspace.append_audit(&self.context.cycle_id, "pythonCompleted", failed).await?;
+                    return Err(error);
+                }
+            };
+            let runtime = if filesystem.exists(&format!("/workspace/analysis/{runtime_path}")).await? {
+                let content = filesystem.read_text(&format!("/workspace/analysis/{runtime_path}")).await?;
+                Some(serde_json::from_str::<Value>(&content).map_err(evidence_error)?)
+            } else { None };
+            let report = json!({
+                "executionId": execution_id,
+                "executionRecordPath": record_path,
+                "submittedCodePath": code_path,
+                "runtime": runtime,
+                "execution": execution
+            });
+            let record = json!({"submission": submitted, "report": report});
+            filesystem.write_text(&format!("/workspace/analysis/{record_path}"), &serde_json::to_string(&record).map_err(evidence_error)?).await?;
+            self.workspace.append_audit(&self.context.cycle_id, "pythonCompleted", json!({
+                "executionId": execution_id,
+                "executionRecordPath": record_path,
+                "status": execution.status
+            })).await?;
+            let (outcome, category) = match execution.status {
+                ExecutionStatus::Succeeded => (ActionOutcome::Success, None),
+                ExecutionStatus::TimedOut => (ActionOutcome::Timeout, Some(FailureCategory::Timeout)),
+                ExecutionStatus::Cancelled => (ActionOutcome::Cancelled, Some(FailureCategory::Cancelled)),
+                ExecutionStatus::Failed => (ActionOutcome::Failed, Some(FailureCategory::Validation)),
+                ExecutionStatus::LaunchFailed => (ActionOutcome::Failed, Some(FailureCategory::Configuration)),
+            };
+            action.finish(outcome, category);
+            Ok(report)
+        }.instrument(span).await;
         action.finish_result(&result);
         result
     }
@@ -284,16 +366,11 @@ impl AnalysisTools for LocalAnalysisTools {
         let span = action.span();
         let result = async {
             self.ensure_not_yielding()?;
-            let cutoff = self
-                .workspace
-                .cutoff(&self.context.cycle_id)
-                .await?
-                .ok_or_else(|| {
-                    AnalysisError::Candidate(
-                        "commit an evidence cutoff before proposing an executable".to_owned(),
-                    )
-                })?;
-            action.snapshot(&cutoff);
+            if !rules.as_array().is_some_and(|rules| !rules.is_empty()) {
+                return Err(AnalysisError::Candidate(
+                    "Candidate rules must be a non-empty JSON array".to_owned(),
+                ));
+            }
             let proposal = self
                 .workspace
                 .prepare_candidate_proposal(&self.context.cycle_id, &self.context.attempt_id, rules)
@@ -318,7 +395,6 @@ impl AnalysisTools for LocalAnalysisTools {
                 .submit_candidate(
                     &proposal_context,
                     proposal.rules,
-                    &cutoff,
                     &proposal.analysis_manifest_digest,
                 )
                 .await?;
@@ -345,6 +421,23 @@ impl AnalysisTools for LocalAnalysisTools {
 }
 
 impl LocalAnalysisTools {
+    async fn record_query(
+        &self,
+        filesystem: &Arc<dyn WorkspaceFileSystem>,
+        record: Value,
+    ) -> Result<(), AnalysisError> {
+        let line = serde_json::to_string(&record).map_err(evidence_error)?;
+        filesystem
+            .append_text(
+                &format!("/workspace/analysis/{QUERY_HISTORY_PATH}"),
+                &format!("{line}\n"),
+            )
+            .await?;
+        self.workspace
+            .append_audit(&self.context.cycle_id, "queries", record)
+            .await
+    }
+
     fn ensure_not_yielding(&self) -> Result<(), AnalysisError> {
         match self.yield_signal.status()? {
             AnalysisRunStatus::Active => Ok(()),
@@ -449,7 +542,7 @@ mod tests {
         time::Duration,
     };
 
-    use chrono::{TimeZone, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
     use flaggo_analysis_domain::{
         AnalysisAuthority, AnalysisContractIdentity, AnalysisCycle, AnalysisEvidenceSource,
         AnalysisProfile, CatalogUpdate,
@@ -458,7 +551,7 @@ mod tests {
         CyclePreparation, LocalWorkspaceProvider, PrepareCycleResult, WorkspaceProvider,
     };
     use flaggo_evidence_store::{
-        EvidenceQueryCapabilities, EvidenceQueryResult, EvidenceStoreError, ObservationWatermark,
+        EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryResult, EvidenceStoreError,
         SQLITE_EVIDENCE_QUERY_CAPABILITIES,
     };
     use serde_json::json;
@@ -474,7 +567,6 @@ mod tests {
     }
 
     struct FakeEvidenceStore {
-        captures: Mutex<u32>,
         requests: Mutex<Vec<(EvidenceQueryScope, EvidenceQueryRequest)>>,
         behavior: QueryBehavior,
     }
@@ -482,6 +574,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum QueryBehavior {
         Success,
+        Rows(u32),
         Timeout,
         Invalid,
         Pending,
@@ -493,17 +586,12 @@ mod tests {
             SQLITE_EVIDENCE_QUERY_CAPABILITIES
         }
 
-        async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError> {
-            let mut captures = self.captures.lock().expect("capture lock");
-            *captures += 1;
-            Ok(ObservationWatermark::new(42))
-        }
-
         async fn query(
             &self,
             scope: &EvidenceQueryScope,
             request: EvidenceQueryRequest,
         ) -> Result<EvidenceQueryResult, EvidenceStoreError> {
+            let limit = request.limits.max_rows.get();
             self.requests
                 .lock()
                 .expect("request lock")
@@ -516,17 +604,39 @@ mod tests {
                     ));
                 }
                 QueryBehavior::Pending => std::future::pending::<()>().await,
-                QueryBehavior::Success => {}
+                QueryBehavior::Success | QueryBehavior::Rows(_) => {}
+            }
+            if let QueryBehavior::Rows(count) = self.behavior {
+                let rows: Vec<_> = (0..count.min(limit))
+                    .map(|index| {
+                        std::collections::BTreeMap::from([("value".to_owned(), json!(index))])
+                    })
+                    .collect();
+                return Ok(EvidenceQueryResult {
+                    normalized_sql: "SELECT value FROM observations".to_owned(),
+                    columns: vec![EvidenceColumn {
+                        name: "value".to_owned(),
+                        data_type: None,
+                    }],
+                    result_bytes: serde_json::to_vec(&rows).unwrap().len(),
+                    rows,
+                    observation_ids: Vec::new(),
+                    truncated: count > limit,
+                });
             }
             Ok(EvidenceQueryResult {
                 normalized_sql: "SELECT count(*) AS count FROM observations".to_owned(),
-                columns: vec!["count".to_owned()],
+                columns: vec![EvidenceColumn {
+                    name: "count".to_owned(),
+                    data_type: None,
+                }],
                 rows: vec![std::collections::BTreeMap::from([(
                     "count".to_owned(),
                     json!(3),
                 )])],
                 observation_ids: Vec::new(),
                 result_bytes: 11,
+                truncated: false,
             })
         }
     }
@@ -563,7 +673,6 @@ mod tests {
             &self,
             context: &AttemptContext,
             _rules: Value,
-            _cutoff: &EvidenceCutoff,
             analysis_manifest_digest: &str,
         ) -> Result<CandidateRecord, AnalysisError> {
             self.submissions
@@ -645,7 +754,6 @@ mod tests {
             now,
         });
         let evidence = Arc::new(FakeEvidenceStore {
-            captures: Mutex::new(0),
             requests: Mutex::new(Vec::new()),
             behavior: QueryBehavior::Success,
         });
@@ -659,6 +767,7 @@ mod tests {
                 timeout: Duration::from_secs(2),
             },
             clock,
+            PythonConfig::default(),
         );
         let directory = tempfile::tempdir().expect("temporary directory");
         let workspaces = LocalWorkspaceProvider::new(directory.path()).expect("workspace provider");
@@ -682,12 +791,6 @@ mod tests {
             .await
             .expect("create tools");
 
-        assert!(
-            tools
-                .run_sql("SELECT count(*) FROM observations")
-                .await
-                .is_err()
-        );
         let description = tools.describe().await.expect("describe data");
         assert_eq!(
             description["builtInSources"][0]["name"],
@@ -704,15 +807,86 @@ mod tests {
                 .expect("functions")
                 .contains(&json!("avg"))
         );
-        tools.commit_cutoff(now).await.expect("commit cutoff");
-        tools.commit_cutoff(now).await.expect("idempotent cutoff");
-        assert_eq!(*evidence.captures.lock().expect("capture lock"), 1);
+        assert_eq!(description["rules"]["consistency"], "live");
+        assert!(description.get("columns").is_none());
+        assert_eq!(
+            description["queryCapabilities"],
+            serde_json::to_value(SQLITE_EVIDENCE_QUERY_CAPABILITIES).unwrap()
+        );
 
         let result = tools
-            .run_sql("SELECT count(*) AS count FROM observations")
+            .run_sql("SELECT count(*) AS count FROM observations", None)
             .await
             .expect("query");
-        assert_eq!(result["rows"][0]["count"], 3);
+        assert!(result.get("rows").is_none());
+        assert_eq!(result["savedRows"], 1);
+        assert_eq!(result["totalRows"], 1);
+        assert_eq!(result["columns"], json!([{"name": "count", "type": null}]));
+        assert_eq!(result["queryStartedAt"], json!(now));
+        assert_eq!(result["queryCompletedAt"], json!(now));
+        assert!(result.get("cutoff").is_none());
+        assert!(result.get("watermark").is_none());
+        let filesystem = lease
+            .filesystem(&cycle.cycle_id, "attempt-1")
+            .await
+            .unwrap();
+        let saved = filesystem
+            .read_text(&format!(
+                "/workspace/analysis/{}",
+                result["resultPath"].as_str().unwrap()
+            ))
+            .await
+            .unwrap();
+        let saved: Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(saved["rows"][0]["count"], 3);
+        assert_eq!(
+            result["contentDigest"],
+            sha256_digest(
+                filesystem
+                    .read_text(&format!(
+                        "/workspace/analysis/{}",
+                        result["resultPath"].as_str().unwrap()
+                    ))
+                    .await
+                    .unwrap()
+                    .as_bytes()
+            )
+        );
+        let history = filesystem
+            .read_text(&format!(
+                "/workspace/analysis/{}",
+                result["historyPath"].as_str().unwrap()
+            ))
+            .await
+            .unwrap();
+        assert_eq!(history.lines().count(), 1);
+        let history: Value = serde_json::from_str(history.trim()).unwrap();
+        assert_eq!(history["result"], result);
+        assert!(history["result"].get("rows").is_none());
+        filesystem.write_text("/workspace/analysis/scripts/model.py", &format!(
+            "import json\nfrom pathlib import Path\nrows = json.loads(Path({:?}).read_text())['rows']\nPath('summary.json').write_text(json.dumps({{'count': rows[0]['count']}}))\nprint('modeled', len(rows))\n",
+            result["resultPath"].as_str().unwrap(),
+        )).await.unwrap();
+        let modeled = tools
+            .code_interpreter(PythonInput::ScriptPath("scripts/model.py"))
+            .await
+            .unwrap();
+        assert_eq!(modeled["execution"]["status"], "succeeded");
+        assert_eq!(
+            modeled["execution"]["stdout"].as_str().unwrap().trim(),
+            "modeled 1"
+        );
+        assert!(
+            modeled["runtime"]["version"]
+                .as_str()
+                .unwrap()
+                .starts_with('3')
+        );
+        let summary = filesystem
+            .read_text("/workspace/analysis/summary.json")
+            .await
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&summary).unwrap()["count"], 3);
         {
             let requests = evidence.requests.lock().expect("request lock");
             assert_eq!(requests.len(), 1);
@@ -729,7 +903,6 @@ mod tests {
                 })
                 .expect("built-in decision source");
             assert!(matches!(&decision_source.signal, EvidenceSignal::Log));
-            assert_eq!(requests[0].1.watermark.get(), 42);
         }
 
         let rules = json!([{
@@ -776,7 +949,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_future_cutoff_and_post_yield_tool_calls() {
+    async fn rejects_post_yield_tool_calls() {
         let accepted_at = Utc
             .with_ymd_and_hms(2026, 3, 1, 0, 0, 0)
             .single()
@@ -789,7 +962,6 @@ mod tests {
             now,
         });
         let evidence = Arc::new(FakeEvidenceStore {
-            captures: Mutex::new(0),
             requests: Mutex::new(Vec::new()),
             behavior: QueryBehavior::Success,
         });
@@ -802,6 +974,7 @@ mod tests {
                 timeout: Duration::from_secs(1),
             },
             Arc::new(FixedClock(now)),
+            PythonConfig::default(),
         );
         let directory = tempfile::tempdir().expect("temporary directory");
         let workspaces = LocalWorkspaceProvider::new(directory.path()).expect("workspace provider");
@@ -821,12 +994,6 @@ mod tests {
             .await
             .expect("create tools");
 
-        assert!(
-            tools
-                .commit_cutoff(now + chrono::Duration::nanoseconds(1))
-                .await
-                .is_err()
-        );
         assert_eq!(
             tools
                 .check_cycle_status()
@@ -859,6 +1026,20 @@ mod tests {
     async fn observed_tools(
         behavior: QueryBehavior,
     ) -> (tempfile::TempDir, Arc<dyn AnalysisTools>, DateTime<Utc>) {
+        let (directory, tools, now, _) =
+            observed_tools_with_python(behavior, PythonConfig::default()).await;
+        (directory, tools, now)
+    }
+
+    async fn observed_tools_with_python(
+        behavior: QueryBehavior,
+        python: PythonConfig,
+    ) -> (
+        tempfile::TempDir,
+        Arc<dyn AnalysisTools>,
+        DateTime<Utc>,
+        Arc<dyn WorkspaceFileSystem>,
+    ) {
         let accepted_at = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).single().unwrap();
         let now = accepted_at + chrono::Duration::hours(2);
         let contract = contract(accepted_at);
@@ -869,16 +1050,16 @@ mod tests {
                 now,
             }),
             Arc::new(FakeEvidenceStore {
-                captures: Mutex::new(0),
                 requests: Mutex::new(Vec::new()),
                 behavior,
             }),
             EvidenceQueryLimits {
-                max_rows: NonZeroU32::new(10).unwrap(),
-                max_bytes: 1024,
+                max_rows: NonZeroU32::new(1000).unwrap(),
+                max_bytes: 65536,
                 timeout: Duration::from_secs(1),
             },
             Arc::new(FixedClock(now)),
+            python,
         );
         let directory = tempfile::tempdir_in(".").unwrap();
         let workspaces = LocalWorkspaceProvider::new(directory.path()).unwrap();
@@ -890,26 +1071,502 @@ mod tests {
                 .unwrap(),
         )
         .cycle;
+        let filesystem = lease
+            .filesystem(&cycle.cycle_id, "attempt-1")
+            .await
+            .unwrap();
         let tools = factory
             .create(context(&cycle, "attempt-1"), contract, lease)
             .await
             .unwrap();
-        (directory, tools, now)
+        (directory, tools, now, filesystem)
     }
 
     #[tokio::test]
-    async fn captures_actual_sql_results_committed_snapshot_and_proposal_without_contents() {
+    async fn saves_default_samples_and_requested_rows_without_inline_data_or_counts() {
+        let (_directory, tools, _now) = observed_tools(QueryBehavior::Rows(125)).await;
+        let sample = tools
+            .run_sql("SELECT value FROM observations ORDER BY value", None)
+            .await
+            .unwrap();
+        assert_eq!(sample["savedRows"], 100);
+        assert_eq!(sample["truncated"], true);
+        assert!(sample["totalRows"].is_null());
+        assert!(sample.get("rows").is_none());
+        let complete = tools
+            .run_sql("SELECT value FROM observations ORDER BY value", Some(200))
+            .await
+            .unwrap();
+        assert_eq!(complete["savedRows"], 125);
+        assert_eq!(complete["totalRows"], 125);
+        assert_eq!(complete["truncated"], false);
+        assert_ne!(complete["resultPath"], sample["resultPath"]);
+        for limit in [0, 1001] {
+            assert!(
+                tools
+                    .run_sql("SELECT value FROM observations", Some(limit))
+                    .await
+                    .is_err()
+            );
+        }
+        let (_empty_directory, empty, _now, filesystem) =
+            observed_tools_with_python(QueryBehavior::Rows(0), PythonConfig::default()).await;
+        let result = empty
+            .run_sql("SELECT value FROM observations", None)
+            .await
+            .unwrap();
+        assert_eq!(result["savedRows"], 0);
+        assert_eq!(result["totalRows"], 0);
+        assert_eq!(result["truncated"], false);
+        assert_eq!(result["columns"], json!([{"name": "value", "type": null}]));
+        let saved: Value = serde_json::from_str(
+            &filesystem
+                .read_text(&format!(
+                    "/workspace/analysis/{}",
+                    result["resultPath"].as_str().unwrap()
+                ))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(saved["columns"], result["columns"]);
+        assert_eq!(saved["rows"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn records_python_outcomes_and_rejects_invalid_entry_paths_and_late_operations() {
+        let (_directory, tools, _, filesystem) =
+            observed_tools_with_python(QueryBehavior::Success, PythonConfig::default()).await;
+        filesystem
+            .write_text(
+                "/workspace/analysis/script.py",
+                "print('private model output')\n",
+            )
+            .await
+            .unwrap();
+        assert!(
+            filesystem
+                .write_text("/workspace/contract.json", "overwrite")
+                .await
+                .is_err()
+        );
+        for path in [
+            "",
+            "../script.py",
+            "/workspace/contract.json",
+            "C:\\host.py",
+            "missing.py",
+        ] {
+            assert!(
+                tools
+                    .code_interpreter(PythonInput::ScriptPath(path))
+                    .await
+                    .is_err(),
+                "{path}"
+            );
+        }
+        let capture = crate::telemetry_support::Capture::default();
+        capture
+            .run(async {
+                let report = tools
+                    .code_interpreter(PythonInput::ScriptPath("/workspace/analysis/script.py"))
+                    .await
+                    .unwrap();
+                assert_eq!(report["execution"]["status"], "succeeded");
+            })
+            .await;
+        {
+            let events = capture.events.lock().unwrap();
+            let terminal = events
+                .iter()
+                .find(|event| {
+                    event.fields.get("event.name")
+                        == Some(&json!("flaggo.analysis.action.completed"))
+                        && event.fields.get("flaggo.analysis.action.kind")
+                            == Some(&json!("python.run"))
+                })
+                .unwrap();
+            assert_eq!(terminal.fields["flaggo.analysis.action.outcome"], "success");
+            assert!(
+                terminal.fields["flaggo.analysis.artifact.digest"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("sha256:")
+            );
+            assert!(
+                !serde_json::to_string(&terminal.fields)
+                    .unwrap()
+                    .contains("private model output")
+            );
+        }
+        tools
+            .yield_signal()
+            .request_contract_superseded(None)
+            .unwrap();
+        assert!(
+            tools
+                .code_interpreter(PythonInput::ScriptPath("script.py"))
+                .await
+                .is_err()
+        );
+        assert!(
+            tools
+                .code_interpreter(PythonInput::Code("print(1)"))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn default_python_environment_supports_data_analysis_modeling_and_plotting() {
+        let (_directory, tools, _, filesystem) =
+            observed_tools_with_python(QueryBehavior::Success, PythonConfig::default()).await;
+        let report = tools
+            .code_interpreter(PythonInput::Code(
+                r#"
+import json, sys
+import numpy as np
+import pandas as pd
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import seaborn as sns
+data = pd.DataFrame({"x": [1, 2, 3], "y": [2, 4, 6]})
+model = LinearRegression().fit(data[["x"]], data["y"])
+prediction = float(model.predict(pd.DataFrame({"x": [4]}))[0])
+sns.lineplot(data=data, x="x", y="y")
+plt.savefig("analysis.png")
+plt.close()
+print(json.dumps({"venv": sys.prefix != sys.base_prefix,
+                  "prediction": prediction, "mean": float(np.mean(data["y"])),
+                  "variance": float(stats.describe(data["y"]).variance)}))
+"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(report["execution"]["status"], "succeeded", "{report}");
+        let output: Value =
+            serde_json::from_str(report["execution"]["stdout"].as_str().unwrap()).unwrap();
+        assert_eq!(output["venv"], true);
+        assert!((output["prediction"].as_f64().unwrap() - 8.0).abs() < 1e-9);
+        assert_eq!(output["mean"], 4.0);
+        assert_eq!(output["variance"], 4.0);
+        assert!(
+            filesystem
+                .metadata("/workspace/analysis/analysis.png")
+                .await
+                .unwrap()
+                .size
+                > 0
+        );
+    }
+
+    #[tokio::test]
+    async fn inline_python_saves_source_and_outputs_without_sharing_process_memory() {
+        let (_directory, tools, _, filesystem) =
+            observed_tools_with_python(QueryBehavior::Success, PythonConfig::default()).await;
+        for code in ["", " \n\t"] {
+            assert!(
+                tools
+                    .code_interpreter(PythonInput::Code(code))
+                    .await
+                    .is_err()
+            );
+        }
+        let code = "from pathlib import Path\nprivate_variable = 42\nPath('inline.txt').write_text('saved')\nprint(private_variable)\n";
+        let first = tools
+            .code_interpreter(PythonInput::Code(code))
+            .await
+            .unwrap();
+        assert_eq!(first["execution"]["status"], "succeeded");
+        assert_eq!(
+            first["execution"]["stdout"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["42"]
+        );
+        assert_eq!(
+            filesystem
+                .read_text("/workspace/analysis/inline.txt")
+                .await
+                .unwrap(),
+            "saved"
+        );
+        assert_eq!(
+            filesystem
+                .read_text(&format!(
+                    "/workspace/analysis/{}",
+                    first["submittedCodePath"].as_str().unwrap(),
+                ))
+                .await
+                .unwrap(),
+            code,
+        );
+        let second = tools.code_interpreter(PythonInput::Code(
+            "from pathlib import Path\nprint('private_variable' in globals())\nprint(Path('inline.txt').read_text())\n",
+        )).await.unwrap();
+        assert_eq!(second["execution"]["status"], "succeeded");
+        assert_eq!(
+            second["execution"]["stdout"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["False", "saved"]
+        );
+        assert_ne!(first["executionId"], second["executionId"]);
+    }
+
+    #[tokio::test]
+    async fn persists_python_failure_launch_failure_timeout_and_cancelled_outcomes() {
+        for (config, script, expected) in [
+            (
+                PythonConfig::default(),
+                "raise ValueError('expected')",
+                "failed",
+            ),
+            (
+                PythonConfig {
+                    executable: "flaggo-missing-python-executable".into(),
+                    ..PythonConfig::default()
+                },
+                "print(1)",
+                "launchFailed",
+            ),
+            (
+                PythonConfig {
+                    timeout: Duration::from_millis(150),
+                    ..PythonConfig::default()
+                },
+                "import time\ntime.sleep(20)",
+                "timedOut",
+            ),
+        ] {
+            let (_directory, tools, _, filesystem) =
+                observed_tools_with_python(QueryBehavior::Success, config).await;
+            let report = tools
+                .code_interpreter(PythonInput::Code(script))
+                .await
+                .unwrap();
+            assert_eq!(report["execution"]["status"], expected);
+            assert!(
+                report["executionRecordPath"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("result.json")
+            );
+            let stored: Value = serde_json::from_str(
+                &filesystem
+                    .read_text(&format!(
+                        "/workspace/analysis/{}",
+                        report["executionRecordPath"].as_str().unwrap()
+                    ))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(stored["report"], report);
+            assert_eq!(stored["report"]["execution"]["status"], expected);
+            assert!(stored["submission"]["scriptPath"].is_null());
+            assert_eq!(
+                filesystem
+                    .read_text(&format!(
+                        "/workspace/analysis/{}",
+                        report["submittedCodePath"].as_str().unwrap()
+                    ))
+                    .await
+                    .unwrap(),
+                script,
+            );
+        }
+        let (_directory, tools, _, filesystem) =
+            observed_tools_with_python(QueryBehavior::Success, PythonConfig::default()).await;
+        let signal = tools.yield_signal();
+        let (report, ()) = tokio::join!(
+            tools.code_interpreter(PythonInput::Code("import time\ntime.sleep(20)")),
+            async {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                signal.request_shutdown().unwrap();
+            }
+        );
+        let report = report.unwrap();
+        assert_eq!(report["execution"]["status"], "cancelled");
+        let stored: Value = serde_json::from_str(
+            &filesystem
+                .read_text(&format!(
+                    "/workspace/analysis/{}",
+                    report["executionRecordPath"].as_str().unwrap()
+                ))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stored["report"], report);
+    }
+
+    #[tokio::test]
+    async fn real_sqlite_to_python_artifacts_survive_workspace_restart_without_replay() {
+        use flaggo_evidence_store::{SqliteEvidenceAnalysisStore, SqliteEvidenceStore};
+
+        let directory = tempfile::tempdir().unwrap();
+        let database_url = format!(
+            "sqlite://{}",
+            directory
+                .path()
+                .join("evidence.db")
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
+        let writer = SqliteEvidenceStore::connect(&database_url).await.unwrap();
+        let reader = Arc::new(
+            SqliteEvidenceAnalysisStore::connect(&database_url)
+                .await
+                .unwrap(),
+        );
+        let accepted_at = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).single().unwrap();
+        let now = accepted_at + chrono::Duration::hours(2);
+        let contract = contract(accepted_at);
+        let factory = LocalCapabilityFactory::new(
+            Arc::new(FakeContractService {
+                current: contract.clone(),
+                submissions: Mutex::new(Vec::new()),
+                now,
+            }),
+            reader.clone(),
+            EvidenceQueryLimits {
+                max_rows: NonZeroU32::new(1000).unwrap(),
+                max_bytes: 65536,
+                timeout: Duration::from_secs(1),
+            },
+            Arc::new(FixedClock(now)),
+            PythonConfig::default(),
+        );
+        let workspace_root = directory.path().join("workspaces");
+        let workspaces = LocalWorkspaceProvider::new(&workspace_root).unwrap();
+        let lease = workspaces.claim(&contract.name, "attempt-1").await.unwrap();
+        let cycle = ready(
+            lease
+                .prepare_cycle(&contract, &profile(), "attempt-1", now)
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        let tools = factory
+            .create(
+                context(&cycle, "attempt-1"),
+                contract.clone(),
+                lease.clone(),
+            )
+            .await
+            .unwrap();
+        let result = tools
+            .run_sql("SELECT count(*) AS count FROM observations", None)
+            .await
+            .unwrap();
+        assert_eq!(result["savedRows"], 1);
+        assert_eq!(result["totalRows"], 1);
+        let filesystem = lease
+            .filesystem(&cycle.cycle_id, "attempt-1")
+            .await
+            .unwrap();
+        filesystem.write_text("/workspace/analysis/model.py", &format!(
+            "import json\nfrom pathlib import Path\nrows = json.loads(Path({:?}).read_text())['rows']\nPath('summary.json').write_text(json.dumps({{'count': rows[0]['count']}}))\nprint('SQLite -> Python')\n",
+            result["resultPath"].as_str().unwrap(),
+        )).await.unwrap();
+        let execution = tools
+            .code_interpreter(PythonInput::ScriptPath("model.py"))
+            .await
+            .unwrap();
+        assert_eq!(execution["execution"]["status"], "succeeded");
+        drop(tools);
+        drop(filesystem);
+        drop(lease);
+        drop(workspaces);
+
+        let restarted = LocalWorkspaceProvider::new(&workspace_root).unwrap();
+        let lease = restarted.claim(&contract.name, "attempt-2").await.unwrap();
+        let recovered = ready(
+            lease
+                .prepare_cycle(&contract, &profile(), "attempt-2", now)
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        assert_eq!(recovered.cycle_id, cycle.cycle_id);
+        assert!(recovered.resumed);
+        let filesystem = lease
+            .filesystem(&recovered.cycle_id, "attempt-2")
+            .await
+            .unwrap();
+        let summary: Value = serde_json::from_str(
+            &filesystem
+                .read_text("/workspace/analysis/summary.json")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(summary["count"], 0);
+        let saved = filesystem
+            .read_text(&format!(
+                "/workspace/analysis/{}",
+                result["resultPath"].as_str().unwrap()
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            sha256_digest(saved.as_bytes()),
+            result["contentDigest"].as_str().unwrap()
+        );
+        let record: Value = serde_json::from_str(
+            &filesystem
+                .read_text(&format!(
+                    "/workspace/analysis/{}",
+                    execution["executionRecordPath"].as_str().unwrap()
+                ))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["report"], execution);
+        assert_eq!(
+            filesystem
+                .read_directory("/workspace/analysis/executions")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            filesystem
+                .read_text(&format!(
+                    "/workspace/analysis/{}",
+                    result["historyPath"].as_str().unwrap()
+                ))
+                .await
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+        reader.close().await;
+        writer.close().await;
+    }
+
+    #[tokio::test]
+    async fn captures_live_sql_results_and_proposal_without_contents() {
         let capture = crate::telemetry_support::Capture::default();
         capture
             .run(async {
                 let parent = tracing::info_span!("cycle");
                 async {
-                    let (_directory, tools, now) = observed_tools(QueryBehavior::Success).await;
+                    let (_directory, tools, _now) = observed_tools(QueryBehavior::Success).await;
                     tools.describe().await.unwrap();
-                    tools.commit_cutoff(now).await.unwrap();
-                    tools.commit_cutoff(now).await.unwrap();
                     tools
-                        .run_sql("SELECT 'private SQL prompt' FROM observations")
+                        .run_sql("SELECT 'private SQL prompt' FROM observations", None)
                         .await
                         .unwrap();
                     tools.propose_executable(json!([{
@@ -927,7 +1584,7 @@ mod tests {
                 event.fields.get("event.name") == Some(&json!("flaggo.analysis.action.completed"))
             })
             .collect();
-        assert_eq!(terminal.len(), 5);
+        assert_eq!(terminal.len(), 3);
         for event in &terminal {
             assert_eq!(event.level, "INFO");
             assert_eq!(event.target, "flaggo.async-analysis");
@@ -951,11 +1608,11 @@ mod tests {
         );
         assert_eq!(sql.fields["flaggo.analysis.result.rows"], 1);
         assert_eq!(sql.fields["flaggo.analysis.result.bytes"], 11);
-        assert_eq!(sql.fields["flaggo.analysis.snapshot.watermark"], 42);
-        assert_eq!(
-            sql.fields["flaggo.analysis.snapshot.cutoff"],
-            "2026-03-01T02:00:00+00:00"
+        assert!(
+            !sql.fields
+                .contains_key("flaggo.analysis.snapshot.watermark")
         );
+        assert!(!sql.fields.contains_key("flaggo.analysis.snapshot.cutoff"));
         for event in events.iter() {
             let encoded = serde_json::to_string(&event.fields).unwrap();
             assert!(!encoded.contains("private SQL prompt"));
@@ -989,12 +1646,11 @@ mod tests {
             let capture = crate::telemetry_support::Capture::default();
             capture
                 .run(async {
-                    let (_directory, tools, now) = observed_tools(behavior).await;
-                    tools.commit_cutoff(now).await.unwrap();
+                    let (_directory, tools, _now) = observed_tools(behavior).await;
                     assert!(
                         tokio::time::timeout(
                             Duration::from_millis(10),
-                            tools.run_sql("SELECT 'private' FROM observations")
+                            tools.run_sql("SELECT 'private' FROM observations", None)
                         )
                         .await
                         .map_or(true, |result| result.is_err())
@@ -1033,14 +1689,8 @@ mod tests {
         let capture = crate::telemetry_support::Capture::default();
         capture
             .run(async {
-                let (_directory, tools, now) = observed_tools(QueryBehavior::Success).await;
-                assert!(
-                    tools
-                        .commit_cutoff(now + chrono::Duration::seconds(1))
-                        .await
-                        .is_err()
-                );
-                assert!(tools.run_sql("SELECT 'private'").await.is_err());
+                let (_directory, tools, _now) = observed_tools(QueryBehavior::Success).await;
+                assert!(tools.run_sql("SELECT 'private'", Some(0)).await.is_err());
                 assert!(
                     tools
                         .propose_executable(json!({"raw": "private"}))
@@ -1052,7 +1702,7 @@ mod tests {
             })
             .await;
         let events = capture.events.lock().unwrap();
-        assert_eq!(events.len(), 8);
+        assert_eq!(events.len(), 6);
         for terminal in events.iter().filter(|event| {
             event.fields.get("event.name") == Some(&json!("flaggo.analysis.action.completed"))
         }) {

@@ -8,15 +8,10 @@ description: Interpret the accepted decision contract that governs one analysis 
 ## Locate contract data
 
 <contract_structure>
-`/workspace/contract.json` contains cycle metadata and the accepted decision
-contract:
-
-- top-level fields identify the name, digest, authority, cadence, and scoped
-  evidence sources;
-- `contract` contains the accepted DecisionContract.
-
-Use `contract` for authored semantics. Use the top-level digest and authority
-for cycle identity and scope.
+Read the accepted DecisionContract from the `contract` field in
+`/workspace/contract.json`. The outer wrapper is analysis metadata, not
+authored contract semantics. Cycle identity and history belong
+to `analysis-cycle-protocol`.
 </contract_structure>
 
 ## Read the learning goal

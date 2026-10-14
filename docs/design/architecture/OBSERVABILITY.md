@@ -105,14 +105,14 @@ Producer ownership stays local:
 | Boundary | Observations |
 | --- | --- |
 | Session lifecycle | Session creation and execution, including explicit domain terminal outcomes |
-| Evidence capabilities | Schema discovery, committed cutoff/watermark, SQL and proposal submission |
+| Evidence capabilities | Schema discovery, live scoped SQL and proposal submission |
 | Agent workspace access | Meaningful artifact reads, writes and appends, not every metadata or directory operation |
 | Provider adapter | Only supported provider request observations, never inferred thinking or private reasoning |
 
-SQL telemetry includes the requested query's SHA-256 digest, committed
-snapshot cutoff/watermark, measured duration and successful returned rows and
-encoded result bytes. Returned rows and watermark are **not rows scanned**.
-Failed queries retain their query/snapshot references and bounded failure
+SQL telemetry includes the requested query's SHA-256 digest, measured duration
+and successful returned rows and encoded result bytes. Returned rows are
+**not rows scanned**. Query artifacts/history record execution start/completion
+times, not a frozen snapshot. Failed queries retain their query digest and bounded failure
 classification without raw database error text. Artifact operations expose
 content digests and byte counts, not contents or paths. For append operations
 these describe the appended fragment, not the complete resulting file;
@@ -147,9 +147,13 @@ focus or changing gameplay. Backend retention is the history boundary: no
 durable action outbox, custom telemetry database, worker query server, or
 complete-delivery guarantee is introduced.
 
-Later dataset/Python and role workflows extend the registered action vocabulary
-at their actual owned boundaries; the present single-agent workflow does not
-invent those operations or roles.
+The local Python capability emits `python.run` at the actual execution boundary,
+with measured completion/failure/timeout/cancellation and the submitted-code
+digest through existing artifact metadata. Code, paths, stdout/stderr and
+runtime diagnostics stay in cycle artifacts, not service telemetry. SQL
+actions still measure saved rows and their encoded row bytes; the returned
+artifact metadata separately reports whole-file bytes. Role workflows must
+extend the vocabulary only when their actual owned boundaries exist.
 
 ## Export and failure isolation
 

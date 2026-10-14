@@ -149,7 +149,7 @@ pub(crate) mod tests {
 
     use flaggo_analysis_domain::{
         AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisError,
-        AttemptContext, CandidateRecord, EvidenceCutoff,
+        AttemptContext, CandidateRecord,
     };
     use flaggo_analysis_workspace::{WorkspaceEntry, WorkspaceFileInfo, WorkspaceFileSystem};
 
@@ -258,13 +258,6 @@ pub(crate) mod tests {
             self.yield_signal.status()
         }
 
-        async fn commit_cutoff(
-            &self,
-            _cutoff: chrono::DateTime<Utc>,
-        ) -> Result<EvidenceCutoff, AnalysisError> {
-            unreachable!()
-        }
-
         async fn describe(&self) -> Result<serde_json::Value, AnalysisError> {
             let mut action = crate::action::ActionObservation::start(
                 &self.context,
@@ -276,8 +269,24 @@ pub(crate) mod tests {
             Ok(json!({"private": "not public telemetry"}))
         }
 
-        async fn run_sql(&self, _sql: &str) -> Result<serde_json::Value, AnalysisError> {
-            unreachable!()
+        async fn run_sql(
+            &self,
+            sql: &str,
+            row_limit: Option<u32>,
+        ) -> Result<serde_json::Value, AnalysisError> {
+            Ok(
+                json!({"requestedSql": sql, "rowLimit": row_limit, "resultPath": "queries/test.json"}),
+            )
+        }
+
+        async fn code_interpreter(
+            &self,
+            input: crate::PythonInput<'_>,
+        ) -> Result<serde_json::Value, AnalysisError> {
+            Ok(match input {
+                crate::PythonInput::ScriptPath(path) => json!({"scriptPath": path}),
+                crate::PythonInput::Code(code) => json!({"code": code}),
+            })
         }
 
         async fn propose_executable(

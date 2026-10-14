@@ -14,7 +14,7 @@ public sealed class SqliteExecutableStore :
 {
     private const string ComponentName = "executable-store";
     private const int MaximumActivationPageSize = 1_000;
-    private const int SchemaVersion = 4;
+    private const int SchemaVersion = 5;
     private readonly string _connectionString;
     private readonly IExpressionCanonicalizer? _expressionCanonicalizer;
     private readonly TimeProvider _timeProvider;
@@ -50,28 +50,40 @@ public sealed class SqliteExecutableStore :
             await versionTable.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await using var transaction = connection.BeginTransaction(
+            IsolationLevel.Serializable,
+            deferred: false);
         await using (var readVersion = connection.CreateCommand())
         {
+            readVersion.Transaction = transaction;
             readVersion.CommandText =
                 "SELECT version FROM flaggo_schema_versions WHERE component = $component;";
             readVersion.Parameters.AddWithValue("$component", ComponentName);
             var storedVersion = await readVersion.ExecuteScalarAsync(cancellationToken);
-            if (storedVersion is not null
-                && Convert.ToInt32(storedVersion, CultureInfo.InvariantCulture) != SchemaVersion)
+            if (storedVersion is not null)
             {
-                throw new InvalidOperationException(
-                    $"Unsupported {ComponentName} schema version {storedVersion}; "
-                    + $"expected {SchemaVersion}.");
+                var version = Convert.ToInt32(storedVersion, CultureInfo.InvariantCulture);
+                if (version == 4)
+                {
+                    await MigrateVersionFourAsync(connection, transaction, cancellationToken);
+                }
+                else if (version != SchemaVersion)
+                {
+                    throw new InvalidOperationException(
+                        $"Unsupported {ComponentName} schema version {storedVersion}; "
+                        + $"expected {SchemaVersion}.");
+                }
             }
         }
 
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             """
 
             INSERT INTO flaggo_schema_versions(component, version)
             VALUES ($component, $version)
-            ON CONFLICT(component) DO NOTHING;
+            ON CONFLICT(component) DO UPDATE SET version = excluded.version;
 
             CREATE TABLE IF NOT EXISTS decision_executables (
                 executable_digest TEXT PRIMARY KEY,
@@ -104,8 +116,6 @@ public sealed class SqliteExecutableStore :
                 contract_name TEXT NOT NULL,
                 contract_digest TEXT NOT NULL,
                 executable_digest TEXT NOT NULL,
-                evidence_cutoff TEXT NOT NULL,
-                evidence_watermark INTEGER NOT NULL CHECK(evidence_watermark > 0),
                 analysis_manifest_digest TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(workspace_id, cycle_id),
@@ -126,6 +136,45 @@ public sealed class SqliteExecutableStore :
             """;
         command.Parameters.AddWithValue("$component", ComponentName);
         command.Parameters.AddWithValue("$version", SchemaVersion);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static async Task MigrateVersionFourAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            CREATE TABLE analysis_candidate_admissions_v5 (
+                workspace_id TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                contract_name TEXT NOT NULL,
+                contract_digest TEXT NOT NULL,
+                executable_digest TEXT NOT NULL,
+                analysis_manifest_digest TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(workspace_id, cycle_id),
+                FOREIGN KEY(executable_digest)
+                    REFERENCES decision_executables(executable_digest)
+            );
+
+            INSERT INTO analysis_candidate_admissions_v5(
+                workspace_id, cycle_id, attempt_id, contract_name, contract_digest,
+                executable_digest, analysis_manifest_digest, created_at
+            )
+            SELECT workspace_id, cycle_id, attempt_id, contract_name, contract_digest,
+                   executable_digest, analysis_manifest_digest, created_at
+            FROM analysis_candidate_admissions;
+
+            DROP TABLE analysis_candidate_admissions;
+            ALTER TABLE analysis_candidate_admissions_v5
+                RENAME TO analysis_candidate_admissions;
+            """;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -216,8 +265,6 @@ public sealed class SqliteExecutableStore :
                 contract_name,
                 contract_digest,
                 executable_digest,
-                evidence_cutoff,
-                evidence_watermark,
                 analysis_manifest_digest,
                 created_at
             )
@@ -228,8 +275,6 @@ public sealed class SqliteExecutableStore :
                 $contractName,
                 $contractDigest,
                 $executableDigest,
-                $evidenceCutoff,
-                $evidenceWatermark,
                 $analysisManifestDigest,
                 $createdAt
             );
@@ -240,8 +285,6 @@ public sealed class SqliteExecutableStore :
         command.Parameters.AddWithValue("$contractName", admission.ContractName);
         command.Parameters.AddWithValue("$contractDigest", admission.ContractDigest);
         command.Parameters.AddWithValue("$executableDigest", admission.ExecutableDigest);
-        command.Parameters.AddWithValue("$evidenceCutoff", FormatTime(admission.EvidenceCutoff));
-        command.Parameters.AddWithValue("$evidenceWatermark", admission.EvidenceWatermark);
         command.Parameters.AddWithValue(
             "$analysisManifestDigest",
             admission.AnalysisManifestDigest);
@@ -278,8 +321,6 @@ public sealed class SqliteExecutableStore :
                        admission.contract_name,
                        admission.contract_digest,
                        admission.executable_digest,
-                       admission.evidence_cutoff,
-                       admission.evidence_watermark,
                        admission.analysis_manifest_digest,
                        admission.created_at,
                        executable.state_version,
@@ -315,8 +356,6 @@ public sealed class SqliteExecutableStore :
                    candidate.contract_name,
                    candidate.contract_digest,
                    candidate.executable_digest,
-                   candidate.evidence_cutoff,
-                   candidate.evidence_watermark,
                    candidate.analysis_manifest_digest,
                    candidate.created_at,
                    candidate.state_version,
@@ -345,18 +384,16 @@ public sealed class SqliteExecutableStore :
                 reader.GetString(3),
                 reader.GetString(4),
                 reader.GetString(5),
-                ParseTime(reader.GetString(6)),
-                reader.GetInt64(7),
-                reader.GetString(8),
-                ParseTime(reader.GetString(9)));
-            var active = reader.IsDBNull(11)
+                reader.GetString(6),
+                ParseTime(reader.GetString(7)));
+            var active = reader.IsDBNull(9)
                 ? null
                 : new ExecutableLifecycleToken(
-                    reader.GetString(11),
-                    reader.GetInt64(12));
+                    reader.GetString(9),
+                    reader.GetInt64(10));
             candidates.Add(new AnalysisCandidateActivationSnapshot(
                 admission,
-                reader.GetInt64(10),
+                reader.GetInt64(8),
                 active));
         }
 
@@ -1325,8 +1362,7 @@ public sealed class SqliteExecutableStore :
             admissionCommand.CommandText =
                 """
                 SELECT workspace_id, cycle_id, attempt_id, contract_name,
-                       contract_digest, executable_digest, evidence_cutoff,
-                       evidence_watermark, analysis_manifest_digest, created_at
+                       contract_digest, executable_digest, analysis_manifest_digest, created_at
                 FROM analysis_candidate_admissions
                 LIMIT 0;
                 """;
@@ -1433,10 +1469,10 @@ public sealed class SqliteExecutableStore :
             || string.IsNullOrWhiteSpace(admission.CycleId)
             || string.IsNullOrWhiteSpace(admission.AttemptId)
             || string.IsNullOrWhiteSpace(admission.ContractName)
-            || admission.EvidenceWatermark <= 0)
+            || !ContractDigests.IsSha256Digest(admission.AnalysisManifestDigest))
         {
             throw new ArgumentException(
-                "Candidate admission identity and positive evidence watermark are required.",
+                "Candidate admission identity and a valid analysis manifest digest are required.",
                 nameof(admission));
         }
     }
@@ -1456,8 +1492,6 @@ public sealed class SqliteExecutableStore :
             existing.ExecutableDigest,
             requested.ExecutableDigest,
             StringComparison.Ordinal)
-        && existing.EvidenceCutoff == requested.EvidenceCutoff
-        && existing.EvidenceWatermark == requested.EvidenceWatermark
         && string.Equals(
             existing.AnalysisManifestDigest,
             requested.AnalysisManifestDigest,
@@ -1475,7 +1509,7 @@ public sealed class SqliteExecutableStore :
         command.CommandText =
             """
             SELECT attempt_id, contract_name, contract_digest, executable_digest,
-                   evidence_cutoff, evidence_watermark, analysis_manifest_digest, created_at
+                   analysis_manifest_digest, created_at
             FROM analysis_candidate_admissions
             WHERE workspace_id = $workspaceId
               AND cycle_id = $cycleId;
@@ -1495,14 +1529,9 @@ public sealed class SqliteExecutableStore :
             reader.GetString(1),
             reader.GetString(2),
             reader.GetString(3),
+            reader.GetString(4),
             DateTimeOffset.Parse(
-                reader.GetString(4),
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind),
-            reader.GetInt64(5),
-            reader.GetString(6),
-            DateTimeOffset.Parse(
-                reader.GetString(7),
+                reader.GetString(5),
                 CultureInfo.InvariantCulture,
                 DateTimeStyles.RoundtripKind));
     }

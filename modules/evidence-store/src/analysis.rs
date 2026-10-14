@@ -6,21 +6,6 @@ use serde_json::Value;
 
 use crate::{AuthorityScope, EvidenceSignal, EvidenceStoreError};
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct ObservationWatermark(u64);
-
-impl ObservationWatermark {
-    #[must_use]
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EvidenceSourceSelector {
     pub signal: EvidenceSignal,
@@ -48,19 +33,40 @@ pub struct EvidenceQueryLimits {
 #[derive(Clone, Debug)]
 pub struct EvidenceQueryRequest {
     pub sql: String,
-    pub cutoff_unix_nano: u64,
-    pub watermark: ObservationWatermark,
     pub limits: EvidenceQueryLimits,
+}
+
+/// Output metadata prepared before execution, independent of whether any rows exist.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceColumn {
+    pub name: String,
+    /// A declared SQLite type, or null when SQLite cannot reliably report one.
+    #[serde(rename = "type")]
+    pub data_type: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct EvidenceRelationColumn {
+    pub name: &'static str,
+    #[serde(rename = "type")]
+    pub data_type: Option<&'static str>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct EvidenceRelation {
+    pub name: &'static str,
+    pub columns: &'static [EvidenceRelationColumn],
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EvidenceQueryResult {
     pub normalized_sql: String,
-    pub columns: Vec<String>,
+    pub columns: Vec<EvidenceColumn>,
     pub rows: Vec<BTreeMap<String, Value>>,
     pub observation_ids: Vec<String>,
     pub result_bytes: usize,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -68,7 +74,7 @@ pub struct EvidenceQueryResult {
 pub struct EvidenceQueryCapabilities {
     pub dialect: &'static str,
     pub statements: &'static [&'static str],
-    pub relations: &'static [&'static str],
+    pub relations: &'static [EvidenceRelation],
     pub features: &'static [&'static str],
     pub functions: &'static [&'static str],
 }
@@ -77,8 +83,7 @@ pub struct EvidenceQueryCapabilities {
 pub trait EvidenceAnalysisStore: Send + Sync {
     fn query_capabilities(&self) -> EvidenceQueryCapabilities;
 
-    async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError>;
-
+    /// Query currently committed evidence in the authorized scope, without a cycle watermark.
     async fn query(
         &self,
         scope: &EvidenceQueryScope,

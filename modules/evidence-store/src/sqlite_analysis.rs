@@ -14,18 +14,47 @@ use sqlparser::{
     parser::Parser,
 };
 use sqlx::{
-    Column, QueryBuilder, Row, Sqlite, SqlitePool, TypeInfo, ValueRef,
+    AssertSqlSafe, Column, Executor, QueryBuilder, Row, SqlSafeStr, Sqlite, SqlitePool,
+    Statement as SqlxStatement, TypeInfo, ValueRef,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow, SqliteSynchronous},
 };
 
 use crate::{
-    EvidenceAnalysisStore, EvidenceQueryCapabilities, EvidenceQueryRequest, EvidenceQueryResult,
-    EvidenceQueryScope, EvidenceSourceSelector, EvidenceStoreError, ObservationWatermark,
+    EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryRequest,
+    EvidenceQueryResult, EvidenceQueryScope, EvidenceRelation, EvidenceRelationColumn,
+    EvidenceSourceSelector, EvidenceStoreError,
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
 const SCHEMA_VERSION: i64 = 4;
-const LOGICAL_VIEW: &str = "observations";
+const RELATIONS: &[EvidenceRelation] = &[EvidenceRelation {
+    name: "observations",
+    columns: &[
+        relation_column("observation_sequence", "INTEGER"),
+        relation_column("observation_id", "TEXT"),
+        relation_column("logical_source_id", "TEXT"),
+        relation_column("content_digest", "TEXT"),
+        relation_column("signal_type", "TEXT"),
+        relation_column("instrumentation_scope", "TEXT"),
+        relation_column("signal_name", "TEXT"),
+        relation_column("metric_kind", "TEXT"),
+        relation_column("metric_unit", "TEXT"),
+        relation_column("parent_span_name", "TEXT"),
+        relation_column("observed_at_unix_nano", "INTEGER"),
+        relation_column("observed_time_source", "TEXT"),
+        relation_column("protocol_kind", "TEXT"),
+        relation_column("decision_id", "TEXT"),
+        relation_column("contract_digest", "TEXT"),
+        relation_column("payload_json", "TEXT"),
+    ],
+}];
+
+const fn relation_column(name: &'static str, data_type: &'static str) -> EvidenceRelationColumn {
+    EvidenceRelationColumn {
+        name,
+        data_type: Some(data_type),
+    }
+}
 const SAFE_FUNCTIONS: &[&str] = &[
     "abs",
     "avg",
@@ -46,13 +75,14 @@ pub const SQLITE_EVIDENCE_QUERY_CAPABILITIES: EvidenceQueryCapabilities =
     EvidenceQueryCapabilities {
         dialect: "sqlite",
         statements: &["SELECT", "WITH (non-recursive)"],
-        relations: &["observations", "named CTEs"],
+        relations: RELATIONS,
         features: &[
             "aggregation",
             "arithmetic",
             "CASE expressions",
             "grouping",
             "JSON extraction",
+            "named CTEs",
             "ordering",
         ],
         functions: SAFE_FUNCTIONS,
@@ -118,18 +148,6 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
         SQLITE_EVIDENCE_QUERY_CAPABILITIES
     }
 
-    async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError> {
-        let value: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(observation_sequence), 0) FROM evidence_observations",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(EvidenceStoreError::unavailable)?;
-        Ok(ObservationWatermark::new(u64::try_from(value).map_err(
-            |_| EvidenceStoreError::CorruptData("negative observation sequence".to_owned()),
-        )?))
-    }
-
     async fn query(
         &self,
         scope: &EvidenceQueryScope,
@@ -142,12 +160,6 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
             ));
         }
         let normalized_sql = validate_sql(&request.sql)?;
-        let cutoff = i64::try_from(request.cutoff_unix_nano).map_err(|_| {
-            EvidenceStoreError::InvalidQuery("cutoff exceeds SQLite integer range".to_owned())
-        })?;
-        let watermark = i64::try_from(request.watermark.get()).map_err(|_| {
-            EvidenceStoreError::InvalidQuery("watermark exceeds SQLite integer range".to_owned())
-        })?;
         let mut builder = QueryBuilder::<Sqlite>::new(
             "WITH observations AS (
                 SELECT observation_sequence,
@@ -177,19 +189,22 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
             .push_bind(&scope.authority.environment)
             .push(" AND (contract_digest IS NULL OR contract_digest = ")
             .push_bind(&scope.contract_digest)
-            .push(") AND CAST(observed_at_unix_nano AS INTEGER) <= ")
-            .push_bind(cutoff)
-            .push(" AND observation_sequence <= ")
-            .push_bind(watermark)
-            .push(" AND (");
+            .push(") AND (");
         for (index, source) in scope.sources.iter().enumerate() {
             if index > 0 {
                 builder.push(" OR ");
             }
             push_source(&mut builder, source);
         }
+        builder.push("))");
+        // Prepare the original projection: a subquery wrapper can silently rename duplicates.
+        let metadata_sql = if let Some(ctes) = normalized_sql.strip_prefix("WITH ") {
+            format!("{}, {ctes}", builder.sql().as_str())
+        } else {
+            format!("{} {normalized_sql}", builder.sql().as_str())
+        };
         builder
-            .push(")) SELECT * FROM (")
+            .push(" SELECT * FROM (")
             .push(&normalized_sql)
             .push(") AS analysis_result LIMIT ")
             .push_bind(i64::from(request.limits.max_rows.get()) + 1);
@@ -208,11 +223,31 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                 .await
                 .map_err(EvidenceStoreError::unavailable)?
                 .set_progress_handler(1_000, move || started.elapsed() < timeout);
+            // Unlike describe(), prepare() neither steps rows nor infers expression types.
+            let statement = (&mut *connection)
+                .prepare(AssertSqlSafe(metadata_sql).into_sql_str())
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+            let mut names = BTreeSet::new();
+            let mut columns = Vec::with_capacity(statement.columns().len());
+            for column in statement.columns() {
+                if !names.insert(column.name().to_ascii_lowercase()) {
+                    return Err(EvidenceStoreError::InvalidQuery(format!(
+                        "duplicate output column name '{}'; use unique aliases",
+                        column.name()
+                    )));
+                }
+                columns.push(EvidenceColumn {
+                    name: column.name().to_owned(),
+                    data_type: (!column.type_info().is_null())
+                        .then(|| column.type_info().name().to_owned()),
+                });
+            }
             let mut stream = query.fetch(&mut *connection);
-            let mut columns = Vec::new();
             let mut rows = Vec::new();
             let mut observation_ids = BTreeSet::new();
             let mut result_bytes = 0usize;
+            let mut truncated = false;
             while let Some(row) = stream.try_next().await.map_err(|error| {
                 if started.elapsed() >= timeout
                     && error
@@ -225,14 +260,8 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                 }
             })? {
                 if rows.len() >= request.limits.max_rows.get() as usize {
-                    return Err(EvidenceStoreError::QueryLimit("row"));
-                }
-                if columns.is_empty() {
-                    columns = row
-                        .columns()
-                        .iter()
-                        .map(|column| column.name().to_owned())
-                        .collect();
+                    truncated = true;
+                    break;
                 }
                 let decoded = decode_row(&row)?;
                 if let Some(Value::String(observation_id)) = decoded.get("observation_id") {
@@ -256,6 +285,7 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                 rows,
                 observation_ids: observation_ids.into_iter().collect(),
                 result_bytes,
+                truncated,
             })
         };
         tokio::time::timeout(request.limits.timeout, future)
@@ -301,7 +331,10 @@ fn validate_sql(sql: &str) -> Result<String, EvidenceStoreError> {
             "only SELECT or WITH queries are allowed".to_owned(),
         ));
     };
-    let mut allowed_relations = BTreeSet::from([LOGICAL_VIEW.to_owned()]);
+    let mut allowed_relations: BTreeSet<_> = RELATIONS
+        .iter()
+        .map(|relation| relation.name.to_owned())
+        .collect();
     if let Some(with) = &query.with {
         if with.recursive {
             return Err(EvidenceStoreError::InvalidQuery(
@@ -310,7 +343,7 @@ fn validate_sql(sql: &str) -> Result<String, EvidenceStoreError> {
         }
         for cte in &with.cte_tables {
             let name = cte.alias.name.value.to_ascii_lowercase();
-            if name == LOGICAL_VIEW || !allowed_relations.insert(name) {
+            if !allowed_relations.insert(name) {
                 return Err(EvidenceStoreError::InvalidQuery(
                     "common table expression names must be unique and cannot shadow observations"
                         .to_owned(),

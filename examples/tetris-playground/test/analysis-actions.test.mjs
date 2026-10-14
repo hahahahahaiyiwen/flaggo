@@ -45,6 +45,8 @@ test("pairs full correlation, deduplicates exact telemetry copies, and accepts o
   assert.equal(action.outcome, "success");
   assert.equal(action.attributes["flaggo.analysis.result.rows"], 2);
   assert.equal(action.attributes["flaggo.analysis.action.duration_ms"], 12);
+  assert.equal(action.attributes["flaggo.analysis.snapshot.watermark"], undefined);
+  assert.equal(action.attributes["flaggo.analysis.snapshot.cutoff"], undefined);
   assert.equal(action.traceId, terminal.traceId);
   assert.equal(view([
     start, log("completed", { "flaggo.analysis.attempt.id": "retry-2" }),
@@ -63,6 +65,26 @@ test("partial and terminal-only histories never invent start/completion timestam
   assert.equal(terminal.outcome, "success");
   const recovered = view([log()], { previous: view([log("completed")]) });
   assert.equal(recovered.actions[0].status, "completed");
+});
+
+test("reconstructs Python execution outcomes without exposing code or diagnostics", () => {
+  const kind = { "flaggo.analysis.action.kind": "python.run" };
+  for (const outcome of ["success", "failed", "timeout", "cancelled"]) {
+    const result = view([
+      log("started", kind),
+      log("completed", {
+        ...kind,
+        "flaggo.analysis.action.outcome": outcome,
+        "flaggo.analysis.artifact.digest": digest,
+        code: "PRIVATE", stdout: "PRIVATE", stderr: "PRIVATE",
+      }),
+    ]);
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0].kind, "python.run");
+    assert.equal(result.actions[0].outcome, outcome);
+    assert.equal(result.actions[0].attributes["flaggo.analysis.artifact.digest"], digest);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
+  }
 });
 
 test("contradictory terminals stay unknown rather than picking success", () => {

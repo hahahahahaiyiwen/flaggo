@@ -127,8 +127,6 @@ async fn materialized_numeric_attributes_support_sql_eligibility_without_casts()
             json_extract(payload_json, '$.signal.payload.attributes[0].value.value') > 0
                 AND json_extract(payload_json, '$.signal.payload.attributes[1].value.value') > 0 AS eligible
             FROM observations ORDER BY pieces, duration".to_owned(),
-        cutoff_unix_nano: 2_000,
-        watermark: reader.capture_watermark().await.unwrap(),
         limits: EvidenceQueryLimits {
             max_rows: NonZeroU32::new(10).unwrap(), max_bytes: 16_384,
             timeout: Duration::from_secs(5),

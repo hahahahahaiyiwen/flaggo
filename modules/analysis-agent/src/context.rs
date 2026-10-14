@@ -114,7 +114,7 @@ mod tests {
                 &[
                     "cycle_context",
                     "cycle_status",
-                    "evidence_snapshot",
+                    "cycle_history",
                     "analysis_record",
                     "cycle_outcome",
                 ][..],
@@ -224,10 +224,8 @@ mod tests {
 
     #[cfg(feature = "copilot")]
     #[test]
-    fn system_defines_role_while_protocol_owns_operations() {
+    fn system_defines_role_without_cycle_or_tool_workflows() {
         use crate::copilot::tools::REGISTERED_ANALYSIS_TOOL_NAMES;
-
-        const PROTOCOL: &str = include_str!("../agent/skills/analysis-cycle-protocol/SKILL.md");
 
         assert!(ANALYSIS_SYSTEM_PROMPT.contains("data scientist"));
         assert!(ANALYSIS_SYSTEM_PROMPT.contains("closed-loop decision system"));
@@ -250,9 +248,47 @@ mod tests {
                 !ANALYSIS_SYSTEM_PROMPT.contains(tool_name),
                 "system prompt must not encode the {tool_name} workflow"
             );
+        }
+    }
+
+    #[test]
+    fn protocol_owns_cycle_lifecycle_and_history_not_tool_mechanics() {
+        const PROTOCOL: &str = include_str!("../agent/skills/analysis-cycle-protocol/SKILL.md");
+        for lifecycle_contract in [
+            "/workspace/cycle.json",
+            "/workspace/contract.json",
+            "/workspace/history/<cycle-id>",
+            "/workspace/analysis",
+            "/workspace/handoffs",
+            "check_cycle_status",
+            "propose_executable",
+        ] {
             assert!(
-                PROTOCOL.contains(tool_name),
-                "protocol skill must describe {tool_name}"
+                PROTOCOL.contains(lifecycle_contract),
+                "missing cycle contract: {lifecycle_contract}"
+            );
+        }
+        for tool_mechanic in [
+            "## Query and model locally",
+            "row_limit",
+            "totalRows",
+            "resultPath",
+            "script_path",
+            "execution.status",
+            "commit_cutoff",
+            "/workspace/cutoff.json",
+        ] {
+            assert!(
+                !PROTOCOL.contains(tool_mechanic),
+                "tool mechanic belongs in its description: {tool_mechanic}"
+            );
+        }
+        const METHOD: &str = include_str!("../agent/skills/qualitative-analysis/SKILL.md");
+        assert!(METHOD.contains("run_sql") && METHOD.contains("code_interpreter"));
+        for mechanic in ["row_limit", "resultPath", "script_path", "execution.status"] {
+            assert!(
+                !METHOD.contains(mechanic),
+                "analytical method must not duplicate {mechanic}"
             );
         }
     }

@@ -9,7 +9,7 @@ use flaggo_analysis_agent::{
 };
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisContractIdentity, AnalysisError, AnalysisProfile, AttemptContext,
-    CandidateRecord, CatalogUpdate, CycleOutcome, EvidenceCutoff,
+    CandidateRecord, CatalogUpdate, CycleOutcome,
 };
 use flaggo_analysis_workspace::{PrepareCycleResult, WorkspaceProvider};
 use serde::Serialize;
@@ -36,7 +36,6 @@ pub trait ContractService: Send + Sync {
         &self,
         context: &AttemptContext,
         rules: Value,
-        cutoff: &EvidenceCutoff,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError>;
 }
@@ -470,11 +469,7 @@ impl AnalysisCoordinator {
             _ => None,
         };
         if let Some(reported_outcome) = completed_without_candidate {
-            let invalid = if workspace.cutoff(&cycle.cycle_id).await?.is_none() {
-                Some(format!(
-                    "agent reported {reported_outcome} before committing an evidence cutoff"
-                ))
-            } else if tools.proposed_candidate().await?.is_some() {
+            let invalid = if tools.proposed_candidate().await?.is_some() {
                 Some(format!(
                     "agent reported {reported_outcome} after a successful proposal tool call"
                 ))

@@ -371,8 +371,6 @@ describe("OpenAPI shared-contract alignment", () => {
       "workspaceId",
       "cycleId",
       "attemptId",
-      "evidenceCutoff",
-      "evidenceWatermark",
       "analysisManifestDigest",
     ]);
     expectRequired(managementModels.$defs!.AnalysisCandidateResult!, [

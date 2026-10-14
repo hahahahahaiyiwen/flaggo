@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use crate::python::PythonConfig;
 use flaggo_analysis_agent::context::analysis_skill_directory;
 
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
@@ -21,6 +22,9 @@ pub const QUERY_MAX_BYTES_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_MA
 pub const QUERY_TIMEOUT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_TIMEOUT_MS";
 pub const RUN_TIMEOUT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS";
 pub const YIELD_GRACE_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_YIELD_GRACE_SECONDS";
+pub const PYTHON_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_PYTHON";
+pub const PYTHON_TIMEOUT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_PYTHON_TIMEOUT_SECONDS";
+pub const PYTHON_OUTPUT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_PYTHON_MAX_OUTPUT_BYTES";
 
 const DEFAULT_DATABASE_URL: &str = "sqlite://flaggo.db";
 const DEFAULT_CONTRACT_SERVICE_URL: &str = "http://127.0.0.1:5000";
@@ -50,6 +54,7 @@ pub struct AnalysisServiceConfig {
     pub query_timeout: Duration,
     pub run_timeout: Duration,
     pub yield_grace_period: Duration,
+    pub python: PythonConfig,
 }
 
 impl AnalysisServiceConfig {
@@ -76,6 +81,20 @@ impl AnalysisServiceConfig {
                 "{QUERY_MAX_BYTES_ENVIRONMENT_VARIABLE} must be greater than zero"
             ));
         }
+        let python_defaults = PythonConfig::default();
+        let python_output = parse_integer(
+            PYTHON_OUTPUT_ENVIRONMENT_VARIABLE,
+            python_defaults.max_output_bytes,
+        )?;
+        if python_output == 0 {
+            return Err(format!(
+                "{PYTHON_OUTPUT_ENVIRONMENT_VARIABLE} must be greater than zero"
+            ));
+        }
+        let executable = python_executable(
+            optional_nonempty(PYTHON_ENVIRONMENT_VARIABLE)?,
+            python_defaults.executable,
+        )?;
 
         let skill_directory = analysis_skill_directory();
         if !skill_directory.is_dir() {
@@ -124,7 +143,25 @@ impl AnalysisServiceConfig {
                 YIELD_GRACE_ENVIRONMENT_VARIABLE,
                 DEFAULT_YIELD_GRACE_SECONDS,
             )?,
+            python: PythonConfig {
+                executable,
+                timeout: duration_seconds(
+                    PYTHON_TIMEOUT_ENVIRONMENT_VARIABLE,
+                    python_defaults.timeout.as_secs(),
+                )?,
+                max_output_bytes: python_output,
+            },
         })
+    }
+}
+
+fn python_executable(configured: Option<String>, default: PathBuf) -> Result<PathBuf, String> {
+    let executable = configured.map(PathBuf::from).unwrap_or(default);
+    if !executable.is_absolute() && executable.components().count() > 1 {
+        std::path::absolute(executable)
+            .map_err(|error| format!("{PYTHON_ENVIRONMENT_VARIABLE}: {error}"))
+    } else {
+        Ok(executable)
     }
 }
 
@@ -176,4 +213,42 @@ fn duration_seconds(name: &str, default: u64) -> Result<Duration, String> {
         return Err(format!("{name} must be greater than zero"));
     }
     Ok(Duration::from_secs(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selects_the_checkout_venv_by_default_and_preserves_explicit_overrides() {
+        let default = PythonConfig::default().executable;
+        assert!(default.is_absolute());
+        assert!(
+            default.is_file(),
+            "create the checkout .venv before running tests"
+        );
+        assert_eq!(python_executable(None, default.clone()).unwrap(), default);
+        assert_eq!(
+            python_executable(Some("custom-python".to_owned()), default).unwrap(),
+            PathBuf::from("custom-python"),
+        );
+    }
+
+    #[test]
+    fn relative_venv_paths_are_absolutized_without_resolving_interpreter_symlinks() {
+        let suffix = if cfg!(windows) {
+            PathBuf::from(".venv").join("Scripts").join("python.exe")
+        } else {
+            PathBuf::from(".venv").join("bin").join("python")
+        };
+        let relative = PathBuf::from("..").join("..").join(&suffix);
+        let resolved = python_executable(
+            Some(relative.to_str().unwrap().to_owned()),
+            PathBuf::from("unused"),
+        )
+        .unwrap();
+        assert!(resolved.is_absolute());
+        assert!(resolved.ends_with(&suffix));
+        assert!(resolved.is_file());
+    }
 }

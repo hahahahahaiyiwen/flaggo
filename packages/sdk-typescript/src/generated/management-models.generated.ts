@@ -507,15 +507,7 @@ export interface AnalysisCandidateProvenance {
   cycleId: string;
   attemptId: string;
   /**
-   * Inclusive event-time cutoff frozen by the analysis cycle.
-   */
-  evidenceCutoff: string;
-  /**
-   * Opaque Evidence Store observation watermark frozen by the analysis cycle.
-   */
-  evidenceWatermark: number;
-  /**
-   * Digest of the immutable analysis manifest persisted in the workspace.
+   * Digest of the sealed analysis manifest persisted in the workspace, including saved datasets and query times. No cycle-wide evidence snapshot boundary is implied.
    */
   analysisManifestDigest: string;
 }

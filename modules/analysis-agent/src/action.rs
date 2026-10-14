@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use flaggo_analysis_domain::{AnalysisError, AttemptContext, EvidenceCutoff};
+use flaggo_analysis_domain::{AnalysisError, AttemptContext};
 use flaggo_analysis_workspace::sha256_digest;
 use tracing::Span;
 use uuid::Uuid;
@@ -15,8 +15,8 @@ pub enum ActionKind {
     SessionRun,
     ProviderRequest,
     EvidenceDescribe,
-    EvidenceCutoff,
     EvidenceSql,
+    PythonRun,
     ArtifactRead,
     ArtifactWrite,
     ArtifactAppend,
@@ -30,8 +30,8 @@ impl ActionKind {
             Self::SessionRun => "session.run",
             Self::ProviderRequest => "provider.request",
             Self::EvidenceDescribe => "evidence.describe",
-            Self::EvidenceCutoff => "evidence.cutoff",
             Self::EvidenceSql => "evidence.sql",
+            Self::PythonRun => "python.run",
             Self::ArtifactRead => "artifact.read",
             Self::ArtifactWrite => "artifact.write",
             Self::ArtifactAppend => "artifact.append",
@@ -143,8 +143,6 @@ pub struct ActionObservation {
     started: Instant,
     finished: bool,
     query_digest: Option<String>,
-    cutoff: Option<String>,
-    watermark: Option<u64>,
     rows: Option<u64>,
     bytes: Option<u64>,
     artifact_digest: Option<String>,
@@ -188,8 +186,6 @@ impl ActionObservation {
                 flaggo.analysis.action.outcome = "running",
                 flaggo.analysis.action.duration_ms = tracing::field::Empty,
                 flaggo.analysis.query.digest = tracing::field::Empty,
-                flaggo.analysis.snapshot.cutoff = tracing::field::Empty,
-                flaggo.analysis.snapshot.watermark = tracing::field::Empty,
                 flaggo.analysis.result.rows = tracing::field::Empty,
                 flaggo.analysis.result.bytes = tracing::field::Empty,
                 flaggo.analysis.artifact.digest = tracing::field::Empty,
@@ -208,8 +204,6 @@ impl ActionObservation {
             started: Instant::now(),
             finished: false,
             query_digest: None,
-            cutoff: None,
-            watermark: None,
             rows: None,
             bytes: None,
             artifact_digest: None,
@@ -230,15 +224,6 @@ impl ActionObservation {
         let digest = sha256_digest(sql.as_bytes());
         self.span.record("flaggo.analysis.query.digest", &digest);
         self.query_digest = Some(digest);
-    }
-
-    pub fn snapshot(&mut self, snapshot: &EvidenceCutoff) {
-        let cutoff = snapshot.cutoff.to_rfc3339();
-        self.span.record("flaggo.analysis.snapshot.cutoff", &cutoff);
-        self.span
-            .record("flaggo.analysis.snapshot.watermark", snapshot.watermark);
-        self.cutoff = Some(cutoff);
-        self.watermark = Some(snapshot.watermark);
     }
 
     pub fn result_size(&mut self, rows: usize, bytes: usize) {
@@ -314,8 +299,6 @@ impl ActionObservation {
                 "flaggo.analysis.action.outcome" = outcome,
                 "flaggo.analysis.action.duration_ms" = duration,
                 "flaggo.analysis.query.digest" = self.query_digest.as_deref(),
-                "flaggo.analysis.snapshot.cutoff" = self.cutoff.as_deref(),
-                "flaggo.analysis.snapshot.watermark" = self.watermark,
                 "flaggo.analysis.result.rows" = self.rows,
                 "flaggo.analysis.result.bytes" = self.bytes,
                 "flaggo.analysis.artifact.digest" = self.artifact_digest.as_deref(),
@@ -393,12 +376,6 @@ mod tests {
                 let mut action =
                     ActionObservation::start(&context(), ActionKind::EvidenceSql, &parent);
                 action.query(&sql);
-                action.snapshot(&EvidenceCutoff {
-                    cutoff: chrono::DateTime::parse_from_rfc3339("2026-10-12T12:00:00Z")
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
-                    watermark: 42,
-                });
                 async { tokio::task::yield_now().await }
                     .instrument(action.span())
                     .await;
@@ -428,7 +405,11 @@ mod tests {
             terminal.fields["flaggo.analysis.query.digest"],
             sha256_digest(sql.as_bytes())
         );
-        assert_eq!(terminal.fields["flaggo.analysis.snapshot.watermark"], 42);
+        assert!(
+            !terminal
+                .fields
+                .contains_key("flaggo.analysis.snapshot.watermark")
+        );
         assert_eq!(terminal.fields["flaggo.analysis.result.rows"], 3);
         assert_eq!(
             terminal.fields["flaggo.analysis.artifact.digest"],

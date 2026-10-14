@@ -117,7 +117,7 @@
         "metrics",
         "traces"
       ],
-      "description": "Analysis scheduling, claims, evidence cutoffs, agent runs, and Candidate proposals."
+      "description": "Analysis scheduling, claims, live evidence queries, agent runs, and Candidate proposals."
     }
   ],
   "attributes": [
@@ -212,8 +212,8 @@
         "session.run",
         "provider.request",
         "evidence.describe",
-        "evidence.cutoff",
         "evidence.sql",
+        "python.run",
         "artifact.read",
         "artifact.write",
         "artifact.append",
@@ -256,22 +256,6 @@
       "classification": "domain-identifier",
       "metricDimension": false,
       "description": "SHA-256 digest of requested SQL; never SQL text or query parameters."
-    },
-    {
-      "name": "flaggo.analysis.snapshot.cutoff",
-      "type": "string",
-      "cardinality": "unbounded",
-      "classification": "domain-identifier",
-      "metricDimension": false,
-      "description": "Committed RFC 3339 evidence cutoff for this action, when known."
-    },
-    {
-      "name": "flaggo.analysis.snapshot.watermark",
-      "type": "int64",
-      "cardinality": "unbounded",
-      "classification": "aggregate",
-      "metricDimension": false,
-      "description": "Committed evidence watermark; not a measurement of rows scanned."
     },
     {
       "name": "flaggo.analysis.result.rows",
@@ -1012,14 +996,6 @@
           "when": "when-known"
         },
         {
-          "name": "flaggo.analysis.snapshot.cutoff",
-          "when": "when-known"
-        },
-        {
-          "name": "flaggo.analysis.snapshot.watermark",
-          "when": "when-known"
-        },
-        {
           "name": "flaggo.analysis.result.rows",
           "when": "when-success"
         },
@@ -1123,14 +1099,6 @@
           "when": "when-known"
         },
         {
-          "name": "flaggo.analysis.snapshot.cutoff",
-          "when": "when-known"
-        },
-        {
-          "name": "flaggo.analysis.snapshot.watermark",
-          "when": "when-known"
-        },
-        {
           "name": "flaggo.analysis.artifact.digest",
           "when": "when-known"
         },
@@ -1167,14 +1135,6 @@
       "conditionalAttributes": [
         {
           "name": "flaggo.analysis.query.digest",
-          "when": "when-known"
-        },
-        {
-          "name": "flaggo.analysis.snapshot.cutoff",
-          "when": "when-known"
-        },
-        {
-          "name": "flaggo.analysis.snapshot.watermark",
           "when": "when-known"
         },
         {

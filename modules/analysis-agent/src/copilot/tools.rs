@@ -11,20 +11,20 @@ use github_copilot_sdk::{
 use serde_json::{Value, json};
 use tracing::Instrument as _;
 
-use crate::AnalysisTools;
 use crate::action::ToolCorrelation;
+use crate::{AnalysisTools, PythonInput};
 
-const BUILTIN_TOOL_NAMES: &[&str] = &["view", "edit", "rg", "glob", "skill"];
+const BUILTIN_TOOL_NAMES: &[&str] = &["view", "create", "edit", "rg", "glob", "skill"];
 pub const CHECK_CYCLE_STATUS_TOOL: &str = "check_cycle_status";
-pub const COMMIT_CUTOFF_TOOL: &str = "commit_cutoff";
 pub const DESCRIBE_TOOL: &str = "describe";
 pub const RUN_SQL_TOOL: &str = "run_sql";
+pub const CODE_INTERPRETER_TOOL: &str = "code_interpreter";
 pub const PROPOSE_EXECUTABLE_TOOL: &str = "propose_executable";
 pub const REGISTERED_ANALYSIS_TOOL_NAMES: &[&str] = &[
     CHECK_CYCLE_STATUS_TOOL,
-    COMMIT_CUTOFF_TOOL,
     DESCRIBE_TOOL,
     RUN_SQL_TOOL,
+    CODE_INTERPRETER_TOOL,
     PROPOSE_EXECUTABLE_TOOL,
 ];
 
@@ -57,9 +57,9 @@ pub(super) fn is_analysis_permission(request: &PermissionRequestData) -> bool {
 #[derive(Clone, Copy)]
 enum AnalysisToolKind {
     CheckCycleStatus,
-    CommitCutoff,
     Describe,
     RunSql,
+    CodeInterpreter,
     ProposeExecutable,
 }
 
@@ -86,26 +86,6 @@ impl AnalysisToolHandler {
             AnalysisToolKind::CheckCycleStatus => {
                 serde_json::to_value(self.tools.check_cycle_status().await.map_err(tool_error)?)?
             }
-            AnalysisToolKind::CommitCutoff => {
-                let cutoff = invocation
-                    .arguments
-                    .get("cutoff")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        CopilotError::with_message(
-                            ErrorKind::InvalidConfig,
-                            "commit_cutoff requires an RFC 3339 cutoff",
-                        )
-                    })?
-                    .parse()
-                    .map_err(|error| {
-                        CopilotError::with_message(
-                            ErrorKind::InvalidConfig,
-                            format!("invalid RFC 3339 cutoff: {error}"),
-                        )
-                    })?;
-                serde_json::to_value(self.tools.commit_cutoff(cutoff).await.map_err(tool_error)?)?
-            }
             AnalysisToolKind::Describe => self.tools.describe().await.map_err(tool_error)?,
             AnalysisToolKind::RunSql => {
                 let sql = invocation
@@ -118,7 +98,39 @@ impl AnalysisToolHandler {
                             "run_sql requires SQL text",
                         )
                     })?;
-                self.tools.run_sql(sql).await.map_err(tool_error)?
+                let row_limit = invocation
+                    .arguments
+                    .get("row_limit")
+                    .map(|value| serde_json::from_value::<u32>(value.clone()))
+                    .transpose()?;
+                self.tools
+                    .run_sql(sql, row_limit)
+                    .await
+                    .map_err(tool_error)?
+            }
+            AnalysisToolKind::CodeInterpreter => {
+                let input = match (
+                    invocation.arguments.get("script_path"),
+                    invocation.arguments.get("code"),
+                ) {
+                    (Some(_), None) => PythonInput::ScriptPath(required_string(
+                        &invocation.arguments,
+                        "script_path",
+                    )?),
+                    (None, Some(_)) => {
+                        PythonInput::Code(required_string(&invocation.arguments, "code")?)
+                    }
+                    _ => {
+                        return Err(CopilotError::with_message(
+                            ErrorKind::InvalidConfig,
+                            "code_interpreter requires exactly one of script_path or code",
+                        ));
+                    }
+                };
+                self.tools
+                    .code_interpreter(input)
+                    .await
+                    .map_err(tool_error)?
             }
             AnalysisToolKind::ProposeExecutable => {
                 let rules = proposal_rules(&invocation.arguments)?;
@@ -144,23 +156,6 @@ pub(super) fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
             Arc::clone(&tools),
         ),
         tool(
-            COMMIT_CUTOFF_TOOL,
-            "Commit the cycle's immutable data cutoff and storage watermark.",
-            json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["cutoff"],
-                "properties": {
-                    "cutoff": {
-                        "type": "string",
-                        "description": "RFC 3339 UTC timestamp no later than now."
-                    }
-                }
-            }),
-            AnalysisToolKind::CommitCutoff,
-            Arc::clone(&tools),
-        ),
-        tool(
             DESCRIBE_TOOL,
             "Describe the available read-only database relation, SQL capabilities, and trusted scope.",
             json!({"type": "object", "additionalProperties": false}),
@@ -169,16 +164,41 @@ pub(super) fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
         ),
         tool(
             RUN_SQL_TOOL,
-            "Run one bounded read-only SQLite query over the scoped observations relation.",
+            concat!(
+                "Run one scoped read-only SQLite query against live evidence. ",
+                "Return metadata, not inline rows. resultPath and historyPath reference the saved result ",
+                "and query log, relative to the cycle analysis directory. columns describes output names and ",
+                "types (null when unknown), including empty results. Read the result JSON's rows array. ",
+                "totalRows is null when truncated, otherwise equals savedRows; it counts query-result rows. ",
+                "Use describe for SQL capabilities and limits."
+            ),
             json!({
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["sql"],
                 "properties": {
-                    "sql": {"type": "string"}
+                    "sql": {"type": "string"},
+                    "row_limit": {"type": "integer", "minimum": 1, "description": "Maximum saved rows. Defaults to min(100, the service ceiling reported by describe); must not exceed that ceiling."}
                 }
             }),
             AnalysisToolKind::RunSql,
+            Arc::clone(&tools),
+        ),
+        tool(
+            CODE_INTERPRETER_TOOL,
+            concat!(
+                "Execute Python from script_path or inline code (exactly one) in a fresh, unsandboxed local process. ",
+                "Return runtime metadata, execution-record references and execution status, exitCode, stdout and stderr. ",
+                "Only execution.status=succeeded denotes success; check capture truncation and outputComplete."
+            ),
+            json!({
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                    "script_path": {"type": "string", "minLength": 1, "description": "Existing Python file: absolute virtual path or relative to the analysis directory."},
+                    "code": {"type": "string", "minLength": 1, "description": "Inline Python source to execute."}
+                }
+            }),
+            AnalysisToolKind::CodeInterpreter,
             Arc::clone(&tools),
         ),
         tool(
@@ -216,6 +236,15 @@ fn proposal_rules(arguments: &Value) -> Result<Value, CopilotError> {
     Ok(Value::Array(rules.clone()))
 }
 
+fn required_string<'a>(arguments: &'a Value, name: &str) -> Result<&'a str, CopilotError> {
+    arguments.get(name).and_then(Value::as_str).ok_or_else(|| {
+        CopilotError::with_message(
+            ErrorKind::InvalidConfig,
+            format!("{name} requires a string"),
+        )
+    })
+}
+
 fn tool(
     name: &'static str,
     description: &'static str,
@@ -248,7 +277,7 @@ mod tests {
     };
 
     #[test]
-    fn exposes_the_complete_bounded_tool_catalog() {
+    fn exposes_the_complete_analysis_tool_catalog() {
         let available = available_tools().expect("build tool catalog");
         let expected = BUILTIN_TOOL_NAMES
             .iter()
@@ -261,10 +290,60 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(available, expected);
+        assert!(!available.iter().any(|name| name == "custom:commit_cutoff"));
     }
 
     #[test]
-    fn approves_only_bounded_analysis_permissions() {
+    fn tool_descriptions_own_usage_and_results_not_operator_configuration() {
+        let catalog = super::copilot_tools(crate::provider::tests::test_spec().tools);
+        for (name, mechanics) in [
+            (
+                super::RUN_SQL_TOOL,
+                &[
+                    "resultPath",
+                    "historyPath",
+                    "columns",
+                    "including empty results",
+                    "rows array",
+                    "savedRows",
+                    "totalRows is null",
+                    "truncated",
+                    "relative to the cycle analysis directory",
+                ][..],
+            ),
+            (
+                super::CODE_INTERPRETER_TOOL,
+                &[
+                    "script_path",
+                    "inline code (exactly one)",
+                    "fresh, unsandboxed local process",
+                    "execution.status",
+                    "truncation",
+                    "outputComplete",
+                    "unsandboxed",
+                ][..],
+            ),
+        ] {
+            let tool = catalog
+                .iter()
+                .find(|tool| tool.name == name)
+                .expect("registered tool");
+            let description = &tool.description;
+            for mechanic in mechanics {
+                assert!(
+                    description.contains(mechanic),
+                    "{name} must explain {mechanic}"
+                );
+            }
+            assert!(
+                !description.contains("FLAGGO_"),
+                "operator configuration belongs in the README"
+            );
+        }
+    }
+
+    #[test]
+    fn approves_only_registered_analysis_permissions() {
         for kind in [PermissionRequestKind::Read, PermissionRequestKind::Write] {
             assert!(is_analysis_permission(&PermissionRequestData {
                 kind: Some(kind),
@@ -313,6 +392,75 @@ mod tests {
             error.to_string(),
             "propose_executable requires at least one rule"
         );
+    }
+
+    #[tokio::test]
+    async fn translates_sql_and_python_arguments_and_rejects_malformed_calls() {
+        use github_copilot_sdk::{
+            tool::ToolHandler as _,
+            types::{ToolInvocation, ToolResult},
+        };
+        for (kind, name, arguments, expected) in [
+            (
+                super::AnalysisToolKind::RunSql,
+                "run_sql",
+                json!({"sql": "SELECT count(*) FROM observations", "row_limit": 123}),
+                json!({"requestedSql": "SELECT count(*) FROM observations", "rowLimit": 123, "resultPath": "queries/test.json"}),
+            ),
+            (
+                super::AnalysisToolKind::CodeInterpreter,
+                "code_interpreter",
+                json!({"script_path": "a.py"}),
+                json!({"scriptPath": "a.py"}),
+            ),
+            (
+                super::AnalysisToolKind::CodeInterpreter,
+                "code_interpreter",
+                json!({"code": "print(1)"}),
+                json!({"code": "print(1)"}),
+            ),
+        ] {
+            let handler = super::AnalysisToolHandler {
+                kind,
+                tools: crate::provider::tests::test_spec().tools,
+                parent: tracing::Span::none(),
+            };
+            let call: ToolInvocation = serde_json::from_value(json!({"sessionId": "test", "toolCallId": "call", "toolName": name, "arguments": arguments})).unwrap();
+            let ToolResult::Text(result) = handler.call(call).await.unwrap() else {
+                panic!("expected text JSON result");
+            };
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&result).unwrap(),
+                expected
+            );
+        }
+        for arguments in [
+            json!({"sql": "SELECT 1", "row_limit": -1}),
+            json!({"sql": "SELECT 1", "row_limit": "100"}),
+            json!({}),
+        ] {
+            let handler = super::AnalysisToolHandler {
+                kind: super::AnalysisToolKind::RunSql,
+                tools: crate::provider::tests::test_spec().tools,
+                parent: tracing::Span::none(),
+            };
+            let call: ToolInvocation = serde_json::from_value(json!({"sessionId": "test", "toolCallId": "call", "toolName": "run_sql", "arguments": arguments})).unwrap();
+            assert!(handler.call(call).await.is_err());
+        }
+        for arguments in [
+            json!({}),
+            json!({"script_path": "a.py", "code": "print(1)"}),
+            json!({"script_path": null}),
+            json!({"code": 1}),
+        ] {
+            let handler = super::AnalysisToolHandler {
+                kind: super::AnalysisToolKind::CodeInterpreter,
+                tools: crate::provider::tests::test_spec().tools,
+                parent: tracing::Span::none(),
+            };
+            let call: ToolInvocation = serde_json::from_value(json!({"sessionId": "test", "toolCallId": "call", "toolName": "code_interpreter", "arguments": arguments})).unwrap();
+            assert!(handler.call(call).await.is_err());
+        }
     }
 
     #[tokio::test]

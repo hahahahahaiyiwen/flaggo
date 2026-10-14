@@ -60,13 +60,25 @@ substitute the decision result for outcome evidence, but do not discard a
 measured outcome because the executable has a strong effect on it.
 </comparative_analysis>
 
-## Query efficiently
+## Choose the analysis method
 
 <query_strategy>
-Use `run_sql` for bounded SQL aggregation, grouping, arithmetic, JSON
-extraction, and non-recursive CTEs when they clarify the data. Prefer compact
-results that retain auditable population and time dimensions. Use only
-capabilities reported by `describe`.
+Use `describe` to discover available relations, columns and query limits.
+Prefer `run_sql` for aggregation and comparisons expressible as a query.
+Use `code_interpreter` for Python inspection or modeling when SQL is
+insufficient. Choose the smallest analysis that answers the question while
+retaining source, population and time boundaries.
+
+Evidence is live and may include late-materialized events. Choose explicit
+time windows and a suitable lag for the question; an older cutoff reduces
+late-arrival risk but does not guarantee completeness. Record those choices
+and reconsider comparisons when refreshing datasets changes their populations.
+
+Samples support exploration, not automatic claims about the full population.
+Use explicit ordering for reproducible samples, account for selection bias,
+and do not infer an exact population size from a limited result. Seek broader
+evidence when the sample is insufficient. Record modeling assumptions,
+intermediate findings and material uncertainty.
 </query_strategy>
 
 ## Reach an executable conclusion

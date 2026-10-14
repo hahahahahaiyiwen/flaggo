@@ -98,8 +98,8 @@ test("live human and ten real-time players feed observed Copilot evidence analys
   for (const action of analysis.sqlActions) {
     expect(action.attributes["flaggo.analysis.query.digest"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(action.attributes["flaggo.analysis.result.rows"]).toBeGreaterThanOrEqual(0);
-    expect(action.attributes["flaggo.analysis.snapshot.watermark"]).toBeGreaterThanOrEqual(0);
-    expect(action.attributes["flaggo.analysis.snapshot.cutoff"]).toBeDefined();
+    expect(action.attributes["flaggo.analysis.snapshot.watermark"]).toBeUndefined();
+    expect(action.attributes["flaggo.analysis.snapshot.cutoff"]).toBeUndefined();
   }
   expect(["candidate", "no_candidate", "no_change"]).toContain(analysis.outcome);
   expect(evidence.windows.size).toBeGreaterThanOrEqual(4);

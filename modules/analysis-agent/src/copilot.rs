@@ -348,6 +348,7 @@ impl CopilotWorkspaceFileSystem {
 #[async_trait]
 impl SessionFsProvider for CopilotWorkspaceFileSystem {
     async fn read_file(&self, path: &str) -> Result<String, FsError> {
+        self.require_exists(path).await?;
         self.inner.read_text(path).await.map_err(fs_error)
     }
 
@@ -463,6 +464,180 @@ mod tests {
 
     use super::{FinalOutcome, FinalOutcomeKind, apply_model_selection};
     use crate::AgentRunOutcome;
+
+    #[tokio::test]
+    async fn missing_workspace_files_map_to_sdk_not_found() {
+        use github_copilot_sdk::session_fs::{FsErrorKind, SessionFsProvider as _};
+        let filesystem =
+            super::CopilotWorkspaceFileSystem::new(crate::provider::tests::test_spec().filesystem);
+        let error = filesystem
+            .read_file("/workspace/missing")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error.kind(), FsErrorKind::NotFound(path) if path == "/workspace/missing")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the installed Copilot runtime; makes no model calls"]
+    async fn native_create_edit_and_view_use_the_workspace_filesystem() {
+        use super::{CopilotRuntime, CopilotRuntimeConfig, CopilotWorkspaceFileSystem};
+        use flaggo_analysis_workspace::{
+            LocalWorkspaceProvider, PrepareCycleResult, WorkspaceProvider as _,
+        };
+        use github_copilot_sdk::rpc::{ToolResult, ToolResultType, ToolsExecuteRequest};
+        use serde_json::json;
+        use std::sync::Arc;
+
+        let directory = tempfile::tempdir_in(".").unwrap();
+        let specification = crate::provider::tests::test_spec();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let lease = provider
+            .claim(&specification.contract.name, "native-files")
+            .await
+            .unwrap();
+        let PrepareCycleResult::Ready(preparation) = lease
+            .prepare_cycle(
+                &specification.contract,
+                &crate::context::analysis_profile(),
+                "native-files",
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("expected a ready cycle");
+        };
+        let filesystem = lease
+            .filesystem(&preparation.cycle.cycle_id, "native-files")
+            .await
+            .unwrap();
+        let runtime = CopilotRuntime::new(CopilotRuntimeConfig {
+            base_directory: directory.path().canonicalize().unwrap(),
+            github_token: None,
+        });
+        let client = runtime.client().await.unwrap();
+        let session = client
+            .create_session(super::session_config(
+                None,
+                &crate::context::analysis_skill_directory(),
+                crate::context::ANALYSIS_SYSTEM_PROMPT,
+                super::available_tools().unwrap(),
+                Arc::new(CopilotWorkspaceFileSystem::new(filesystem.clone())),
+                specification.tools,
+            ))
+            .await
+            .unwrap();
+        let path = "/workspace/analysis/model.py";
+        let created = session
+            .rpc()
+            .tools()
+            .execute(ToolsExecuteRequest {
+                name: "create".to_owned(),
+                arguments: json!({"path": path, "file_text": "print(1)\n"}),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(filesystem.exists(path).await.unwrap(), "{created:?}");
+        assert_eq!(
+            filesystem
+                .read_text(path)
+                .await
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["print(1)"],
+            "{created:?}"
+        );
+        let edited = session
+            .rpc()
+            .tools()
+            .execute(ToolsExecuteRequest {
+                name: "edit".to_owned(),
+                arguments: json!({"path": path, "old_str": "print(1)", "new_str": "print(2)"}),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            filesystem
+                .read_text(path)
+                .await
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["print(2)"],
+            "{edited:?}"
+        );
+        let viewed = session
+            .rpc()
+            .tools()
+            .execute(ToolsExecuteRequest {
+                name: "view".to_owned(),
+                arguments: json!({"path": path}),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(format!("{viewed:?}").contains("print(2)"), "{viewed:?}");
+        let contract = filesystem
+            .read_text("/workspace/contract.json")
+            .await
+            .unwrap();
+        let denied = session
+            .rpc()
+            .tools()
+            .execute(ToolsExecuteRequest {
+                name: "edit".to_owned(),
+                arguments: json!({"path": "/workspace/contract.json", "old_str": contract, "new_str": "overwrite"}),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            matches!(&denied, ToolResult::ToolResultExpanded(report) if report.result_type == ToolResultType::Failure),
+            "native editing must not overwrite cycle control records: {denied:?}",
+        );
+        assert_eq!(
+            filesystem
+                .read_text("/workspace/contract.json")
+                .await
+                .unwrap(),
+            contract
+        );
+        let missing_parent = session.rpc().tools().execute(ToolsExecuteRequest {
+            name: "create".to_owned(),
+            arguments: json!({"path": "/workspace/analysis/scripts/nested/model.py", "file_text": "print(1)\n"}),
+            ..Default::default()
+        }).await.unwrap();
+        assert!(
+            matches!(&missing_parent, ToolResult::ToolResultExpanded(report) if report.result_type == ToolResultType::Failure),
+            "{missing_parent:?}"
+        );
+        filesystem
+            .create_directory("/workspace/analysis/scripts/nested", true)
+            .await
+            .unwrap();
+        let nested = session.rpc().tools().execute(ToolsExecuteRequest {
+            name: "create".to_owned(),
+            arguments: json!({"path": "/workspace/analysis/scripts/nested/model.py", "file_text": "print(3)\n"}),
+            ..Default::default()
+        }).await.unwrap();
+        assert_eq!(
+            filesystem
+                .read_text("/workspace/analysis/scripts/nested/model.py")
+                .await
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["print(3)"],
+            "{nested:?}"
+        );
+        session.disconnect().await.unwrap();
+        runtime.stop().await.unwrap();
+    }
 
     #[test]
     fn maps_strict_terminal_outcomes() {

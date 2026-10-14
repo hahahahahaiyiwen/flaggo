@@ -18,7 +18,7 @@ use flaggo_analysis_agent::{
 use flaggo_analysis_domain::{
     AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisError,
     AnalysisEvidenceSource, AnalysisProfile, AttemptContext, CandidateRecord, CatalogUpdate,
-    CycleOutcome, EvidenceCutoff,
+    CycleOutcome,
 };
 use flaggo_analysis_workspace::{LocalWorkspaceProvider, WorkspaceFileSystem, workspace_id};
 use flaggo_async_analysis::{
@@ -26,8 +26,8 @@ use flaggo_async_analysis::{
     local_capabilities::LocalCapabilityFactory,
 };
 use flaggo_evidence_store::{
-    EvidenceAnalysisStore, EvidenceQueryCapabilities, EvidenceQueryLimits, EvidenceQueryRequest,
-    EvidenceQueryResult, EvidenceQueryScope, EvidenceStoreError, ObservationWatermark,
+    EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryLimits,
+    EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope, EvidenceStoreError,
     SQLITE_EVIDENCE_QUERY_CAPABILITIES,
 };
 use serde_json::{Value, json};
@@ -91,7 +91,6 @@ impl ContractService for FakeContractService {
         &self,
         context: &AttemptContext,
         _rules: Value,
-        _cutoff: &EvidenceCutoff,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
         self.submissions
@@ -120,10 +119,6 @@ impl EvidenceAnalysisStore for FakeEvidenceStore {
         SQLITE_EVIDENCE_QUERY_CAPABILITIES
     }
 
-    async fn capture_watermark(&self) -> Result<ObservationWatermark, EvidenceStoreError> {
-        Ok(ObservationWatermark::new(7))
-    }
-
     async fn query(
         &self,
         _scope: &EvidenceQueryScope,
@@ -132,10 +127,14 @@ impl EvidenceAnalysisStore for FakeEvidenceStore {
         self.queries.fetch_add(1, Ordering::Relaxed);
         Ok(EvidenceQueryResult {
             normalized_sql: "SELECT count(*) AS count FROM observations".to_owned(),
-            columns: vec!["count".to_owned()],
+            columns: vec![EvidenceColumn {
+                name: "count".to_owned(),
+                data_type: None,
+            }],
             rows: vec![BTreeMap::from([("count".to_owned(), json!(12))])],
             observation_ids: Vec::new(),
             result_bytes: 12,
+            truncated: false,
         })
     }
 }
@@ -155,7 +154,6 @@ enum Script {
 struct ScriptedAgentProvider {
     script: Script,
     starts: AtomicUsize,
-    cutoff: DateTime<Utc>,
     contract_service: Arc<FakeContractService>,
     replacement: Option<AnalysisContract>,
 }
@@ -170,7 +168,6 @@ impl AgentProvider for ScriptedAgentProvider {
         Ok(Arc::new(ScriptedSession {
             script: self.script,
             ordinal,
-            cutoff: self.cutoff,
             tools: specification.tools,
             filesystem: specification.filesystem,
             contract_service: Arc::clone(&self.contract_service),
@@ -182,7 +179,6 @@ impl AgentProvider for ScriptedAgentProvider {
 struct ScriptedSession {
     script: Script,
     ordinal: usize,
-    cutoff: DateTime<Utc>,
     tools: Arc<dyn AnalysisTools>,
     filesystem: Arc<dyn WorkspaceFileSystem>,
     contract_service: Arc<FakeContractService>,
@@ -204,9 +200,8 @@ impl AgentSession for ScriptedSession {
                         "agent artifact template was not prepared: {path}"
                     );
                 }
-                self.tools.commit_cutoff(self.cutoff).await?;
                 self.tools
-                    .run_sql("SELECT count(*) AS count FROM observations")
+                    .run_sql("SELECT count(*) AS count FROM observations", None)
                     .await?;
                 self.filesystem
                     .write_text(
@@ -224,9 +219,8 @@ impl AgentSession for ScriptedSession {
                 Ok(AgentRunOutcome::Candidate)
             }
             Script::NoChange => {
-                self.tools.commit_cutoff(self.cutoff).await?;
                 self.tools
-                    .run_sql("SELECT count(*) AS count FROM observations")
+                    .run_sql("SELECT count(*) AS count FROM observations", None)
                     .await?;
                 self.filesystem
                     .write_text(
@@ -242,7 +236,6 @@ impl AgentSession for ScriptedSession {
                 Err(AnalysisError::Agent("provider interrupted".to_owned()))
             }
             Script::FailThenNoCandidate => {
-                self.tools.commit_cutoff(self.cutoff).await?;
                 self.filesystem
                     .write_text(
                         "/workspace/analysis/recovery.md",
@@ -284,7 +277,6 @@ impl AgentSession for ScriptedSession {
                 Ok(AgentRunOutcome::Superseded)
             }
             Script::SupersedeBeforeCompletion => {
-                self.tools.commit_cutoff(self.cutoff).await?;
                 self.contract_service
                     .set_current(self.replacement.clone().expect("supersession replacement"));
                 Ok(AgentRunOutcome::NoChange {
@@ -393,6 +385,7 @@ fn coordinator_with_poll_interval(
                 timeout: Duration::from_secs(1),
             },
             Arc::clone(&clock),
+            flaggo_async_analysis::python::PythonConfig::default(),
         )),
         AgentPool::new(provider, NonZeroUsize::new(1).expect("nonzero")),
         CoordinatorConfig {
@@ -430,7 +423,6 @@ async fn persists_candidate_through_real_workspace_and_capability_boundaries() {
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::Candidate,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: None,
     });
@@ -481,7 +473,6 @@ async fn completes_no_change_without_persisting_a_candidate() {
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::NoChange,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: None,
     });
@@ -532,7 +523,6 @@ async fn resumes_same_cycle_after_provider_failure() {
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::FailThenNoCandidate,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: None,
     });
@@ -579,7 +569,6 @@ async fn checkpoints_workspace_during_graceful_supersession() {
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::Supersede,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: Some(new_contract.clone()),
     });
@@ -637,7 +626,6 @@ async fn final_currentness_check_supersedes_an_agent_result_that_wins_the_poll_r
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::SupersedeBeforeCompletion,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: Some(new_contract.clone()),
     });
@@ -688,7 +676,6 @@ async fn coordinator_finalizes_supersession_when_the_agent_ignores_the_yield_sig
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::IgnoreSupersession,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: Some(new_contract.clone()),
     });
@@ -731,7 +718,6 @@ async fn rejects_agent_claimed_supersession_without_a_coordinator_signal() {
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::ClaimSupersession,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: None,
     });
@@ -773,7 +759,6 @@ async fn checkpoints_and_retains_cycle_during_graceful_shutdown() {
     let provider = Arc::new(ScriptedAgentProvider {
         script: Script::ShutdownCheckpoint,
         starts: AtomicUsize::new(0),
-        cutoff: now,
         contract_service: Arc::clone(&service),
         replacement: None,
     });

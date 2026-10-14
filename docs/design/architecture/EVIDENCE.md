@@ -378,12 +378,21 @@ separate Contract Service activator
 ```
 
 Only one analysis cycle may claim a contract-name workspace at a time. Each
-cycle binds one exact current digest, immutable evidence cutoff, and opaque
-Evidence Store watermark. The next interval starts after the previous cycle
+cycle binds one exact current digest. Queries read live scoped evidence and
+persist datasets with output-column metadata and query execution times; the
+agent chooses time windows and accounts for materialization delay. There is no
+cycle-wide cutoff or ingestion watermark. The next interval starts after the previous cycle
 reaches a terminal outcome. Recoverable attempts resume the same cycle without
 advancing cadence. Runtime continues using the existing active executable
 throughout evidence delay, analysis, failure, Candidate persistence, and
 activation attempts.
+
+The Evidence Store owns discovery of logical relations, columns/types and SQL
+capabilities; `describe` forwards them with runtime limits and scope. Query output
+metadata comes from prepared statements even when no rows match. Saved datasets
+remain available on resumption; deliberately refreshed queries may see late
+arrivals. Candidate provenance identifies the sealed analysis manifest, not a
+frozen database snapshot.
 
 `auto-activation` means a separate Contract Service activator may attempt to
 replace the activation mapping after Async Analysis persists a validated

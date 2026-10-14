@@ -357,7 +357,7 @@ public sealed class ContractLifecycle(
             ValidateRouteName(contractName);
             ValidateDigest(contractDigest);
             ArgumentNullException.ThrowIfNull(submission);
-            ValidateProvenance(submission.Provenance, timeProvider.GetUtcNow());
+            ValidateProvenance(submission.Provenance);
             var accepted = await contractStore.GetAsync(
                 contractName,
                 contractDigest,
@@ -392,8 +392,6 @@ public sealed class ContractLifecycle(
                     workspaceId = submission.Provenance.WorkspaceId,
                     cycleId = submission.Provenance.CycleId,
                     attemptId = submission.Provenance.AttemptId,
-                    evidenceCutoff = submission.Provenance.EvidenceCutoff,
-                    evidenceWatermark = submission.Provenance.EvidenceWatermark,
                     analysisManifestDigest = submission.Provenance.AnalysisManifestDigest
                 }));
             var admission = new AnalysisCandidateAdmission(
@@ -403,8 +401,6 @@ public sealed class ContractLifecycle(
                 contractName,
                 contractDigest,
                 candidateDigest,
-                submission.Provenance.EvidenceCutoff,
-                submission.Provenance.EvidenceWatermark,
                 submission.Provenance.AnalysisManifestDigest,
                 createdAt);
 
@@ -909,9 +905,7 @@ public sealed class ContractLifecycle(
 
     }
 
-    private static void ValidateProvenance(
-        AnalysisCandidateProvenance provenance,
-        DateTimeOffset now)
+    private static void ValidateProvenance(AnalysisCandidateProvenance provenance)
     {
         ArgumentNullException.ThrowIfNull(provenance);
         foreach (var (name, value) in new[]
@@ -935,16 +929,6 @@ public sealed class ContractLifecycle(
         {
             throw new ArgumentException(
                 "workspaceId and analysisManifestDigest must be lowercase sha256 digests.");
-        }
-
-        if (provenance.EvidenceWatermark <= 0)
-        {
-            throw new ArgumentException("evidenceWatermark must be positive.");
-        }
-
-        if (provenance.EvidenceCutoff > now)
-        {
-            throw new ArgumentException("evidenceCutoff cannot be in the future.");
         }
     }
 }

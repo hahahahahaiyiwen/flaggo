@@ -7,5 +7,5 @@ pub use error::AnalysisError;
 pub use model::{
     AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisCycle,
     AnalysisEvidenceSource, AnalysisProfile, AttemptContext, CandidateProposal, CandidateRecord,
-    CatalogUpdate, CycleOutcome, EvidenceCutoff, ScheduleError,
+    CatalogUpdate, CycleOutcome, ScheduleError,
 };

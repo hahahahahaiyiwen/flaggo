@@ -13,7 +13,9 @@ mod capability;
 mod filesystem;
 mod provider;
 
-pub use capability::{AnalysisCapabilityFactory, AnalysisRunStatus, AnalysisTools, YieldSignal};
+pub use capability::{
+    AnalysisCapabilityFactory, AnalysisRunStatus, AnalysisTools, PythonInput, YieldSignal,
+};
 pub use filesystem::ObservedWorkspaceFileSystem;
 pub use provider::{
     AgentLease, AgentPool, AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec,

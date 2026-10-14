@@ -103,13 +103,6 @@ impl AttemptContext {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EvidenceCutoff {
-    pub cutoff: DateTime<Utc>,
-    pub watermark: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CandidateRecord {
     pub contract_name: String,
     pub contract_digest: String,

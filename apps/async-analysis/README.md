@@ -8,9 +8,10 @@ The local implementation combines:
 
 - a provider-neutral coordinator and bounded Agent Pool;
 - one durable, name-keyed workspace with an exclusive process and OS lock;
-- one immutable exact contract digest, evidence cutoff, and Evidence Store
-  watermark per cycle;
+- one immutable exact contract digest per cycle, with live evidence queries
+  and persisted datasets;
 - read-only, contract-scoped, bounded SQL over the Evidence Store;
+- SQL-to-file results and a fresh-process local Python modeling tool;
 - a Copilot SDK adapter running the local Copilot CLI in empty mode;
 - module-owned role/task prompts, composable unversioned skills, and an
   attempt-scoped virtual POSIX filesystem; and
@@ -40,13 +41,14 @@ The agent-facing surface is intentionally split by responsibility:
 | --- | --- | --- |
 | Role and mission | `modules/analysis-agent/agent/prompts/system.md` | Define the data-scientist role, closed-loop stages, contract objective, guardrails, and executable mission without encoding workflow |
 | Minimal task | `modules/analysis-agent/agent/prompts/task.md` | Require `analysis-cycle-protocol`; `context.rs` binds the dynamic contract, workspace, cycle, and attempt identity |
-| Cycle protocol | `modules/analysis-agent/agent/skills/analysis-cycle-protocol/SKILL.md` | Load cycle context, periodically check cycle status, commit the evidence snapshot, persist artifacts, and select a terminal outcome |
+| Cycle protocol | `modules/analysis-agent/agent/skills/analysis-cycle-protocol/SKILL.md` | Cycle identity/inputs, work-product/history discovery, resumption, status/checkpointing and attempt outcomes |
 | Contract interpretation | `modules/analysis-agent/agent/skills/understand-decision-contract/SKILL.md` | Interpret the accepted contract wrapper, learning objective, guardrails, evidence mappings, and executable constraints |
-| Analytical method | `modules/analysis-agent/agent/skills/qualitative-analysis/SKILL.md` | Data quality, population and temporal boundaries, comparative reasoning, uncertainty, and the executable conclusion |
+| Analytical method | `modules/analysis-agent/agent/skills/qualitative-analysis/SKILL.md` | SQL/Python method choice, sampling/data quality, population and temporal boundaries, comparative reasoning, uncertainty and the executable conclusion |
 | Executable authoring | `modules/analysis-agent/agent/skills/author-executable/SKILL.md` | Apply the supported `flaggo.cel/v1` profile and convert supported analysis into one minimal executable proposal |
 | Writable artifact templates | `modules/analysis-agent/agent/templates` | Provide existing files that the runtime's edit tool can update |
-| Copilot tool catalog and permission allowlist | `modules/analysis-agent/src/copilot/tools.rs` | Five bounded filesystem/skill built-ins and the five typed Flaggo tools |
-| Trusted tool behavior | `src/local_capabilities.rs` | Coordinator status, immutable cutoff, scoped evidence access, and inactive Candidate admission |
+| Tool descriptions and permission allowlist | `modules/analysis-agent/src/copilot/tools.rs` | Six built-ins and five typed tools; SQL result semantics and Python invocation/results, with SDK-native file creation/editing |
+| Trusted tool behavior | `src/local_capabilities.rs` | Coordinator status, live scoped SQL-to-file results, local Python execution and inactive Candidate admission |
+| Operational guidance | This README | Deployment/configuration, trusted-local limitations, resource controls and recovery guarantees |
 
 Every prompt, skill, and template uses Markdown headings for human-readable
 hierarchy and semantic XML tags around each agent-facing instruction or
@@ -61,26 +63,126 @@ unversioned.
 identity as escaped XML, and prepares the writable templates. The current
 local packaging loads skills from the analysis-agent module source tree.
 
-The current Copilot runtime exposes editing but no create-file tool. Before a
-session starts, the analysis-agent context package therefore creates stable
+The SDK-native `create` and `edit` tools create files and make incremental
+edits through the workspace filesystem adapter, which enforces writable
+locations. Native `create` requires an existing parent directory; inline
+Python can create subdirectories when needed. Before a session starts,
+the analysis-agent context package also creates stable
 findings, supersession, and handoff templates inside the writable workspace.
 The agent preserves their semantic XML tags and replaces their Markdown
 placeholders; resumed attempts retain existing content.
 
-The agent cannot access a shell, host paths, arbitrary network endpoints,
-database credentials, activation operations, or Executable Store tables.
+The Copilot built-in tool catalog does not expose a shell, host paths,
+arbitrary network endpoints, database credentials, or activation operations.
+However, `code_interpreter` deliberately runs unsandboxed Python under the
+local OS account, with host filesystem/network/subprocess access and the
+inherited environment. Its working directory and agent instructions guide
+usage; they do not enforce confinement. This is a trusted-local prototype,
+not a sandbox. Python can bypass virtual filesystem/sealing restrictions
+and can access existing services; no runtime-authority isolation is claimed.
 `propose_executable` can persist one validated `candidate` lifecycle record;
 activation remains a separate Contract Service concern.
 The headless permission predicate approves only filesystem reads/writes and
 the five registered analysis tools: `check_cycle_status`, `describe`,
-`run_sql`, `commit_cutoff`, and `propose_executable`.
+`run_sql`, `code_interpreter`, and
+`propose_executable`.
 `check_cycle_status` reads only the coordinator-owned control signal; the
 agent does not query Contract Service to detect supersession. The permission
 predicate rejects shell, URL, MCP, memory, hook, unknown-permission, and
 unknown-custom-tool requests; the virtual filesystem still enforces the
 narrower workspace read/write paths.
 
+## Local query and Python workflow
+
+1. Call `describe` to discover store-owned logical relations, columns/types and
+   SQL capabilities, plus service query limits and the current trusted scope.
+2. Call `run_sql` with SQL and optional `row_limit`. Each call executes one
+   scoped query, saves JSON under `/workspace/analysis/queries/<query-id>.json`,
+   and appends query history at `/workspace/analysis/queries/history.jsonl`.
+   The response contains `queryId`, `resultPath`, `historyPath`, `columns`, `savedRows`,
+   `totalRows`, `truncated`, `rowLimit`, file `resultBytes`, `contentDigest`,
+   `queryStartedAt`, and `queryCompletedAt` -- no inline rows. `resultPath` and `historyPath`
+   are relative to the cycle analysis directory. Read rows from the file's
+   `rows` array. The default limit is `min(100, service ceiling)`; explicit
+   limits must be positive and at most the ceiling. One extra row detects
+   truncation without a COUNT query; `totalRows` is null when truncated and
+   equals `savedRows` otherwise. Use `ORDER BY` for stable sampling. An
+   intentional SQL `LIMIT` describes that query's result, not the full source
+   population. `columns` contains `{name, type}` descriptors for the actual
+   query output, including aliases and empty results; unknown types are null.
+   Duplicate output names are rejected instead of silently overwriting values.
+3. Use the SDK-native `create` tool with an absolute virtual `path`, such as
+   `/workspace/analysis/model.py`, and UTF-8 `file_text`.
+   Use `edit` to change an existing file.
+4. Call `code_interpreter` with exactly one of `script_path` or inline `code`.
+   File paths may be relative, such as `model.py`, or absolute
+   virtual paths under `/workspace/analysis`. Inline source is saved directly
+   as the execution's submitted-code artifact; it needs no separate file
+   creation call. Both forms execute a saved copy using the configured Python
+   executable, directly without a
+   shell. The working directory is the cycle analysis directory; use relative
+   paths such as `queries/<query-id>.json`, not `/workspace/...` inside Python.
+   The original script directory (or the analysis directory for inline code)
+   is available for imports, while `__file__`
+   identifies the saved execution copy. Each invocation has fresh memory.
+
+SQL validation, source/authority/contract scope, byte limits
+and query timeout remain enforced by the trusted SQL capability. Row overflow
+is now explicit successful truncation; byte/time failures do not return a
+successful partial artifact. History and trusted audit entries refer to
+saved results rather than duplicating their rows. Save/history/audit errors
+remain explicit; interrupted multi-file persistence can leave an orphan file,
+not a successful result or an automatically retried query.
+
+Queries read live evidence: no cycle-wide timestamp cutoff or ingestion
+watermark is imposed. The agent selects time predicates and an appropriate lag,
+accounts for materialization delay, and can deliberately refresh a saved dataset.
+Query start/completion times describe execution, not evidence completeness.
+Saved files are stable inputs for a modeling run; subsequent queries or resumed
+attempts can see newly materialized observations. Existing historical
+`cutoff.json` files are not used to constrain new queries. Candidate provenance
+references the sealed analysis manifest rather than a claimed frozen snapshot.
+
+Python responses contain an execution ID, submitted-code and execution-record
+paths, observed runtime metadata, and an `execution` object with status,
+exit code, elapsed milliseconds, bounded stdout/stderr, truncation flags,
+`outputComplete`, and an optional diagnostic. Statuses are `succeeded`,
+`failed`, `launchFailed`, `timedOut`, and `cancelled`. Runner I/O/persistence
+errors remain tool errors with a failure record when persistence succeeds.
+Records live under `analysis/executions/<execution-id>` and include the
+submitted code/digest, configured interpreter, available actual runtime
+identity, and outcome. Generated files stay where the script writes them.
+Existing results/scripts/records survive ordinary restart and handoff; the
+runtime does not implicitly replay executions.
+
+The default interpreter is the source checkout's root `.venv`: `Scripts/python.exe`
+on Windows or `bin/python` on Linux/macOS. Set `FLAGGO_ANALYSIS_PYTHON` to
+override it; there is no automatic fallback to system Python. Provision packages
+outside agent-generated code. The tracked `requirements.txt` includes NumPy,
+pandas, SciPy, scikit-learn, matplotlib and seaborn; package versions are not
+pinned or allowlisted. Generated virtual environments are ignored by Git.
+Large data, remote storage, persistent notebook kernels, hard memory/CPU/
+artifact quotas, sandboxing and complete input/output provenance are deferred.
+Timeout/cancellation kills and waits for the direct Python process only;
+descendants are not contained. Pipe draining is bounded after process exit,
+and `outputComplete: false` explicitly reports unfinished capture. Output
+limits bound captured bytes per stream, not generated files or computation.
+Host access means recorded artifacts are not tamper-proof.
+
 ## Run locally
+
+Install Python 3 and prepare the analysis environment from the repository root:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r .\apps\async-analysis\requirements.txt
+```
+
+On Linux/macOS, use `.venv/bin/python` for the install command. Recreate the
+environment in each checkout rather than copying or committing it. The service
+uses the virtual environment by default without activation or setting an
+environment variable; its location is bound to the source checkout at build
+time, like the current skill-directory packaging.
 
 The Evidence Store schema must already exist in `FLAGGO_DATABASE_URL`, Contract
 Service must be reachable, and the local Copilot CLI must be installed and
@@ -126,6 +228,9 @@ tool payloads. There is no separate session-event logging switch.
 | `FLAGGO_ANALYSIS_QUERY_TIMEOUT_MS` | `20000` | Evidence-query and local HTTP timeout |
 | `FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS` | `1200` | Maximum Copilot attempt duration |
 | `FLAGGO_ANALYSIS_YIELD_GRACE_SECONDS` | `30` | Checkpoint grace period for supersession and shutdown |
+| `FLAGGO_ANALYSIS_PYTHON` | Checkout root `.venv` interpreter | Optional override; multi-component relative paths resolve at startup |
+| `FLAGGO_ANALYSIS_PYTHON_TIMEOUT_SECONDS` | `60` | Direct Python process deadline |
+| `FLAGGO_ANALYSIS_PYTHON_MAX_OUTPUT_BYTES` | `16384` | Captured bytes per stdout/stderr stream; excess is drained and discarded |
 
 ## Operational observability
 
@@ -149,7 +254,7 @@ telemetry.
 `flaggo.analysis.action.started` and `flaggo.analysis.action.completed` logs
 describe meaningful operations inside an attempt; `flaggo.analysis.action`
 spans provide measured duration and trace correlation. Session start/run,
-evidence discovery/cutoff/SQL, artifact inspection/edits and proposal submission
+evidence discovery/SQL, Python execution, artifact inspection/edits and proposal submission
 share one provider-neutral vocabulary. Deterministic providers use the same
 trusted capability boundaries as Copilot. Provider-only observations are
 reported only when supported by actual SDK signals. The current Copilot SDK
@@ -159,12 +264,12 @@ tools must not be displayed as measured model waiting.
 
 Each invocation has a generated action UUID and exact contract/cycle/attempt
 correlation. A failed query and a later retry remain separate actions. SQL
-details expose a digest, committed cutoff/watermark, duration, and actual
+details expose a digest, duration, and actual
 returned rows/encoded bytes, never SQL or result data. Artifact references use
 content digests and sizes instead of paths/content; append describes the
 appended fragment, not the resulting full file. Internal `.copilot`/`.git`
 content accesses and metadata-only operations are excluded. Result rows are not scanned
-observations; watermark is snapshot identity, not query work measured.
+observations.
 
 The registered field and outcome allowlists are defined by
 [internal service observability](../../docs/design/architecture/OBSERVABILITY.md)
@@ -236,9 +341,9 @@ read-only `SELECT` or non-recursive `WITH` statement over the logical
 JSON extraction, and common aggregates are supported. The current approved
 functions are `abs`, `avg`, `coalesce`, `count`, `json_extract`, `json_type`,
 `lower`, `max`, `min`, `nullif`, `round`, `sum`, `total`, and `upper`;
-`describe` reports this list to the agent. Authority, declared source,
-exact contract digest, committed cutoff timestamp, and storage watermark are
-always injected by trusted code. Multiple statements, recursive CTEs,
+`describe` reports this list to the agent. Authority, declared source, and
+exact contract digest are always injected by trusted code. Time-window
+predicates are chosen by the agent. Multiple statements, recursive CTEs,
 mutation, pragmas, physical tables, table-valued functions, and unapproved
 functions are rejected, and results are bounded by row, byte, and timeout
 limits. Percentiles, median, standard deviation, regression, and richer

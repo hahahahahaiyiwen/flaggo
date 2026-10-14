@@ -275,6 +275,21 @@ Service boundary and may return an immutable candidate plus provenance, but it
 cannot write runtime authority. Candidate submission validates and persists the
 immutable executable as `candidate`; it does not activate it.
 
+Candidate provenance contains `workspaceId`, `cycleId`, `attemptId`, and
+`analysisManifestDigest`. The digest identifies the sealed analysis manifest
+with saved datasets and query times. Evidence queries are live; neither
+`evidenceCutoff` nor `evidenceWatermark` is accepted, and admission does not
+assert a cycle-wide frozen evidence boundary. A retry must preserve the
+workspace/cycle/attempt identities, contract and executable digests, and
+manifest digest; changing any of these conflicts with the original admission.
+
+Executable Store schema v5 removes the snapshot columns from admissions.
+Initialization transactionally migrates v4 admission rows and rebuilds their
+indexes while preserving executable content, lifecycle state, timestamps, and
+existing provenance JSON. Legacy snapshot fields in that JSON remain historical
+truth only, not required inputs for new admissions or retries. Other unsupported
+schema versions are rejected rather than implicitly upgraded.
+
 The initial policy is `mode: auto-activation`. An internal hosted worker runs
 one bounded scan during service startup, then waits
 `FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS` between scans. The positive

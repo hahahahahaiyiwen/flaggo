@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_domain::{
     AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisError,
-    AnalysisEvidenceSource, AttemptContext, CandidateRecord, CatalogUpdate, EvidenceCutoff,
+    AnalysisEvidenceSource, AttemptContext, CandidateRecord, CatalogUpdate,
 };
 use reqwest::{
     Client, Response, StatusCode, Url,
@@ -150,7 +150,6 @@ impl ContractService for ContractServiceClient {
         &self,
         context: &AttemptContext,
         rules: Value,
-        cutoff: &EvidenceCutoff,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
         if !rules.is_array() {
@@ -158,11 +157,6 @@ impl ContractService for ContractServiceClient {
                 "Candidate rules must be a JSON array".to_owned(),
             ));
         }
-        let evidence_watermark = i64::try_from(cutoff.watermark).map_err(|_| {
-            AnalysisError::Candidate(
-                "evidence watermark exceeds the Candidate API range".to_owned(),
-            )
-        })?;
         let url = self.endpoint([
             "v3",
             "decision-contracts",
@@ -180,8 +174,6 @@ impl ContractService for ContractServiceClient {
                     workspace_id: context.workspace_id.clone(),
                     cycle_id: context.cycle_id.clone(),
                     attempt_id: context.attempt_id.clone(),
-                    evidence_cutoff: cutoff.cutoff,
-                    evidence_watermark,
                     analysis_manifest_digest: analysis_manifest_digest.to_owned(),
                 },
             })
@@ -411,8 +403,6 @@ struct CandidateProvenance {
     workspace_id: String,
     cycle_id: String,
     attempt_id: String,
-    evidence_cutoff: DateTime<Utc>,
-    evidence_watermark: i64,
     analysis_manifest_digest: String,
 }
 
@@ -441,7 +431,6 @@ mod tests {
         http::{HeaderMap, Response, StatusCode, header::CONTENT_TYPE},
         routing::{get, post},
     };
-    use chrono::{TimeZone, Utc};
     use serde_json::json;
 
     use super::*;
@@ -649,10 +638,6 @@ mod tests {
         let (base_url, state, server) = start_server().await;
         let client =
             ContractServiceClient::new(&base_url, None, Duration::from_secs(2)).expect("client");
-        let cutoff = Utc
-            .with_ymd_and_hms(2026, 3, 1, 1, 30, 0)
-            .single()
-            .expect("valid timestamp");
         let context = AttemptContext {
             workspace_id: "sha256:wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
                 .to_owned(),
@@ -672,10 +657,6 @@ mod tests {
                     "when": {"expression": "true"},
                     "return": {"value": 5}
                 }]),
-                &EvidenceCutoff {
-                    cutoff,
-                    watermark: 42,
-                },
                 "sha256:mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
             )
             .await
@@ -695,10 +676,6 @@ mod tests {
                     "when": {"expression": "true"},
                     "return": {"value": 5}
                 }]),
-                &EvidenceCutoff {
-                    cutoff,
-                    watermark: 42,
-                },
                 "sha256:mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
             )
             .await
@@ -713,7 +690,12 @@ mod tests {
             context.workspace_id
         );
         assert_eq!(submissions[0]["provenance"]["cycleId"], "cycle-1");
-        assert_eq!(submissions[0]["provenance"]["evidenceWatermark"], 42);
+        assert!(
+            submissions[0]["provenance"]
+                .get("evidenceWatermark")
+                .is_none()
+        );
+        assert!(submissions[0]["provenance"].get("evidenceCutoff").is_none());
         server.abort();
     }
 }
