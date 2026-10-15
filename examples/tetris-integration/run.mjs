@@ -17,6 +17,7 @@ import {
 } from "./host-process.mjs";
 import { deployTetrisContract } from "./deploy-contract.mjs";
 import { startLocalFlaggoHosts } from "./local-flaggo.mjs";
+import { analysisInferenceEnvironment } from "./analysis-inference.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
@@ -449,7 +450,8 @@ async function runAsyncAnalysisActivationCheck({
   hosts,
   lifecycle,
 }) {
-  let githubToken = await currentGitHubToken(lifecycle.signal);
+  let githubToken = (process.env.FLAGGO_ANALYSIS_INFERENCE ?? "github") === "github"
+    ? await currentGitHubToken(lifecycle.signal) : undefined;
   const { host } = await hosts.startAsyncAnalysis({ githubToken });
   githubToken = undefined;
 
@@ -569,6 +571,9 @@ async function assertAnalysisActionDiagnostics(logPath, cycleId) {
 }
 
 async function currentGitHubToken(signal) {
+  if (process.env.GH_TOKEN !== undefined || process.env.GITHUB_TOKEN !== undefined) {
+    return analysisInferenceEnvironment().GH_TOKEN;
+  }
   try {
     const { stdout } = await execFileAsync("gh", ["auth", "token"], {
       encoding: "utf8",

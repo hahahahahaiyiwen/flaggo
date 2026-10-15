@@ -1,8 +1,8 @@
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
-import { startPlaygroundFixture } from "./playground-fixture.mjs";
+import { readAttemptFailureRecords, startPlaygroundFixture } from "./playground-fixture.mjs";
 
 let host;
 let runDirectory;
@@ -17,6 +17,30 @@ test.afterAll(async () => {
   if (host === undefined) return;
   await host.close();
   await rm(runDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
+test.afterEach(async ({}, testInfo) => {
+  if (host === undefined) return;
+  const failuresPath = testInfo.outputPath("analysis-attempt-failures.json");
+  await writeFile(failuresPath, JSON.stringify(await readAttemptFailureRecords(runDirectory), null, 2), "utf8");
+  await testInfo.attach("analysis-attempt-failures", { path: failuresPath });
+  if (testInfo.status === testInfo.expectedStatus) return;
+  await testInfo.attach("playground-launcher-output", {
+    body: host.output,
+    contentType: "text/plain",
+  });
+  const logs = new Set([
+    "async-analysis.log", "playground-gateway.log", "contract-service.log",
+    "decision-service.log", "evidence-materializer.log", "otel-ingestion.log",
+    "observability.log",
+  ]);
+  for (const name of await readdir(runDirectory)) {
+    if (!logs.has(name)) continue;
+    await testInfo.attach(name, {
+      body: (await readFile(resolve(runDirectory, name))).subarray(-65_536),
+      contentType: "text/plain",
+    });
+  }
 });
 
 test("live human and ten real-time players feed observed Copilot evidence analysis", async ({ page }, testInfo) => {
@@ -37,7 +61,8 @@ test("live human and ten real-time players feed observed Copilot evidence analys
   let current;
   let commandSequence = 0;
   while (Date.now() < deadline) {
-    const response = await page.request.get(`${host.url}/api/state`);
+    // Retry one connection reset on this idempotent poll, not HTTP failures.
+    const response = await page.request.get(`${host.url}/api/state`, { maxRetries: 1 });
     expect(response.ok()).toBe(true);
     current = await response.json();
     if (!stopped && Date.now() >= collectionEndsAt) {

@@ -31,14 +31,14 @@ Install the repository prerequisites first:
 - .NET 10 SDK
 - the repository-pinned Rust toolchain
 - Node.js and npm
-- A GitHub token with Copilot access for the default live mode
+- A GitHub token with Copilot access, or explicit BYOK configuration, for live mode
 
 From the repository root:
 
 ```powershell
 npm ci
 dotnet restore Flaggo.slnx --configfile NuGet.config
-$env:FLAGGO_ANALYSIS_GITHUB_TOKEN = (gh auth token)
+$env:GH_TOKEN = (gh auth token)
 npm run tetris:playground
 ```
 
@@ -55,10 +55,17 @@ child processes. The Node gateway and gameplay sessions also run on the host.
 Flaggo's shared SQLite file lives in the run directory on the host; it is not
 a database container. LGTM storage is bind-mounted from that directory.
 
-The default mode is **live**, using the production Copilot analysis provider.
-The token may instead come from `GH_TOKEN` or `GITHUB_TOKEN`; missing credentials
-fail before starting the stack. Live mode does not silently substitute the
-deterministic fitter.
+The default mode is **live**, using the production Copilot SDK analysis provider.
+GitHub-backed inference is the default; use `GH_TOKEN` or `GITHUB_TOKEN`
+(`GH_TOKEN` takes precedence). Alternatively configure `FLAGGO_ANALYSIS_INFERENCE=byok`,
+`FLAGGO_ANALYSIS_MODEL`, `OPENAI_BASE_URL`, `FLAGGO_ANALYSIS_BYOK_WIRE_API` and
+`OPENAI_API_KEY` before running the same launcher. The OpenAI-compatible provider
+type is fixed internally. Ambient OpenAI settings are ignored in GitHub mode.
+BYOK needs no
+GitHub token or `gh auth login`; it still uses the pinned Copilot SDK/runtime.
+See [BYOK configuration and validation status](../../apps/async-analysis/README.md#byok-inference).
+Missing or inconsistent configuration fails before starting the stack. Live mode
+never substitutes the deterministic fitter, another endpoint or another model.
 
 For the separate, credential-free controlled benchmark:
 
@@ -491,6 +498,12 @@ a Candidate or validate human preferences. It collects one minute of legal
 play, stops the bots, and leaves the human game paused or game over while
 shared analysis continues.
 The ten-minute observation budget is a test timeout, not a live latency guarantee.
+State polling retries one `ECONNRESET` on an idempotent GET, but does not retry
+HTTP failures. Failed runs attach bounded standard-service logs and launcher
+output before cleanup; raw provider session logs are not attached.
+Every run also preserves exact durable attempt-failure records in
+`analysis-attempt-failures.json` before workspace cleanup, including failed
+attempts followed by a successful retry.
 It attaches evidence and per-cycle bounded SQL action/completion metadata,
 without reading raw provider session logs or SQL result payloads. Action
 telemetry does not prove which result origins were returned: mixed origins
@@ -501,7 +514,7 @@ built-in `node:sqlite` module.
 ```powershell
 npm run test:tetris-playground:browser
 npm run test:tetris-playground:e2e
-$env:FLAGGO_ANALYSIS_GITHUB_TOKEN = (gh auth token)
+$env:GH_TOKEN = (gh auth token)
 npm run test:tetris-playground:live
 cargo test --locked -p flaggo-tetris-playground-analysis
 ```

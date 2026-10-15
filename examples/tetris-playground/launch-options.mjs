@@ -25,9 +25,6 @@ export function parsePlaygroundArguments(arguments_) {
 
 export function validatePlaygroundCredentials(options, environment = process.env) {
   if (options.analysisMode !== "copilot") return;
-  const token = environment.FLAGGO_ANALYSIS_GITHUB_TOKEN
-    ?? environment.GH_TOKEN ?? environment.GITHUB_TOKEN;
-  if (token === undefined || token.trim() === "") {
-    throw new Error("Copilot analysis requires FLAGGO_ANALYSIS_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN.");
-  }
+  analysisInferenceEnvironment(environment);
 }
+import { analysisInferenceEnvironment } from "../tetris-integration/analysis-inference.mjs";

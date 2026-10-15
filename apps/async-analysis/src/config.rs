@@ -7,6 +7,7 @@ use std::{
 
 use crate::python::PythonConfig;
 use flaggo_analysis_agent::context::analysis_skill_directory;
+use flaggo_analysis_agent::copilot::{ByokWireApi, CopilotInferenceConfig};
 
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
 pub const CATALOG_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_URL";
@@ -16,7 +17,12 @@ pub const COPILOT_HOME_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_COPILOT_HOM
 pub const MAX_AGENTS_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_MAX_AGENTS";
 pub const POLL_INTERVAL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_POLL_INTERVAL_MS";
 pub const MODEL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_MODEL";
-pub const GITHUB_TOKEN_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_GITHUB_TOKEN";
+pub const GH_TOKEN_ENVIRONMENT_VARIABLE: &str = "GH_TOKEN";
+pub const GITHUB_TOKEN_ENVIRONMENT_VARIABLE: &str = "GITHUB_TOKEN";
+pub const INFERENCE_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_INFERENCE";
+const BYOK_BASE_URL: &str = "OPENAI_BASE_URL";
+const BYOK_WIRE_API: &str = "FLAGGO_ANALYSIS_BYOK_WIRE_API";
+const BYOK_API_KEY: &str = "OPENAI_API_KEY";
 pub const QUERY_MAX_ROWS_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_MAX_ROWS";
 pub const QUERY_MAX_BYTES_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_MAX_BYTES";
 pub const QUERY_TIMEOUT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_QUERY_TIMEOUT_MS";
@@ -45,8 +51,7 @@ pub struct AnalysisServiceConfig {
     pub workspace_root: PathBuf,
     pub copilot_home: PathBuf,
     pub skill_directory: PathBuf,
-    pub model: Option<String>,
-    pub github_token: Option<String>,
+    pub inference: CopilotInferenceConfig,
     pub max_agents: NonZeroUsize,
     pub poll_interval: Duration,
     pub query_max_rows: NonZeroU32,
@@ -61,7 +66,7 @@ pub struct AnalysisServiceConfig {
 
 impl AnalysisServiceConfig {
     pub fn from_environment() -> Result<Self, String> {
-        let model = optional_nonempty(MODEL_ENVIRONMENT_VARIABLE)?;
+        let inference = inference_configuration(optional_nonempty)?;
         let max_agents = NonZeroUsize::new(parse_integer(
             MAX_AGENTS_ENVIRONMENT_VARIABLE,
             DEFAULT_MAX_AGENTS,
@@ -150,8 +155,7 @@ impl AnalysisServiceConfig {
                 DEFAULT_COPILOT_HOME,
             )?),
             skill_directory,
-            model,
-            github_token: optional_nonempty(GITHUB_TOKEN_ENVIRONMENT_VARIABLE)?,
+            inference,
             max_agents,
             poll_interval: duration_millis(
                 POLL_INTERVAL_ENVIRONMENT_VARIABLE,
@@ -183,6 +187,75 @@ impl AnalysisServiceConfig {
     }
 }
 
+fn inference_configuration(
+    mut read: impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<CopilotInferenceConfig, String> {
+    let mode = read(INFERENCE_ENVIRONMENT_VARIABLE)?.unwrap_or_else(|| "github".to_owned());
+    let model = read(MODEL_ENVIRONMENT_VARIABLE)?;
+    let wire_api = read(BYOK_WIRE_API)?;
+    match mode.as_str() {
+        "github" => {
+            if wire_api.is_some() {
+                return Err(format!(
+                    "{BYOK_WIRE_API} requires FLAGGO_ANALYSIS_INFERENCE=byok"
+                ));
+            }
+            let token = match read(GH_TOKEN_ENVIRONMENT_VARIABLE)? {
+                Some(token) => Some(token),
+                None => read(GITHUB_TOKEN_ENVIRONMENT_VARIABLE)?,
+            };
+            Ok(CopilotInferenceConfig::GitHub { model, token })
+        }
+        "byok" => {
+            let base_url = read(BYOK_BASE_URL)?;
+            let api_key = read(BYOK_API_KEY)?;
+            let model = model
+                .ok_or_else(|| format!("{MODEL_ENVIRONMENT_VARIABLE} is required for BYOK"))?;
+            let base_url =
+                base_url.ok_or_else(|| format!("{BYOK_BASE_URL} is required for BYOK"))?;
+            let url = reqwest::Url::parse(&base_url)
+                .map_err(|_| format!("{BYOK_BASE_URL} must be an absolute HTTP(S) URL"))?;
+            let loopback = url.host_str().is_some_and(|host| {
+                host == "localhost"
+                    || host
+                        .trim_matches(['[', ']'])
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|address| address.is_loopback())
+            });
+            if url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || !(url.scheme() == "https" || url.scheme() == "http" && loopback)
+            {
+                return Err(format!(
+                    "{BYOK_BASE_URL} requires HTTPS (HTTP only for loopback), without URL credentials, query or fragment"
+                ));
+            }
+            if !loopback && api_key.is_none() {
+                return Err(format!(
+                    "{BYOK_API_KEY} is required for a remote BYOK endpoint"
+                ));
+            }
+            let wire_api = match wire_api.as_deref() {
+                Some("responses") => ByokWireApi::Responses,
+                Some("completions") => ByokWireApi::Completions,
+                _ => return Err(format!("{BYOK_WIRE_API} must be responses or completions")),
+            };
+            Ok(CopilotInferenceConfig::Byok {
+                model,
+                base_url,
+                wire_api,
+                api_key,
+            })
+        }
+        _ => Err(format!(
+            "{INFERENCE_ENVIRONMENT_VARIABLE} must be github or byok"
+        )),
+    }
+}
+
 fn python_executable(configured: Option<String>, default: PathBuf) -> Result<PathBuf, String> {
     let executable = configured.map(PathBuf::from).unwrap_or(default);
     if !executable.is_absolute() && executable.components().count() > 1 {
@@ -198,7 +271,7 @@ fn nonempty_or_default(name: &str, default: &str) -> Result<String, String> {
         Ok(value) if value.trim().is_empty() => Err(format!("{name} must not be empty")),
         Ok(value) => Ok(value),
         Err(env::VarError::NotPresent) => Ok(default.to_owned()),
-        Err(error) => Err(format!("{name} is not valid Unicode: {error}")),
+        Err(_) => Err(format!("{name} is not valid Unicode")),
     }
 }
 
@@ -209,7 +282,7 @@ fn optional_nonempty(name: &str) -> Result<Option<String>, String> {
         }
         Ok(value) => Ok(Some(value)),
         Err(env::VarError::NotPresent) => Ok(None),
-        Err(error) => Err(format!("{name} is not valid Unicode: {error}")),
+        Err(_) => Err(format!("{name} is not valid Unicode")),
     }
 }
 
@@ -246,6 +319,149 @@ fn duration_seconds(name: &str, default: u64) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn inference(values: &[(&str, &str)]) -> Result<CopilotInferenceConfig, String> {
+        inference_configuration(|name| {
+            let value = values
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned());
+            if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
+                Err(format!("{name} must not be empty"))
+            } else {
+                Ok(value)
+            }
+        })
+    }
+
+    fn byok_values() -> Vec<(&'static str, &'static str)> {
+        vec![
+            (INFERENCE_ENVIRONMENT_VARIABLE, "byok"),
+            (BYOK_BASE_URL, "https://example.openai.azure.com/openai/v1/"),
+            (BYOK_WIRE_API, "responses"),
+            (BYOK_API_KEY, "test-provider-secret"),
+            (MODEL_ENVIRONMENT_VARIABLE, "selected-deployment"),
+        ]
+    }
+
+    #[test]
+    fn github_remains_default_and_preserves_explicit_token_and_model() {
+        assert!(matches!(
+            inference(&[]).unwrap(),
+            CopilotInferenceConfig::GitHub {
+                model: None,
+                token: None
+            }
+        ));
+        assert!(matches!(
+            inference(&[
+                (GH_TOKEN_ENVIRONMENT_VARIABLE, "preferred-token"),
+                (GITHUB_TOKEN_ENVIRONMENT_VARIABLE, "other-token"),
+                (BYOK_BASE_URL, "not-a-url"),
+                (BYOK_API_KEY, ""),
+            ]).unwrap(),
+            CopilotInferenceConfig::GitHub { token: Some(token), .. }
+                if token == "preferred-token"
+        ));
+        assert!(
+            inference(&[
+                (GH_TOKEN_ENVIRONMENT_VARIABLE, ""),
+                (GITHUB_TOKEN_ENVIRONMENT_VARIABLE, "other-token"),
+            ])
+            .is_err()
+        );
+        assert!(matches!(
+            inference(&[
+                (GITHUB_TOKEN_ENVIRONMENT_VARIABLE, "test-github-token"),
+                (MODEL_ENVIRONMENT_VARIABLE, "selected-model"),
+            ]).unwrap(),
+            CopilotInferenceConfig::GitHub { model: Some(model), token: Some(token) }
+                if model == "selected-model" && token == "test-github-token"
+        ));
+    }
+
+    #[test]
+    fn byok_configuration_is_explicit_and_does_not_consume_github_credentials() {
+        let mut values = byok_values();
+        values.push((GH_TOKEN_ENVIRONMENT_VARIABLE, ""));
+        values.push((GITHUB_TOKEN_ENVIRONMENT_VARIABLE, ""));
+        assert!(matches!(
+            inference(&values).unwrap(),
+            CopilotInferenceConfig::Byok {
+                model, base_url, wire_api: ByokWireApi::Responses, api_key: Some(key)
+            } if model == "selected-deployment"
+                && base_url == "https://example.openai.azure.com/openai/v1/"
+                && key == "test-provider-secret"
+        ));
+        for missing in [
+            BYOK_BASE_URL,
+            BYOK_WIRE_API,
+            BYOK_API_KEY,
+            MODEL_ENVIRONMENT_VARIABLE,
+        ] {
+            let values = byok_values()
+                .into_iter()
+                .filter(|(key, _)| *key != missing)
+                .collect::<Vec<_>>();
+            assert!(inference(&values).is_err(), "missing {missing}");
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_or_ambiguous_inference_settings_without_echoing_values() {
+        for (name, invalid) in [
+            (INFERENCE_ENVIRONMENT_VARIABLE, "automatic"),
+            (BYOK_WIRE_API, "unknown-protocol"),
+            (MODEL_ENVIRONMENT_VARIABLE, ""),
+            (BYOK_API_KEY, ""),
+            (BYOK_BASE_URL, "not-a-url"),
+            (BYOK_BASE_URL, "http://remote.example/v1"),
+            (
+                BYOK_BASE_URL,
+                "https://user:test-provider-secret@example.com/v1",
+            ),
+            (
+                BYOK_BASE_URL,
+                "https://example.com/v1?key=test-provider-secret",
+            ),
+            (BYOK_BASE_URL, "https://example.com/v1#test-provider-secret"),
+        ] {
+            let mut values = byok_values();
+            values.iter_mut().find(|(key, _)| *key == name).unwrap().1 = invalid;
+            let error = inference(&values).unwrap_err();
+            assert!(!error.contains("test-provider-secret"));
+        }
+    }
+
+    #[test]
+    fn keyless_loopback_is_explicit_but_not_allowed_for_remote_endpoints() {
+        for endpoint in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8000/v1",
+            "http://[::1]:8000/v1",
+        ] {
+            let mut values = byok_values();
+            values.retain(|(key, _)| *key != BYOK_API_KEY);
+            values
+                .iter_mut()
+                .find(|(key, _)| *key == BYOK_BASE_URL)
+                .unwrap()
+                .1 = endpoint;
+            values
+                .iter_mut()
+                .find(|(key, _)| *key == BYOK_WIRE_API)
+                .unwrap()
+                .1 = "completions";
+            assert!(matches!(
+                inference(&values).unwrap(),
+                CopilotInferenceConfig::Byok {
+                    api_key: None,
+                    wire_api: ByokWireApi::Completions,
+                    ..
+                }
+            ));
+        }
+    }
 
     #[test]
     fn selects_the_checkout_venv_by_default_and_preserves_explicit_overrides() {

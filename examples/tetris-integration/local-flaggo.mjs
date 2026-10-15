@@ -138,10 +138,11 @@ export async function startLocalFlaggoHosts({
     };
   }
 
-  async function startAsyncAnalysis({ githubToken }) {
-    if (typeof githubToken !== "string" || githubToken.trim() === "") {
-      throw new TypeError("githubToken must be a non-empty string.");
-    }
+  async function startAsyncAnalysis({ githubToken } = {}) {
+    const inferenceEnvironment = analysisInferenceEnvironment({
+      ...process.env,
+      ...(githubToken === undefined ? {} : { GH_TOKEN: githubToken }),
+    });
     const host = lifecycle.startHost(() => startRustHost(
       "tetris-async-analysis",
       "flaggo-async-analysis",
@@ -149,7 +150,7 @@ export async function startLocalFlaggoHosts({
       repositoryRoot,
       {
         FLAGGO_ANALYSIS_COPILOT_HOME: paths.copilotHome,
-        FLAGGO_ANALYSIS_GITHUB_TOKEN: githubToken,
+        ...inferenceEnvironment,
         FLAGGO_ANALYSIS_POLL_INTERVAL_MS: "1000",
         FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: "600",
         FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.asyncAnalysisWorkspace,
@@ -195,3 +196,4 @@ async function ready(url, fetchImpl, signal) {
   }
   return true;
 }
+import { analysisInferenceEnvironment } from "./analysis-inference.mjs";

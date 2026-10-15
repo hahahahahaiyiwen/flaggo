@@ -34,6 +34,10 @@ advancing the same contract's analysis.
 
 The production composition uses a Copilot agent provider. The deterministic
 Tetris provider implements the same provider interface without model execution.
+The Copilot adapter can select GitHub-backed inference or explicitly configured
+OpenAI-compatible BYOK inference. This transport choice does not change role
+selection, handoff state, tool authority or Candidate admission; see the
+[application configuration](../../../apps/async-analysis/README.md#byok-inference).
 The provider creates sessions; it does not currently scan contracts or
 workspaces.
 

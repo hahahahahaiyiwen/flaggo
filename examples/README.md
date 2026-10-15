@@ -50,6 +50,66 @@ Continue with the chosen example's local-run instructions after setup.
 Standalone terminal play and deterministic benchmarks do not require Python
 analysis.
 
+## Inference for live analysis
+
+Live examples use the pinned Copilot SDK/runtime with either GitHub-backed
+inference (the default) or explicitly configured BYOK. Configure one mode in
+the same terminal that launches the example, after preparing Python above.
+Standalone terminal play and deterministic benchmarks need neither credential.
+
+For GitHub-backed inference, use a token with Copilot access:
+
+```powershell
+$env:GH_TOKEN = (gh auth token)
+```
+
+The launchers also accept `GITHUB_TOKEN`; `GH_TOKEN` takes precedence when both
+are set. For BYOK instead, configure
+an OpenAI-compatible HTTP endpoint, exact model/deployment and supported wire
+protocol. For example, with an Azure OpenAI / Microsoft Foundry OpenAI v1 endpoint:
+
+```powershell
+$env:FLAGGO_ANALYSIS_INFERENCE = "byok"
+$env:FLAGGO_ANALYSIS_BYOK_WIRE_API = "responses"
+$env:FLAGGO_ANALYSIS_MODEL = "<deployment-name>"
+$env:OPENAI_BASE_URL = "https://<resource>.openai.azure.com/openai/v1/"
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new(
+    "", (Read-Host "Provider API key" -AsSecureString)
+).Password
+```
+
+Replace the endpoint and deployment placeholders with your resource's values.
+Use the Azure deployment name, not an assumed model alias. Select `responses`
+or `completions` (Chat Completions) according to the deployment's support for
+iterative tool calls. Remote endpoints require HTTPS and a nonempty API key.
+The key is loaded into this process's environment; do not commit it, print it,
+or save it in a configuration file. Python analysis is trusted-local and
+unsandboxed, so process environment variables are not a credential-isolation
+boundary.
+
+Flaggo explicitly maps `OPENAI_BASE_URL` and `OPENAI_API_KEY` to the SDK's
+provider configuration; the SDK does not automatically configure BYOK from
+these variables. The provider type is fixed to `openai` for this implementation.
+Ambient OpenAI variables do not select BYOK and are ignored in GitHub mode.
+
+BYOK does not require a GitHub token or `gh auth login`, and does not silently
+fall back to GitHub, another endpoint or another model. Missing or inconsistent
+configuration fails before the stack starts. To return to GitHub mode, remove
+the `FLAGGO_ANALYSIS_BYOK_WIRE_API` variable, set `FLAGGO_ANALYSIS_INFERENCE=github`,
+and remove or replace the BYOK-specific `FLAGGO_ANALYSIS_MODEL`.
+
+From the repository root, launch the playground with either configuration:
+
+```powershell
+npm run tetris:playground
+```
+
+The terminal integration's opt-in live analysis uses the same settings; see
+[its run instructions](tetris-integration/README.md). For supported endpoint
+formats, local keyless endpoints, troubleshooting and the distinction between
+configuration validation and live model compatibility, see the
+[Async Analysis BYOK guide](../apps/async-analysis/README.md#byok-inference).
+
 ## Available examples
 
 Small, self-contained examples may live here. Larger showcase applications,
@@ -68,7 +128,8 @@ uses the same nine-game training protocol and verifies Candidate auto-activation
 
 `tetris-playground` composes that headless game boundary with all real Flaggo
 services, a pinned Collector and Grafana LGTM, and a browser observer. Its
-default live mode uses credentialed production Copilot analysis, one dominant
+default live mode uses production Copilot SDK analysis with GitHub or BYOK
+inference, one dominant
 human game, and ten initially idle real-time greedy slots contributing
 attributed evidence. The separate `--mode=benchmark` launch defaults to the
 deterministic fitter and measures matched held-out improvement under the
