@@ -156,6 +156,7 @@ enum Script {
     RequestRevision,
     RejectDraft,
     SubmitThenInterrupt,
+    SubmitDifferentDraft,
     AlwaysFail,
     NeverFinish,
     StartupFailure,
@@ -214,7 +215,8 @@ impl AgentSession for ScriptedSession {
             Script::Collaborate
             | Script::RequestRevision
             | Script::RejectDraft
-            | Script::SubmitThenInterrupt => self.collaborate().await,
+            | Script::SubmitThenInterrupt
+            | Script::SubmitDifferentDraft => self.collaborate().await,
             Script::Candidate => {
                 for path in [
                     ANALYSIS_FINDINGS_PATH,
@@ -420,9 +422,14 @@ impl ScriptedSession {
                         metadata: Some(serde_json::to_value(metadata).unwrap()),
                     });
                 }
-                self.tools
-                    .propose_executable(draft["rules"].clone())
-                    .await?;
+                let mut rules = draft["rules"].clone();
+                if matches!(self.script, Script::SubmitDifferentDraft) {
+                    rules[0]["return"]["value"] = json!(6);
+                }
+                let candidate = self.tools.propose_executable(rules.clone()).await?;
+                if matches!(self.script, Script::Collaborate) {
+                    assert_eq!(self.tools.propose_executable(rules).await?, candidate);
+                }
                 if matches!(self.script, Script::SubmitThenInterrupt) {
                     return Err(AnalysisError::Agent(
                         "response interrupted after successful submission".to_owned(),
@@ -489,6 +496,7 @@ fn coordinator_with_poll_interval(
             | Script::RequestRevision
             | Script::RejectDraft
             | Script::SubmitThenInterrupt
+            | Script::SubmitDifferentDraft
     ) {
         Arc::new(WorkflowAgentProvider::new(provider, false))
     } else {
@@ -740,6 +748,183 @@ impl ContractService for LostReplyService {
         Err(AnalysisError::Contract(
             "admission response lost".to_owned(),
         ))
+    }
+}
+
+struct RecoverySupersessionService {
+    inner: Arc<dyn ContractService>,
+    service: Arc<FakeContractService>,
+    replacement: Option<AnalysisContract>,
+    reads: AtomicUsize,
+}
+
+#[async_trait]
+impl ContractService for RecoverySupersessionService {
+    async fn list_current_learning_contracts(
+        &self,
+        revision: Option<&str>,
+    ) -> Result<CatalogUpdate, AnalysisError> {
+        self.inner.list_current_learning_contracts(revision).await
+    }
+
+    async fn get_current_contract(
+        &self,
+        name: &str,
+    ) -> Result<Option<AnalysisContract>, AnalysisError> {
+        if self.reads.fetch_add(1, Ordering::SeqCst) == 1 {
+            *self.service.current.write().unwrap() = self.replacement.clone();
+        }
+        self.inner.get_current_contract(name).await
+    }
+
+    async fn submit_candidate(
+        &self,
+        context: &AttemptContext,
+        rules: Value,
+        manifest: &str,
+    ) -> Result<CandidateRecord, AnalysisError> {
+        self.inner.submit_candidate(context, rules, manifest).await
+    }
+}
+
+#[tokio::test]
+async fn submission_recovery_finalizes_supersession_before_replacement_is_eligible() {
+    for lost_reply in [false, true] {
+        for removed in [false, true] {
+            let script = if lost_reply {
+                Script::Collaborate
+            } else {
+                Script::SubmitThenInterrupt
+            };
+            let (now, service, evidence, provider) = workflow_fixture(script);
+            let transport: Arc<dyn ContractService> = if lost_reply {
+                Arc::new(LostReplyService {
+                    inner: service.clone(),
+                    admitted: tokio::sync::Mutex::new(None),
+                })
+            } else {
+                service.clone()
+            };
+            let directory = tempfile::tempdir().unwrap();
+            let mut cycle_id = None;
+            for _ in 0..2 {
+                let coordinator = coordinator_with_limits(
+                    directory.path(),
+                    transport.clone(),
+                    evidence.clone(),
+                    Arc::new(WorkflowAgentProvider::new(provider.clone(), false)),
+                    now,
+                    Duration::from_secs(1),
+                    Duration::from_secs(30),
+                    CycleLimits {
+                        max_attempts: 2,
+                        ..CycleLimits::default()
+                    },
+                );
+                let CoordinatorRunOutcome::Recoverable { cycle_id: id, .. } =
+                    coordinator.run_once(now).await.unwrap()
+                else {
+                    panic!("expected an unfinished cycle");
+                };
+                cycle_id = Some(id);
+            }
+            let replacement = (!removed).then(|| contract('b', now));
+            let replacement_digest = replacement
+                .as_ref()
+                .map(|contract| contract.contract_digest.clone());
+            let coordinator = coordinator_with_limits(
+                directory.path(),
+                Arc::new(RecoverySupersessionService {
+                    inner: transport,
+                    service: service.clone(),
+                    replacement,
+                    reads: AtomicUsize::new(0),
+                }),
+                evidence,
+                Arc::new(WorkflowAgentProvider::new(provider.clone(), false)),
+                now,
+                Duration::from_secs(1),
+                Duration::from_secs(30),
+                CycleLimits {
+                    max_attempts: 2,
+                    ..CycleLimits::default()
+                },
+            );
+            let cycle_id = cycle_id.unwrap();
+            assert!(matches!(
+                coordinator.run_once(now).await.unwrap(),
+                CoordinatorRunOutcome::Completed {
+                    cycle_id: id,
+                    outcome: CycleOutcome::Superseded { replacement_digest: digest },
+                    ..
+                } if id == cycle_id && digest == replacement_digest
+            ));
+            let root = directory
+                .path()
+                .join(workspace_id("checkout.delay").trim_start_matches("sha256:"));
+            let cycle: Value = serde_json::from_slice(
+                &std::fs::read(root.join("cycles").join(&cycle_id).join("cycle.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(cycle["status"], "terminal");
+            let outcome: Value = serde_json::from_slice(
+                &std::fs::read(root.join("cycles").join(&cycle_id).join("outcome.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(outcome["outcome"]["kind"], "superseded");
+            let current: Value =
+                serde_json::from_slice(&std::fs::read(root.join("current-cycle.json")).unwrap())
+                    .unwrap();
+            assert!(current["cycleId"].is_null());
+            assert!(matches!(
+                coordinator.run_once(now).await.unwrap(),
+                CoordinatorRunOutcome::Idle | CoordinatorRunOutcome::NotEligible { .. }
+            ));
+            assert_eq!(provider.starts.load(Ordering::SeqCst), 2);
+            assert_eq!(service.submissions.lock().unwrap().len(), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn reviewer_and_general_cannot_submit_rules_different_from_the_committed_draft() {
+    for general in [false, true] {
+        let (now, service, evidence, provider) = workflow_fixture(Script::SubmitDifferentDraft);
+        let directory = tempfile::tempdir().unwrap();
+        for attempt in 0..2 {
+            let coordinator = coordinator_with_limits(
+                directory.path(),
+                service.clone(),
+                evidence.clone(),
+                Arc::new(WorkflowAgentProvider::new(provider.clone(), general)),
+                now,
+                Duration::from_secs(1),
+                Duration::from_secs(30),
+                CycleLimits::default(),
+            );
+            let CoordinatorRunOutcome::Recoverable {
+                cycle_id,
+                reason,
+                failure_category,
+                ..
+            } = coordinator.run_once(now).await.unwrap()
+            else {
+                panic!("expected an unfinished cycle");
+            };
+            if attempt == 1 {
+                assert!(reason.contains("submitted rules do not match the committed draft"));
+                assert_eq!(failure_category, "integrity");
+                let cycle_root = directory
+                    .path()
+                    .join(workspace_id("checkout.delay").trim_start_matches("sha256:"))
+                    .join("cycles")
+                    .join(cycle_id);
+                assert!(!cycle_root.join("proposal.pending.json").exists());
+                assert!(!cycle_root.join("candidate.json").exists());
+            }
+        }
+        assert!(service.submissions.lock().unwrap().is_empty());
+        assert_eq!(provider.starts.load(Ordering::SeqCst), 2);
     }
 }
 

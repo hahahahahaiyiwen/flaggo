@@ -320,16 +320,22 @@ impl AnalysisCoordinator {
             .filesystem(&cycle.cycle_id, &context.attempt_id)
             .await?;
         if let Some(proposal) = workspace.pending_proposal(&cycle.cycle_id).await? {
-            tools.propose_executable(proposal.rules).await?;
-            let candidate = tools.proposed_candidate().await?.ok_or_else(|| {
-                AnalysisError::InvalidState("recovered submission has no Candidate".to_owned())
-            })?;
+            let submitted = match tools.propose_executable(proposal.rules).await {
+                Ok(_) => true,
+                Err(AnalysisError::Superseded(_)) => false,
+                Err(error) => return Err(error),
+            };
             let current_digest = self
                 .contract_service
                 .get_current_contract(&contract.name)
                 .await?
                 .map(|current| current.contract_digest);
-            let outcome = if current_digest.as_deref() == Some(contract.contract_digest.as_str()) {
+            let outcome = if submitted
+                && current_digest.as_deref() == Some(contract.contract_digest.as_str())
+            {
+                let candidate = tools.proposed_candidate().await?.ok_or_else(|| {
+                    AnalysisError::InvalidState("recovered submission has no Candidate".to_owned())
+                })?;
                 CycleOutcome::Candidate { candidate }
             } else {
                 workspace

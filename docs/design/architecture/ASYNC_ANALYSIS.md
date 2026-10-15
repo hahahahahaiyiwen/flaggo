@@ -340,7 +340,10 @@ reviewed draft and explain the submission decision. The tool does not add a
 review-authorship or approval-record validation gate in this iteration.
 
 Submission retains tool permission enforcement, existing proposal/contract
-validation and cycle integrity checks. It checks that the bound contract digest
+validation and cycle integrity checks. The provider binds submitted rules to the
+exact rules from the digest-verified committed draft; different rules require a
+new draft handoff rather than substitution at submission. This does not validate
+review authorship or an approval record. It checks that the bound contract digest
 is still current; Contract Service checks currentness again at admission, so a
 local preflight check is not the authority against a replacement race.
 
@@ -386,7 +389,10 @@ before ordinary workflow routing. Resume the exact submission without rewriting
 sealed findings or review files, then complete the cycle from its result. A
 successful tool call repeated in the same attempt is likewise idempotent.
 Currentness checks still apply; supersession ends unfinished cycle work rather
-than undoing an existing admission.
+than undoing an existing admission. A supersession error during sealed-submission
+reconciliation terminalizes the old cycle immediately, even if a replacement is
+not yet eligible for analysis or the contract was removed. Unrelated submission
+errors remain retryable.
 
 Required cases include identical repeat, changed-rules conflict, lost response,
 restart with a new attempt, and supersession on both remote and cached paths.

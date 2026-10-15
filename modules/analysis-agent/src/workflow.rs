@@ -90,14 +90,16 @@ impl AgentProvider for WorkflowAgentProvider {
         mut spec: AgentSessionSpec,
     ) -> Result<Arc<dyn AgentSession>, AnalysisError> {
         let current = work_state(spec.handoff.as_ref())?;
-        if let Some(metadata) = &current {
+        let draft_rules = if let Some(metadata) = &current {
             if metadata.revision > spec.cycle_limits.max_revisions {
                 return Err(AnalysisError::InvalidState(
                     "handoff exceeds the cycle revision limit".to_owned(),
                 ));
             }
-            validate_artifacts(spec.filesystem.as_ref(), metadata).await?;
-        }
+            Some(validate_artifacts(spec.filesystem.as_ref(), metadata).await?)
+        } else {
+            None
+        };
         let state = current
             .as_ref()
             .map_or(WorkflowState::AnalysisReady, |metadata| metadata.outcome);
@@ -118,6 +120,7 @@ impl AgentProvider for WorkflowAgentProvider {
             inner: tools.clone(),
             profile,
             state,
+            draft_rules,
         });
         spec.task.prompt.push_str(&format!(
             "\n\n<workflow-context>{}</workflow-context>",
@@ -369,7 +372,7 @@ async fn read_artifact(
 async fn validate_artifacts(
     filesystem: &dyn WorkspaceFileSystem,
     metadata: &WorkflowMetadata,
-) -> Result<(), AnalysisError> {
+) -> Result<Value, AnalysisError> {
     let proposal = read_artifact(filesystem, &metadata.proposal_path).await?;
     if sha256_digest(proposal.as_bytes()) != metadata.proposal_digest {
         return Err(AnalysisError::InvalidState(
@@ -408,13 +411,14 @@ async fn validate_artifacts(
     if let Some(path) = &metadata.review_path {
         read_review(filesystem, path).await?;
     }
-    Ok(())
+    Ok(draft["rules"].clone())
 }
 
 struct ProfileTools {
     inner: Arc<dyn AnalysisTools>,
     profile: AgentProfile,
     state: WorkflowState,
+    draft_rules: Option<Value>,
 }
 
 #[async_trait]
@@ -438,6 +442,11 @@ impl AnalysisTools for ProfileTools {
         if self.profile == AgentProfile::Proposer || self.state != WorkflowState::DraftReady {
             return Err(AnalysisError::InvalidState(
                 "submission is not permitted for this profile and workflow state".to_owned(),
+            ));
+        }
+        if self.draft_rules.as_ref() != Some(&rules) {
+            return Err(AnalysisError::InvalidState(
+                "submitted rules do not match the committed draft".to_owned(),
             ));
         }
         self.inner.propose_executable(rules).await
@@ -689,6 +698,7 @@ mod tests {
             inner: crate::provider::tests::test_spec().tools,
             profile: AgentProfile::Proposer,
             state: WorkflowState::AnalysisReady,
+            draft_rules: None,
         };
         assert!(matches!(
             tools.propose_executable(json!([{}])).await,
