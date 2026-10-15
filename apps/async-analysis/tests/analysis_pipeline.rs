@@ -14,13 +14,16 @@ use flaggo_analysis_agent::{
     AgentPool, AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec, AnalysisRunStatus,
     AnalysisTask, AnalysisTools,
     context::{ANALYSIS_FINDINGS_PATH, HANDOFF_CHECKPOINT_PATH, SUPERSESSION_NOTE_PATH},
+    workflow::{WorkflowAgentProvider, WorkflowMetadata, WorkflowState, work_state},
 };
 use flaggo_analysis_domain::{
     AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisError,
     AnalysisEvidenceSource, AnalysisProfile, AttemptContext, CandidateRecord, CatalogUpdate,
-    CycleOutcome,
+    CycleLimits, CycleOutcome,
 };
-use flaggo_analysis_workspace::{LocalWorkspaceProvider, WorkspaceFileSystem, workspace_id};
+use flaggo_analysis_workspace::{
+    LocalWorkspaceProvider, WorkspaceFileSystem, sha256_digest, workspace_id,
+};
 use flaggo_async_analysis::{
     AnalysisCoordinator, Clock, ContractService, CoordinatorConfig, CoordinatorRunOutcome,
     local_capabilities::LocalCapabilityFactory,
@@ -149,6 +152,13 @@ enum Script {
     IgnoreSupersession,
     ClaimSupersession,
     ShutdownCheckpoint,
+    Collaborate,
+    RequestRevision,
+    RejectDraft,
+    SubmitThenInterrupt,
+    AlwaysFail,
+    NeverFinish,
+    StartupFailure,
 }
 
 struct ScriptedAgentProvider {
@@ -165,7 +175,12 @@ impl AgentProvider for ScriptedAgentProvider {
         specification: AgentSessionSpec,
     ) -> Result<Arc<dyn AgentSession>, AnalysisError> {
         let ordinal = self.starts.fetch_add(1, Ordering::SeqCst);
+        if matches!(self.script, Script::StartupFailure) {
+            return Err(AnalysisError::Agent("provider startup failed".to_owned()));
+        }
         Ok(Arc::new(ScriptedSession {
+            workflow: work_state(specification.handoff.as_ref())?,
+            attempt_id: specification.context.attempt_id,
             script: self.script,
             ordinal,
             tools: specification.tools,
@@ -177,6 +192,8 @@ impl AgentProvider for ScriptedAgentProvider {
 }
 
 struct ScriptedSession {
+    workflow: Option<WorkflowMetadata>,
+    attempt_id: String,
     script: Script,
     ordinal: usize,
     tools: Arc<dyn AnalysisTools>,
@@ -189,6 +206,15 @@ struct ScriptedSession {
 impl AgentSession for ScriptedSession {
     async fn run(&self, _task: AnalysisTask) -> Result<AgentRunOutcome, AnalysisError> {
         match self.script {
+            Script::AlwaysFail => Err(AnalysisError::Agent(
+                "recoverable provider error".to_owned(),
+            )),
+            Script::NeverFinish => std::future::pending().await,
+            Script::StartupFailure => unreachable!(),
+            Script::Collaborate
+            | Script::RequestRevision
+            | Script::RejectDraft
+            | Script::SubmitThenInterrupt => self.collaborate().await,
             Script::Candidate => {
                 for path in [
                     ANALYSIS_FINDINGS_PATH,
@@ -310,6 +336,7 @@ impl AgentSession for ScriptedSession {
                     .await?;
                 Ok(AgentRunOutcome::Handoff {
                     summary: "service shutdown checkpoint".to_owned(),
+                    metadata: None,
                 })
             }
         }
@@ -321,6 +348,90 @@ impl AgentSession for ScriptedSession {
 
     async fn close(&self) -> Result<(), AnalysisError> {
         Ok(())
+    }
+}
+
+impl ScriptedSession {
+    async fn collaborate(&self) -> Result<AgentRunOutcome, AnalysisError> {
+        let directory = format!("attempts/{}", self.attempt_id);
+        match self.workflow.as_ref().map(|state| state.outcome) {
+            None | Some(WorkflowState::RequestChange) => {
+                assert!(!self.tools.can_propose());
+                assert!(self.tools.propose_executable(json!([{}])).await.is_err());
+                let query = self
+                    .tools
+                    .run_sql("SELECT count(*) AS count FROM observations", None)
+                    .await?;
+                let proposal_path = format!("{directory}/proposal.json");
+                let content = json!({"rules": [{"name": "learned", "when": {"expression": "true"}, "return": {"value": 5}}], "method": "bounded evidence assessment"}).to_string();
+                self.filesystem
+                    .write_text(&format!("/workspace/analysis/{proposal_path}"), &content)
+                    .await?;
+                let metadata = WorkflowMetadata {
+                    outcome: WorkflowState::DraftReady,
+                    proposal_path,
+                    proposal_digest: sha256_digest(content.as_bytes()),
+                    evidence_paths: vec![query["resultPath"].as_str().unwrap().to_owned()],
+                    evidence_digests: BTreeMap::from([(
+                        query["resultPath"].as_str().unwrap().to_owned(),
+                        query["contentDigest"].as_str().unwrap().to_owned(),
+                    )]),
+                    revision: self.workflow.as_ref().map_or(0, |state| state.revision + 1),
+                    review_path: None,
+                };
+                Ok(AgentRunOutcome::Handoff {
+                    summary: "draft ready".to_owned(),
+                    metadata: Some(serde_json::to_value(metadata).unwrap()),
+                })
+            }
+            Some(WorkflowState::DraftReady) => {
+                assert!(self.tools.can_propose());
+                let current = self.workflow.as_ref().unwrap();
+                let draft: Value = serde_json::from_str(
+                    &self
+                        .filesystem
+                        .read_text(&format!("/workspace/analysis/{}", current.proposal_path))
+                        .await?,
+                )
+                .unwrap();
+                assert!(
+                    self.filesystem
+                        .write_text(
+                            &format!("/workspace/analysis/{}", current.proposal_path),
+                            "overwrite prior draft"
+                        )
+                        .await
+                        .is_err()
+                );
+                let review_path = format!("{directory}/review.json");
+                self.filesystem.write_text(&format!("/workspace/analysis/{review_path}"), &json!({"proposalPath": current.proposal_path, "proposalDigest": current.proposal_digest, "decision": "reviewed"}).to_string()).await?;
+                if matches!(self.script, Script::RejectDraft) {
+                    return Ok(AgentRunOutcome::Reject {
+                        reason: "insufficient support".to_owned(),
+                        review_path,
+                    });
+                }
+                if matches!(self.script, Script::RequestRevision) && current.revision == 0 {
+                    let mut metadata = current.clone();
+                    metadata.outcome = WorkflowState::RequestChange;
+                    metadata.review_path = Some(review_path);
+                    return Ok(AgentRunOutcome::Handoff {
+                        summary: "revise".to_owned(),
+                        metadata: Some(serde_json::to_value(metadata).unwrap()),
+                    });
+                }
+                self.tools
+                    .propose_executable(draft["rules"].clone())
+                    .await?;
+                if matches!(self.script, Script::SubmitThenInterrupt) {
+                    return Err(AnalysisError::Agent(
+                        "response interrupted after successful submission".to_owned(),
+                    ));
+                }
+                Ok(AgentRunOutcome::Candidate)
+            }
+            Some(WorkflowState::AnalysisReady) => unreachable!(),
+        }
     }
 }
 
@@ -372,6 +483,40 @@ fn coordinator_with_poll_interval(
     now: DateTime<Utc>,
     supersession_poll_interval: Duration,
 ) -> AnalysisCoordinator {
+    let provider: Arc<dyn AgentProvider> = if matches!(
+        provider.script,
+        Script::Collaborate
+            | Script::RequestRevision
+            | Script::RejectDraft
+            | Script::SubmitThenInterrupt
+    ) {
+        Arc::new(WorkflowAgentProvider::new(provider, false))
+    } else {
+        provider
+    };
+    coordinator_with_limits(
+        workspace_root,
+        service,
+        evidence,
+        provider,
+        now,
+        supersession_poll_interval,
+        Duration::from_secs(1_200),
+        CycleLimits::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn coordinator_with_limits(
+    workspace_root: &std::path::Path,
+    service: Arc<dyn ContractService>,
+    evidence: Arc<FakeEvidenceStore>,
+    provider: Arc<dyn AgentProvider>,
+    now: DateTime<Utc>,
+    supersession_poll_interval: Duration,
+    attempt_timeout: Duration,
+    cycle_limits: CycleLimits,
+) -> AnalysisCoordinator {
     let clock: Arc<dyn Clock> = Arc::new(FixedClock(now));
     AnalysisCoordinator::new(
         service.clone(),
@@ -389,6 +534,8 @@ fn coordinator_with_poll_interval(
         )),
         AgentPool::new(provider, NonZeroUsize::new(1).expect("nonzero")),
         CoordinatorConfig {
+            cycle_limits,
+            attempt_timeout,
             supersession_poll_interval,
             yield_grace_period: Duration::from_millis(100),
             analysis_profile: AnalysisProfile {
@@ -402,6 +549,299 @@ fn coordinator_with_poll_interval(
         },
         clock,
     )
+}
+
+fn workflow_fixture(
+    script: Script,
+) -> (
+    DateTime<Utc>,
+    Arc<FakeContractService>,
+    Arc<FakeEvidenceStore>,
+    Arc<ScriptedAgentProvider>,
+) {
+    let accepted_at = Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).single().unwrap();
+    let now = accepted_at + chrono::Duration::hours(2);
+    let service = Arc::new(FakeContractService {
+        current: RwLock::new(Some(contract('a', accepted_at))),
+        submissions: Mutex::new(vec![]),
+        now,
+    });
+    let evidence = Arc::new(FakeEvidenceStore {
+        queries: AtomicUsize::new(0),
+    });
+    let provider = Arc::new(ScriptedAgentProvider {
+        script,
+        starts: AtomicUsize::new(0),
+        contract_service: service.clone(),
+        replacement: None,
+    });
+    (now, service, evidence, provider)
+}
+
+#[tokio::test]
+async fn collaborates_across_fresh_coordinators_for_approval_revision_and_rejection() {
+    for (script, attempts, expected_reviews) in [
+        (Script::Collaborate, 2, 1),
+        (Script::RequestRevision, 4, 2),
+        (Script::RejectDraft, 2, 1),
+        (Script::SubmitThenInterrupt, 3, 1),
+    ] {
+        let (now, service, evidence, provider) = workflow_fixture(script);
+        let directory = tempfile::tempdir().unwrap();
+        let mut cycle_id = None;
+        for attempt in 0..attempts {
+            let coordinator = coordinator(
+                directory.path(),
+                service.clone(),
+                evidence.clone(),
+                provider.clone(),
+                now,
+            );
+            let outcome = coordinator.run_once(now).await.unwrap();
+            let id = match &outcome {
+                CoordinatorRunOutcome::Recoverable { cycle_id, .. }
+                | CoordinatorRunOutcome::Completed { cycle_id, .. } => cycle_id,
+                _ => panic!("unexpected outcome {outcome:?}"),
+            };
+            if let Some(previous) = &cycle_id {
+                assert_eq!(previous, id);
+            } else {
+                cycle_id = Some(id.clone());
+            }
+            if attempt + 1 < attempts {
+                assert!(matches!(outcome, CoordinatorRunOutcome::Recoverable { .. }));
+            } else if matches!(script, Script::RejectDraft) {
+                assert!(matches!(
+                    outcome,
+                    CoordinatorRunOutcome::Completed {
+                        outcome: CycleOutcome::NoCandidate { .. },
+                        ..
+                    }
+                ));
+            } else {
+                assert!(matches!(
+                    outcome,
+                    CoordinatorRunOutcome::Completed {
+                        outcome: CycleOutcome::Candidate { .. },
+                        ..
+                    }
+                ));
+            }
+        }
+        let root = directory
+            .path()
+            .join(workspace_id("checkout.delay").trim_start_matches("sha256:"))
+            .join("cycles")
+            .join(cycle_id.unwrap());
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(root.join("analysis-manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|file| file["path"].as_str().unwrap().ends_with("/review.json"))
+                .count(),
+            expected_reviews
+        );
+        let submissions = service.submissions.lock().unwrap();
+        assert_eq!(
+            submissions.len(),
+            usize::from(!matches!(script, Script::RejectDraft))
+        );
+        assert_eq!(
+            provider.starts.load(Ordering::SeqCst),
+            if matches!(script, Script::SubmitThenInterrupt) {
+                2
+            } else {
+                attempts
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn startup_execution_and_timeout_failures_consume_durable_attempt_limits() {
+    for script in [
+        Script::StartupFailure,
+        Script::AlwaysFail,
+        Script::NeverFinish,
+    ] {
+        let (now, service, evidence, provider) = workflow_fixture(script);
+        let directory = tempfile::tempdir().unwrap();
+        for attempt in 0..9 {
+            let coordinator = coordinator_with_limits(
+                directory.path(),
+                service.clone(),
+                evidence.clone(),
+                provider.clone(),
+                now,
+                Duration::from_secs(1),
+                Duration::from_millis(20),
+                CycleLimits::default(),
+            );
+            let outcome = coordinator.run_once(now).await.unwrap();
+            if attempt < 8 {
+                assert!(matches!(outcome, CoordinatorRunOutcome::Recoverable { .. }));
+            } else {
+                assert!(matches!(
+                    outcome,
+                    CoordinatorRunOutcome::Completed {
+                        outcome: CycleOutcome::Failure { .. },
+                        ..
+                    }
+                ));
+            }
+        }
+        assert_eq!(provider.starts.load(Ordering::SeqCst), 8);
+    }
+}
+
+struct LostReplyService {
+    inner: Arc<FakeContractService>,
+    admitted: tokio::sync::Mutex<Option<(AttemptContext, Value, CandidateRecord)>>,
+}
+
+#[async_trait]
+impl ContractService for LostReplyService {
+    async fn list_current_learning_contracts(
+        &self,
+        revision: Option<&str>,
+    ) -> Result<CatalogUpdate, AnalysisError> {
+        self.inner.list_current_learning_contracts(revision).await
+    }
+    async fn get_current_contract(
+        &self,
+        name: &str,
+    ) -> Result<Option<AnalysisContract>, AnalysisError> {
+        self.inner.get_current_contract(name).await
+    }
+    async fn submit_candidate(
+        &self,
+        context: &AttemptContext,
+        rules: Value,
+        manifest: &str,
+    ) -> Result<CandidateRecord, AnalysisError> {
+        let mut admitted = self.admitted.lock().await;
+        if let Some((original, original_rules, candidate)) = admitted.as_ref() {
+            assert_eq!(context, original);
+            assert_eq!(&rules, original_rules);
+            assert_eq!(manifest, candidate.analysis_manifest_digest);
+            let mut result = candidate.clone();
+            result.created = false;
+            return Ok(result);
+        }
+        let candidate = self
+            .inner
+            .submit_candidate(context, rules.clone(), manifest)
+            .await?;
+        *admitted = Some((context.clone(), rules, candidate));
+        Err(AnalysisError::Contract(
+            "admission response lost".to_owned(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn lost_admission_reply_retries_original_provenance_without_starting_another_agent() {
+    let (now, service, evidence, provider) = workflow_fixture(Script::Collaborate);
+    let transport = Arc::new(LostReplyService {
+        inner: service.clone(),
+        admitted: tokio::sync::Mutex::new(None),
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let mut last = None;
+    for _ in 0..3 {
+        let coordinator = coordinator_with_limits(
+            directory.path(),
+            transport.clone(),
+            evidence.clone(),
+            Arc::new(WorkflowAgentProvider::new(provider.clone(), false)),
+            now,
+            Duration::from_secs(1),
+            Duration::from_secs(30),
+            CycleLimits {
+                max_attempts: 2,
+                ..CycleLimits::default()
+            },
+        );
+        last = Some(coordinator.run_once(now).await.unwrap());
+    }
+    assert!(matches!(
+        last,
+        Some(CoordinatorRunOutcome::Completed {
+            outcome: CycleOutcome::Candidate { .. },
+            ..
+        })
+    ));
+    assert_eq!(provider.starts.load(Ordering::SeqCst), 2);
+    assert_eq!(service.submissions.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn cached_submission_retries_succeed_changed_rules_conflict_and_superseded_cache_fails() {
+    use flaggo_analysis_workspace::{PrepareCycleResult, WorkspaceProvider};
+    let (now, service, evidence, _) = workflow_fixture(Script::Collaborate);
+    let directory = tempfile::tempdir().unwrap();
+    let workspaces = LocalWorkspaceProvider::new(directory.path()).unwrap();
+    let bound = service
+        .get_current_contract("checkout.delay")
+        .await
+        .unwrap()
+        .unwrap();
+    let lease = workspaces.claim(&bound.name, "author").await.unwrap();
+    let PrepareCycleResult::Ready(preparation) = lease
+        .prepare_cycle(
+            &bound,
+            &AnalysisProfile {
+                skill_names: vec![],
+            },
+            "author",
+            now,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("expected cycle")
+    };
+    let factory = LocalCapabilityFactory::new(
+        service.clone(),
+        evidence,
+        EvidenceQueryLimits {
+            max_rows: NonZeroU32::new(10).unwrap(),
+            max_bytes: 4096,
+            timeout: Duration::from_secs(1),
+        },
+        Arc::new(FixedClock(now)),
+        flaggo_async_analysis::python::PythonConfig::default(),
+    );
+    use flaggo_analysis_agent::AnalysisCapabilityFactory;
+    let tools = factory
+        .create(
+            AttemptContext::new(&preparation.cycle, "author".to_owned()),
+            bound.clone(),
+            lease,
+        )
+        .await
+        .unwrap();
+    let rules =
+        json!([{"name": "learned", "when": {"expression": "true"}, "return": {"value": 5}}]);
+    let candidate = tools.propose_executable(rules.clone()).await.unwrap();
+    assert_eq!(
+        tools.propose_executable(rules.clone()).await.unwrap(),
+        candidate
+    );
+    assert!(matches!(
+        tools.propose_executable(json!([{"changed": true}])).await,
+        Err(AnalysisError::ProposalConflict(_))
+    ));
+    service.set_current(contract('b', bound.accepted_at));
+    assert!(matches!(
+        tools.propose_executable(rules).await,
+        Err(AnalysisError::Superseded(_))
+    ));
+    assert_eq!(service.submissions.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

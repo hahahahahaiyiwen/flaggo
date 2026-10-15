@@ -14,6 +14,7 @@ async-trait = "0.1.89"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
 flaggo-analysis-domain = { version = "0.1.0", path = "../analysis-domain" }
 flaggo-analysis-workspace = { version = "0.1.0", path = "../analysis-workspace" }
+opentelemetry.workspace = true
 github-copilot-sdk = { version = "1.0.17-preview.5", default-features = false, features = ["derive", "runtime"], optional = true }
 schemars = { version = "1.2.2", optional = true }
 serde.workspace = true

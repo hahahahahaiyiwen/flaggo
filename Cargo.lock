@@ -527,6 +527,7 @@ dependencies = [
  "flaggo-analysis-domain",
  "flaggo-analysis-workspace",
  "github-copilot-sdk",
+ "opentelemetry",
  "schemars",
  "serde",
  "serde_json",
@@ -705,6 +706,7 @@ dependencies = [
  "flaggo-async-analysis",
  "flaggo-service-observability",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]

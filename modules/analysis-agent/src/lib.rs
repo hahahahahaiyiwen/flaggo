@@ -8,6 +8,7 @@ pub mod action;
 pub mod context;
 #[cfg(feature = "copilot")]
 pub mod copilot;
+pub mod workflow;
 
 mod capability;
 mod filesystem;

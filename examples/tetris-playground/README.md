@@ -73,6 +73,11 @@ Benchmark mode defaults to the example-owned deterministic `AgentProvider`.
 Use `--mode=benchmark --analysis=copilot` for a production-agent benchmark.
 Both providers use the real coordinator, live scoped bounded SQL tool,
 workspace, proposal, Candidate admission, and activation worker. The deterministic
+provider now saves a versioned draft and evidence, releases the workspace, then
+reproduces the analysis in a fresh reviewer attempt. Only that review attempt
+can submit; its review is included in the sealed analysis manifest. SQL actions
+may belong to the proposer attempt rather than the final Candidate's attempt.
+The deterministic
 provider discovers the SQL row ceiling through `describe` and pages at up to
 100 rows, reducing the page size when the configured ceiling is lower. The benchmark
 waits up to 45 seconds for deterministic activation or ten minutes for Copilot;

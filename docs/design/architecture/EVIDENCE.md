@@ -23,6 +23,10 @@ The OTel Ingestion, Evidence Materializer, and Async Analysis app
 boundaries are canonical in
 [Application boundaries and lifecycle](APP_BOUNDARIES.md).
 
+Coordinator, workspace and agent-provider ownership, cycle scheduling, and
+metadata-driven workflow handoffs are described in
+[Async Analysis](ASYNC_ANALYSIS.md).
+
 ## Evidence flow
 
 ```text

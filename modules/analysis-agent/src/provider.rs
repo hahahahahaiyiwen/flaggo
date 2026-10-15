@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::Instrument as _;
 
-use flaggo_analysis_domain::{AnalysisContract, AnalysisError, AttemptContext};
+use flaggo_analysis_domain::{
+    AnalysisContract, AnalysisError, AttemptContext, CycleLimits, WorkflowHandoff,
+};
 use flaggo_analysis_workspace::WorkspaceFileSystem;
 
 use crate::AnalysisTools;
@@ -13,10 +15,23 @@ use crate::action::{ActionKind, ActionObservation, ActionOutcome, FailureCategor
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentRunOutcome {
     Candidate,
-    NoChange { reason: String },
-    NoCandidate { reason: String },
-    Failure { reason: String },
-    Handoff { summary: String },
+    NoChange {
+        reason: String,
+    },
+    NoCandidate {
+        reason: String,
+    },
+    Failure {
+        reason: String,
+    },
+    Handoff {
+        summary: String,
+        metadata: Option<serde_json::Value>,
+    },
+    Reject {
+        reason: String,
+        review_path: String,
+    },
     Superseded,
 }
 
@@ -26,6 +41,8 @@ pub struct AgentSessionSpec {
     pub filesystem: Arc<dyn WorkspaceFileSystem>,
     pub tools: Arc<dyn AnalysisTools>,
     pub task: AnalysisTask,
+    pub handoff: Option<WorkflowHandoff>,
+    pub cycle_limits: CycleLimits,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,6 +101,7 @@ impl AgentPool {
                     context,
                     parent,
                     _permit: permit,
+                    closed: tokio::sync::Mutex::new(false),
                 }),
                 Err(error) => {
                     drop(permit);
@@ -103,6 +121,7 @@ pub struct AgentLease {
     context: AttemptContext,
     parent: tracing::Span,
     _permit: OwnedSemaphorePermit,
+    closed: tokio::sync::Mutex<bool>,
 }
 
 impl AgentLease {
@@ -116,6 +135,7 @@ impl AgentLease {
                     AgentRunOutcome::Candidate => (ActionOutcome::Success, None),
                     AgentRunOutcome::NoChange { .. } => (ActionOutcome::NoChange, None),
                     AgentRunOutcome::NoCandidate { .. } => (ActionOutcome::NoCandidate, None),
+                    AgentRunOutcome::Reject { .. } => (ActionOutcome::NoCandidate, None),
                     AgentRunOutcome::Failure { .. } => {
                         (ActionOutcome::Failed, Some(FailureCategory::Internal))
                     }
@@ -134,7 +154,12 @@ impl AgentLease {
     }
 
     pub async fn close(&self) -> Result<(), AnalysisError> {
-        self.session.close().await
+        let mut closed = self.closed.lock().await;
+        if !*closed {
+            self.session.close().await?;
+            *closed = true;
+        }
+        Ok(())
     }
 }
 
@@ -248,12 +273,16 @@ pub(crate) mod tests {
     }
 
     struct TestTools {
+        can_propose: bool,
         yield_signal: Arc<YieldSignal>,
         context: AttemptContext,
     }
 
     #[async_trait]
     impl AnalysisTools for TestTools {
+        fn can_propose(&self) -> bool {
+            self.can_propose
+        }
         async fn check_cycle_status(&self) -> Result<AnalysisRunStatus, AnalysisError> {
             self.yield_signal.status()
         }
@@ -395,6 +424,7 @@ pub(crate) mod tests {
             (
                 AgentRunOutcome::Handoff {
                     summary: "private".to_owned(),
+                    metadata: None,
                 },
                 "handoff",
             ),
@@ -602,6 +632,10 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn test_spec() -> AgentSessionSpec {
+        test_spec_with_proposal_permission(true)
+    }
+
+    pub(crate) fn test_spec_with_proposal_permission(can_propose: bool) -> AgentSessionSpec {
         let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
         let contract = AnalysisContract {
             name: "test.contract".to_owned(),
@@ -628,10 +662,13 @@ pub(crate) mod tests {
             },
         };
         AgentSessionSpec {
+            handoff: None,
+            cycle_limits: Default::default(),
             context: context.clone(),
             contract,
             filesystem: Arc::new(TestFileSystem),
             tools: Arc::new(TestTools {
+                can_propose,
                 yield_signal: Arc::new(YieldSignal::default()),
                 context,
             }),

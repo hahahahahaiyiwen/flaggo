@@ -55,6 +55,8 @@ pub struct AnalysisServiceConfig {
     pub run_timeout: Duration,
     pub yield_grace_period: Duration,
     pub python: PythonConfig,
+    pub cycle_limits: flaggo_analysis_domain::CycleLimits,
+    pub general_profile: bool,
 }
 
 impl AnalysisServiceConfig {
@@ -104,6 +106,32 @@ impl AnalysisServiceConfig {
             ));
         }
         Ok(Self {
+            cycle_limits: flaggo_analysis_domain::CycleLimits {
+                max_attempts: {
+                    let value = parse_integer("FLAGGO_ANALYSIS_CYCLE_MAX_ATTEMPTS", 8_u32)?;
+                    if value == 0 {
+                        return Err(
+                            "FLAGGO_ANALYSIS_CYCLE_MAX_ATTEMPTS must be positive".to_owned()
+                        );
+                    }
+                    value
+                },
+                max_revisions: parse_integer("FLAGGO_ANALYSIS_CYCLE_MAX_REVISIONS", 1_u32)?,
+                execution_seconds: duration_seconds(
+                    "FLAGGO_ANALYSIS_CYCLE_EXECUTION_SECONDS",
+                    3_600,
+                )?
+                .as_secs(),
+            },
+            general_profile: match optional_nonempty("FLAGGO_ANALYSIS_AGENT_PROFILE")?.as_deref() {
+                None | Some("specialized") => false,
+                Some("general") => true,
+                Some(_) => {
+                    return Err(
+                        "FLAGGO_ANALYSIS_AGENT_PROFILE must be specialized or general".to_owned(),
+                    );
+                }
+            },
             database_url: nonempty_or_default(
                 DATABASE_URL_ENVIRONMENT_VARIABLE,
                 DEFAULT_DATABASE_URL,

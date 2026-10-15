@@ -120,8 +120,12 @@ unsuccessful content operations omit content digest/size. Metadata-only
 operations and internal `.copilot`/`.git` content access are not observed.
 Prompts, tool arguments/results,
 model text and arbitrary provider event JSON are not part of this contract.
-No action identifier or action metadata becomes a metric dimension; the
-existing bounded cycle metrics remain sufficient for the timeline.
+No action identifier, digest, byte count or content-derived detail becomes a
+metric dimension. The provider-selected profile is the bounded exception:
+`flaggo.analysis.profile.selected` events and session-start spans identify the
+role, and `flaggo.analysis.profile.selections` counts only proposer, reviewer
+and general selections. Exact attempt/cycle/artifact identifiers remain absent
+from metrics; role selection is execution provenance, not a persisted plan.
 Producer correlation is bounded to 256 bytes for contract names and 128 bytes
 for cycle/attempt identities. Invalid correlation suppresses public action
 records with an explicit warning that contains no rejected values; it never

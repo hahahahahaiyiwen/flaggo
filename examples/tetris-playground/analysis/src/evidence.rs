@@ -481,6 +481,254 @@ mod tests {
 
     use super::{ACTIVE_PLAY, BALANCE, GAME_OVERS, LINES, analyze_evidence};
 
+    struct WorkflowTools {
+        filesystem: std::sync::Arc<dyn flaggo_analysis_workspace::WorkspaceFileSystem>,
+        rows: Vec<Value>,
+        candidate: tokio::sync::Mutex<Option<flaggo_analysis_domain::CandidateRecord>>,
+        lease: std::sync::Arc<dyn flaggo_analysis_workspace::WorkspaceLease>,
+        cycle_id: String,
+        attempt_id: String,
+        contract: flaggo_analysis_domain::AnalysisContract,
+        signal: std::sync::Arc<flaggo_analysis_agent::YieldSignal>,
+    }
+
+    #[async_trait::async_trait]
+    impl flaggo_analysis_agent::AnalysisTools for WorkflowTools {
+        async fn check_cycle_status(
+            &self,
+        ) -> Result<flaggo_analysis_agent::AnalysisRunStatus, flaggo_analysis_domain::AnalysisError>
+        {
+            self.signal.status()
+        }
+        async fn describe(&self) -> Result<Value, flaggo_analysis_domain::AnalysisError> {
+            Ok(
+                json!({"queryCapabilities": {"dialect": "sqlite", "relations": [{"name": "observations"}]}, "rules": {"resultRowsLimited": 37}}),
+            )
+        }
+        async fn run_sql(
+            &self,
+            sql: &str,
+            limit: Option<u32>,
+        ) -> Result<Value, flaggo_analysis_domain::AnalysisError> {
+            let cursor: usize = sql
+                .split("observation_sequence > ")
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(limit, Some(37));
+            let path = format!("queries/page-{cursor}.json");
+            let rows = self
+                .rows
+                .iter()
+                .skip(cursor)
+                .take(37)
+                .cloned()
+                .collect::<Vec<_>>();
+            self.filesystem
+                .write_text(
+                    &format!("/workspace/analysis/{path}"),
+                    &json!({"rows": rows}).to_string(),
+                )
+                .await?;
+            Ok(json!({"resultPath": path}))
+        }
+        async fn code_interpreter(
+            &self,
+            _input: flaggo_analysis_agent::PythonInput<'_>,
+        ) -> Result<Value, flaggo_analysis_domain::AnalysisError> {
+            unreachable!("deterministic analysis requires no Python")
+        }
+        async fn propose_executable(
+            &self,
+            rules: Value,
+        ) -> Result<flaggo_analysis_domain::CandidateRecord, flaggo_analysis_domain::AnalysisError>
+        {
+            let proposal = self
+                .lease
+                .prepare_candidate_proposal(&self.cycle_id, &self.attempt_id, rules)
+                .await?;
+            let candidate = flaggo_analysis_domain::CandidateRecord {
+                contract_name: self.contract.name.clone(),
+                contract_digest: self.contract.contract_digest.clone(),
+                executable_digest: format!("sha256:{}", "b".repeat(64)),
+                created_at: chrono::Utc::now(),
+                created: true,
+                analysis_manifest_digest: proposal.analysis_manifest_digest,
+            };
+            self.lease
+                .record_candidate(&self.cycle_id, &candidate)
+                .await?;
+            *self.candidate.lock().await = Some(candidate.clone());
+            Ok(candidate)
+        }
+        async fn proposed_candidate(
+            &self,
+        ) -> Result<
+            Option<flaggo_analysis_domain::CandidateRecord>,
+            flaggo_analysis_domain::AnalysisError,
+        > {
+            Ok(self.candidate.lock().await.clone())
+        }
+        fn yield_signal(&self) -> std::sync::Arc<flaggo_analysis_agent::YieldSignal> {
+            self.signal.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn deterministic_provider_drafts_then_independently_reviews_before_sealing() {
+        use flaggo_analysis_agent::{
+            AgentProvider, AgentRunOutcome, AgentSessionSpec, AnalysisTask,
+            workflow::WorkflowAgentProvider,
+        };
+        use flaggo_analysis_domain::{
+            AnalysisAuthority, AnalysisContract, AnalysisProfile, AttemptContext, CycleLimits,
+            WorkflowHandoff,
+        };
+        use flaggo_analysis_workspace::{
+            LocalWorkspaceProvider, PrepareCycleResult, WorkspaceProvider, workspace_id,
+        };
+        use std::sync::Arc;
+        for reject in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let contract = AnalysisContract {
+                name: "tetris.dropInterval".to_owned(),
+                contract_digest: format!("sha256:{}", "a".repeat(64)),
+                accepted_at: chrono::Utc::now() - chrono::Duration::hours(2),
+                evaluation_interval: "PT1H".to_owned(),
+                authority: AnalysisAuthority {
+                    tenant: "local".to_owned(),
+                    application: "tetris".to_owned(),
+                    environment: "test".to_owned(),
+                },
+                evidence_sources: vec![],
+                contract: json!({}),
+            };
+            let workspaces = LocalWorkspaceProvider::new(root.path()).unwrap();
+            let lease = workspaces.claim(&contract.name, "proposer").await.unwrap();
+            let PrepareCycleResult::Ready(preparation) = lease
+                .prepare_cycle(
+                    &contract,
+                    &AnalysisProfile {
+                        skill_names: vec![],
+                    },
+                    "proposer",
+                    chrono::Utc::now(),
+                )
+                .await
+                .unwrap()
+            else {
+                panic!("expected cycle")
+            };
+            let filesystem = lease
+                .filesystem(&preparation.cycle.cycle_id, "proposer")
+                .await
+                .unwrap();
+            let mut rows = fixture(false)["rows"].as_array().unwrap().clone();
+            for (index, row) in rows.iter_mut().enumerate() {
+                row["observation_sequence"] = json!(index + 1);
+            }
+            let provider =
+                WorkflowAgentProvider::new(Arc::new(crate::TetrisPlaygroundAgentProvider), false);
+            let mut handoff = None;
+            for attempt_id in ["proposer", "reviewer"] {
+                let tools = Arc::new(WorkflowTools {
+                    filesystem: filesystem.clone(),
+                    rows: rows.clone(),
+                    candidate: tokio::sync::Mutex::new(None),
+                    lease: lease.clone(),
+                    cycle_id: preparation.cycle.cycle_id.clone(),
+                    attempt_id: attempt_id.to_owned(),
+                    contract: contract.clone(),
+                    signal: Arc::new(flaggo_analysis_agent::YieldSignal::default()),
+                });
+                let task = AnalysisTask {
+                    prompt: "analyze".to_owned(),
+                };
+                let session = provider
+                    .start_session(AgentSessionSpec {
+                        context: AttemptContext::new(&preparation.cycle, attempt_id.to_owned()),
+                        contract: contract.clone(),
+                        tools,
+                        filesystem: filesystem.clone(),
+                        task: task.clone(),
+                        handoff: handoff.clone(),
+                        cycle_limits: CycleLimits::default(),
+                    })
+                    .await
+                    .unwrap();
+                let outcome = session.run(task).await.unwrap();
+                session.close().await.unwrap();
+                if attempt_id == "proposer" {
+                    let AgentRunOutcome::Handoff {
+                        summary,
+                        metadata: Some(mut metadata),
+                    } = outcome
+                    else {
+                        panic!("expected draft")
+                    };
+                    assert_eq!(metadata["revision"], 0);
+                    if reject {
+                        let path = format!(
+                            "/workspace/analysis/{}",
+                            metadata["proposalPath"].as_str().unwrap()
+                        );
+                        let mut draft: Value =
+                            serde_json::from_str(&filesystem.read_text(&path).await.unwrap())
+                                .unwrap();
+                        draft["rules"][1]["return"]["value"] = json!(500);
+                        let content = draft.to_string();
+                        filesystem.write_text(&path, &content).await.unwrap();
+                        metadata["proposalDigest"] =
+                            json!(flaggo_analysis_workspace::sha256_digest(content.as_bytes()));
+                    }
+                    handoff = Some(WorkflowHandoff {
+                        attempt_id: "proposer".to_owned(),
+                        summary,
+                        metadata,
+                    });
+                } else if reject {
+                    assert!(matches!(outcome, AgentRunOutcome::NoCandidate { .. }));
+                    assert!(
+                        filesystem
+                            .exists("/workspace/analysis/attempts/reviewer/rejection.json")
+                            .await
+                            .unwrap()
+                    );
+                    assert!(
+                        !filesystem
+                            .exists("/workspace/proposal.pending.json")
+                            .await
+                            .unwrap()
+                    );
+                } else {
+                    assert_eq!(outcome, AgentRunOutcome::Candidate);
+                    let manifest: Value = serde_json::from_slice(
+                        &std::fs::read(
+                            root.path()
+                                .join(workspace_id(&contract.name).trim_start_matches("sha256:"))
+                                .join("cycles")
+                                .join(&preparation.cycle.cycle_id)
+                                .join("analysis-manifest.json"),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+                    assert!(
+                        manifest["files"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|file| file["path"] == "analysis/attempts/reviewer/review.json")
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn learns_a_contextual_policy_from_forward_outcomes() {
         let analysis = analyze_evidence(&fixture(false)).expect("analysis");

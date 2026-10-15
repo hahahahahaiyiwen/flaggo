@@ -4,13 +4,14 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
-    CandidateRecord, CycleOutcome,
+    CandidateRecord, CycleLimits, CycleOutcome, WorkflowHandoff,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -217,11 +218,6 @@ impl WorkspaceLease for LocalWorkspaceLease {
             let mut cycle = self.read_cycle(&cycle_id)?;
             if cycle.status == CycleStatus::Active || cycle.status == CycleStatus::Superseding {
                 if cycle.contract_digest == contract.contract_digest {
-                    if cycle.analysis_profile != *analysis_profile {
-                        return Err(AnalysisError::workspace(
-                            "recoverable cycle uses a different analysis profile",
-                        ));
-                    }
                     self.record_attempt(&cycle_id, attempt_id, now)?;
                     let sealed = self
                         .cycle_path(&cycle_id)
@@ -271,6 +267,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
             opened_at: now,
             status: CycleStatus::Active,
             replacement_digest: None,
+            latest_handoff: None,
         };
         let initialization = (|| {
             fs::create_dir_all(cycle_root.join("analysis")).map_err(workspace_error)?;
@@ -359,8 +356,8 @@ impl WorkspaceLease for LocalWorkspaceLease {
         let proposal = if pending_path.exists() {
             let existing = read_json::<CandidateProposal>(&pending_path)?;
             if existing.rules != rules {
-                return Err(AnalysisError::workspace(
-                    "a different Candidate proposal is already committed for this cycle",
+                return Err(AnalysisError::ProposalConflict(
+                    "a different Candidate proposal is already committed for this cycle".to_owned(),
                 ));
             }
             let manifest_path = cycle_root.join("analysis-manifest.json");
@@ -470,23 +467,210 @@ impl WorkspaceLease for LocalWorkspaceLease {
         cycle_id: &str,
         attempt_id: &str,
         summary: &str,
+        metadata: Option<Value>,
     ) -> Result<(), AnalysisError> {
         validate_segment(attempt_id, "attempt ID")?;
         let _io_guard = mutex_lock(&self.io_gate)?;
         self.require_active_cycle(cycle_id)?;
         self.require_writable(cycle_id)?;
-        write_json_atomic(
-            &self
-                .cycle_path(cycle_id)
-                .join("handoffs")
-                .join(format!("{attempt_id}.json")),
-            &HandoffRecord {
-                schema_version: WORKSPACE_SCHEMA_VERSION,
-                attempt_id: attempt_id.to_owned(),
-                recorded_at: Utc::now(),
-                summary: summary.to_owned(),
-            },
-        )
+        if summary.trim().is_empty()
+            || metadata.as_ref().is_some_and(|value| !value.is_object())
+            || serde_json::to_vec(&metadata)
+                .map_err(workspace_error)?
+                .len()
+                > 16_384
+        {
+            return Err(AnalysisError::InvalidState(
+                "handoff requires a non-empty summary and at most 16 KiB of object metadata"
+                    .to_owned(),
+            ));
+        }
+        let mut cycle = self.read_cycle(cycle_id)?;
+        let path = self
+            .cycle_path(cycle_id)
+            .join("handoffs")
+            .join(format!("{attempt_id}.json"));
+        if path.exists() {
+            let existing: HandoffRecord = read_json(&path)?;
+            if existing.summary != summary
+                || existing.metadata != metadata
+                || existing.cycle_id.as_deref() != Some(cycle_id)
+                || existing.contract_digest.as_deref() != Some(cycle.contract_digest.as_str())
+                || (cycle.latest_handoff.as_deref() != Some(attempt_id)
+                    && cycle.latest_handoff != existing.previous_handoff)
+            {
+                return Err(AnalysisError::InvalidState(
+                    "committed handoff cannot be changed or republished out of order".to_owned(),
+                ));
+            }
+        } else {
+            write_json_atomic(
+                &path,
+                &HandoffRecord {
+                    schema_version: WORKSPACE_SCHEMA_VERSION,
+                    attempt_id: attempt_id.to_owned(),
+                    recorded_at: Utc::now(),
+                    summary: summary.to_owned(),
+                    metadata: metadata.clone(),
+                    cycle_id: Some(cycle_id.to_owned()),
+                    contract_digest: Some(cycle.contract_digest.clone()),
+                    previous_handoff: cycle.latest_handoff.clone(),
+                },
+            )?;
+        }
+        if metadata.is_some() {
+            cycle.latest_handoff = Some(attempt_id.to_owned());
+            write_json_atomic(&self.cycle_path(cycle_id).join("cycle.json"), &cycle)?;
+        }
+        Ok(())
+    }
+
+    async fn latest_handoff(
+        &self,
+        cycle_id: &str,
+    ) -> Result<Option<WorkflowHandoff>, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        self.require_active_cycle(cycle_id)?;
+        let cycle = self.read_cycle(cycle_id)?;
+        let Some(attempt_id) = cycle.latest_handoff else {
+            return Ok(None);
+        };
+        validate_segment(&attempt_id, "handoff attempt ID")?;
+        let path = self
+            .cycle_path(cycle_id)
+            .join("handoffs")
+            .join(format!("{attempt_id}.json"));
+        let contents = fs::read(&path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                AnalysisError::InvalidState("latest workflow handoff record is missing".to_owned())
+            } else {
+                workspace_error(error)
+            }
+        })?;
+        let record: HandoffRecord = serde_json::from_slice(&contents).map_err(|error| {
+            AnalysisError::InvalidState(format!(
+                "latest workflow handoff record is corrupt: {error}"
+            ))
+        })?;
+        if record.schema_version != WORKSPACE_SCHEMA_VERSION
+            || record.attempt_id != attempt_id
+            || record.cycle_id.as_deref() != Some(cycle_id)
+            || record.contract_digest.as_deref() != Some(cycle.contract_digest.as_str())
+        {
+            return Err(AnalysisError::InvalidState(
+                "latest handoff does not match its bound cycle and attempt".to_owned(),
+            ));
+        }
+        let metadata = record.metadata.filter(Value::is_object).ok_or_else(|| {
+            AnalysisError::InvalidState("latest workflow handoff has no object metadata".to_owned())
+        })?;
+        Ok(Some(WorkflowHandoff {
+            attempt_id,
+            summary: record.summary,
+            metadata,
+        }))
+    }
+
+    async fn pending_proposal(
+        &self,
+        cycle_id: &str,
+    ) -> Result<Option<CandidateProposal>, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        self.require_active_cycle(cycle_id)?;
+        let path = self.cycle_path(cycle_id).join("proposal.pending.json");
+        if path.exists() {
+            read_json(&path).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn reserve_attempt(
+        &self,
+        cycle_id: &str,
+        attempt_id: &str,
+        limits: &CycleLimits,
+        timeout: Duration,
+    ) -> Result<Duration, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        self.require_active_cycle(cycle_id)?;
+        validate_segment(attempt_id, "attempt ID")?;
+        if limits.max_attempts == 0 || limits.execution_seconds == 0 || timeout.is_zero() {
+            return Err(AnalysisError::InvalidState(
+                "cycle execution limits must be positive".to_owned(),
+            ));
+        }
+        let path = self.cycle_path(cycle_id).join("budget.json");
+        let mut budget = if path.exists() {
+            read_json::<CycleBudget>(&path)?
+        } else {
+            CycleBudget {
+                limits: limits.clone(),
+                attempts: 0,
+                execution_millis: 0,
+                reservation: None,
+            }
+        };
+        if budget.limits != *limits {
+            return Err(AnalysisError::InvalidState(
+                "cycle limits differ from their durable configuration".to_owned(),
+            ));
+        }
+        let total = limits.execution_seconds.checked_mul(1_000).ok_or_else(|| {
+            AnalysisError::InvalidState("cycle time budget overflows milliseconds".to_owned())
+        })?;
+        if budget.attempts >= limits.max_attempts || budget.execution_millis >= total {
+            return Err(AnalysisError::LimitExceeded(
+                "attempt count or accumulated execution time exhausted".to_owned(),
+            ));
+        }
+        let requested = u64::try_from(timeout.as_millis()).map_err(workspace_error)?;
+        let allowance = requested.min(total - budget.execution_millis);
+        if allowance == 0 {
+            return Err(AnalysisError::InvalidState(
+                "attempt timeout is below one millisecond".to_owned(),
+            ));
+        }
+        // An unsettled prior reservation remains charged after a crash.
+        budget.attempts += 1;
+        budget.execution_millis += allowance;
+        budget.reservation = Some(AttemptReservation {
+            attempt_id: attempt_id.to_owned(),
+            millis: allowance,
+        });
+        write_json_atomic(&path, &budget)?;
+        Ok(Duration::from_millis(allowance))
+    }
+
+    async fn settle_attempt(
+        &self,
+        cycle_id: &str,
+        attempt_id: &str,
+        elapsed: Duration,
+    ) -> Result<(), AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        let path = self.cycle_path(cycle_id).join("budget.json");
+        let mut budget: CycleBudget = read_json(&path)?;
+        let reservation = budget.reservation.take().ok_or_else(|| {
+            AnalysisError::InvalidState("attempt has no execution reservation".to_owned())
+        })?;
+        if reservation.attempt_id != attempt_id {
+            return Err(AnalysisError::InvalidState(
+                "execution reservation belongs to another attempt".to_owned(),
+            ));
+        }
+        let elapsed = u64::try_from(elapsed.as_millis())
+            .map_err(workspace_error)?
+            .min(reservation.millis);
+        budget.execution_millis = budget
+            .execution_millis
+            .checked_sub(reservation.millis - elapsed)
+            .ok_or_else(|| {
+                AnalysisError::InvalidState(
+                    "execution reservation exceeds the charged budget".to_owned(),
+                )
+            })?;
+        write_json_atomic(&path, &budget)
     }
 
     async fn record_attempt_failure(
@@ -1053,6 +1237,7 @@ fn is_manifest_control_file(relative: &str) -> bool {
     matches!(
         relative,
         "cycle.json"
+            | "budget.json"
             | "analysis-manifest.json"
             | "proposal.pending.json"
             | "proposal.json"
@@ -1251,6 +1436,8 @@ struct StoredCycle {
     opened_at: DateTime<Utc>,
     status: CycleStatus,
     replacement_digest: Option<String>,
+    #[serde(default)]
+    latest_handoff: Option<String>,
 }
 
 impl StoredCycle {
@@ -1292,13 +1479,37 @@ struct AttemptFailure {
     error: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HandoffRecord {
     schema_version: u32,
     attempt_id: String,
     recorded_at: DateTime<Utc>,
     summary: String,
+    #[serde(default)]
+    metadata: Option<Value>,
+    #[serde(default)]
+    cycle_id: Option<String>,
+    #[serde(default)]
+    contract_digest: Option<String>,
+    #[serde(default)]
+    previous_handoff: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CycleBudget {
+    limits: CycleLimits,
+    attempts: u32,
+    execution_millis: u64,
+    reservation: Option<AttemptReservation>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AttemptReservation {
+    attempt_id: String,
+    millis: u64,
 }
 
 #[derive(Serialize)]
@@ -1369,6 +1580,276 @@ mod tests {
                 panic!("expected ready cycle, next eligible at {eligible_at}")
             }
         }
+    }
+
+    #[tokio::test]
+    async fn commits_handoff_pointer_without_advancing_on_checkpoint_or_orphan() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let contract = contract('a', accepted_at);
+        let lease = provider.claim(&contract.name, "attempt-1").await.unwrap();
+        let cycle = ready(
+            lease
+                .prepare_cycle(
+                    &contract,
+                    &profile(),
+                    "attempt-1",
+                    accepted_at + Duration::hours(2),
+                )
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        let metadata = json!({"outcome": "draftReady", "revision": 0});
+        lease
+            .record_handoff(
+                &cycle.cycle_id,
+                "attempt-1",
+                "draft",
+                Some(metadata.clone()),
+            )
+            .await
+            .unwrap();
+        lease
+            .record_handoff(
+                &cycle.cycle_id,
+                "attempt-1",
+                "draft",
+                Some(metadata.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            lease
+                .record_handoff(
+                    &cycle.cycle_id,
+                    "attempt-1",
+                    "changed",
+                    Some(metadata.clone())
+                )
+                .await,
+            Err(AnalysisError::InvalidState(_))
+        ));
+        lease
+            .record_handoff(&cycle.cycle_id, "attempt-2", "checkpoint", None)
+            .await
+            .unwrap();
+        let root = directory
+            .path()
+            .join(workspace_id(&contract.name).trim_start_matches("sha256:"))
+            .join("cycles")
+            .join(&cycle.cycle_id);
+        let orphan = HandoffRecord {
+            schema_version: WORKSPACE_SCHEMA_VERSION,
+            attempt_id: "attempt-orphan".to_owned(),
+            recorded_at: Utc::now(),
+            summary: "unpublished".to_owned(),
+            metadata: Some(json!({"outcome": "requestChange"})),
+            cycle_id: Some(cycle.cycle_id.clone()),
+            contract_digest: Some(contract.contract_digest.clone()),
+            previous_handoff: Some("attempt-1".to_owned()),
+        };
+        write_json_atomic(&root.join("handoffs").join("attempt-orphan.json"), &orphan).unwrap();
+        drop(lease);
+        let lease = provider.claim(&contract.name, "attempt-3").await.unwrap();
+        let mut changed_profile = profile();
+        changed_profile.skill_names.reverse();
+        let resumed = ready(
+            lease
+                .prepare_cycle(
+                    &contract,
+                    &changed_profile,
+                    "attempt-3",
+                    accepted_at + Duration::hours(3),
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(resumed.cycle.cycle_id, cycle.cycle_id);
+        assert_eq!(
+            lease
+                .latest_handoff(&cycle.cycle_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .metadata,
+            metadata
+        );
+        let mut corrupt: HandoffRecord =
+            read_json(&root.join("handoffs").join("attempt-1.json")).unwrap();
+        corrupt.contract_digest = Some("wrong".to_owned());
+        write_json_atomic(&root.join("handoffs").join("attempt-1.json"), &corrupt).unwrap();
+        assert!(matches!(
+            lease.latest_handoff(&cycle.cycle_id).await,
+            Err(AnalysisError::InvalidState(_))
+        ));
+        fs::remove_file(root.join("handoffs").join("attempt-1.json")).unwrap();
+        assert!(matches!(
+            lease.latest_handoff(&cycle.cycle_id).await,
+            Err(AnalysisError::InvalidState(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn durable_attempt_budget_refunds_execution_but_charges_crash_reservations() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let contract = contract('a', accepted_at);
+        let lease = provider.claim(&contract.name, "attempt-1").await.unwrap();
+        let cycle = ready(
+            lease
+                .prepare_cycle(
+                    &contract,
+                    &profile(),
+                    "attempt-1",
+                    accepted_at + Duration::hours(2),
+                )
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        let limits = CycleLimits {
+            max_attempts: 8,
+            max_revisions: 1,
+            execution_seconds: 10,
+        };
+        let seconds = std::time::Duration::from_secs;
+        assert_eq!(
+            lease
+                .reserve_attempt(&cycle.cycle_id, "attempt-1", &limits, seconds(8))
+                .await
+                .unwrap(),
+            seconds(8)
+        );
+        lease
+            .settle_attempt(&cycle.cycle_id, "attempt-1", seconds(2))
+            .await
+            .unwrap();
+        assert_eq!(
+            lease
+                .reserve_attempt(&cycle.cycle_id, "attempt-2", &limits, seconds(6))
+                .await
+                .unwrap(),
+            seconds(6)
+        );
+        drop(lease); // A crash leaves the second reservation fully charged.
+        let lease = provider.claim(&contract.name, "attempt-3").await.unwrap();
+        lease
+            .prepare_cycle(
+                &contract,
+                &profile(),
+                "attempt-3",
+                accepted_at + Duration::hours(3),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            lease
+                .reserve_attempt(&cycle.cycle_id, "attempt-3", &limits, seconds(8))
+                .await
+                .unwrap(),
+            seconds(2)
+        );
+        assert!(matches!(
+            lease
+                .reserve_attempt(&cycle.cycle_id, "attempt-4", &limits, seconds(1))
+                .await,
+            Err(AnalysisError::LimitExceeded(_))
+        ));
+        lease
+            .settle_attempt(&cycle.cycle_id, "attempt-3", seconds(1))
+            .await
+            .unwrap();
+        let changed = CycleLimits {
+            max_attempts: 9,
+            ..limits.clone()
+        };
+        assert!(matches!(
+            lease
+                .reserve_attempt(&cycle.cycle_id, "attempt-4", &changed, seconds(1))
+                .await,
+            Err(AnalysisError::InvalidState(_))
+        ));
+        lease
+            .reserve_attempt(&cycle.cycle_id, "attempt-4", &limits, seconds(1))
+            .await
+            .unwrap();
+        lease
+            .settle_attempt(&cycle.cycle_id, "attempt-4", seconds(2))
+            .await
+            .unwrap();
+        assert!(matches!(
+            lease
+                .reserve_attempt(&cycle.cycle_id, "attempt-5", &limits, seconds(1))
+                .await,
+            Err(AnalysisError::LimitExceeded(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn failed_attempts_count_and_budget_updates_do_not_invalidate_sealed_provenance() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let contract = contract('a', accepted_at);
+        let lease = provider.claim(&contract.name, "attempt-1").await.unwrap();
+        let cycle = ready(
+            lease
+                .prepare_cycle(
+                    &contract,
+                    &profile(),
+                    "attempt-1",
+                    accepted_at + Duration::hours(2),
+                )
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        let limits = CycleLimits {
+            max_attempts: 2,
+            ..CycleLimits::default()
+        };
+        let seconds = std::time::Duration::from_secs;
+        lease
+            .reserve_attempt(&cycle.cycle_id, "attempt-1", &limits, seconds(1))
+            .await
+            .unwrap();
+        lease
+            .record_attempt_failure(&cycle.cycle_id, "attempt-1", "failed")
+            .await
+            .unwrap();
+        lease
+            .settle_attempt(&cycle.cycle_id, "attempt-1", seconds(0))
+            .await
+            .unwrap();
+        lease
+            .reserve_attempt(&cycle.cycle_id, "attempt-2", &limits, seconds(1))
+            .await
+            .unwrap();
+        let rules = json!([{"when": true, "then": 1}]);
+        let proposal = lease
+            .prepare_candidate_proposal(&cycle.cycle_id, "attempt-2", rules.clone())
+            .await
+            .unwrap();
+        lease
+            .settle_attempt(&cycle.cycle_id, "attempt-2", seconds(0))
+            .await
+            .unwrap();
+        assert_eq!(
+            lease
+                .prepare_candidate_proposal(&cycle.cycle_id, "attempt-3", rules)
+                .await
+                .unwrap(),
+            proposal
+        );
+        assert!(matches!(
+            lease
+                .reserve_attempt(&cycle.cycle_id, "attempt-3", &limits, seconds(1))
+                .await,
+            Err(AnalysisError::LimitExceeded(_))
+        ));
     }
 
     #[tokio::test]

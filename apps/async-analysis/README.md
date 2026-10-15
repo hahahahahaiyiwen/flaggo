@@ -7,6 +7,7 @@ participates in runtime decisions.
 The local implementation combines:
 
 - a provider-neutral coordinator and bounded Agent Pool;
+- state-driven proposer/reviewer/general routing through durable handoffs;
 - one durable, name-keyed workspace with an exclusive process and OS lock;
 - one immutable exact contract digest per cycle, with live evidence queries
   and persisted datasets;
@@ -59,6 +60,15 @@ The durable analysis profile binds each cycle to the ordered skill names
 `analysis-cycle-protocol`, `understand-decision-contract`,
 `qualitative-analysis`, and `author-executable`; skills are deliberately
 unversioned.
+This list is skill provenance, not a role plan or a recovery compatibility gate.
+The provider selects proposer for initial analysis/revision and reviewer for
+a committed draft, or general when configured. Proposers do not receive a
+registered submission tool. General agents have submission authority only in
+the draft-review state. Native writes are restricted to the current attempt's
+`analysis/attempts/<attempt-id>` directory, shared lifecycle notes and internal
+SDK state; prior drafts/reviews cannot be overwritten through these tools.
+See [Async Analysis](../../docs/design/architecture/ASYNC_ANALYSIS.md) for the
+transition table, artifact metadata and trusted-local review responsibilities.
 `modules/analysis-agent/src/context.rs` owns the assets, binds dynamic cycle
 identity as escaped XML, and prepares the writable templates. The current
 local packaging loads skills from the analysis-agent module source tree.
@@ -112,7 +122,7 @@ narrower workspace read/write paths.
    query output, including aliases and empty results; unknown types are null.
    Duplicate output names are rejected instead of silently overwriting values.
 3. Use the SDK-native `create` tool with an absolute virtual `path`, such as
-   `/workspace/analysis/model.py`, and UTF-8 `file_text`.
+   `/workspace/analysis/attempts/<attempt-id>/model.py`, and UTF-8 `file_text`.
    Use `edit` to change an existing file.
 4. Call `code_interpreter` with exactly one of `script_path` or inline `code`.
    File paths may be relative, such as `model.py`, or absolute
@@ -226,7 +236,11 @@ tool payloads. There is no separate session-event logging switch.
 | `FLAGGO_ANALYSIS_QUERY_MAX_ROWS` | `1000` | Maximum rows returned by one evidence query |
 | `FLAGGO_ANALYSIS_QUERY_MAX_BYTES` | `1048576` | Maximum encoded result bytes per evidence query |
 | `FLAGGO_ANALYSIS_QUERY_TIMEOUT_MS` | `20000` | Evidence-query and local HTTP timeout |
-| `FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS` | `1200` | Maximum Copilot attempt duration |
+| `FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS` | `1200` | Maximum session creation/run allowance per attempt |
+| `FLAGGO_ANALYSIS_AGENT_PROFILE` | `specialized` | State-selected proposer/reviewer, or `general` |
+| `FLAGGO_ANALYSIS_CYCLE_MAX_ATTEMPTS` | `8` | Durable attempt ceiling, including failed starts |
+| `FLAGGO_ANALYSIS_CYCLE_MAX_REVISIONS` | `1` | Revised drafts allowed after initial revision zero |
+| `FLAGGO_ANALYSIS_CYCLE_EXECUTION_SECONDS` | `3600` | Accumulated execution allowance; downtime excluded |
 | `FLAGGO_ANALYSIS_YIELD_GRACE_SECONDS` | `30` | Checkpoint grace period for supersession and shutdown |
 | `FLAGGO_ANALYSIS_PYTHON` | Checkout root `.venv` interpreter | Optional override; multi-component relative paths resolve at startup |
 | `FLAGGO_ANALYSIS_PYTHON_TIMEOUT_SECONDS` | `60` | Direct Python process deadline |
@@ -240,6 +254,22 @@ one root `flaggo.analysis.cycle` span for each exact-contract work attempt,
 bounded cycle outcome and duration metrics, and an active-worker gauge. Exact
 contract, cycle, attempt, and Candidate identifiers appear only on spans and
 structured lifecycle logs; they are never metric dimensions.
+`flaggo.analysis.profile.selected` identifies the provider's bounded role
+selection with exact cycle/attempt correlation, without agent-authored content.
+Session-start spans also record the selected profile. The
+`flaggo.analysis.profile.selections` counter uses only the bounded profile
+dimension (proposer, reviewer, general), never exact contract/cycle/attempt IDs.
+
+Cycle limits are fixed on the first reservation and must match on recovery.
+Unused reserved time is refunded on ordinary completion; crash reservations
+remain fully charged. Exhaustion ends the cycle with explicit failure.
+Budgets are runtime control records, not sealed analytical artifacts.
+No token/usage ceiling is claimed. A sealed pending submission is retried before
+starting another agent, retaining its original attempt and manifest provenance.
+This transport-only reconciliation precedes exhausted agent limits and does
+not consume another agent attempt; existing HTTP deadlines still apply.
+Identical submissions return the original Candidate; changed rules conflict,
+and cached retries still reject a superseded contract.
 
 Console logs are always available. Logs, metrics, and traces export as
 OTLP/HTTP binary Protobuf when the standard
@@ -273,8 +303,9 @@ observations.
 
 The registered field and outcome allowlists are defined by
 [internal service observability](../../docs/design/architecture/OBSERVABILITY.md)
-and its machine-readable profile. Action metadata and identities are not
-metric dimensions. No private reasoning, model text, arbitrary free-text
+and its machine-readable profile. Exact action identities and high-cardinality
+details are not metric dimensions; only the bounded role-selection metric
+uses the selected profile. No private reasoning, model text, arbitrary free-text
 summaries or provider payload mirror is emitted.
 
 ### Troubleshooting progress

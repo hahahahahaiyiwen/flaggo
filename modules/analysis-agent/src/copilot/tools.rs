@@ -147,7 +147,8 @@ impl AnalysisToolHandler {
 }
 
 pub(super) fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
-    vec![
+    let can_propose = tools.can_propose();
+    let mut registered = vec![
         tool(
             CHECK_CYCLE_STATUS_TOOL,
             "Check whether this cycle is active, superseded, or stopping.",
@@ -219,7 +220,11 @@ pub(super) fn copilot_tools(tools: Arc<dyn AnalysisTools>) -> Vec<Tool> {
             AnalysisToolKind::ProposeExecutable,
             tools,
         ),
-    ]
+    ];
+    if !can_propose {
+        registered.pop();
+    }
+    registered
 }
 
 fn proposal_rules(arguments: &Value) -> Result<Value, CopilotError> {
@@ -392,6 +397,15 @@ mod tests {
             error.to_string(),
             "propose_executable requires at least one rule"
         );
+    }
+
+    #[test]
+    fn proposer_has_no_registered_submission_tool() {
+        for (can_propose, count) in [(false, 4), (true, 5)] {
+            let spec = crate::provider::tests::test_spec_with_proposal_permission(can_propose);
+            let tools = super::copilot_tools(spec.tools);
+            assert_eq!(tools.len(), count);
+        }
     }
 
     #[tokio::test]

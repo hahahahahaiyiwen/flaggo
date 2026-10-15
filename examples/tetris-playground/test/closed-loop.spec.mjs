@@ -295,7 +295,10 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     }
     expect(log.attributes["flaggo.contract.digest"]).toBe(active.contractDigest);
     expect(log.attributes["flaggo.analysis.cycle.id"]).toBe(provenance.cycleId);
-    expect(log.attributes["flaggo.analysis.attempt.id"]).toBe(provenance.attemptId);
+    expect(log.attributes["flaggo.analysis.attempt.id"]).toMatch(/^[0-9a-f-]{36}$/u);
+    if (log.attributes["flaggo.analysis.action.kind"] === "proposal.submit") {
+      expect(log.attributes["flaggo.analysis.attempt.id"]).toBe(provenance.attemptId);
+    }
     expect(log.attributes["flaggo.analysis.action.id"]).toMatch(/^[0-9a-f-]{36}$/u);
     expect(log.traceId).toMatch(/^[0-9a-f]{32}$/u);
   }
@@ -316,7 +319,8 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     .evaluateAll((options) => options.map((option) => option.value)),
   { timeout: 30_000 }).toContain(cycleSelection);
   await page.locator("#analysis-cycle").selectOption(cycleSelection);
-  await page.locator("#analysis-attempt").selectOption(provenance.attemptId);
+  const inspectedAttemptId = sqlActions[0].attributes["flaggo.analysis.attempt.id"];
+  await page.locator("#analysis-attempt").selectOption(inspectedAttemptId);
   const inspectedSqlId = sqlActions[0].attributes["flaggo.analysis.action.id"];
   const inspectedSql = page.locator(`.analysis-action[data-action-id="${inspectedSqlId}"]`);
   await expect(inspectedSql).toBeVisible({ timeout: 30_000 });
@@ -333,7 +337,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     state = await response.json();
     return state.analysisActions.actions.some((action) =>
       action.actionId === inspectedSqlId && action.cycleId === provenance.cycleId
-      && action.attemptId === provenance.attemptId && action.outcome === "success");
+      && action.attemptId === inspectedAttemptId && action.outcome === "success");
   }, { timeout: 30_000 }).toBe(true);
   const telemetry = {};
   await expect.poll(async () => {

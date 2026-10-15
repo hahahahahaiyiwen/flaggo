@@ -63,6 +63,10 @@ impl YieldSignal {
 
 #[async_trait]
 pub trait AnalysisTools: Send + Sync {
+    fn can_propose(&self) -> bool {
+        true
+    }
+
     async fn check_cycle_status(&self) -> Result<AnalysisRunStatus, AnalysisError>;
 
     async fn describe(&self) -> Result<Value, AnalysisError>;
