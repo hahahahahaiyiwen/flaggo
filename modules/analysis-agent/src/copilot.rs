@@ -27,7 +27,7 @@ use github_copilot_sdk::{
         SessionFsConventions, SessionFsProvider,
     },
     tool::JsonSchema,
-    types::{MessageOptions, SessionConfig, SystemMessageConfig},
+    types::{MessageOptions, ProviderConfig, SessionConfig, SystemMessageConfig},
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
@@ -42,7 +42,6 @@ pub const PROVIDER_REQUEST_OBSERVABILITY_SUPPORTED: bool = false;
 
 pub struct CopilotAgentProvider {
     runtime: Arc<CopilotRuntime>,
-    model: Option<String>,
     skill_directory: PathBuf,
     system_message: String,
     run_timeout: Duration,
@@ -51,13 +50,80 @@ pub struct CopilotAgentProvider {
 #[derive(Clone)]
 pub struct CopilotRuntimeConfig {
     pub base_directory: PathBuf,
-    pub github_token: Option<String>,
+    pub inference: CopilotInferenceConfig,
+}
+
+#[derive(Clone)]
+pub enum CopilotInferenceConfig {
+    GitHub {
+        model: Option<String>,
+        token: Option<String>,
+    },
+    Byok {
+        model: String,
+        base_url: String,
+        wire_api: ByokWireApi,
+        api_key: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ByokWireApi {
+    Responses,
+    Completions,
+}
+
+impl ByokWireApi {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Responses => "responses",
+            Self::Completions => "completions",
+        }
+    }
+}
+
+impl std::fmt::Debug for CopilotInferenceConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GitHub { model, token } => formatter
+                .debug_struct("GitHub")
+                .field("model", model)
+                .field("token", &token.as_ref().map(|_| "<redacted>"))
+                .finish(),
+            Self::Byok {
+                model,
+                base_url,
+                wire_api,
+                api_key,
+            } => formatter
+                .debug_struct("Byok")
+                .field("model", model)
+                .field("base_url", base_url)
+                .field("wire_api", wire_api)
+                .field("api_key", &api_key.as_ref().map(|_| "<redacted>"))
+                .finish(),
+        }
+    }
+}
+
+impl CopilotInferenceConfig {
+    fn error(&self, error: impl std::fmt::Display) -> AnalysisError {
+        let mut message = error.to_string();
+        let secret = match self {
+            Self::GitHub { token, .. } => token,
+            Self::Byok { api_key, .. } => api_key,
+        };
+        if let Some(secret) = secret.as_ref().filter(|secret| !secret.is_empty()) {
+            message = message.replace(secret, "<redacted>");
+        }
+        AnalysisError::Agent(message)
+    }
 }
 
 impl CopilotAgentProvider {
     pub async fn start(
         runtime_config: CopilotRuntimeConfig,
-        model: Option<String>,
         skill_directory: PathBuf,
         system_message: String,
         run_timeout: Duration,
@@ -66,7 +132,6 @@ impl CopilotAgentProvider {
         runtime.client().await?;
         Ok(Self {
             runtime,
-            model,
             skill_directory,
             system_message,
             run_timeout,
@@ -95,7 +160,7 @@ impl AgentProvider for CopilotAgentProvider {
         let client = self.runtime.client().await?;
         let (session, client) = match client
             .create_session(session_config(
-                self.model.as_deref(),
+                &self.runtime.config.inference,
                 &self.skill_directory,
                 &self.system_message,
                 available_tools.clone(),
@@ -110,7 +175,7 @@ impl AgentProvider for CopilotAgentProvider {
                 let replacement = self.runtime.client().await?;
                 let session = replacement
                     .create_session(session_config(
-                        self.model.as_deref(),
+                        &self.runtime.config.inference,
                         &self.skill_directory,
                         &self.system_message,
                         available_tools,
@@ -118,10 +183,10 @@ impl AgentProvider for CopilotAgentProvider {
                         tools,
                     ))
                     .await
-                    .map_err(agent_error)?;
+                    .map_err(|error| self.runtime.config.inference.error(error))?;
                 (session, replacement)
             }
-            Err(error) => return Err(agent_error(error)),
+            Err(error) => return Err(self.runtime.config.inference.error(error)),
         };
 
         Ok(Arc::new(CopilotAgentSession {
@@ -160,21 +225,11 @@ impl CopilotRuntime {
         if let Some(client) = client.as_ref() {
             return Ok(Arc::clone(client));
         }
-        let options = ClientOptions::default()
-            .with_mode(ClientMode::Empty)
-            .with_base_directory(&self.config.base_directory)
-            .with_session_fs(SessionFsConfig::new(
-                "/workspace",
-                "/workspace/analysis/.copilot",
-                SessionFsConventions::Posix,
-            ));
-        let options = match &self.config.github_token {
-            Some(token) => options
-                .with_github_token(token.clone())
-                .with_use_logged_in_user(false),
-            None => options.with_use_logged_in_user(true),
-        };
-        let started = Arc::new(Client::start(options).await.map_err(agent_error)?);
+        let started = Arc::new(
+            Client::start(client_options(&self.config))
+                .await
+                .map_err(|error| self.config.inference.error(error))?,
+        );
         *client = Some(Arc::clone(&started));
         Ok(started)
     }
@@ -199,14 +254,48 @@ impl CopilotRuntime {
     async fn stop(&self) -> Result<(), AnalysisError> {
         let client = self.client.lock().await.take();
         if let Some(client) = client {
-            client.stop().await.map_err(agent_error)?;
+            client
+                .stop()
+                .await
+                .map_err(|error| self.config.inference.error(error))?;
         }
         Ok(())
     }
 }
 
+fn client_options(config: &CopilotRuntimeConfig) -> ClientOptions {
+    let options = ClientOptions::default()
+        .with_mode(ClientMode::Empty)
+        .with_base_directory(&config.base_directory)
+        .with_session_fs(SessionFsConfig::new(
+            "/workspace",
+            "/workspace/analysis/.copilot",
+            SessionFsConventions::Posix,
+        ));
+    match &config.inference {
+        CopilotInferenceConfig::GitHub {
+            token: Some(token), ..
+        } => options
+            .with_github_token(token.clone())
+            .with_use_logged_in_user(false),
+        CopilotInferenceConfig::GitHub { token: None, .. } => options.with_use_logged_in_user(true),
+        CopilotInferenceConfig::Byok { .. } => {
+            options.with_use_logged_in_user(false).with_env_remove([
+                "GH_TOKEN",
+                "GITHUB_TOKEN",
+                "COPILOT_GITHUB_TOKEN",
+                "COPILOT_SDK_AUTH_TOKEN",
+                "OPENAI_API_KEY",
+                "AZURE_OPENAI_API_KEY",
+                "AZURE_OPENAI_KEY",
+                "ANTHROPIC_API_KEY",
+            ])
+        }
+    }
+}
+
 fn session_config(
-    model: Option<&str>,
+    inference: &CopilotInferenceConfig,
     skill_directory: &std::path::Path,
     system_message: &str,
     available_tools: Vec<String>,
@@ -217,7 +306,25 @@ fn session_config(
         .approve_permissions_if(is_analysis_permission)
         .with_session_fs_provider(filesystem)
         .with_tools(copilot_tools(tools));
-    apply_model_selection(&mut config, model);
+    match inference {
+        CopilotInferenceConfig::GitHub { model, .. } => {
+            apply_model_selection(&mut config, model.as_deref());
+        }
+        CopilotInferenceConfig::Byok {
+            model,
+            base_url,
+            wire_api,
+            api_key,
+        } => {
+            apply_model_selection(&mut config, Some(model));
+            let mut provider = ProviderConfig::new(base_url)
+                .with_provider_type("openai")
+                .with_wire_api(wire_api.as_str())
+                .with_transport("http");
+            provider.api_key = api_key.clone();
+            config.provider = Some(provider);
+        }
+    }
     config.client_name = Some("flaggo-async-analysis".to_owned());
     config.available_tools = Some(available_tools);
     config.enable_skills = Some(true);
@@ -263,7 +370,7 @@ impl AgentSession for CopilotAgentSession {
                 if error.is_transport_failure() {
                     self.runtime.invalidate(&self.client).await;
                 }
-                return Err(agent_error(error));
+                return Err(self.runtime.config.inference.error(error));
             }
         };
         outcome.into_domain()
@@ -281,20 +388,44 @@ impl AgentSession for CopilotAgentSession {
         let disconnect_result = self.session.disconnect().await;
         match (disconnect_result, abort_error) {
             (Ok(()), _) => Ok(()),
-            (Err(error), _) => Err(agent_error(error)),
+            (Err(error), _) => Err(self.runtime.config.inference.error(error)),
         }
     }
 }
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(extend("required" = ["outcome", "explanation", "metadata", "reviewPath"]))]
 struct FinalOutcome {
     outcome: FinalOutcomeKind,
     explanation: String,
     #[serde(default)]
-    metadata: serde_json::Map<String, serde_json::Value>,
+    metadata: Option<FinalOutcomeMetadata>,
     #[serde(default)]
     review_path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(inline, extend("required" = [
+    "outcome", "proposalPath", "proposalDigest", "evidencePaths",
+    "evidenceDigests", "revision", "reviewPath"
+]))]
+struct FinalOutcomeMetadata {
+    outcome: Option<String>,
+    proposal_path: String,
+    proposal_digest: String,
+    evidence_paths: Vec<String>,
+    evidence_digests: Vec<FinalEvidenceDigest>,
+    revision: u32,
+    review_path: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FinalEvidenceDigest {
+    path: String,
+    digest: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -331,7 +462,7 @@ impl FinalOutcome {
             }),
             FinalOutcomeKind::Handoff => Ok(AgentRunOutcome::Handoff {
                 summary: self.explanation,
-                metadata: if self.metadata.is_empty() {
+                metadata: if self.metadata.is_none() {
                     None
                 } else {
                     return Err(AnalysisError::InvalidState(
@@ -344,19 +475,46 @@ impl FinalOutcome {
                     FinalOutcomeKind::DraftReady => "draftReady",
                     _ => "requestChange",
                 };
-                let mut metadata = self.metadata;
+                let metadata = self.metadata.ok_or_else(|| {
+                    AnalysisError::InvalidState("workflow outcome requires metadata".to_owned())
+                })?;
                 if metadata
-                    .get("outcome")
-                    .is_some_and(|value| value.as_str() != Some(outcome))
+                    .outcome
+                    .as_deref()
+                    .is_some_and(|value| value != outcome)
                 {
                     return Err(AnalysisError::InvalidState(
                         "metadata outcome contradicts final outcome".to_owned(),
                     ));
                 }
-                metadata.insert("outcome".to_owned(), serde_json::json!(outcome));
+                let mut evidence_digests = std::collections::BTreeMap::new();
+                for evidence in metadata.evidence_digests {
+                    if evidence_digests
+                        .insert(evidence.path, evidence.digest)
+                        .is_some()
+                    {
+                        return Err(AnalysisError::InvalidState(
+                            "duplicate evidence digest path".to_owned(),
+                        ));
+                    }
+                }
+                let metadata = crate::workflow::WorkflowMetadata {
+                    outcome: match self.outcome {
+                        FinalOutcomeKind::DraftReady => crate::workflow::WorkflowState::DraftReady,
+                        _ => crate::workflow::WorkflowState::RequestChange,
+                    },
+                    proposal_path: metadata.proposal_path,
+                    proposal_digest: metadata.proposal_digest,
+                    evidence_paths: metadata.evidence_paths,
+                    evidence_digests,
+                    revision: metadata.revision,
+                    review_path: metadata.review_path,
+                };
                 Ok(AgentRunOutcome::Handoff {
                     summary: self.explanation,
-                    metadata: Some(serde_json::Value::Object(metadata)),
+                    metadata: Some(serde_json::to_value(metadata).map_err(|error| {
+                        AnalysisError::InvalidState(format!("invalid workflow metadata: {error}"))
+                    })?),
                 })
             }
             FinalOutcomeKind::Reject => {
@@ -502,16 +660,143 @@ fn fs_not_found(path: &str) -> FsError {
     )
 }
 
-fn agent_error(error: impl std::fmt::Display) -> AnalysisError {
-    AnalysisError::Agent(error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use github_copilot_sdk::types::SessionConfig;
 
     use super::{FinalOutcome, FinalOutcomeKind, apply_model_selection};
     use crate::AgentRunOutcome;
+
+    #[test]
+    fn byok_client_disables_github_login_and_removes_inherited_credentials() {
+        use super::{ByokWireApi, CopilotInferenceConfig, CopilotRuntimeConfig, client_options};
+        let config = CopilotRuntimeConfig {
+            base_directory: std::path::PathBuf::from("runtime"),
+            inference: CopilotInferenceConfig::Byok {
+                model: "selected-deployment".to_owned(),
+                base_url: "https://example.openai.azure.com/openai/v1/".to_owned(),
+                wire_api: ByokWireApi::Responses,
+                api_key: Some("test-provider-secret".to_owned()),
+            },
+        };
+        for _ in 0..2 {
+            let options = client_options(&config);
+            assert_eq!(options.use_logged_in_user, Some(false));
+            assert!(options.github_token.is_none());
+            assert!(options.env.is_empty());
+            for name in [
+                "GH_TOKEN",
+                "GITHUB_TOKEN",
+                "COPILOT_GITHUB_TOKEN",
+                "COPILOT_SDK_AUTH_TOKEN",
+                "OPENAI_API_KEY",
+                "AZURE_OPENAI_API_KEY",
+                "AZURE_OPENAI_KEY",
+                "ANTHROPIC_API_KEY",
+            ] {
+                assert!(options.env_remove.contains(&std::ffi::OsString::from(name)));
+            }
+        }
+    }
+
+    #[test]
+    fn github_authentication_selection_is_unchanged() {
+        use super::{CopilotInferenceConfig, CopilotRuntimeConfig, client_options};
+        for token in [None, Some("test-github-token".to_owned())] {
+            let options = client_options(&CopilotRuntimeConfig {
+                base_directory: std::path::PathBuf::from("runtime"),
+                inference: CopilotInferenceConfig::GitHub {
+                    model: None,
+                    token: token.clone(),
+                },
+            });
+            assert_eq!(options.use_logged_in_user, Some(token.is_none()));
+            assert_eq!(options.github_token, token);
+            assert!(options.env_remove.is_empty());
+        }
+    }
+
+    #[test]
+    fn byok_sessions_pin_inference_without_changing_role_tool_permissions() {
+        use super::{ByokWireApi, CopilotInferenceConfig, CopilotWorkspaceFileSystem};
+        for wire_api in [ByokWireApi::Responses, ByokWireApi::Completions] {
+            for can_propose in [false, true] {
+                let spec = crate::provider::tests::test_spec_with_proposal_permission(can_propose);
+                let inference = CopilotInferenceConfig::Byok {
+                    model: "selected-deployment".to_owned(),
+                    base_url: "https://example.openai.azure.com/openai/v1/".to_owned(),
+                    wire_api,
+                    api_key: Some("test-provider-secret".to_owned()),
+                };
+                let mut available = super::available_tools().unwrap();
+                if !can_propose {
+                    available.retain(|name| name != super::tools::PROPOSE_EXECUTABLE_TOOL);
+                }
+                for _ in 0..2 {
+                    let config = super::session_config(
+                        &inference,
+                        &crate::context::analysis_skill_directory(),
+                        crate::context::ANALYSIS_SYSTEM_PROMPT,
+                        available.clone(),
+                        std::sync::Arc::new(CopilotWorkspaceFileSystem::new(
+                            spec.filesystem.clone(),
+                        )),
+                        spec.tools.clone(),
+                    );
+                    assert_eq!(config.model.as_deref(), Some("selected-deployment"));
+                    assert_eq!(
+                        config.allowed_models,
+                        Some(vec!["selected-deployment".to_owned()])
+                    );
+                    assert!(config.github_token.is_none());
+                    assert_eq!(config.available_tools, Some(available.clone()));
+                    assert_eq!(
+                        config.tools.as_ref().unwrap().len(),
+                        if can_propose { 5 } else { 4 }
+                    );
+                    let provider = config.provider.unwrap();
+                    assert_eq!(provider.provider_type.as_deref(), Some("openai"));
+                    assert_eq!(
+                        provider.base_url,
+                        "https://example.openai.azure.com/openai/v1/"
+                    );
+                    assert_eq!(provider.wire_api.as_deref(), Some(wire_api.as_str()));
+                    assert_eq!(provider.transport.as_deref(), Some("http"));
+                    assert_eq!(provider.api_key.as_deref(), Some("test-provider-secret"));
+                    assert!(provider.bearer_token.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inference_debug_and_errors_redact_configured_credentials() {
+        use super::{ByokWireApi, CopilotInferenceConfig};
+        for inference in [
+            CopilotInferenceConfig::GitHub {
+                model: None,
+                token: Some("test-secret-value".to_owned()),
+            },
+            CopilotInferenceConfig::Byok {
+                model: "deployment".to_owned(),
+                base_url: "https://example.com/v1".to_owned(),
+                wire_api: ByokWireApi::Responses,
+                api_key: Some("test-secret-value".to_owned()),
+            },
+        ] {
+            assert!(!format!("{inference:?}").contains("test-secret-value"));
+            for message in [
+                "401 invalid key test-secret-value",
+                "429 rate limit",
+                "model tool failed",
+                "request cancelled",
+            ] {
+                let error = inference.error(message).to_string();
+                assert!(!error.contains("test-secret-value"));
+                assert!(error.contains(message.split_whitespace().next().unwrap()));
+            }
+        }
+    }
 
     #[tokio::test]
     async fn missing_workspace_files_map_to_sdk_not_found() {
@@ -563,12 +848,22 @@ mod tests {
             .unwrap();
         let runtime = CopilotRuntime::new(CopilotRuntimeConfig {
             base_directory: directory.path().canonicalize().unwrap(),
-            github_token: None,
+            inference: super::CopilotInferenceConfig::Byok {
+                model: "test-model".to_owned(),
+                base_url: "http://127.0.0.1:1/v1".to_owned(),
+                wire_api: super::ByokWireApi::Responses,
+                api_key: None,
+            },
         });
         let client = runtime.client().await.unwrap();
+        let status = client.get_status().await.unwrap();
+        println!(
+            "SDK native BYOK test: runtime {}, protocol {}; no inference request",
+            status.version, status.protocol_version
+        );
         let session = client
             .create_session(super::session_config(
-                None,
+                &runtime.config.inference,
                 &crate::context::analysis_skill_directory(),
                 crate::context::ANALYSIS_SYSTEM_PROMPT,
                 super::available_tools().unwrap(),
@@ -729,11 +1024,20 @@ mod tests {
 
     #[test]
     fn maps_flat_workflow_results_to_handoffs_and_rejection() {
+        let metadata = serde_json::json!({
+            "proposalPath": "attempts/a/proposal.json",
+            "proposalDigest": "sha256:example",
+            "evidencePaths": ["queries/a.json"],
+            "evidenceDigests": [{"path": "queries/a.json", "digest": "sha256:evidence"}],
+            "revision": 0,
+            "reviewPath": "attempts/a/review.json"
+        });
         for outcome in ["draftReady", "requestChange"] {
             let final_outcome: FinalOutcome = serde_json::from_value(serde_json::json!({
                 "outcome": outcome, "explanation": "work completed",
-                "metadata": {"proposalPath": "attempts/a/proposal.json", "proposalDigest": "sha256:example", "evidencePaths": [], "revision": 0}
-            })).unwrap();
+                "metadata": metadata
+            }))
+            .unwrap();
             let AgentRunOutcome::Handoff {
                 metadata: Some(metadata),
                 ..
@@ -742,6 +1046,11 @@ mod tests {
                 panic!("workflow outcome must become a handoff");
             };
             assert_eq!(metadata["outcome"], outcome);
+            assert_eq!(
+                metadata["evidenceDigests"]["queries/a.json"],
+                "sha256:evidence"
+            );
+            assert_eq!(metadata["reviewPath"], "attempts/a/review.json");
         }
         let reject: FinalOutcome = serde_json::from_value(serde_json::json!({
             "outcome": "reject", "explanation": "unsupported", "reviewPath": "attempts/a/review.json"
@@ -750,10 +1059,19 @@ mod tests {
             reject.into_domain(),
             Ok(AgentRunOutcome::Reject { .. })
         ));
+        let mut contradicting_metadata = metadata.clone();
+        contradicting_metadata["outcome"] = serde_json::json!("requestChange");
+        let mut duplicate_metadata = metadata.clone();
+        duplicate_metadata["evidenceDigests"] = serde_json::json!([
+            {"path": "queries/a.json", "digest": "sha256:first"},
+            {"path": "queries/a.json", "digest": "sha256:second"}
+        ]);
         for value in [
             serde_json::json!({"outcome": "reject", "explanation": "missing review"}),
-            serde_json::json!({"outcome": "handoff", "explanation": "checkpoint", "metadata": {"outcome": "draftReady"}}),
-            serde_json::json!({"outcome": "draftReady", "explanation": "contradiction", "metadata": {"outcome": "requestChange"}}),
+            serde_json::json!({"outcome": "handoff", "explanation": "checkpoint", "metadata": metadata}),
+            serde_json::json!({"outcome": "draftReady", "explanation": "contradiction", "metadata": contradicting_metadata}),
+            serde_json::json!({"outcome": "draftReady", "explanation": "missing metadata", "metadata": null}),
+            serde_json::json!({"outcome": "draftReady", "explanation": "duplicate input", "metadata": duplicate_metadata}),
         ] {
             assert!(
                 serde_json::from_value::<FinalOutcome>(value)
@@ -768,12 +1086,52 @@ mod tests {
     fn terminal_outcome_schema_avoids_unsupported_unions() {
         let schema = serde_json::to_value(schemars::schema_for!(FinalOutcome))
             .expect("serialize terminal outcome schema");
+        fn assert_closed_objects(schema: &serde_json::Value) {
+            match schema {
+                serde_json::Value::Object(object) => {
+                    if let Some(properties) = object.get("properties") {
+                        assert_eq!(
+                            object.get("additionalProperties"),
+                            Some(&serde_json::json!(false))
+                        );
+                        let required = object["required"].as_array().expect("required fields");
+                        let properties = properties.as_object().expect("object properties");
+                        assert_eq!(required.len(), properties.len());
+                        for name in properties.keys() {
+                            assert!(
+                                required.contains(&serde_json::json!(name)),
+                                "missing required {name}"
+                            );
+                        }
+                    } else {
+                        assert_ne!(
+                            object.get("type"),
+                            Some(&serde_json::json!("object")),
+                            "unconstrained object schema"
+                        );
+                    }
+                    for value in object.values() {
+                        assert_closed_objects(value);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        assert_closed_objects(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_closed_objects(&schema);
         let schema = schema.to_string();
         assert!(!schema.contains("\"oneOf\""));
         assert!(!schema.contains("\"anyOf\""));
         assert!(!schema.contains("\"allOf\""));
         assert!(schema.contains("\"additionalProperties\":false"));
-        assert!(schema.contains("\"required\":[\"outcome\",\"explanation\"]"));
+        assert!(
+            schema
+                .contains("\"required\":[\"outcome\",\"explanation\",\"metadata\",\"reviewPath\"]")
+        );
     }
 
     #[test]

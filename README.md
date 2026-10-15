@@ -67,16 +67,35 @@ Run the browser playground to play Tetris and observe a complete local
 decision/evidence/analysis/activation loop. Tetris demonstrates the architecture;
 it is not the product boundary.
 
+Prepare the [Python analysis environment](examples/README.md#python-environment-for-live-analysis)
+first. From the repository root, configure BYOK with an OpenAI-compatible
+endpoint and launch the playground:
+
 ```powershell
 npm ci
 dotnet restore Flaggo.slnx --configfile NuGet.config
-$env:FLAGGO_ANALYSIS_GITHUB_TOKEN = (gh auth token)
+
+$env:FLAGGO_ANALYSIS_INFERENCE = "byok"
+$env:FLAGGO_ANALYSIS_BYOK_WIRE_API = "responses"
+$env:FLAGGO_ANALYSIS_MODEL = "<model-or-deployment-name>"
+$env:OPENAI_BASE_URL = "<openai-compatible-api-base-url>"
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new(
+    "", (Read-Host "Provider API key" -AsSecureString)
+).Password
+
 npm run tetris:playground
 ```
 
-The default live mode uses production Copilot analysis and requires a token
-with Copilot access (`FLAGGO_ANALYSIS_GITHUB_TOKEN`, `GH_TOKEN`, or
-`GITHUB_TOKEN`). Play the human game alongside ten autonomous greedy-player
+Set your provider's full API base URL and model (or deployment name), and run
+in the same terminal. Never commit your API key. BYOK uses the Copilot
+SDK/runtime without GitHub authentication or fallback.
+
+See [inference configuration](examples/README.md#inference-for-live-analysis)
+for protocol options and the GitHub-backed alternative (`GH_TOKEN` or
+`GITHUB_TOKEN`), or the [BYOK guide](apps/async-analysis/README.md#byok-inference)
+for supported endpoints, credential limits, and validation status.
+
+Play the human game alongside ten autonomous greedy-player
 slots, with three bot sessions visible at a time. Use `--mode=benchmark` for the separate credential-free,
 deterministic controlled comparison. The launcher starts pinned Collector and
 Grafana LGTM containers plus all real Flaggo services and prints dynamic

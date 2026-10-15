@@ -43,9 +43,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
         CopilotAgentProvider::start(
             CopilotRuntimeConfig {
                 base_directory: config.copilot_home.clone(),
-                github_token: config.github_token.clone(),
+                inference: config.inference.clone(),
             },
-            config.model.clone(),
             config.skill_directory.clone(),
             ANALYSIS_SYSTEM_PROMPT.to_owned(),
             config.run_timeout,

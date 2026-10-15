@@ -1,12 +1,33 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 const exampleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(exampleDirectory, "../..");
+
+export async function readAttemptFailureRecords(runDirectory) {
+  const entries = await readdir(runDirectory, { withFileTypes: true });
+  if (!entries.some((entry) => entry.name === "analysis-workspaces" && entry.isDirectory())) {
+    return { workspaceAvailable: false, failures: [] };
+  }
+  const workspaceRoot = resolve(runDirectory, "analysis-workspaces");
+  const failures = [];
+  for (const entry of await readdir(workspaceRoot, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith("-failure.json")) continue;
+    const path = resolve(entry.parentPath, entry.name);
+    const parts = relative(workspaceRoot, path).split(sep);
+    if (parts.length !== 5 || parts[1] !== "cycles" || parts[3] !== "attempts") continue;
+    failures.push({
+      path: relative(runDirectory, path),
+      record: JSON.parse(await readFile(path, "utf8")),
+    });
+  }
+  failures.sort((left, right) => left.path.localeCompare(right.path));
+  return { workspaceAvailable: true, failures };
+}
 
 export async function startPlaygroundFixture({ mode, analysisMode, retain = false }) {
   await mkdir(resolve(repositoryRoot, ".flaggo"), { recursive: true });

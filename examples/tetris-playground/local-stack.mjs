@@ -4,6 +4,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { resolve } from "node:path";
+import { analysisInferenceEnvironment } from "../tetris-integration/analysis-inference.mjs";
 
 import {
   sqliteDatabaseUrl,
@@ -261,14 +262,7 @@ export async function startFlaggoServices({
     const binaryName = deterministic
       ? "flaggo-tetris-playground-analysis"
       : "flaggo-async-analysis";
-    const githubToken = process.env.FLAGGO_ANALYSIS_GITHUB_TOKEN
-      ?? process.env.GH_TOKEN
-      ?? process.env.GITHUB_TOKEN;
-    if (!deterministic && (githubToken === undefined || githubToken.trim() === "")) {
-      throw new Error(
-        "Copilot analysis mode requires FLAGGO_ANALYSIS_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN.",
-      );
-    }
+    const inferenceEnvironment = deterministic ? {} : analysisInferenceEnvironment();
     const host = lifecycle.startHost(() => startRustHost(
       "tetris-playground-async-analysis",
       binaryName,
@@ -277,9 +271,7 @@ export async function startFlaggoServices({
       {
         ...telemetryEnvironment,
         FLAGGO_ANALYSIS_COPILOT_HOME: paths.copilotHome,
-        ...(deterministic
-          ? {}
-          : { FLAGGO_ANALYSIS_GITHUB_TOKEN: githubToken }),
+        ...inferenceEnvironment,
         FLAGGO_ANALYSIS_MAX_AGENTS: "1",
         FLAGGO_ANALYSIS_POLL_INTERVAL_MS: "250",
         FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: deterministic ? "120" : "600",

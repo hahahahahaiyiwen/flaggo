@@ -194,26 +194,27 @@ uses the virtual environment by default without activation or setting an
 environment variable; its location is bound to the source checkout at build
 time, like the current skill-directory packaging.
 
-The Evidence Store schema must already exist in `FLAGGO_DATABASE_URL`, Contract
-Service must be reachable, and the local Copilot CLI must be installed and
-authenticated. When `FLAGGO_ANALYSIS_MODEL` is absent, the Copilot SDK selects
-its default model:
+The Evidence Store schema must already exist in `FLAGGO_DATABASE_URL` and Contract
+Service must be reachable. The pinned Copilot SDK/runtime distribution is still
+required in both inference modes. GitHub-backed inference is the default and
+requires GitHub authentication; BYOK does not. When `FLAGGO_ANALYSIS_MODEL` is
+absent in GitHub mode, the SDK selects its default model:
 
 ```powershell
 cargo run -p flaggo-async-analysis
 ```
 
 Set `FLAGGO_ANALYSIS_MODEL` only when a run must pin one exact model. By
-default the SDK authenticates as the user already logged in through `gh`. A
-test can capture that credential without printing it and pass it only to the
-child process:
+default, `GH_TOKEN` takes precedence over `GITHUB_TOKEN`; without either, the
+SDK uses the logged-in user's credentials. A test can capture a GitHub CLI
+credential without printing it and pass it to the child process:
 
 ```powershell
-$env:FLAGGO_ANALYSIS_GITHUB_TOKEN = gh auth token
+$env:GH_TOKEN = gh auth token
 try {
   cargo run -p flaggo-async-analysis
 } finally {
-  Remove-Item Env:\FLAGGO_ANALYSIS_GITHUB_TOKEN -ErrorAction SilentlyContinue
+  Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue
 }
 ```
 
@@ -222,6 +223,88 @@ startup or action logs. Analysis progress uses allowlisted action metadata
 through standard service telemetry, not raw provider session messages or
 tool payloads. There is no separate session-event logging switch.
 
+### BYOK inference
+
+Explicit BYOK uses the same Copilot agent runtime, role workflow, restricted
+tools, saved SQL/Python artifacts and Candidate admission path, but routes model
+requests directly to the configured provider. It requires neither a GitHub token
+nor a logged-in GitHub user. It does **not** replace the Copilot runtime or make
+its distribution independent of GitHub.
+
+Initial support is deliberately limited to `openai`-compatible HTTP providers
+with an explicit `responses` or `completions` protocol. For an Azure OpenAI /
+Microsoft Foundry OpenAI v1 endpoint:
+
+```powershell
+$env:FLAGGO_ANALYSIS_INFERENCE = "byok"
+$env:OPENAI_BASE_URL = "https://<resource>.openai.azure.com/openai/v1/"
+$env:FLAGGO_ANALYSIS_BYOK_WIRE_API = "responses"
+$env:FLAGGO_ANALYSIS_MODEL = "<deployment-name>"
+# Load OPENAI_API_KEY securely into this process, not a source file.
+cargo run -p flaggo-async-analysis
+```
+
+Use the deployment name, not an assumed model alias. Select `completions` only
+when the chosen deployment supports Chat Completions and iterative tool calls.
+HTTPS and a nonempty key are required for remote endpoints; explicit loopback
+endpoints may use HTTP and omit the key. URLs containing credentials, query
+strings or fragments are rejected. Missing model/protocol and invalid endpoint
+settings fail configuration. Flaggo reads `OPENAI_BASE_URL` and `OPENAI_API_KEY`
+and explicitly passes them to SDK `base_url` and `api_key`; these variables do
+not automatically configure the SDK. The supported provider type is fixed
+internally to `openai`, so no provider-type environment variable is needed.
+Ambient OpenAI variables are ignored in GitHub mode; only
+`FLAGGO_ANALYSIS_BYOK_WIRE_API` requires BYOK mode.
+Native `azure` and `anthropic` provider types, bearer-token refresh, WebSocket
+transport, arbitrary custom headers and automatic model/endpoint fallback are
+not supported in this iteration.
+
+Structured attempt outcomes use closed typed objects with all schema properties
+required, using null for absent workflow metadata. Evidence digests travel as
+`{path, digest}` pairs and are normalized to the existing durable workflow map;
+duplicate paths fail validation. This avoids unrestricted object schemas that
+strict OpenAI-compatible providers reject.
+
+The BYOK runtime disables automatic login and removes inherited GitHub token
+variables and common ambient provider-key variables from its child environment.
+Only the explicitly configured provider key is passed in the session. All sessions, including a transport
+restart retry, retain the selected endpoint, protocol and model. It never
+silently falls back to GitHub inference, another model or another provider.
+Provider authentication errors, rate limits, tool/model failures and
+cancellation remain errors; configured credential text is redacted from adapter
+errors. Do not log SDK provider configuration objects or dump the environment.
+Unsandboxed Python retains its documented host/environment access; this is not
+a credential-isolation boundary.
+
+**Validation status:** credential-free tests cover session provider settings,
+authentication selection, token removal, role-tool registration, startup
+validation, and credential redaction against Rust SDK `1.0.17-preview.5`.
+The opt-in SDK-native filesystem integration also passes with BYOK configured,
+runtime `1.0.92-5` / protocol `3`, no GitHub credentials and no inference requests.
+A credentialed `responses` smoke with `gpt-5.4-nano` version `2026-03-17` exercised
+iterative tools, saved SQL artifacts and artifact reads without GitHub token
+variables. The latest run observed 28 successful SQL actions, but exhausted its
+600-second attempt allowance without a terminal cycle outcome, so the live smoke
+failed. An earlier run failed host-side integrity validation; its exact reason
+was not retained and did not recur in the latest run. Live smoke runs now preserve
+durable attempt-failure records before workspace cleanup.
+Candidate submission, completed review handoff and analytical quality remain
+unverified for that deployment. The separate deterministic closed-loop smoke
+passes; this does not establish hosted-model compatibility or quality.
+Record the exact runtime version, deployment/model/version and wire protocol
+when repeating that separate smoke run. Required CI does not need provider
+credentials. A successful chat response alone is insufficient: verify iterative
+tools, saved SQL result reads, persisted proposal/review artifacts and the actual
+proposal tool path. Live analysis may correctly abstain; arbitrary live inputs
+do not promise a Candidate or a quality improvement.
+
+For `401`/`403`, verify the key belongs to the selected resource and key auth is
+enabled. For `404`, verify the deployment name and the full `/openai/v1/` base URL,
+not a project-management URL or native versioned deployment URL. For `429`,
+check that deployment's quota/rate limits. A model rejecting tool calls or the
+selected protocol is unsupported until demonstrated; changing credentials or
+protocol is an explicit operator action, not an automatic retry strategy.
+
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `FLAGGO_DATABASE_URL` | `sqlite://flaggo.db` | Read-only Evidence Store database |
@@ -229,8 +312,12 @@ tool payloads. There is no separate session-event logging switch.
 | `FLAGGO_CONTRACT_CATALOG_URL` | derived from Contract Service | Optional full current-catalog endpoint URL |
 | `FLAGGO_ANALYSIS_WORKSPACE_ROOT` | `./flaggo-analysis-workspaces` | Durable contract workspaces |
 | `FLAGGO_ANALYSIS_COPILOT_HOME` | `./flaggo-analysis-copilot` | Isolated local Copilot runtime state |
-| `FLAGGO_ANALYSIS_MODEL` | Copilot SDK default | Optional exact Copilot model ID |
-| `FLAGGO_ANALYSIS_GITHUB_TOKEN` | logged-in `gh` user | Optional in-memory GitHub credential |
+| `FLAGGO_ANALYSIS_INFERENCE` | `github` | Explicit `github` or `byok` inference |
+| `FLAGGO_ANALYSIS_MODEL` | Copilot SDK default in GitHub mode | Exact model/deployment; required for BYOK |
+| `GH_TOKEN` / `GITHUB_TOKEN` | logged-in `gh` user | Optional GitHub credential; `GH_TOKEN` takes precedence |
+| `OPENAI_BASE_URL` | none | Full OpenAI-compatible inference base URL; read only in BYOK mode |
+| `FLAGGO_ANALYSIS_BYOK_WIRE_API` | none | Required `responses` or `completions` |
+| `OPENAI_API_KEY` | none | Process-only provider key; required except for loopback; read only in BYOK mode |
 | `FLAGGO_ANALYSIS_MAX_AGENTS` | `1` | Concurrent worker and agent-session limit |
 | `FLAGGO_ANALYSIS_POLL_INTERVAL_MS` | `5000` | Catalog, eligibility, and supersession polling interval |
 | `FLAGGO_ANALYSIS_QUERY_MAX_ROWS` | `1000` | Maximum rows returned by one evidence query |

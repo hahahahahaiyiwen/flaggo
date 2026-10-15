@@ -91,8 +91,11 @@ write a new versioned draft, increment `revision` by one, and return
 For `draftReady` and `requestChange`, supply an object `metadata` containing:
 `outcome` (`draftReady` or `requestChange`), `proposalPath`, `proposalDigest`
 (SHA-256 with `sha256:` prefix over the exact UTF-8 draft bytes),
-`evidencePaths` (array), `evidenceDigests` (object mapping each path to its
-SHA-256 content digest), and `revision` (initial draft is zero).
+`evidencePaths` (array), `evidenceDigests` (array of objects with `path` and
+`digest`, one per evidence path), and `revision` (initial draft is zero).
+Use `reviewPath: null` when there is no review. The adapter converts the digest
+array into the durable workflow's path-to-digest object; duplicate paths are
+invalid.
 For saved SQL results, reuse the tool's `contentDigest`. For authored datasets,
 hash the exact saved UTF-8 bytes. The runtime verifies these saved inputs.
 All artifact paths are relative to `/workspace/analysis`, for example
@@ -100,7 +103,7 @@ All artifact paths are relative to `/workspace/analysis`, for example
 proposal path, digest, evidence references/digests and revision, and adds `reviewPath`
 pointing to your saved review. A revised draft uses a new proposal path.
 
-A plain `handoff` has no metadata and checkpoints interrupted work without
+A plain `handoff` uses `metadata: null` and checkpoints interrupted work without
 advancing state. Your output is committed by the runtime after validation;
 writing files alone does not advance state. Failure and shutdown preserve
 the last valid state for a fresh attempt. Candidate submission seals all
@@ -112,7 +115,15 @@ There is no separate review-commit tool or submitter profile.
 
 <cycle_outcome>
 When proposing a change, load `author-executable`. Return one structured
-outcome with a concise, non-empty explanation:
+outcome with a concise, non-empty explanation.
+
+Include all top-level response fields: `outcome`, `explanation`, `metadata`
+and `reviewPath`. Use `metadata: null` except for `draftReady` and
+`requestChange`, and use `reviewPath: ""` except for `reject`. In workflow
+metadata, include all declared fields; `outcome` may be null to use the
+top-level outcome, and `reviewPath` may be null when no review exists.
+
+Valid outcomes:
 
 - `candidate` only after `propose_executable` succeeds;
 - `draftReady` after saving a versioned draft and its metadata;
