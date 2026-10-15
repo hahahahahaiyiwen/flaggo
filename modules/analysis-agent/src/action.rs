@@ -104,7 +104,12 @@ impl FailureCategory {
 
 pub fn failure_category(error: &AnalysisError) -> FailureCategory {
     match error {
-        AnalysisError::WorkspaceBusy(_) => FailureCategory::Conflict,
+        AnalysisError::WorkspaceBusy(_) | AnalysisError::ProposalConflict(_) => {
+            FailureCategory::Conflict
+        }
+        AnalysisError::LimitExceeded(_) | AnalysisError::Superseded(_) => {
+            FailureCategory::Validation
+        }
         AnalysisError::InvalidState(_) => FailureCategory::Integrity,
         _ => FailureCategory::Dependency,
     }
@@ -181,6 +186,7 @@ impl ActionObservation {
                 flaggo.contract.digest = %context.contract.digest,
                 flaggo.analysis.cycle.id = %context.cycle_id,
                 flaggo.analysis.attempt.id = %context.attempt_id,
+                flaggo.analysis.profile = tracing::field::Empty,
                 flaggo.analysis.action.id = %id,
                 flaggo.analysis.action.kind = kind.as_str(),
                 flaggo.analysis.action.outcome = "running",

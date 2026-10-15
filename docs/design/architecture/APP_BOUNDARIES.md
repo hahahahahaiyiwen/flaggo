@@ -250,6 +250,7 @@ availability, evidence freshness, or learning success.
 - [Contract clients and Contract Service](CONTRACT_SERVICE.md)
 - [Runtime client and Decision Service](RUNTIME.md)
 - [Evidence and learning](EVIDENCE.md)
+- [Async Analysis workspaces, cycles, and workflow handoff](ASYNC_ANALYSIS.md)
 - [Decision authority](AUTHORITY.md)
 - [Decision contract lifecycle](../contracts/LIFECYCLE.md)
 - [Runnable app composition roots](../../../apps/README.md)

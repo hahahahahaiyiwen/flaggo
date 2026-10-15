@@ -121,6 +121,32 @@ pub struct CandidateProposal {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowHandoff {
+    pub attempt_id: String,
+    pub summary: String,
+    pub metadata: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CycleLimits {
+    pub max_attempts: u32,
+    pub max_revisions: u32,
+    pub execution_seconds: u64,
+}
+
+impl Default for CycleLimits {
+    fn default() -> Self {
+        Self {
+            max_attempts: 8,
+            max_revisions: 1,
+            execution_seconds: 3_600,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CycleOutcome {
     Candidate { candidate: CandidateRecord },

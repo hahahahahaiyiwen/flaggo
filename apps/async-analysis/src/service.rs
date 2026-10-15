@@ -1,5 +1,6 @@
 use std::{error::Error, future::Future, io, sync::Arc};
 
+use flaggo_analysis_agent::workflow::WorkflowAgentProvider;
 use flaggo_analysis_agent::{AgentPool, AgentProvider};
 use flaggo_analysis_workspace::LocalWorkspaceProvider;
 use flaggo_evidence_store::{EvidenceQueryLimits, SqliteEvidenceAnalysisStore};
@@ -51,11 +52,16 @@ where
         contract_service,
         workspace_provider,
         capabilities,
-        AgentPool::new(provider, config.max_agents),
+        AgentPool::new(
+            Arc::new(WorkflowAgentProvider::new(provider, config.general_profile)),
+            config.max_agents,
+        ),
         CoordinatorConfig {
             supersession_poll_interval: config.poll_interval,
             yield_grace_period: config.yield_grace_period,
             analysis_profile: flaggo_analysis_agent::context::analysis_profile(),
+            cycle_limits: config.cycle_limits.clone(),
+            attempt_timeout: config.run_timeout,
         },
         clock,
     ));

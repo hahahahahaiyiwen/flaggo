@@ -94,6 +94,11 @@ def validate_analysis_action_guards(profile: dict, registry: Registry, rep: Repo
         ("unregistered action detail", "logEvents", "eventName",
          "flaggo.analysis.action.completed", "conditionalAttributes",
          {"name": "flaggo.executable.digest", "when": "when-known"}, "append"),
+        ("invented agent profile", "attributes", "name",
+         "flaggo.analysis.profile", "allowedValues", "coordinator", "append"),
+        ("cycle-identified profile metric", "metrics", "name",
+         "flaggo.analysis.profile.selections", "requiredAttributes",
+         "flaggo.analysis.cycle.id", "append"),
     ]
     for label, section, key, name, field, value, operation in mutations:
         modified = deepcopy(profile)
@@ -499,13 +504,15 @@ def validate_service_observability_profile(
         )
     for name, definition in attributes_by_name.items():
         if name.startswith("flaggo.analysis.") and name not in {
-            "flaggo.analysis.cycle.id", "flaggo.analysis.attempt.id"
+            "flaggo.analysis.cycle.id", "flaggo.analysis.attempt.id",
+            "flaggo.analysis.profile"
         }:
             rep.check(
                 definition.get("metricDimension") is False,
                 f"{context}: action metadata '{name}' is not a metric dimension",
             )
     action_metadata = {
+        "flaggo.analysis.profile",
         "flaggo.analysis.query.digest",
         "flaggo.analysis.result.rows",
         "flaggo.analysis.result.bytes",
@@ -514,6 +521,23 @@ def validate_service_observability_profile(
         "flaggo.analysis.session.id",
         "flaggo.failure.category",
     }
+    agent_profile = attributes_by_name.get("flaggo.analysis.profile", {})
+    rep.check(
+        agent_profile.get("metricDimension") is True
+        and agent_profile.get("cardinality") == "bounded"
+        and set(agent_profile.get("allowedValues", [])) == {"proposer", "reviewer", "general"},
+        f"{context}: agent profiles must have exactly three bounded metric values",
+    )
+    profile_metric = next(
+        (metric for metric in profile.get("metrics", [])
+         if metric.get("name") == "flaggo.analysis.profile.selections"),
+        {},
+    )
+    rep.check(
+        profile_metric.get("requiredAttributes") == ["flaggo.analysis.profile"]
+        and profile_metric.get("optionalAttributes") == [],
+        f"{context}: profile selections must not have identity or content dimensions",
+    )
     for definition in [
         spans_by_name.get("flaggo.analysis.action", {}),
         logs_by_name.get("flaggo.analysis.action.started", {}),

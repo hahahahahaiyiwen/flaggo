@@ -87,7 +87,10 @@ impl AgentProvider for CopilotAgentProvider {
         let tools = specification.tools;
         let filesystem: Arc<dyn SessionFsProvider> =
             Arc::new(CopilotWorkspaceFileSystem::new(specification.filesystem));
-        let available_tools = available_tools()?;
+        let mut available_tools = available_tools()?;
+        if !tools.can_propose() {
+            available_tools.retain(|name| name != tools::PROPOSE_EXECUTABLE_TOOL);
+        }
 
         let client = self.runtime.client().await?;
         let (session, client) = match client
@@ -288,6 +291,10 @@ impl AgentSession for CopilotAgentSession {
 struct FinalOutcome {
     outcome: FinalOutcomeKind,
     explanation: String,
+    #[serde(default)]
+    metadata: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    review_path: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -299,6 +306,9 @@ enum FinalOutcomeKind {
     Failure,
     Handoff,
     Superseded,
+    DraftReady,
+    RequestChange,
+    Reject,
 }
 
 impl FinalOutcome {
@@ -321,7 +331,45 @@ impl FinalOutcome {
             }),
             FinalOutcomeKind::Handoff => Ok(AgentRunOutcome::Handoff {
                 summary: self.explanation,
+                metadata: if self.metadata.is_empty() {
+                    None
+                } else {
+                    return Err(AnalysisError::InvalidState(
+                        "checkpoint handoff must not advance workflow state".to_owned(),
+                    ));
+                },
             }),
+            FinalOutcomeKind::DraftReady | FinalOutcomeKind::RequestChange => {
+                let outcome = match self.outcome {
+                    FinalOutcomeKind::DraftReady => "draftReady",
+                    _ => "requestChange",
+                };
+                let mut metadata = self.metadata;
+                if metadata
+                    .get("outcome")
+                    .is_some_and(|value| value.as_str() != Some(outcome))
+                {
+                    return Err(AnalysisError::InvalidState(
+                        "metadata outcome contradicts final outcome".to_owned(),
+                    ));
+                }
+                metadata.insert("outcome".to_owned(), serde_json::json!(outcome));
+                Ok(AgentRunOutcome::Handoff {
+                    summary: self.explanation,
+                    metadata: Some(serde_json::Value::Object(metadata)),
+                })
+            }
+            FinalOutcomeKind::Reject => {
+                if self.review_path.trim().is_empty() {
+                    return Err(AnalysisError::InvalidState(
+                        "reject requires reviewPath".to_owned(),
+                    ));
+                }
+                Ok(AgentRunOutcome::Reject {
+                    reason: self.explanation,
+                    review_path: self.review_path,
+                })
+            }
             FinalOutcomeKind::Superseded => Ok(AgentRunOutcome::Superseded),
         }
     }
@@ -645,6 +693,8 @@ mod tests {
             FinalOutcome {
                 outcome: FinalOutcomeKind::NoChange,
                 explanation: "current executable remains appropriate".to_owned(),
+                metadata: Default::default(),
+                review_path: String::new(),
             }
             .into_domain()
             .expect("valid outcome"),
@@ -656,6 +706,8 @@ mod tests {
             FinalOutcome {
                 outcome: FinalOutcomeKind::NoCandidate,
                 explanation: "not enough data".to_owned(),
+                metadata: Default::default(),
+                review_path: String::new(),
             }
             .into_domain()
             .expect("valid outcome"),
@@ -667,10 +719,49 @@ mod tests {
             FinalOutcome {
                 outcome: FinalOutcomeKind::Handoff,
                 explanation: " ".to_owned(),
+                metadata: Default::default(),
+                review_path: String::new(),
             }
             .into_domain()
             .is_err()
         );
+    }
+
+    #[test]
+    fn maps_flat_workflow_results_to_handoffs_and_rejection() {
+        for outcome in ["draftReady", "requestChange"] {
+            let final_outcome: FinalOutcome = serde_json::from_value(serde_json::json!({
+                "outcome": outcome, "explanation": "work completed",
+                "metadata": {"proposalPath": "attempts/a/proposal.json", "proposalDigest": "sha256:example", "evidencePaths": [], "revision": 0}
+            })).unwrap();
+            let AgentRunOutcome::Handoff {
+                metadata: Some(metadata),
+                ..
+            } = final_outcome.into_domain().unwrap()
+            else {
+                panic!("workflow outcome must become a handoff");
+            };
+            assert_eq!(metadata["outcome"], outcome);
+        }
+        let reject: FinalOutcome = serde_json::from_value(serde_json::json!({
+            "outcome": "reject", "explanation": "unsupported", "reviewPath": "attempts/a/review.json"
+        })).unwrap();
+        assert!(matches!(
+            reject.into_domain(),
+            Ok(AgentRunOutcome::Reject { .. })
+        ));
+        for value in [
+            serde_json::json!({"outcome": "reject", "explanation": "missing review"}),
+            serde_json::json!({"outcome": "handoff", "explanation": "checkpoint", "metadata": {"outcome": "draftReady"}}),
+            serde_json::json!({"outcome": "draftReady", "explanation": "contradiction", "metadata": {"outcome": "requestChange"}}),
+        ] {
+            assert!(
+                serde_json::from_value::<FinalOutcome>(value)
+                    .unwrap()
+                    .into_domain()
+                    .is_err()
+            );
+        }
     }
 
     #[test]

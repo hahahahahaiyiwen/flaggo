@@ -16,6 +16,12 @@ pub enum AnalysisError {
     Candidate(String),
     #[error("analysis state is invalid: {0}")]
     InvalidState(String),
+    #[error("cycle execution limit exhausted: {0}")]
+    LimitExceeded(String),
+    #[error("Candidate proposal conflicts with the sealed cycle submission: {0}")]
+    ProposalConflict(String),
+    #[error("analysis contract is superseded: {0}")]
+    Superseded(String),
 }
 
 impl AnalysisError {

@@ -366,6 +366,17 @@ impl AnalysisTools for LocalAnalysisTools {
         let span = action.span();
         let result = async {
             self.ensure_not_yielding()?;
+            let current = self
+                .contract_service
+                .get_current_contract(&self.contract.name)
+                .await?;
+            if current
+                .as_ref()
+                .map(|contract| contract.contract_digest.as_str())
+                != Some(self.contract.contract_digest.as_str())
+            {
+                return Err(AnalysisError::Superseded(self.contract.name.clone()));
+            }
             if !rules.as_array().is_some_and(|rules| !rules.is_empty()) {
                 return Err(AnalysisError::Candidate(
                     "Candidate rules must be a non-empty JSON array".to_owned(),

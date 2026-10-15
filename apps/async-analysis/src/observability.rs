@@ -305,6 +305,9 @@ const fn success_status(outcome: &'static str) -> CycleStatus<'static> {
 pub fn analysis_failure_category(error: &AnalysisError) -> &'static str {
     match error {
         AnalysisError::WorkspaceBusy(_) => "conflict",
+        AnalysisError::ProposalConflict(_) => "conflict",
+        AnalysisError::Superseded(_) => "superseded",
+        AnalysisError::LimitExceeded(_) => "validation",
         AnalysisError::InvalidState(_) => "integrity",
         AnalysisError::Contract(_)
         | AnalysisError::Workspace(_)

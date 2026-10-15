@@ -122,6 +122,15 @@
   ],
   "attributes": [
     {
+      "name": "flaggo.analysis.profile",
+      "type": "string",
+      "cardinality": "bounded",
+      "classification": "bounded-operation",
+      "metricDimension": true,
+      "allowedValues": ["proposer", "reviewer", "general"],
+      "description": "Provider-selected profile, not a cycle-level plan; the role-selection counter has only these three bounded series."
+    },
+    {
       "name": "flaggo.request.correlation_id",
       "type": "string",
       "cardinality": "unbounded",
@@ -992,6 +1001,10 @@
       ],
       "conditionalAttributes": [
         {
+          "name": "flaggo.analysis.profile",
+          "when": "when-known"
+        },
+        {
           "name": "flaggo.analysis.query.digest",
           "when": "when-known"
         },
@@ -1077,6 +1090,21 @@
     }
   ],
   "logEvents": [
+    {
+      "eventName": "flaggo.analysis.profile.selected",
+      "minimumSeverity": "info",
+      "scopes": ["flaggo.async-analysis"],
+      "purpose": "Identify the provider-selected profile for a cycle attempt.",
+      "requiredAttributes": [
+        "flaggo.contract.name",
+        "flaggo.contract.digest",
+        "flaggo.analysis.cycle.id",
+        "flaggo.analysis.attempt.id",
+        "flaggo.analysis.profile"
+      ],
+      "conditionalAttributes": [],
+      "outcomes": []
+    },
     {
       "eventName": "flaggo.analysis.action.started",
       "minimumSeverity": "info",
@@ -1575,6 +1603,17 @@
     }
   ],
   "metrics": [
+    {
+      "name": "flaggo.analysis.profile.selections",
+      "scopes": ["flaggo.async-analysis"],
+      "instrument": "counter",
+      "unit": "{selection}",
+      "valueType": "int64",
+      "monotonic": true,
+      "purpose": "Count provider role selections with three bounded series and no cycle, attempt, artifact or contract dimensions.",
+      "requiredAttributes": ["flaggo.analysis.profile"],
+      "optionalAttributes": []
+    },
     {
       "name": "flaggo.contract.operations",
       "scopes": [

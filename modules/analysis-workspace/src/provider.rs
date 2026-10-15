@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
-    CandidateRecord, CycleOutcome,
+    CandidateRecord, CycleLimits, CycleOutcome, WorkflowHandoff,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,6 +123,32 @@ pub trait WorkspaceLease: Send + Sync {
         cycle_id: &str,
         attempt_id: &str,
         summary: &str,
+        metadata: Option<Value>,
+    ) -> Result<(), AnalysisError>;
+
+    async fn latest_handoff(
+        &self,
+        cycle_id: &str,
+    ) -> Result<Option<WorkflowHandoff>, AnalysisError>;
+
+    async fn pending_proposal(
+        &self,
+        cycle_id: &str,
+    ) -> Result<Option<CandidateProposal>, AnalysisError>;
+
+    async fn reserve_attempt(
+        &self,
+        cycle_id: &str,
+        attempt_id: &str,
+        limits: &CycleLimits,
+        timeout: Duration,
+    ) -> Result<Duration, AnalysisError>;
+
+    async fn settle_attempt(
+        &self,
+        cycle_id: &str,
+        attempt_id: &str,
+        elapsed: Duration,
     ) -> Result<(), AnalysisError>;
 
     async fn record_attempt_failure(

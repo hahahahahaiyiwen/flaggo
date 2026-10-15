@@ -8,10 +8,10 @@ use flaggo_analysis_agent::{
     context::{analysis_task_prompt, prepare_agent_workspace},
 };
 use flaggo_analysis_domain::{
-    AnalysisContract, AnalysisContractIdentity, AnalysisError, AnalysisProfile, AttemptContext,
-    CandidateRecord, CatalogUpdate, CycleOutcome,
+    AnalysisContract, AnalysisContractIdentity, AnalysisCycle, AnalysisError, AnalysisProfile,
+    AttemptContext, CandidateRecord, CatalogUpdate, CycleLimits, CycleOutcome,
 };
-use flaggo_analysis_workspace::{PrepareCycleResult, WorkspaceProvider};
+use flaggo_analysis_workspace::{PrepareCycleResult, WorkspaceLease, WorkspaceProvider};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::{RwLock, watch};
@@ -57,6 +57,8 @@ pub struct CoordinatorConfig {
     pub supersession_poll_interval: Duration,
     pub yield_grace_period: Duration,
     pub analysis_profile: AnalysisProfile,
+    pub cycle_limits: CycleLimits,
+    pub attempt_timeout: Duration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -211,7 +213,7 @@ impl AnalysisCoordinator {
         &self,
         contract: AnalysisContract,
         now: DateTime<Utc>,
-        mut shutdown: Option<watch::Receiver<bool>>,
+        shutdown: Option<watch::Receiver<bool>>,
         observation: &mut CycleObservation,
     ) -> Result<CoordinatorRunOutcome, AnalysisError> {
         let attempt_id = Uuid::new_v4().to_string();
@@ -241,6 +243,72 @@ impl AnalysisCoordinator {
             }
         };
         let cycle = preparation.cycle;
+        // Reconcile sealed admission before agent limits: this creates no session.
+        if workspace.pending_proposal(&cycle.cycle_id).await?.is_some() {
+            return self
+                .execute_attempt(
+                    contract,
+                    workspace,
+                    cycle,
+                    attempt_id,
+                    shutdown,
+                    observation,
+                    tokio::time::Instant::now() + self.config.attempt_timeout,
+                )
+                .await;
+        }
+        let allowance = match workspace
+            .reserve_attempt(
+                &cycle.cycle_id,
+                &attempt_id,
+                &self.config.cycle_limits,
+                self.config.attempt_timeout,
+            )
+            .await
+        {
+            Ok(allowance) => allowance,
+            Err(AnalysisError::LimitExceeded(reason)) => {
+                let outcome = CycleOutcome::Failure { reason };
+                workspace
+                    .complete_cycle(&contract, &cycle.cycle_id, &outcome, self.clock.now())
+                    .await?;
+                return Ok(CoordinatorRunOutcome::Completed {
+                    contract_name: contract.name,
+                    cycle_id: cycle.cycle_id,
+                    outcome,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        let started = std::time::Instant::now();
+        let result = self
+            .execute_attempt(
+                contract,
+                workspace.clone(),
+                cycle.clone(),
+                attempt_id.clone(),
+                shutdown,
+                observation,
+                tokio::time::Instant::now() + allowance,
+            )
+            .await;
+        workspace
+            .settle_attempt(&cycle.cycle_id, &attempt_id, started.elapsed())
+            .await?;
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_attempt(
+        &self,
+        contract: AnalysisContract,
+        workspace: Arc<dyn WorkspaceLease>,
+        cycle: AnalysisCycle,
+        attempt_id: String,
+        mut shutdown: Option<watch::Receiver<bool>>,
+        observation: &mut CycleObservation,
+        deadline: tokio::time::Instant,
+    ) -> Result<CoordinatorRunOutcome, AnalysisError> {
         observation.record_active_attempt(&cycle.cycle_id, &attempt_id);
         let _active_worker = self.observability.worker_active();
         let context = AttemptContext::new(&cycle, attempt_id);
@@ -251,6 +319,41 @@ impl AnalysisCoordinator {
         let filesystem = workspace
             .filesystem(&cycle.cycle_id, &context.attempt_id)
             .await?;
+        if let Some(proposal) = workspace.pending_proposal(&cycle.cycle_id).await? {
+            let submitted = match tools.propose_executable(proposal.rules).await {
+                Ok(_) => true,
+                Err(AnalysisError::Superseded(_)) => false,
+                Err(error) => return Err(error),
+            };
+            let current_digest = self
+                .contract_service
+                .get_current_contract(&contract.name)
+                .await?
+                .map(|current| current.contract_digest);
+            let outcome = if submitted
+                && current_digest.as_deref() == Some(contract.contract_digest.as_str())
+            {
+                let candidate = tools.proposed_candidate().await?.ok_or_else(|| {
+                    AnalysisError::InvalidState("recovered submission has no Candidate".to_owned())
+                })?;
+                CycleOutcome::Candidate { candidate }
+            } else {
+                workspace
+                    .mark_superseding(&cycle.cycle_id, current_digest.as_deref())
+                    .await?;
+                CycleOutcome::Superseded {
+                    replacement_digest: current_digest,
+                }
+            };
+            workspace
+                .complete_cycle(&contract, &cycle.cycle_id, &outcome, self.clock.now())
+                .await?;
+            return Ok(CoordinatorRunOutcome::Completed {
+                contract_name: contract.name,
+                cycle_id: cycle.cycle_id,
+                outcome,
+            });
+        }
         prepare_agent_workspace(filesystem.as_ref()).await?;
         let filesystem = Arc::new(ObservedWorkspaceFileSystem::new(
             filesystem,
@@ -259,20 +362,67 @@ impl AnalysisCoordinator {
         let task = AnalysisTask {
             prompt: analysis_task_prompt(&context),
         };
-        let lease = self
-            .agent_pool
-            .acquire(AgentSessionSpec {
+        let acquisition = tokio::time::timeout_at(
+            deadline,
+            self.agent_pool.acquire(AgentSessionSpec {
                 context: context.clone(),
                 contract: contract.clone(),
                 filesystem,
                 tools: tools.clone(),
                 task: task.clone(),
-            })
-            .await?;
+                handoff: workspace.latest_handoff(&cycle.cycle_id).await?,
+                cycle_limits: self.config.cycle_limits.clone(),
+            }),
+        )
+        .await;
+        let lease = match acquisition {
+            Ok(Ok(lease)) => lease,
+            result => {
+                let (error, failure_category) = match result {
+                    Ok(Err(error)) => {
+                        let category = analysis_failure_category(&error);
+                        (error, category)
+                    }
+                    Err(_) => (
+                        AnalysisError::Agent(
+                            "session creation exceeded attempt allowance".to_owned(),
+                        ),
+                        "timeout",
+                    ),
+                    Ok(Ok(_)) => unreachable!(),
+                };
+                workspace
+                    .record_attempt_failure(
+                        &cycle.cycle_id,
+                        &context.attempt_id,
+                        &error.to_string(),
+                    )
+                    .await?;
+                return Ok(CoordinatorRunOutcome::Recoverable {
+                    contract_name: contract.name,
+                    cycle_id: cycle.cycle_id,
+                    reason: error.to_string(),
+                    failure_category,
+                });
+            }
+        };
+        let result = async {
         let mut run = Box::pin(lease.run(task));
         let agent_outcome = loop {
             tokio::select! {
                 result = &mut run => break result,
+                () = tokio::time::sleep_until(deadline) => {
+                    tools.yield_signal().request_shutdown()?;
+                    lease.request_yield("Attempt execution allowance exhausted; checkpoint and stop.").await?;
+                    lease.close().await?;
+                    workspace.record_attempt_failure(&cycle.cycle_id, &context.attempt_id, "attempt execution allowance exhausted").await?;
+                    return Ok(CoordinatorRunOutcome::Recoverable {
+                        contract_name: contract.name,
+                        cycle_id: cycle.cycle_id,
+                        reason: "attempt execution allowance exhausted".to_owned(),
+                        failure_category: "timeout",
+                    });
+                }
                 () = tokio::time::sleep(self.config.supersession_poll_interval) => {
                     let current = match self
                         .contract_service
@@ -390,9 +540,9 @@ impl AnalysisCoordinator {
         };
 
         let agent_outcome = match agent_outcome {
-            Ok(AgentRunOutcome::Handoff { summary }) => {
+            Ok(AgentRunOutcome::Handoff { summary, metadata }) => {
                 workspace
-                    .record_handoff(&cycle.cycle_id, &context.attempt_id, &summary)
+                    .record_handoff(&cycle.cycle_id, &context.attempt_id, &summary, metadata)
                     .await?;
                 lease.close().await?;
                 return Ok(CoordinatorRunOutcome::Recoverable {
@@ -507,6 +657,9 @@ impl AnalysisCoordinator {
             }
             AgentRunOutcome::NoChange { reason } => CycleOutcome::NoChange { reason },
             AgentRunOutcome::NoCandidate { reason } => CycleOutcome::NoCandidate { reason },
+            AgentRunOutcome::Reject { .. } => return Err(AnalysisError::InvalidState(
+                "provider must normalize workflow rejection to a generic completion".to_owned(),
+            )),
             AgentRunOutcome::Failure { reason } => CycleOutcome::Failure { reason },
             AgentRunOutcome::Superseded => {
                 let error = AnalysisError::InvalidState(
@@ -539,6 +692,9 @@ impl AnalysisCoordinator {
             cycle_id: cycle.cycle_id,
             outcome,
         })
+        }.await;
+        lease.close().await?;
+        result
     }
 }
 

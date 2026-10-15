@@ -8,9 +8,12 @@ use std::sync::{
 use async_trait::async_trait;
 use flaggo_analysis_agent::{
     AgentProvider, AgentRunOutcome, AgentSession, AgentSessionSpec, AnalysisRunStatus,
-    AnalysisTask, AnalysisTools, context::ANALYSIS_FINDINGS_PATH,
+    AnalysisTask, AnalysisTools,
+    context::ANALYSIS_FINDINGS_PATH,
+    workflow::{WorkflowMetadata, WorkflowState, work_state},
 };
 use flaggo_analysis_domain::AnalysisError;
+use flaggo_analysis_workspace::sha256_digest;
 use serde_json::{Value, json};
 
 use evidence::analyze_evidence;
@@ -42,6 +45,11 @@ impl AgentProvider for TetrisPlaygroundAgentProvider {
             )));
         }
         Ok(Arc::new(TetrisPlaygroundAgentSession {
+            current: work_state(specification.handoff.as_ref())?,
+            directory: format!(
+                "/workspace/analysis/attempts/{}",
+                specification.context.attempt_id
+            ),
             tools: specification.tools,
             filesystem: specification.filesystem,
             yield_requested: AtomicBool::new(false),
@@ -50,6 +58,8 @@ impl AgentProvider for TetrisPlaygroundAgentProvider {
 }
 
 struct TetrisPlaygroundAgentSession {
+    current: Option<WorkflowMetadata>,
+    directory: String,
     tools: Arc<dyn AnalysisTools>,
     filesystem: Arc<dyn flaggo_analysis_workspace::WorkspaceFileSystem>,
     yield_requested: AtomicBool,
@@ -60,6 +70,13 @@ impl AgentSession for TetrisPlaygroundAgentSession {
     async fn run(&self, _task: AnalysisTask) -> Result<AgentRunOutcome, AnalysisError> {
         if let Some(outcome) = self.yield_outcome().await? {
             return Ok(outcome);
+        }
+        if let Some(draft) = self
+            .current
+            .as_ref()
+            .filter(|metadata| metadata.outcome == WorkflowState::DraftReady)
+        {
+            return self.review(draft).await;
         }
         let page_size = evidence_page_size(&self.tools.describe().await?)?;
         let mut rows = Vec::new();
@@ -96,7 +113,8 @@ impl AgentSession for TetrisPlaygroundAgentSession {
                 None => break,
             }
         }
-        let analysis = analyze_evidence(&json!({"rows": rows}))?;
+        let evidence = json!({"rows": rows});
+        let analysis = analyze_evidence(&evidence)?;
         self.filesystem
             .write_text(ANALYSIS_FINDINGS_PATH, &analysis.findings)
             .await?;
@@ -105,8 +123,52 @@ impl AgentSession for TetrisPlaygroundAgentSession {
         }
         match analysis.proposal {
             Ok(rules) => {
-                self.tools.propose_executable(rules).await?;
-                Ok(AgentRunOutcome::Candidate)
+                self.filesystem
+                    .create_directory(&self.directory, true)
+                    .await?;
+                let evidence_path = format!("{}/evidence.json", self.directory);
+                let proposal_path = format!("{}/proposal.json", self.directory);
+                let proposal = serde_json::to_string_pretty(&json!({
+                    "rules": rules,
+                    "method": "Reproduce the deterministic Tetris evidence analysis against the saved evidence before admission."
+                })).map_err(|error| AnalysisError::Agent(error.to_string()))?;
+                self.filesystem
+                    .write_text(&evidence_path, &evidence.to_string())
+                    .await?;
+                self.filesystem
+                    .write_text(&proposal_path, &proposal)
+                    .await?;
+                let metadata = WorkflowMetadata {
+                    outcome: WorkflowState::DraftReady,
+                    proposal_path: proposal_path
+                        .trim_start_matches("/workspace/analysis/")
+                        .to_owned(),
+                    proposal_digest: sha256_digest(proposal.as_bytes()),
+                    evidence_paths: vec![
+                        evidence_path
+                            .trim_start_matches("/workspace/analysis/")
+                            .to_owned(),
+                    ],
+                    evidence_digests: std::collections::BTreeMap::from([(
+                        evidence_path
+                            .trim_start_matches("/workspace/analysis/")
+                            .to_owned(),
+                        sha256_digest(evidence.to_string().as_bytes()),
+                    )]),
+                    revision: self
+                        .current
+                        .as_ref()
+                        .map_or(0, |metadata| metadata.revision + 1),
+                    review_path: None,
+                };
+                Ok(AgentRunOutcome::Handoff {
+                    summary: "Tetris draft and saved evidence are ready for independent review"
+                        .to_owned(),
+                    metadata: Some(
+                        serde_json::to_value(metadata)
+                            .map_err(|error| AnalysisError::Agent(error.to_string()))?,
+                    ),
+                })
             }
             Err(reason) => Ok(AgentRunOutcome::NoCandidate { reason }),
         }
@@ -183,6 +245,63 @@ fn append_evidence_page(
 }
 
 impl TetrisPlaygroundAgentSession {
+    async fn review(&self, draft: &WorkflowMetadata) -> Result<AgentRunOutcome, AnalysisError> {
+        let evidence_path = draft.evidence_paths.first().ok_or_else(|| {
+            AnalysisError::InvalidState("Tetris draft has no saved evidence".to_owned())
+        })?;
+        let evidence: Value = serde_json::from_str(
+            &self
+                .filesystem
+                .read_text(&format!("/workspace/analysis/{evidence_path}"))
+                .await?,
+        )
+        .map_err(|error| AnalysisError::InvalidState(error.to_string()))?;
+        let proposal: Value = serde_json::from_str(
+            &self
+                .filesystem
+                .read_text(&format!("/workspace/analysis/{}", draft.proposal_path))
+                .await?,
+        )
+        .map_err(|error| AnalysisError::InvalidState(error.to_string()))?;
+        let analysis = analyze_evidence(&evidence)?;
+        let approved = analysis
+            .proposal
+            .as_ref()
+            .is_ok_and(|rules| proposal["rules"] == *rules);
+        self.filesystem
+            .create_directory(&self.directory, true)
+            .await?;
+        let review_path = format!("{}/review.json", self.directory);
+        self.filesystem
+            .write_text(
+                &review_path,
+                &json!({
+                    "proposalPath": draft.proposal_path,
+                    "proposalDigest": draft.proposal_digest,
+                    "approved": approved,
+                    "method": "Independent reproduction using the saved evidence",
+                    "findings": analysis.findings,
+                })
+                .to_string(),
+            )
+            .await?;
+        if let Some(outcome) = self.yield_outcome().await? {
+            return Ok(outcome);
+        }
+        if !approved {
+            return Ok(AgentRunOutcome::Reject {
+                reason: "Saved evidence does not reproduce the proposed Tetris rules".to_owned(),
+                review_path: review_path
+                    .trim_start_matches("/workspace/analysis/")
+                    .to_owned(),
+            });
+        }
+        self.tools
+            .propose_executable(proposal["rules"].clone())
+            .await?;
+        Ok(AgentRunOutcome::Candidate)
+    }
+
     async fn yield_outcome(&self) -> Result<Option<AgentRunOutcome>, AnalysisError> {
         if !self.yield_requested.load(Ordering::Acquire) {
             return Ok(None);
@@ -191,6 +310,7 @@ impl TetrisPlaygroundAgentSession {
             AnalysisRunStatus::Active | AnalysisRunStatus::ServiceShutdown => {
                 Ok(Some(AgentRunOutcome::Handoff {
                     summary: "Tetris playground analysis yielded for service shutdown".to_owned(),
+                    metadata: None,
                 }))
             }
             AnalysisRunStatus::ContractSuperseded { .. } => Ok(Some(AgentRunOutcome::Superseded)),

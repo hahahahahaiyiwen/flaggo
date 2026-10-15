@@ -49,7 +49,17 @@ expected objective effect, guardrail reasoning, and uncertainty.
 ## Submit the Candidate
 
 <candidate_submission>
+For `analysisReady` or `requestChange`, save rules and analytical support as a
+versioned draft in the task's attempt directory and return `draftReady` with
+the metadata described by `analysis-cycle-protocol`. Do not submit directly.
+
+For `draftReady`, independently review the saved draft and evidence. Save your
+JSON review in your own attempt directory before submitting the bound rules.
+If unsupported, return `reject` or a bounded `requestChange` instead.
+
 Submit the supported rules through `propose_executable`; Candidate admission
-is not activation. Follow `analysis-cycle-protocol` for status checks,
+is not activation. An identical retry returns the original Candidate;
+a changed sealed submission conflicts. Never treat conflict as permission to
+alter or replace a previously admitted Candidate. Follow `analysis-cycle-protocol` for status checks,
 checkpointing and the attempt outcome.
 </candidate_submission>
