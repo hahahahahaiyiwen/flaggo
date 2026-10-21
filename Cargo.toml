@@ -7,6 +7,7 @@ members = [
     "modules/analysis-agent",
     "modules/analysis-domain",
     "modules/analysis-workspace",
+    "modules/contract",
     "modules/evidence-store",
     "modules/otlp-codec",
     "modules/raw-otlp-inbox",
