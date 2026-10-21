@@ -1,0 +1,25 @@
+[package]
+name = "flaggo-cel-parity-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+base64 = "0.22.1"
+cel = { version = "=0.15.0", default-features = false, features = ["json", "parser_pratt"] }
+cel-core = "=0.5.1"
+cel-core-proto = "=0.5.1"
+flaggo-contract = { path = "../../../modules/contract" }
+prost = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "=0.2.0"
+sha2 = "0.10"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
