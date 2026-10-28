@@ -1,3 +1,4 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
 use flaggo_contract::ContractError;
 use flaggo_expression::{CheckedDecisionExecutable, CheckedExecutableRule, CheckedExpression};
 use serde::{
@@ -40,6 +41,20 @@ fn required<T, E: de::Error>(value: Option<T>, field: &'static str) -> Result<T,
     value.ok_or_else(|| de::Error::missing_field(field))
 }
 
+struct CheckedAst(String);
+
+impl<'de> Deserialize<'de> for CheckedAst {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let encoded = String::deserialize(deserializer)?;
+        let compact: String = encoded
+            .chars()
+            .filter(|ch| !matches!(ch, ' ' | '\t' | '\r' | '\n'))
+            .collect();
+        let bytes = STANDARD.decode(compact).map_err(de::Error::custom)?;
+        Ok(Self(STANDARD.encode(bytes)))
+    }
+}
+
 checked_object!(Executable, CheckedDecisionExecutable, {
     rules: Vec<Option<Rule>> => "rules"
 }, |rules: Option<Vec<Option<Rule>>>| {
@@ -63,13 +78,13 @@ checked_object!(Rule, CheckedExecutableRule, {
 checked_object!(Expression, CheckedExpression, {
     canonical: String => "canonicalExpression",
     attributes: Vec<String> => "referencedAttributes",
-    ast: String => "checkedAst",
+    ast: CheckedAst => "checkedAst",
     digest: String => "checkedAstDigest"
-}, |canonical: Option<String>, attributes: Option<Vec<String>>, ast: Option<String>, digest: Option<String>| {
+}, |canonical: Option<String>, attributes: Option<Vec<String>>, ast: Option<CheckedAst>, digest: Option<String>| {
     Ok(CheckedExpression {
         canonical_expression: required(canonical, "canonicalExpression")?,
         referenced_attributes: required(attributes, "referencedAttributes")?,
-        checked_ast: required(ast, "checkedAst")?,
+        checked_ast: required(ast, "checkedAst")?.0,
         checked_ast_digest: required(digest, "checkedAstDigest")?,
     })
 });
@@ -82,7 +97,7 @@ pub(crate) fn read(bytes: &[u8]) -> Result<Option<CheckedDecisionExecutable>, Co
 mod tests {
     use super::*;
 
-    const VALID: &str = r#"{"rules":[{"name":"r","predicate":{"canonicalExpression":"true","referencedAttributes":[],"checkedAst":"bytes","checkedAstDigest":"digest"}}]}"#;
+    const VALID: &str = r#"{"rules":[{"name":"r","predicate":{"canonicalExpression":"true","referencedAttributes":[],"checkedAst":"YQ==","checkedAstDigest":"digest"}}]}"#;
 
     #[test]
     fn valid_repeated_members_use_the_last_value_without_strict_token_limits() {
@@ -107,5 +122,46 @@ mod tests {
             ));
         }
         assert!(read(b"null").unwrap().is_none());
+    }
+
+    #[test]
+    fn invalid_base64_is_a_json_fault_even_before_a_valid_repeated_member() {
+        for invalid in [
+            VALID.replace("\"YQ==\"", "\"!\""),
+            VALID.replace("\"checkedAst\":", "\"checkedAst\":\"!\",\"checkedAst\":"),
+        ] {
+            assert!(matches!(
+                read(invalid.as_bytes()),
+                Err(ContractError::Json(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn base64_matches_json_byte_array_whitespace_padding_and_empty_values() {
+        for encoded in [
+            "!",
+            "YQ",
+            "YQ=",
+            "YQ===",
+            "Y=Q=",
+            "YR==",
+            "Y\u{a0}Q==",
+            "Y\u{b}Q==",
+        ] {
+            let invalid = VALID.replace("\"YQ==\"", &serde_json::to_string(encoded).unwrap());
+            assert!(
+                matches!(read(invalid.as_bytes()), Err(ContractError::Json(_))),
+                "{encoded:?}"
+            );
+        }
+        for (encoded, expected) in [("", ""), (" \t\r\nYQ== ", "YQ==")] {
+            let valid = VALID.replace("\"YQ==\"", &serde_json::to_string(encoded).unwrap());
+            let checked = read(valid.as_bytes()).unwrap().unwrap();
+            assert_eq!(
+                checked.rules[0].as_ref().unwrap().predicate.checked_ast,
+                expected
+            );
+        }
     }
 }

@@ -185,7 +185,11 @@ impl Checker<'_> {
                 ("_+_", [Kind::String, Kind::String]) => Kind::String,
                 ("_+_", [Kind::List, Kind::List]) => Kind::List,
                 ("_%_", [Kind::Int, Kind::Int]) => Kind::Int,
-                ("_?_:_", [Kind::Bool, a, b]) if a == b => *a,
+                ("_?_:_", [Kind::Bool, a, b])
+                    if a == b && unifiable_types(&args[1].cel_type, &args[2].cel_type) =>
+                {
+                    *a
+                }
                 ("bool", [Kind::Bool | Kind::String]) => Kind::Bool,
                 ("int", [Kind::Int | Kind::Double | Kind::String | Kind::Null]) => Kind::Int,
                 ("double", [Kind::Int | Kind::Double | Kind::String]) => Kind::Double,
@@ -254,6 +258,18 @@ impl Checker<'_> {
             || message.clone(),
             |parsed| parsed.diagnostic(node, &message),
         )
+    }
+}
+
+fn unifiable_types(left: &cel_core::CelType, right: &cel_core::CelType) -> bool {
+    use cel_core::CelType;
+    match (left, right) {
+        (CelType::Dyn, _) | (_, CelType::Dyn) => true,
+        (CelType::List(left), CelType::List(right)) => unifiable_types(left, right),
+        (CelType::Map(left_key, left_value), CelType::Map(right_key, right_value)) => {
+            unifiable_types(left_key, right_key) && unifiable_types(left_value, right_value)
+        }
+        _ => left == right,
     }
 }
 
@@ -513,7 +529,7 @@ pub(crate) fn canonical(node: &IdedExpr, parent: u8, right: bool) -> Result<Stri
                     LiteralValue::UInt(value) => format!("{}u", value.inner()),
                     LiteralValue::Double(value) => {
                         let mut text = float_string(*value.inner());
-                        if !text.contains('.') && !text.contains('e') {
+                        if value.inner().is_finite() && !text.contains('.') && !text.contains('e') {
                             text.push_str(".0");
                         }
                         text

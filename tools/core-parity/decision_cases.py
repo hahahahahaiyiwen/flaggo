@@ -43,6 +43,7 @@ def cases():
     cases = [
         request("first-match", [rule("first"), rule("second")]),
         request("later-match", [rule("false", "false"), rule("second")]),
+        request("overflow-literal", [rule(predicate="1e400 > 0.0")]),
         request("empty", []),
         request("false-default", [rule(predicate="false")]),
         request("missing-predicate", [rule(predicate="attributes.x > 0")]),
@@ -71,6 +72,22 @@ def cases():
         request("cancel-empty-default", [], cancelled=True),
         request("current-exposure"),
     ]
+    for index, (left, right) in enumerate([
+        ({"type": "integer"}, {"type": "string"}),
+        ({"type": "array", "items": {"type": "integer"}},
+         {"type": "array", "items": {"type": "string"}}),
+        ({"type": "integer"}, {"type": "integer"}),
+    ]):
+        model = contract()
+        model["attributes"] = [
+            {"name": "choose", "schema": {"type": "boolean"}},
+            {"name": "a", "schema": {"type": "array", "items": left}},
+            {"name": "b", "schema": {"type": "array", "items": right}},
+        ]
+        model["result"] = {"schema": {"type": "array", "items": left}, "default": []}
+        cases.append(request("conditional-container-" + str(index), [
+            rule(result={"expression": "attributes.choose ? attributes.a : attributes.b"}),
+        ], model=model, attributes={"choose": False, "a": [], "b": []}))
     for name, value in [
         ("missing", None), ("null", None), ("string", "0.5"), ("boolean", True),
         ("negative", -0.1), ("one", 1), ("above-one", 2), ("zero", 0),

@@ -34,7 +34,10 @@ Cancellation is explicit; transactional writes check it before commit.
 Stored reads preserve integrity versus native JSON/timestamp/argument/database
 faults. Executable and provenance JSON use strict token validation. Checked DTOs
 follow the reference's direct serializer instead: repeated members are allowed,
-but each occurrence is type-checked before the last valid value wins. Storage
+but each occurrence is type-checked before the last valid value wins. `checkedAst`
+is decoded as a base64 byte array at this boundary, preserving native JSON faults
+and canonical byte-array serialization rather than deferring malformed data to
+materialization. Storage
 timestamps and cursors reuse the contract-store compatibility helpers.
 Lifecycle/outcome enums serialize as the reference's numeric low-level DTOs;
 HTTP management representations are a separate composition concern.

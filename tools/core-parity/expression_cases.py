@@ -5,6 +5,34 @@ import json
 from pathlib import Path
 
 
+def review_cases() -> list[dict]:
+    requests = [{
+        "id": "overflow-literal-" + str(index), "expression": source,
+        "resultType": "boolean", "compileOnly": False,
+    } for index, source in enumerate([
+        "1e400 > 0.0", "-1e400 < 0.0", "1e400 == 1e400", "1e400 > 1.0",
+    ])]
+    for index, (left, right) in enumerate([
+        ({"type": "integer"}, {"type": "string"}),
+        ({"type": "array", "items": {"type": "integer"}},
+         {"type": "array", "items": {"type": "string"}}),
+        ({"type": "integer"}, {"type": "integer"}),
+        (None, {"type": "integer"}),
+    ]):
+        requests.append({
+            "id": "conditional-container-" + str(index),
+            "expression": "size(attributes.choose ? attributes.a : attributes.b)",
+            "schemas": {
+                "choose": {"type": "boolean"},
+                "a": {"type": "array", **({"items": left} if left else {})},
+                "b": {"type": "array", "items": right},
+            },
+            "attributes": {"choose": True, "a": [], "b": []},
+            "resultType": "integer", "compileOnly": False,
+        })
+    return requests
+
+
 def lexical_cases() -> list[str]:
     return [
         "true & false", "true | false", "a = b", "a @ b", "not valid { @",
@@ -50,6 +78,7 @@ def syntax_cases() -> list[dict]:
         ".qualified.Type{field: [1, 2]}",
         "--1", "---1", "!!true", "!!!true", "--attributes.current_level",
         "-9223372036854775808", "-0x8000000000000000", "-0.0",
+        "1e400 > 0.0", "-1e400 < 0.0",
         "a ? (b ? c : d) : e", "a ? b ? c : d : e",
         "(", "[", "{", "Type{", "f(", "f(1,)", "[1,,2]", "{1}", "Type{1:2}",
         "a.", "a[", "a[]", "a.?b", "a[?1]", "[?1]", "{?1:2}", "Type{?field:1}",
@@ -180,6 +209,18 @@ def compiler_cases(root: Path) -> list[dict]:
     changed = copy.deepcopy(executable)
     changed["rules"][0]["when"] = {"expression": "attributes.missing"}
     add("executable-undeclared", "executable", changed, supplied_contract=original)
+    for source in ("1e400 > 0.0", "-1e400 < 0.0"):
+        changed = copy.deepcopy(original)
+        changed["authoredExecutable"]["rules"][0]["when"] = {"expression": source}
+        add("overflow-validate-" + source[0], "contract", changed)
+        add("overflow-digest-" + source[0], "contract", changed, "digest")
+    for index, case in enumerate(review_cases()[4:6]):
+        changed = copy.deepcopy(original)
+        changed["attributes"].extend(
+            {"name": name, "schema": schema} for name, schema in case["schemas"].items())
+        changed["authoredExecutable"]["rules"][0]["when"] = {
+            "expression": case["expression"] + " > 0"}
+        add("conditional-container-" + str(index), "contract", changed)
     return requests
 
 

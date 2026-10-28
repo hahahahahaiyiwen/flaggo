@@ -18,6 +18,82 @@ fn attributes() -> IndexMap<String, ValueSchema> {
     ])
 }
 
+#[test]
+fn conditional_overloads_unify_nested_container_parameters() {
+    let compiler = ExpressionCompiler::default();
+    for (left, right, accepted) in [
+        (
+            json!({"type":"array","items":{"type":"integer"}}),
+            json!({"type":"array","items":{"type":"string"}}),
+            false,
+        ),
+        (
+            json!({"type":"array","items":{"type":"array","items":{"type":"integer"}}}),
+            json!({"type":"array","items":{"type":"array","items":{"type":"string"}}}),
+            false,
+        ),
+        (
+            json!({"type":"array","items":{"type":"integer"}}),
+            json!({"type":"array","items":{"type":"integer"}}),
+            true,
+        ),
+        (
+            json!({"type":"array"}),
+            json!({"type":"array","items":{"type":"integer"}}),
+            true,
+        ),
+    ] {
+        let attributes = IndexMap::from([
+            ("choose".into(), schema("boolean")),
+            ("a".into(), serde_json::from_value(left).unwrap()),
+            ("b".into(), serde_json::from_value(right).unwrap()),
+        ]);
+        let result = compiler.compile(
+            "size(attributes.choose ? attributes.a : attributes.b)",
+            &attributes,
+            &schema("integer"),
+            ExpressionPurpose::Result,
+        );
+        assert_eq!(result.is_ok(), accepted);
+        if let Ok(compiled) = result {
+            compiler
+                .materialize(
+                    compiled.checked(),
+                    &attributes,
+                    &schema("integer"),
+                    ExpressionPurpose::Result,
+                )
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn overflowing_literals_keep_oracle_canonical_text_and_restart() {
+    let compiler = ExpressionCompiler::default();
+    let compiled = compiler
+        .compile(
+            "1e400 > 0.0",
+            &IndexMap::new(),
+            &schema("boolean"),
+            ExpressionPurpose::Result,
+        )
+        .unwrap();
+    assert_eq!(compiled.checked().canonical_expression, "+Inf > 0.0");
+    let restarted = compiler
+        .materialize(
+            compiled.checked(),
+            &IndexMap::new(),
+            &schema("boolean"),
+            ExpressionPurpose::Result,
+        )
+        .unwrap();
+    assert_eq!(
+        restarted.evaluate(&IndexMap::new(), None).unwrap(),
+        JsonValue::from(json!(true))
+    );
+}
+
 fn contract() -> DecisionContract {
     strict_json::deserialize(
         br#"{

@@ -799,6 +799,7 @@ dependencies = [
 name = "flaggo-executable-store"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "flaggo-contract",
  "flaggo-contract-store",

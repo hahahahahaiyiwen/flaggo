@@ -160,6 +160,7 @@ def operations():
     for name, assignment in [
         ("checked-null", "checked_executable_json=CAST('null' AS BLOB)"),
         ("checked-json", "checked_executable_json=X'7B'"),
+        ("checked-base64", """checked_executable_json=CAST(json_set(CAST(checked_executable_json AS TEXT),'$.rules[0].predicate.checkedAst','!') AS BLOB)"""),
         ("executable-json", "executable_json=X'7B'"),
     ]:
         add("runtime-corrupt-" + name, "sql",
@@ -177,6 +178,10 @@ def operations():
         ("checked-duplicate-null", """checked_executable_json=CAST('{"rules":null,' || substr(CAST(checked_executable_json AS TEXT),2) AS BLOB)"""),
         ("checked-duplicate-predicate", """checked_executable_json=CAST(replace(CAST(checked_executable_json AS TEXT),'"predicate":{','"predicate":null,"predicate":{') AS BLOB)"""),
         ("checked-duplicate-ast", """checked_executable_json=CAST(replace(CAST(checked_executable_json AS TEXT),'"checkedAst":','"checkedAst":false,"checkedAst":') AS BLOB)"""),
+        ("checked-base64", """checked_executable_json=CAST(json_set(CAST(checked_executable_json AS TEXT),'$.rules[0].predicate.checkedAst','!') AS BLOB)"""),
+        ("checked-duplicate-base64", """checked_executable_json=CAST(replace(CAST(checked_executable_json AS TEXT),'"checkedAst":','"checkedAst":"!","checkedAst":') AS BLOB)"""),
+        ("checked-base64-whitespace", """checked_executable_json=CAST(json_set(CAST(checked_executable_json AS TEXT),'$.rules[0].predicate.checkedAst','Y Q==') AS BLOB)"""),
+        ("checked-base64-trailing-bits", """checked_executable_json=CAST(json_set(CAST(checked_executable_json AS TEXT),'$.rules[0].predicate.checkedAst','YR==') AS BLOB)"""),
         ("provenance", "provenance_json=X'7B'"),
         ("time", "created_at='bad'"),
     ]:
@@ -184,6 +189,18 @@ def operations():
         add("corrupt-" + name, "sql", query=f"UPDATE decision_executables SET {assignment} WHERE lifecycle_state='inactive';")
         add("read-corrupt-" + name, "get", use="second")
         add("restore-" + name, "sql", query=restore)
+    for name, encoded in [
+        ("empty", ""), ("missing-padding", "YQ"), ("partial-padding", "YQ="),
+        ("excess-padding", "YQ==="), ("interior-padding", "Y=Q="),
+        ("unicode-space", "Y\u00a0Q=="), ("vertical-tab", "Y\vQ=="),
+        ("ascii-whitespace", " \t\r\nYQ== "),
+    ]:
+        add("base64-" + name, "sql", query=(
+            "UPDATE decision_executables SET checked_executable_json=CAST("
+            "json_set(CAST(checked_executable_json AS TEXT),'$.rules[0].predicate.checkedAst',"
+            f"'{encoded}') AS BLOB) WHERE lifecycle_state='inactive';"))
+        add("read-base64-" + name, "get", use="second")
+        add("restore-base64-" + name, "sql", query=restore)
     add("unsupported", "sql", query="UPDATE flaggo_schema_versions SET version=6 WHERE component='executable-store';")
     add("unsupported-health", "health")
     add("unsupported-initialize", "initialize")
