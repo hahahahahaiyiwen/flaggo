@@ -140,7 +140,10 @@ fn check_call(
         .iter()
         .filter(|overload| reference.overload_ids.contains(&overload.id))
         .map(|overload| &overload.result);
-    if let Some(first) = types.next()
+    if name == "_?_:_" {
+        // The reference binds the generic result from the first branch, including dyn.
+        result.type_map.insert(id, arguments[1].clone());
+    } else if let Some(first) = types.next()
         && types.any(|kind| kind != first)
     {
         // cel-core keeps the last matching result; CEL uses dyn for ambiguous results.

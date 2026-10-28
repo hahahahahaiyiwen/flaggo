@@ -19,6 +19,119 @@ fn attributes() -> IndexMap<String, ValueSchema> {
 }
 
 #[test]
+fn conditional_container_metadata_preserves_first_branch_parameters() {
+    use base64::Engine;
+    use cel_core_proto::r#gen::cel::expr::r#type::TypeKind;
+    use prost::Message;
+
+    let compiler = ExpressionCompiler::default();
+    let types = [
+        json!({"type":"array","items":{"type":"integer"}}),
+        json!({"type":"array"}),
+        json!({"type":"array","items":{"type":"array","items":{"type":"integer"}}}),
+        json!({"type":"array","items":{"type":"array"}}),
+    ];
+    for (left_index, left) in types.iter().enumerate() {
+        for (right_index, right) in types.iter().enumerate() {
+            let attributes = IndexMap::from([
+                ("a".into(), serde_json::from_value(left.clone()).unwrap()),
+                ("b".into(), serde_json::from_value(right.clone()).unwrap()),
+            ]);
+            let compiled = compiler.compile(
+                "true ? attributes.a : attributes.b",
+                &attributes,
+                &schema("array"),
+                ExpressionPurpose::Result,
+            );
+            let compatible =
+                !(left_index == 0 && right_index >= 2 || left_index >= 2 && right_index == 0);
+            assert_eq!(compiled.is_ok(), compatible, "{left_index}/{right_index}");
+            let Ok(compiled) = compiled else { continue };
+            compiler
+                .materialize(
+                    compiled.checked(),
+                    &attributes,
+                    &schema("array"),
+                    ExpressionPurpose::Result,
+                )
+                .unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&compiled.checked().checked_ast)
+                .unwrap();
+            let wire = cel_core_proto::CheckedExpr::decode(bytes.as_slice()).unwrap();
+            let mut kind = wire.type_map.get(&wire.expr.as_ref().unwrap().id).unwrap();
+            for _ in 0..(if left_index >= 2 { 2 } else { 1 }) {
+                let Some(TypeKind::ListType(list)) = &kind.type_kind else {
+                    panic!("expected a list type for {left_index}/{right_index}");
+                };
+                kind = list.elem_type.as_deref().unwrap();
+            }
+            if left_index % 2 == 0 {
+                assert!(matches!(kind.type_kind, Some(TypeKind::Primitive(2))));
+            } else {
+                assert!(matches!(kind.type_kind, Some(TypeKind::Dyn(_))));
+            }
+        }
+    }
+}
+
+#[test]
+fn conditional_generic_substitution_keeps_reference_branch_order() {
+    let compiler = ExpressionCompiler::default();
+    assert!(
+        compiler
+            .compile(
+                "false ? (null + null) : 1",
+                &attributes(),
+                &schema("integer"),
+                ExpressionPurpose::Result,
+            )
+            .is_err()
+    );
+    for (source, kind, expected) in [
+        ("true ? null : (null + null)", "null", JsonValue::Null),
+        (
+            "true ? 1 : (null + null)",
+            "integer",
+            JsonValue::from(json!(1)),
+        ),
+        (
+            "false && bool(true ? (null + null) : attributes.items)",
+            "boolean",
+            JsonValue::Bool(false),
+        ),
+    ] {
+        let mut attributes = attributes();
+        attributes.insert(
+            "items".to_owned(),
+            serde_json::from_value(json!({"type":"array","items":{"type":"integer"}})).unwrap(),
+        );
+        let compiled = compiler
+            .compile(
+                source,
+                &attributes,
+                &schema(kind),
+                ExpressionPurpose::Result,
+            )
+            .unwrap_or_else(|error| panic!("{source}: {error}"));
+        let restarted = compiler
+            .materialize(
+                compiled.checked(),
+                &attributes,
+                &schema(kind),
+                ExpressionPurpose::Result,
+            )
+            .unwrap();
+        for expression in [compiled, restarted] {
+            assert_eq!(
+                expression.evaluate(&IndexMap::new(), None).unwrap(),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
 fn guarded_nullable_overloads_compile_materialize_and_keep_root_types_strict() {
     let compiler = ExpressionCompiler::default();
     for (source, expected) in [

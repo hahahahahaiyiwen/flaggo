@@ -169,8 +169,15 @@ impl Checker<'_> {
             .map(|argument| argument.kind)
             .collect::<Vec<_>>();
         let numeric = |kind| matches!(kind, Kind::Int | Kind::Double);
+        if stored_kind.is_none()
+            && name == "_?_:_"
+            && !unifiable_types(&args[1].cel_type, &args[2].cel_type)
+        {
+            return Err(self.overload_error(node, name, args));
+        }
         let inferred = if stored_kind.is_none()
-            && (kinds.contains(&Kind::Dyn)
+            && (name == "_?_:_"
+                || kinds.contains(&Kind::Dyn)
                 || (kinds == [Kind::Null, Kind::Null]
                     && matches!(name, "_+_" | "_-_" | "_<_" | "_<=_" | "_>_" | "_>=_")))
         {
@@ -216,11 +223,6 @@ impl Checker<'_> {
                 ("_+_", [Kind::String, Kind::String]) => Kind::String,
                 ("_+_", [Kind::List, Kind::List]) => Kind::List,
                 ("_%_", [Kind::Int, Kind::Int]) => Kind::Int,
-                ("_?_:_", [Kind::Bool, a, b])
-                    if a == b && unifiable_types(&args[1].cel_type, &args[2].cel_type) =>
-                {
-                    *a
-                }
                 ("bool", [Kind::Bool | Kind::String]) => Kind::Bool,
                 ("int", [Kind::Int | Kind::Double | Kind::String | Kind::Null]) => Kind::Int,
                 ("double", [Kind::Int | Kind::Double | Kind::String]) => Kind::Double,

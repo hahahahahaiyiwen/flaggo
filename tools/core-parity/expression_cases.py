@@ -63,6 +63,40 @@ def nullable_cases() -> list[dict]:
     return cases
 
 
+def conditional_cases() -> list[dict]:
+    branches = [
+        "null", "true", "1", "1.0", "'x'", "attributes.items",
+        "attributes.object", "(null + null)", "(null - null)",
+    ]
+    schemas = {
+        "items": {"type": "array", "items": {"type": "integer"}},
+        "object": {"type": "object", "properties": {}, "additionalProperties": False},
+    }
+    requests = []
+    for left_index, left in enumerate(branches):
+        for right_index, right in enumerate(branches):
+            conditional = f"true ? {left} : {right}"
+            for kind in ("null", "boolean", "integer", "number", "string", "array", "object"):
+                requests.append({
+                    "id": f"conditional-root-{left_index}-{right_index}-{kind}",
+                    "expression": conditional, "schemas": schemas,
+                    "attributes": {"items": [], "object": {}},
+                    "resultType": kind, "compileOnly": False,
+                })
+            for function in ("bool", "size", "equality"):
+                expression = (f"({conditional}) == ({conditional})" if function == "equality"
+                              else f"{function}({conditional})")
+                if function == "size":
+                    expression += " == 0"
+                requests.append({
+                    "id": f"conditional-nested-{left_index}-{right_index}-{function}",
+                    "expression": f"false && ({expression})", "schemas": schemas,
+                    "attributes": {"items": [], "object": {}},
+                    "resultType": "boolean", "compileOnly": False,
+                })
+    return requests
+
+
 def lexical_cases() -> list[str]:
     return [
         "true & false", "true | false", "a = b", "a @ b", "not valid { @",

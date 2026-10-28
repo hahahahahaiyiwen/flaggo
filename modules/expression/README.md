@@ -13,6 +13,8 @@ Nullable standard overloads preserve ambiguous intermediate `dyn` types.
 The owned adapter checks calls bottom-up so those types reach parent calls,
 and explicitly persists `dyn` entries omitted by the upstream serializer.
 Dynamic intermediate values do not relax root result schemas or profile bounds.
+Conditional generic results retain the reference's first-branch substitution,
+including nested container parameters; incompatible branches still reject.
 `materialize` takes only persisted `CheckedExpression` metadata, not source text;
 it validates the byte/checksum/reference/type/canonical/profile/cost bounds and
 does not parse source or rerun the source type checker. `CompiledExpression`
@@ -65,6 +67,10 @@ validation/identity cases. Syntax failures compare exact diagnostic text, not
 just rejection; contract adapters compare full validation issue arrays.
 Nullable regressions cover guarded and failing operators, nested dynamic calls,
 root-type rejection and both producers in all four restart directions.
+An exhaustive scalar/null/Dyn/container conditional matrix exercises both branch
+orders at direct roots and inside equality, Boolean conversion and size calls.
+Actual decision cases assert successful reference outcomes as well as rejection,
+so invalid contract fixtures cannot substitute for expression-admission proof.
 Focused regressions also exercise accepted 249-level nesting, rejected 250-level
 nesting and the 1,000/1,001 syntax AST boundary on a 512 KiB thread stack.
 

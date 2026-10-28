@@ -92,6 +92,23 @@ def cases():
     for case in expression_cases.nullable_cases():
         if case["resultType"] == "boolean":
             cases.append(request(case["id"], [rule(predicate=case["expression"])]))
+    for case in expression_cases.conditional_cases():
+        model = contract()
+        model["attributes"] = [
+            {"name": name, "schema": schema} for name, schema in case["schemas"].items()
+        ]
+        kind = case["resultType"]
+        model["result"] = {
+            "schema": {"type": kind},
+            "default": {"null": None, "boolean": False, "integer": 0, "number": 0.0,
+                        "string": "", "array": [], "object": {}}[kind],
+        }
+        if kind == "array":
+            model["result"]["schema"]["items"] = {"type": "integer"}
+        elif kind == "object":
+            model["result"]["schema"].update(properties={}, additionalProperties=False)
+        cases.append(request(case["id"], [rule(result={"expression": case["expression"]})],
+                             model=model, attributes=case["attributes"]))
     for name, value in [
         ("missing", None), ("null", None), ("string", "0.5"), ("boolean", True),
         ("negative", -0.1), ("one", 1), ("above-one", 2), ("zero", 0),
@@ -219,6 +236,10 @@ def validate_reference(responses):
         "cancel-rule": "error", "cancel-empty-default": "decision",
         "literal-object": "decision", "literal-array": "decision",
         "invalid-default-result": "error", "floating-native-fault": "error",
+        "conditional-root-7-2-integer": "compile-invalid",
+        "conditional-root-0-7-null": "decision",
+        "conditional-root-2-7-integer": "decision",
+        "conditional-nested-7-5-bool": "decision",
     }.items():
         response = responses["decision-" + identifier]
         if response.get("value", {}).get("outcome") != outcome:
@@ -226,6 +247,14 @@ def validate_reference(responses):
     first = responses["decision-first-match"]["value"]["decision"]
     if first["result"] != 7 or first["evaluation"] != {"source": "rule", "rule": "first"}:
         raise RuntimeError("The reference did not preserve first-match rule precedence.")
+    for identifier, expected in [
+        ("conditional-root-0-7-null", None),
+        ("conditional-root-2-7-integer", 1),
+        ("conditional-nested-7-5-bool", False),
+    ]:
+        actual = responses["decision-" + identifier]["value"]["decision"]["result"]
+        if type(actual) is not type(expected) or actual != expected:
+            raise RuntimeError(f"The reference did not exercise conditional result {identifier}.")
     skipped = responses["decision-missing-return-before-failing-predicate"]["value"]["decision"]
     if skipped["evaluation"] != {"source": "rule", "rule": "next"}:
         raise RuntimeError("The reference evaluated a rule with a missing return attribute.")
