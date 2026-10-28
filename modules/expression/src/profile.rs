@@ -215,7 +215,7 @@ impl Checker<'_> {
                 ("_&&_" | "_||_", [Kind::Bool, Kind::Bool]) => Kind::Bool,
                 ("_==_" | "_!=_", [a, b]) if a == b => Kind::Bool,
                 ("_<_" | "_<=_" | "_>_" | "_>=_", [a, b])
-                    if a == b && (numeric(*a) || *a == Kind::String) =>
+                    if a == b && (numeric(*a) || matches!(a, Kind::Bool | Kind::String)) =>
                 {
                     Kind::Bool
                 }

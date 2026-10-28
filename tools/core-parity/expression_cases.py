@@ -40,6 +40,8 @@ def nullable_cases() -> list[dict]:
         sources.extend((f"false && {term}", f"true || {term}"))
     for op in ("+", "-"):
         term = f"(null {op} null)"
+        for addition in (f"'x' + {term}", f"{term} + 'x'"):
+            sources.append(f"false && ({addition} == {addition})")
         for expression in [
             f"{term} == null", f"int({term}) == 0", f"bool({term})",
             f"size({term}) == 0", f"{term} + 1 == 0", f"{term} - {term} == null",
@@ -61,6 +63,18 @@ def nullable_cases() -> list[dict]:
         "resultType": kind, "compileOnly": True,
     } for kind in ("null", "boolean", "integer", "number", "string", "array", "object"))
     return cases
+
+
+def ordering_cases() -> list[dict]:
+    sources = [
+        f"{left} {operator} {right}"
+        for operator in ("<", "<=", ">", ">=")
+        for left in ("false", "true") for right in ("false", "true")
+    ]
+    return [{
+        "id": f"boolean-order-{index}", "expression": source,
+        "resultType": "boolean", "compileOnly": False,
+    } for index, source in enumerate(sources)]
 
 
 def conditional_cases() -> list[dict]:

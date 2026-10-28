@@ -19,6 +19,99 @@ fn attributes() -> IndexMap<String, ValueSchema> {
 }
 
 #[test]
+fn boolean_ordering_matches_all_reference_truth_tables() {
+    let compiler = ExpressionCompiler::default();
+    for (operator, compare) in [
+        ("<", bool::lt as fn(&bool, &bool) -> bool),
+        ("<=", bool::le),
+        (">", bool::gt),
+        (">=", bool::ge),
+    ] {
+        for left in [false, true] {
+            for right in [false, true] {
+                let source = format!("{left} {operator} {right}");
+                let compiled = compiler
+                    .compile(
+                        &source,
+                        &IndexMap::new(),
+                        &schema("boolean"),
+                        ExpressionPurpose::Predicate,
+                    )
+                    .unwrap();
+                let restarted = compiler
+                    .materialize(
+                        compiled.checked(),
+                        &IndexMap::new(),
+                        &schema("boolean"),
+                        ExpressionPurpose::Predicate,
+                    )
+                    .unwrap();
+                for expression in [compiled, restarted] {
+                    assert_eq!(
+                        expression.evaluate(&IndexMap::new(), None).unwrap(),
+                        JsonValue::Bool(compare(&left, &right))
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn string_addition_persists_reference_cost_estimator_overload_ids() {
+    use base64::Engine;
+    use prost::Message;
+
+    let compiler = ExpressionCompiler::default();
+    for term in ["(null + null)", "(null - null)"] {
+        for addition in [format!("\"x\" + {term}"), format!("{term} + \"x\"")] {
+            let source = format!("false && ({addition} == {addition})");
+            let compiled = compiler
+                .compile(
+                    &source,
+                    &IndexMap::new(),
+                    &schema("boolean"),
+                    ExpressionPurpose::Predicate,
+                )
+                .unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&compiled.checked().checked_ast)
+                .unwrap();
+            let wire = cel_core_proto::CheckedExpr::decode(bytes.as_slice()).unwrap();
+            let overloads = wire
+                .reference_map
+                .values()
+                .flat_map(|reference| &reference.overload_id)
+                .collect::<Vec<_>>();
+            assert!(
+                !overloads
+                    .iter()
+                    .any(|id| id.as_str() == "add_string_string")
+            );
+            assert_eq!(
+                overloads
+                    .iter()
+                    .filter(|id| id.as_str() == "add_string")
+                    .count(),
+                2
+            );
+            let restarted = compiler
+                .materialize(
+                    compiled.checked(),
+                    &IndexMap::new(),
+                    &schema("boolean"),
+                    ExpressionPurpose::Predicate,
+                )
+                .unwrap();
+            assert_eq!(
+                restarted.evaluate(&IndexMap::new(), None).unwrap(),
+                JsonValue::Bool(false)
+            );
+        }
+    }
+}
+
+#[test]
 fn conditional_container_metadata_preserves_first_branch_parameters() {
     use base64::Engine;
     use cel_core_proto::r#gen::cel::expr::r#type::TypeKind;

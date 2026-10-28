@@ -224,6 +224,14 @@ pub fn compile(
         .collect::<Vec<_>>();
     let ast = cel_core::Ast::new_checked(core_expression, source, type_info);
     let mut checked = ast.to_checked_expr().map_err(|error| error.to_string())?;
+    // The reference cost estimator uses this overload ID to propagate string sizes.
+    for reference in checked.reference_map.values_mut() {
+        for overload in &mut reference.overload_id {
+            if overload == "add_string_string" {
+                *overload = "add_string".to_owned();
+            }
+        }
+    }
     // The upstream serializer omits dyn entries; persisted CEL needs explicit metadata.
     for id in dynamic_ids {
         checked.type_map.insert(

@@ -89,7 +89,7 @@ def cases():
         cases.append(request("conditional-container-" + str(index), [
             rule(result={"expression": "attributes.choose ? attributes.a : attributes.b"}),
         ], model=model, attributes={"choose": False, "a": [], "b": []}))
-    for case in expression_cases.nullable_cases():
+    for case in expression_cases.nullable_cases() + expression_cases.ordering_cases():
         if case["resultType"] == "boolean":
             cases.append(request(case["id"], [rule(predicate=case["expression"])]))
     for case in expression_cases.conditional_cases():
@@ -240,6 +240,7 @@ def validate_reference(responses):
         "conditional-root-0-7-null": "decision",
         "conditional-root-2-7-integer": "decision",
         "conditional-nested-7-5-bool": "decision",
+        "boolean-order-1": "decision",
     }.items():
         response = responses["decision-" + identifier]
         if response.get("value", {}).get("outcome") != outcome:
@@ -251,6 +252,7 @@ def validate_reference(responses):
         ("conditional-root-0-7-null", None),
         ("conditional-root-2-7-integer", 1),
         ("conditional-nested-7-5-bool", False),
+        ("boolean-order-1", 7),
     ]:
         actual = responses["decision-" + identifier]["value"]["decision"]["result"]
         if type(actual) is not type(expected) or actual != expected:
