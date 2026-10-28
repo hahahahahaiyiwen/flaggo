@@ -1186,7 +1186,15 @@ def validate_canonicalization_vectors(rep: Report) -> None:
     rep.check(bool(vectors), "canonicalization vector set is empty")
     for vector in vectors:
         try:
-            actual = canonical_json_bytes(vector["input"]).decode("utf-8")
+            number_model = vector.get("numberModel", "native")
+            if number_model not in ("native", "binary64"):
+                raise ValueError(f"unsupported numberModel {number_model!r}")
+            value = vector["input"]
+            if number_model == "binary64":
+                value = json.loads(
+                    json.dumps(value, allow_nan=False), parse_int=float
+                )
+            actual = canonical_json_bytes(value).decode("utf-8")
         except Exception as exc:  # noqa: BLE001
             rep.fail(
                 f"canonicalization vector '{vector.get('name')}' failed: {exc}"

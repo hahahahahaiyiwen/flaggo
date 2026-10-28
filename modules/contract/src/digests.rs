@@ -57,7 +57,7 @@ pub fn contract_digest(
             }
         }
     }
-    let mut value = serde_json::to_value(contract)?;
+    let mut value = crate::strict_json::to_value(&contract)?;
     sort_named(&mut value["attributes"])?;
     if let Some(learning) = value.get_mut("learning") {
         sort_named(&mut learning["evidence"])?;
@@ -79,7 +79,7 @@ pub fn executable_digest(
         }
         canonicalize_return(&mut rule.result, canonicalizer)?;
     }
-    digest(&serde_json::to_value(executable)?)
+    digest(&crate::strict_json::to_value(&executable)?)
 }
 
 pub fn canonicalize_expressions(

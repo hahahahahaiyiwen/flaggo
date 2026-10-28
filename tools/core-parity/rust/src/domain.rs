@@ -1,4 +1,4 @@
-use flaggo_contract::digests::{contract_digest, executable_digest};
+use flaggo_contract::digests::{ExpressionCanonicalizer, contract_digest, executable_digest};
 use flaggo_contract::strict_json;
 use flaggo_contract::{
     ContractError, DecisionContract, DecisionExecutable, RuntimeInput, ValueSchema,
@@ -17,6 +17,8 @@ pub struct Request {
     validation_contract: Option<String>,
     #[serde(default)]
     validation_value: Option<String>,
+    #[serde(default)]
+    with_expressions: bool,
 }
 
 pub fn evaluate(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
@@ -24,9 +26,18 @@ pub fn evaluate(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
         return validate(request);
     }
     let bytes = request.document.as_bytes();
+    if request.domain_action == "rawRoundtrip" && request.domain_model == "json" {
+        let result = strict_json::deserialize::<flaggo_contract::JsonValue>(bytes)
+            .and_then(|value| strict_json::serialize(&value))
+            .map(|bytes| String::from_utf8(bytes).expect("JSON serialization emits UTF-8"));
+        return Ok(match result {
+            Ok(value) => json!({"id":request.id, "status":"value", "value":value}),
+            Err(error) => fault(&request.id, error),
+        });
+    }
     let digest = match request.domain_action.as_str() {
         "digest" => true,
-        "roundtrip" => false,
+        "roundtrip" | "canonicalize" => false,
         _ => return Err(std::io::Error::other("unknown domain action").into()),
     };
     if digest && !matches!(request.domain_model.as_str(), "contract" | "executable") {
@@ -36,13 +47,19 @@ pub fn evaluate(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
     fn validate(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
         use flaggo_contract::{JsonValue, validation, value_schema};
         let bytes = request.document.as_bytes();
+        let compiler = request
+            .with_expressions
+            .then(flaggo_expression::ExpressionCompiler::default);
+        let validator = compiler
+            .as_ref()
+            .map(|compiler| compiler as &dyn validation::ContractExpressionValidator);
         let result = (|| -> Result<Value, ContractError> {
             let mut issues = Vec::new();
             match request.domain_model.as_str() {
                 "contract" => {
                     return Ok(serde_json::to_value(validation::validate_contract(
                         &strict_json::deserialize(bytes)?,
-                        None,
+                        validator,
                     )?)?);
                 }
                 "schema" if request.domain_action == "validateValue" => {
@@ -76,7 +93,7 @@ pub fn evaluate(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
                         issues = validation::validate_executable(
                             &contract,
                             &strict_json::deserialize(bytes)?,
-                            None,
+                            validator,
                         )?;
                     }
                 }
@@ -90,41 +107,55 @@ pub fn evaluate(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
         })();
         match result {
             Ok(value) => Ok(json!({"id":request.id, "status":"value", "value":value})),
-            Err(ContractError::Json(error)) => {
-                Ok(json!({"id":request.id, "status":"json-error", "message":error.to_string()}))
-            }
-            Err(error @ (ContractError::InvalidUnicode(_) | ContractError::InvalidModel(_))) => {
-                Ok(json!({"id":request.id, "status":"runtime-fault", "message":error.to_string()}))
-            }
-            Err(error) => Err(error.into()),
+            Err(error) => Ok(fault(&request.id, error)),
         }
     }
+    let compiler = request
+        .with_expressions
+        .then(flaggo_expression::ExpressionCompiler::default);
+    let canonicalizer = compiler
+        .as_ref()
+        .map(|compiler| compiler as &dyn ExpressionCanonicalizer);
     let result = (|| -> Result<(Value, Option<String>), ContractError> {
         match request.domain_model.as_str() {
             "contract" => {
-                let model: DecisionContract = strict_json::deserialize(bytes)?;
+                let mut model: DecisionContract = strict_json::deserialize(bytes)?;
+                if request.domain_action == "canonicalize" {
+                    let compiler = compiler.as_ref().ok_or_else(|| {
+                        ContractError::InvalidModel(
+                            "canonicalization requires an expression compiler".to_owned(),
+                        )
+                    })?;
+                    model = flaggo_contract::digests::canonicalize_expressions(&model, compiler)?;
+                }
                 let digest = if digest {
-                    Some(contract_digest(&model, None)?)
+                    Some(contract_digest(&model, canonicalizer)?)
                 } else {
                     None
                 };
-                Ok((serde_json::to_value(model)?, digest))
+                Ok((strict_json::to_value(&model)?, digest))
             }
             "executable" => {
                 let model: DecisionExecutable = strict_json::deserialize(bytes)?;
                 let digest = if digest {
-                    Some(executable_digest(&model, None)?)
+                    Some(executable_digest(&model, canonicalizer)?)
                 } else {
                     None
                 };
-                Ok((serde_json::to_value(model)?, digest))
+                Ok((strict_json::to_value(&model)?, digest))
             }
             "runtimeInput" => Ok((
-                serde_json::to_value(strict_json::deserialize::<RuntimeInput>(bytes)?)?,
+                strict_json::to_value(&strict_json::deserialize::<RuntimeInput>(bytes)?)?,
+                None,
+            )),
+            "runtimeDecision" => Ok((
+                strict_json::to_value(&strict_json::deserialize::<
+                    flaggo_contract::RuntimeDecision,
+                >(bytes)?)?,
                 None,
             )),
             "schema" => Ok((
-                serde_json::to_value(strict_json::deserialize::<ValueSchema>(bytes)?)?,
+                strict_json::to_value(&strict_json::deserialize::<ValueSchema>(bytes)?)?,
                 None,
             )),
             "json" => Ok((strict_json::deserialize::<Value>(bytes)?, None)),
@@ -137,12 +168,26 @@ pub fn evaluate(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
         Ok((document, digest)) => Ok(json!({
             "id": request.id, "status": "value", "value": {"document":document, "digest":digest}
         })),
-        Err(ContractError::Json(error)) => Ok(json!({
-            "id": request.id, "status": "json-error", "message": error.to_string()
-        })),
-        Err(ContractError::InvalidUnicode(error)) => Ok(json!({
-            "id": request.id, "status": "runtime-fault", "message": error.to_string()
-        })),
-        Err(error) => Err(error.into()),
+        Err(error) => Ok(fault(&request.id, error)),
     }
+}
+
+fn fault(id: &str, error: ContractError) -> Value {
+    let (status, exception_type) = match &error {
+        ContractError::Json(_) => ("json-error", None),
+        ContractError::Expression(_) => ("compile-error", None),
+        ContractError::MissingTypeDiscriminator => {
+            ("runtime-fault", Some("System.NotSupportedException"))
+        }
+        ContractError::Serialization(_) => ("runtime-fault", Some("System.ArgumentException")),
+        ContractError::InvalidUnicode(_) => {
+            ("runtime-fault", Some("System.InvalidOperationException"))
+        }
+        ContractError::InvalidModel(_) => ("runtime-fault", None),
+    };
+    let mut response = json!({"id":id, "status":status, "message":error.to_string()});
+    if let Some(exception_type) = exception_type {
+        response["exceptionType"] = json!(exception_type);
+    }
+    response
 }

@@ -6,13 +6,25 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::fmt;
 
+mod tracked;
+
 pub const MAXIMUM_DOCUMENT_BYTES: usize = 262_144;
 pub const MAXIMUM_DEPTH: usize = 16;
 pub const MAXIMUM_STRING_BYTES: usize = 16_384;
 
 pub fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ContractError> {
     validate(bytes)?;
-    Ok(serde_json::from_slice(bytes)?)
+    tracked::deserialize(bytes)
+}
+
+pub fn serialize<T: serde::Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, ContractError> {
+    serde_json::to_vec(value).map_err(ContractError::Serialization)
+}
+
+pub fn to_value<T: serde::Serialize + ?Sized>(
+    value: &T,
+) -> Result<serde_json::Value, ContractError> {
+    Ok(serde_json::from_slice(&serialize(value)?)?)
 }
 
 pub fn validate(bytes: &[u8]) -> Result<(), ContractError> {

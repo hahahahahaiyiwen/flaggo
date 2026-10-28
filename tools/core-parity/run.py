@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the existing Flaggo CEL compiler with an isolated upstream Rust probe."""
+"""Compare .NET reference libraries with owned Rust expression/domain modules."""
 
 from __future__ import annotations
 
@@ -9,11 +9,17 @@ import copy
 import hashlib
 import json
 import math
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import domain_cases
+import decision_cases
+import expression_cases
+import json_fault_cases
+import store_cases
+import executable_store_cases
 import validation_cases
 
 
@@ -148,7 +154,8 @@ def same_value(left: object, right: object) -> bool:
     return left == right
 
 
-def compare(requests: list[dict], reference: dict, candidate: dict, *, canonical: bool = False) -> dict:
+def compare(requests: list[dict], reference: dict, candidate: dict, *, canonical: bool = False,
+            error_messages: bool = False, fault_types: bool = False) -> dict:
     mismatches = []
     for request in requests:
         identifier = request["id"]
@@ -161,6 +168,12 @@ def compare(requests: list[dict], reference: dict, candidate: dict, *, canonical
         ) or (
             canonical and expected["status"] in {"value", "compiled"}
             and expected["canonical"] != actual.get("canonical")
+        ) or (
+            error_messages and expected["status"] == "compile-error"
+            and expected.get("message") != actual.get("message")
+        ) or (
+            fault_types and expected["status"] == "runtime-fault"
+            and expected.get("exceptionType") != actual.get("exceptionType")
         ):
             mismatches.append({
                 "id": identifier,
@@ -170,17 +183,16 @@ def compare(requests: list[dict], reference: dict, candidate: dict, *, canonical
                 "candidate": actual,
             })
     return {
-        "scope": "CEL and domain-library feasibility only; not service parity or cutover readiness.",
+        "scope": "Core library/runtime/store migration; not service parity or cutover readiness.",
         "cases": len(requests),
         "matched": len(requests) - len(mismatches),
         "mismatches": mismatches,
         "notYetVerified": [
             "Complete canonical expression and contract/executable digest conformance",
-            "Complete schema/profile typing, static-cost conformance and runtime cancellation",
+            "Complete schema/profile typing and static-cost conformance",
             "Checked protobuf persistence and restart without parsing source",
-            "Full strict JSON and contract validation, including out-of-range JSON numbers "
-            "and polymorphic discriminator native-fault compatibility",
-            "Service/store/HTTP/currentness/observability/full-loop parity",
+            "Whole-service strict JSON and HTTP fault-envelope compatibility",
+            "Whole-service HTTP, emitted observability and unchanged-client full-loop parity",
         ],
     }
 
@@ -298,7 +310,7 @@ def execute(args: argparse.Namespace) -> int:
         command.append("--profile")
     candidate = output(command, requests)
     report = compare(requests, reference, candidate, canonical=args.profile)
-    report["candidate"] = "bounded-profile-prototype" if args.profile else "upstream-library"
+    report["candidate"] = "owned-rust-core-libraries-and-stores" if args.profile else "upstream-library"
     vectors = json.loads((ROOT / "contracts" / "conformance" / "canonicalization-vectors-v1.json")
                          .read_text(encoding="utf-8"))["vectors"]
     canonical_requests = [{"id": vector["name"], "canonicalJson": vector["input"]} for vector in vectors]
@@ -312,6 +324,38 @@ def execute(args: argparse.Namespace) -> int:
     report["domainValidation"] = compare(
         validation_requests, output(oracle, validation_requests), output(command, validation_requests))
     if args.profile:
+        decisions = decision_cases.cases()
+        report["contractStore"] = store_cases.verify(oracle, command)
+        report["executableStore"] = executable_store_cases.verify(oracle, command)
+        decision_reference = output(oracle, decisions)
+        decision_cases.validate_reference(decision_reference)
+        decision_candidate = output(command, decisions)
+        report["decisionRuntime"] = compare(decisions, decision_reference, decision_candidate)
+        for name, emitted in [
+            ("dotnetExecutable", decision_reference), ("rustExecutable", decision_candidate),
+        ]:
+            restarted = decision_cases.restart_cases(decisions, emitted)
+            if not restarted:
+                raise RuntimeError("The decision corpus did not produce restartable decisions.")
+            for consumer, program in [("Dotnet", oracle), ("Rust", command)]:
+                report[name + consumer + "Restart"] = compare(
+                    restarted, decision_reference, output(program, restarted))
+        corrupted = decision_cases.corruption_cases(
+            decision_cases.restart_cases(decisions, decision_reference))
+        rejected = output(oracle, corrupted)
+        if any(response.get("value", {}).get("outcome") != "materialize-invalid"
+               for response in rejected.values()):
+            raise RuntimeError("The reference accepted a corrupted executable artifact.")
+        report["executableCorruption"] = compare(corrupted, rejected, output(command, corrupted))
+        for name, extra in [
+            ("compilerAdapters", expression_cases.compiler_cases(ROOT)),
+            ("jsonFaults", json_fault_cases.cases(ROOT)),
+            ("syntaxCanonicalization", expression_cases.syntax_cases()),
+            ("cancellation", expression_cases.cancellation_cases()),
+        ]:
+            report[name] = compare(extra, output(oracle, extra), output(command, extra),
+                                   error_messages=name == "syntaxCanonicalization",
+                                   fault_types=name == "jsonFaults")
         restart = restart_cases(requests, reference)
         reloaded = output(oracle, restart)
         report["dotnetRestart"] = compare(restart, reference, reloaded, canonical=True)
@@ -341,7 +385,12 @@ def execute(args: argparse.Namespace) -> int:
         checks.update((name, report[name]) for name in
                       ("dotnetRestart", "rustRestart", "rustCompiledDotnetRestart",
                        "rustCompiledRustRestart", "corruptionRejection",
-                       "dotnetCheckedByteBounds", "rustCheckedByteBounds"))
+                       "dotnetCheckedByteBounds", "rustCheckedByteBounds",
+                       "compilerAdapters", "jsonFaults", "syntaxCanonicalization", "cancellation"))
+        checks.update((name, report[name]) for name in (
+            "contractStore", "executableStore",
+            "decisionRuntime", "dotnetExecutableDotnetRestart", "dotnetExecutableRustRestart",
+            "rustExecutableDotnetRestart", "rustExecutableRustRestart", "executableCorruption"))
     for name, check in checks.items():
         print(f"{name}: {check['matched']}/{check['cases']} cases match")
     print(f"report: {args.report}")
@@ -356,7 +405,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return execute(args)
-    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, RuntimeError, sqlite3.Error, subprocess.CalledProcessError) as error:
         print(f"Parity probe failed: {error}", file=sys.stderr)
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps({

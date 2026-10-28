@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\modules\expression\src\Flaggo.Expressions\Flaggo.Expressions.csproj" />
+    <ProjectReference Include="..\..\..\apps\decision-service\src\Flaggo.DecisionService\Flaggo.DecisionService.csproj" />
   </ItemGroup>
 </Project>

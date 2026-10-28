@@ -19,6 +19,21 @@ def cases(root: Path) -> list[dict]:
         "01-validate-valid.json"
     ).read_text(encoding="utf-8"))["request"]["body"]
     add("fixture", "contract", fixture, "digest")
+    for index, evaluation in enumerate([
+        {"source": "default"}, {"source": "rule", "rule": "r"},
+        {"rule": "r", "source": "rule"}, {"source": "rule", "rule": " "},
+        {"source": "rule", "rule": ""}, {"source": "rule"},
+        {"source": "rule", "rule": None}, {"source": "rule", "rule": 1},
+        {"source": "rule", "rule": "r", "extra": 1},
+        {"source": "default", "rule": "r"}, {"source": "default", "extra": 1},
+        {"source": "unknown"}, {"source": None}, {"source": 1},
+        {}, [], None,
+    ]):
+        add("decision-provenance-" + str(index), "runtimeDecision", {
+            "contractDigest": "sha256:" + "a" * 64,
+            "executableDigest": "sha256:" + "b" * 64,
+            "result": 7, "evaluation": evaluation,
+        })
     changed = copy.deepcopy(fixture)
     changed["attributes"].reverse()
     changed["learning"]["evidence"].reverse()

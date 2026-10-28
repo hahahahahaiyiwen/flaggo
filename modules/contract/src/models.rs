@@ -3,6 +3,21 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
+fn optional_double<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f64>, D::Error> {
+    Option::<crate::JsonNumber>::deserialize(deserializer)
+        .map(|value| value.and_then(|value| value.as_f64()))
+}
+
+fn serialize_optional_double<S: serde::Serializer>(
+    value: &Option<f64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if value.is_some_and(|value| !value.is_finite()) {
+        return Err(serde::ser::Error::custom("non-finite typed JSON number"));
+    }
+    value.serialize(serializer)
+}
+
 fn present_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
     String::deserialize(deserializer).map(Some)
 }
@@ -75,15 +90,40 @@ pub struct ContractResult {
 pub struct ValueSchema {
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "optional_double",
+        serialize_with = "serialize_optional_double",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub minimum: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "optional_double",
+        serialize_with = "serialize_optional_double",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub maximum: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "optional_double",
+        serialize_with = "serialize_optional_double",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub exclusive_minimum: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "optional_double",
+        serialize_with = "serialize_optional_double",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub exclusive_maximum: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "optional_double",
+        serialize_with = "serialize_optional_double",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub multiple_of: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_length: Option<i32>,
@@ -190,6 +230,13 @@ impl<'de> Deserialize<'de> for EvidenceSource {
                 formatter.write_str("an evidence source with kind as its first member")
             }
 
+            fn visit_newtype_struct<D: Deserializer<'de>>(
+                self,
+                deserializer: D,
+            ) -> Result<Self::Value, D::Error> {
+                deserializer.deserialize_map(self)
+            }
+
             fn visit_map<A: serde::de::MapAccess<'de>>(
                 self,
                 mut map: A,
@@ -206,7 +253,7 @@ impl<'de> Deserialize<'de> for EvidenceSource {
                 .map(EvidenceSource)
             }
         }
-        deserializer.deserialize_map(SourceVisitor)
+        deserializer.deserialize_newtype_struct("EvidenceSource", SourceVisitor)
     }
 }
 
@@ -348,6 +395,44 @@ pub struct RuntimeInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CurrentExposure {
     pub exposure_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeDecision {
+    pub contract_digest: String,
+    pub executable_digest: String,
+    pub result: Value,
+    pub evaluation: EvaluationProvenance,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "source", rename_all = "camelCase", deny_unknown_fields)]
+pub enum EvaluationProvenance {
+    Rule {
+        #[serde(deserialize_with = "evaluation_rule")]
+        rule: String,
+    },
+    Default {},
+}
+
+impl EvaluationProvenance {
+    pub fn source(&self) -> &'static str {
+        match self {
+            Self::Rule { .. } => "rule",
+            Self::Default {} => "default",
+        }
+    }
+}
+
+fn evaluation_rule<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let rule = String::deserialize(deserializer)?;
+    if rule.is_empty() {
+        return Err(serde::de::Error::custom(
+            "Evaluation rule must not be empty.",
+        ));
+    }
+    Ok(rule)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

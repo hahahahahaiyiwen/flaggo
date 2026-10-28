@@ -833,7 +833,7 @@ fn validate_expression(
     }
 }
 
-fn boolean_schema() -> ValueSchema {
+pub fn boolean_schema() -> ValueSchema {
     ValueSchema {
         kind: "boolean".into(),
         minimum: None,

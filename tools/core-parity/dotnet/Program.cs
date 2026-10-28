@@ -11,6 +11,20 @@ while (Console.ReadLine() is { } line)
     using var request = JsonDocument.Parse(line);
     var value = request.RootElement;
     var id = value.GetProperty("id").GetString();
+    if (value.TryGetProperty("storeAction", out _))
+    {
+        Console.WriteLine(JsonSerializer.Serialize(
+            value.GetProperty("storeAction").GetString() == "executable"
+                ? await ExecutableStoreProbe.EvaluateAsync(value, compiler)
+                : await StoreProbe.EvaluateAsync(value, compiler), StrictJson.Options));
+        continue;
+    }
+    if (value.TryGetProperty("decisionAction", out _))
+    {
+        Console.WriteLine(JsonSerializer.Serialize(
+            await DecisionProbe.EvaluateAsync(value, compiler), StrictJson.Options));
+        continue;
+    }
     if (value.TryGetProperty("domainModel", out var domainModel))
     {
         try
@@ -21,16 +35,27 @@ while (Console.ReadLine() is { } line)
                 "contract" => StrictJson.Deserialize<DecisionContract>(bytes),
                 "executable" => StrictJson.Deserialize<DecisionExecutable>(bytes),
                 "runtimeInput" => StrictJson.Deserialize<RuntimeInput>(bytes),
+                "runtimeDecision" => StrictJson.Deserialize<RuntimeDecision>(bytes),
                 "schema" => StrictJson.Deserialize<ValueSchema>(bytes),
                 "json" => StrictJson.Deserialize<JsonElement>(bytes),
                 _ => throw new InvalidOperationException("Unknown domain model.")
             };
             var action = value.GetProperty("domainAction").GetString();
+            if (action == "rawRoundtrip")
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new {
+                    id, status = "value",
+                    value = JsonSerializer.Serialize(model, model.GetType(), StrictJson.Options)
+                }));
+                continue;
+            }
+            var expressionCompiler = value.TryGetProperty("withExpressions", out var withExpressions)
+                && withExpressions.GetBoolean() ? compiler : null;
             if (action is "validate" or "validateValue")
             {
                 object validation = model switch
                 {
-                    DecisionContract contract => ContractValidator.Validate(contract),
+                    DecisionContract contract => ContractValidator.Validate(contract, expressionCompiler),
                     ValueSchema schema when action == "validateValue" =>
                         ValidateValue(schema, value.GetProperty("validationValue").GetString()!),
                     ValueSchema schema => ValidateSchema(schema),
@@ -39,7 +64,8 @@ while (Console.ReadLine() is { } line)
                             value.GetProperty("validationContract").GetString()!)), input),
                     DecisionExecutable executable => ContractValidator.ValidateExecutable(
                         StrictJson.Deserialize<DecisionContract>(Encoding.UTF8.GetBytes(
-                            value.GetProperty("validationContract").GetString()!)), executable),
+                            value.GetProperty("validationContract").GetString()!)), executable,
+                            expressionCompiler),
                     _ => throw new InvalidOperationException("Model cannot be validated.")
                 };
                 Console.WriteLine(JsonSerializer.Serialize(new
@@ -49,11 +75,17 @@ while (Console.ReadLine() is { } line)
                 }));
                 continue;
             }
+            if (action == "canonicalize")
+            {
+                model = ContractDigests.CanonicalizeExpressions(
+                    (DecisionContract)model,
+                    expressionCompiler ?? throw new InvalidOperationException("Missing compiler."));
+            }
             string? digest = action == "digest"
                 ? model switch
                 {
-                    DecisionContract contract => ContractDigests.ComputeContractDigest(contract),
-                    DecisionExecutable executable => ContractDigests.ComputeExecutableDigest(executable),
+                    DecisionContract contract => ContractDigests.ComputeContractDigest(contract, expressionCompiler),
+                    DecisionExecutable executable => ContractDigests.ComputeExecutableDigest(executable, expressionCompiler),
                     _ => throw new InvalidOperationException("Model does not have a digest.")
                 }
                 : null;
@@ -72,6 +104,13 @@ while (Console.ReadLine() is { } line)
             Console.WriteLine(JsonSerializer.Serialize(new
             {
                 id, status = "json-error", message = error.Message
+            }));
+        }
+        catch (ExpressionCompilationException error)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                id, status = "compile-error", message = error.Message
             }));
         }
         catch (Exception error) when (error is InvalidOperationException or NotSupportedException
@@ -104,6 +143,24 @@ while (Console.ReadLine() is { } line)
             var issues = new List<ValidationIssue>();
             ContractValidator.ValidateRuntimeInput(contract, input, issues);
             return issues;
+        }
+        continue;
+    }
+    if (value.TryGetProperty("syntaxExpression", out var syntaxExpression))
+    {
+        try
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                id, status = "value", value = compiler.Canonicalize(syntaxExpression.GetString()!)
+            }));
+        }
+        catch (ExpressionCompilationException error)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                id, status = "compile-error", message = error.Message
+            }));
         }
         continue;
     }
@@ -160,7 +217,9 @@ while (Console.ReadLine() is { } line)
         property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal);
     try
     {
-        var result = compiled.Evaluate(attributes);
+        var cancellation = value.TryGetProperty("cancelled", out var cancelled)
+            && cancelled.GetBoolean() ? new CancellationToken(true) : default;
+        var result = compiled.Evaluate(attributes, cancellation);
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             id, status = "value", value = result, canonical = compiled.CanonicalExpression,
@@ -168,6 +227,14 @@ while (Console.ReadLine() is { } line)
         }));
     }
     catch (ExpressionEvaluationException error)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            id, status = "evaluation-error", message = error.Message,
+            @checked = JsonSerializer.SerializeToElement(compiled.CheckedExpression, StrictJson.Options)
+        }));
+    }
+    catch (OperationCanceledException error)
     {
         Console.WriteLine(JsonSerializer.Serialize(new
         {

@@ -25,8 +25,19 @@ Install and run:
 
 ```powershell
 python -m pip install -r contracts\conformance\requirements.txt
+python -m unittest discover -s contracts\conformance -p "test_*.py"
 python contracts\conformance\validate.py
 ```
+
+Canonicalization vectors default to `numberModel: "native"`, retaining the
+strict JSON loader's numeric types and the Python canonicalizer's safe-integer
+checks. The `ieee754-number-boundaries` vector explicitly selects
+`numberModel: "binary64"`:
+only that vector's input is interpreted as IEEE-754 binary64 before exact
+expected-byte comparison. Its original integer tokens remain in the shared
+file for the Rust/.NET parity probes. This opt-in does not change fixture
+parsing, contract identity calculation, or the global canonicalization helper.
+Unknown number models and non-finite values are rejected.
 
 `fixture-manifest-v1.json` is the stable case index. Implementations may
 generate language-specific models from the OpenAPI documents and schemas, but

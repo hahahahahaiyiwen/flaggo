@@ -262,7 +262,9 @@ fn value_at_depth(
                 if schema.unique_items == Some(true) {
                     let mut unique = HashSet::new();
                     for item in items {
-                        if !unique.insert(serde_jcs::to_string(item)?) {
+                        if !unique
+                            .insert(serde_jcs::to_string(&crate::strict_json::to_value(item)?)?)
+                        {
                             error(
                                 issues,
                                 "array-items-not-unique",

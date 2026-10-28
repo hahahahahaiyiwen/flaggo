@@ -58,7 +58,7 @@ impl From<CheckedExpr> for OrderedCheckedExpr {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CheckedExpression {
     pub canonical_expression: String,
@@ -67,31 +67,33 @@ pub struct CheckedExpression {
     pub checked_ast_digest: String,
 }
 
+pub(crate) fn schema_type(value: &flaggo_contract::ValueSchema) -> cel_core::CelType {
+    use cel_core::CelType;
+    match value.kind.as_str() {
+        "null" => CelType::Null,
+        "boolean" => CelType::Bool,
+        "integer" => CelType::Int,
+        "number" => CelType::Double,
+        "string" => CelType::String,
+        "array" => CelType::list(value.items.as_deref().map_or(CelType::Dyn, schema_type)),
+        "object" => CelType::map(CelType::String, CelType::Dyn),
+        _ => CelType::Dyn,
+    }
+}
+
 pub fn compile(
     expression: &IdedExpr,
     source: &str,
-    schemas: &serde_json::Value,
+    schemas: &indexmap::IndexMap<String, flaggo_contract::ValueSchema>,
     canonical: String,
 ) -> Result<CheckedExpression, String> {
     use cel_core::{CelType, Env};
     use cel_core_proto::AstToProto;
-    fn schema(value: &serde_json::Value) -> CelType {
-        match value["type"].as_str() {
-            Some("null") => CelType::Null,
-            Some("boolean") => CelType::Bool,
-            Some("integer") => CelType::Int,
-            Some("number") => CelType::Double,
-            Some("string") => CelType::String,
-            Some("array") => CelType::list(schema(&value["items"])),
-            Some("object") => CelType::map(CelType::String, CelType::Dyn),
-            _ => CelType::Dyn,
-        }
-    }
     // A dynamic root declaration shadows the qualified schema declarations in cel-core.
     let mut environment =
         Env::with_standard_library().with_variable("attributes._random", CelType::Double);
-    for (name, value) in schemas.as_object().ok_or("schemas must be an object")? {
-        environment.add_variable(format!("attributes.{name}"), schema(value));
+    for (name, value) in schemas {
+        environment.add_variable(format!("attributes.{name}"), schema_type(value));
     }
     let parsed = cel_core_proto::ParsedExpr {
         expr: Some(to_proto(expression)?),
@@ -137,7 +139,7 @@ pub fn compile(
         &mut references,
     )?;
     let bytes = OrderedCheckedExpr::from(checked).encode_to_vec();
-    if bytes.is_empty() || bytes.len() > 65_536 {
+    if bytes.is_empty() || bytes.len() > crate::MAXIMUM_CHECKED_EXPRESSION_BYTES {
         return Err("compiled checked expression exceeds byte limits".to_owned());
     }
     Ok(CheckedExpression {
@@ -189,13 +191,13 @@ fn to_proto(node: &IdedExpr) -> Result<cel_core_proto::Expr, String> {
 }
 
 pub fn decode(stored: &CheckedExpression) -> Result<(IdedExpr, HashMap<i64, Type>), String> {
-    if stored.checked_ast.len() > 87_384 {
+    if stored.checked_ast.len() > crate::MAXIMUM_CHECKED_EXPRESSION_BYTES.div_ceil(3) * 4 {
         return Err("checked expression exceeds the encoded size limit".to_owned());
     }
     let bytes = STANDARD
         .decode(&stored.checked_ast)
         .map_err(|error| error.to_string())?;
-    if bytes.is_empty() || bytes.len() > 65_536 {
+    if bytes.is_empty() || bytes.len() > crate::MAXIMUM_CHECKED_EXPRESSION_BYTES {
         return Err("checked expression exceeds the byte limits".to_owned());
     }
     if format!("sha256:{:x}", Sha256::digest(&bytes)) != stored.checked_ast_digest {
@@ -240,7 +242,7 @@ fn convert(
     references: &mut BTreeSet<String>,
 ) -> Result<IdedExpr, String> {
     *nodes += 1;
-    if depth > 32 || *nodes > 256 {
+    if depth > crate::MAXIMUM_AST_DEPTH || *nodes > crate::MAXIMUM_AST_NODES {
         return Err("checked expression exceeds AST limits".to_owned());
     }
     let expr = match node.expr_kind.as_ref() {
@@ -305,7 +307,8 @@ mod tests {
 
     fn compiled(source: &str, schemas: &serde_json::Value) -> super::CheckedExpression {
         let ast = cel::parser::PrattParser::default().parse(source).unwrap();
-        compile(&ast, source, schemas, source.to_owned()).unwrap()
+        let schemas = serde_json::from_value(schemas.clone()).unwrap();
+        compile(&ast, source, &schemas, source.to_owned()).unwrap()
     }
 
     #[test]
