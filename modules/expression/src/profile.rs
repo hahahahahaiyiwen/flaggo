@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Kind {
+    Dyn,
     Null,
     Bool,
     Int,
@@ -168,8 +169,38 @@ impl Checker<'_> {
             .map(|argument| argument.kind)
             .collect::<Vec<_>>();
         let numeric = |kind| matches!(kind, Kind::Int | Kind::Double);
+        let inferred = if stored_kind.is_none()
+            && (kinds.contains(&Kind::Dyn)
+                || (kinds == [Kind::Null, Kind::Null]
+                    && matches!(name, "_+_" | "_-_" | "_<_" | "_<=_" | "_>_" | "_>=_")))
+        {
+            Some(
+                super::checked::nullable_call_type(
+                    node,
+                    &args
+                        .iter()
+                        .map(|arg| arg.cel_type.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|_| self.overload_error(node, name, args))?,
+            )
+        } else {
+            None
+        };
         let kind = if let Some(kind) = stored_kind {
             kind
+        } else if let Some(kind) = &inferred {
+            match kind {
+                cel_core::CelType::Dyn => Kind::Dyn,
+                cel_core::CelType::Null => Kind::Null,
+                cel_core::CelType::Bool => Kind::Bool,
+                cel_core::CelType::Int => Kind::Int,
+                cel_core::CelType::Double => Kind::Double,
+                cel_core::CelType::String => Kind::String,
+                cel_core::CelType::List(_) => Kind::List,
+                cel_core::CelType::Map(_, _) => Kind::Map,
+                _ => return Err(self.overload_error(node, name, args)),
+            }
         } else {
             match (name, kinds.as_slice()) {
                 ("!_", [Kind::Bool]) => Kind::Bool,
@@ -217,7 +248,7 @@ impl Checker<'_> {
         };
         Ok(Checked {
             kind,
-            cel_type: match kind {
+            cel_type: inferred.unwrap_or_else(|| match kind {
                 Kind::List | Kind::Map => {
                     let operands = if name == "_?_:_" { &args[1..] } else { args };
                     operands
@@ -227,12 +258,13 @@ impl Checker<'_> {
                             join_types(&left, &right.cel_type)
                         })
                 }
+                Kind::Dyn => cel_core::CelType::Dyn,
                 Kind::Null => cel_core::CelType::Null,
                 Kind::Bool => cel_core::CelType::Bool,
                 Kind::Int => cel_core::CelType::Int,
                 Kind::Double => cel_core::CelType::Double,
                 Kind::String => cel_core::CelType::String,
-            },
+            }),
             cost: args
                 .iter()
                 .map(|argument| argument.cost)
@@ -291,6 +323,7 @@ fn join_types(left: &cel_core::CelType, right: &cel_core::CelType) -> cel_core::
 fn type_name(kind: &cel_core::CelType) -> String {
     use cel_core::CelType;
     match kind {
+        CelType::Null => "null_type".to_owned(),
         CelType::List(item) => format!("list({})", type_name(item)),
         CelType::Map(key, value) => format!("map({}, {})", type_name(key), type_name(value)),
         _ => kind.to_string(),

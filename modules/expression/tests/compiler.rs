@@ -19,6 +19,58 @@ fn attributes() -> IndexMap<String, ValueSchema> {
 }
 
 #[test]
+fn guarded_nullable_overloads_compile_materialize_and_keep_root_types_strict() {
+    let compiler = ExpressionCompiler::default();
+    for (source, expected) in [
+        ("false && null < null", false),
+        ("true || null < null", true),
+        ("false && (null + null == null + null)", false),
+        ("false && (int(null + null) == 0)", false),
+        ("false && bool(null - null)", false),
+        ("false && (size(null + null) == 0)", false),
+        ("false && bool((null + null) * (null - null))", false),
+    ] {
+        let compiled = compiler
+            .compile(
+                source,
+                &IndexMap::new(),
+                &schema("boolean"),
+                ExpressionPurpose::Predicate,
+            )
+            .unwrap_or_else(|error| panic!("{source}: {error}"));
+        let restarted = compiler
+            .materialize(
+                compiled.checked(),
+                &IndexMap::new(),
+                &schema("boolean"),
+                ExpressionPurpose::Predicate,
+            )
+            .unwrap();
+        for expression in [compiled, restarted] {
+            assert_eq!(
+                expression.evaluate(&IndexMap::new(), None).unwrap(),
+                JsonValue::Bool(expected)
+            );
+        }
+    }
+    for kind in [
+        "null", "boolean", "integer", "number", "string", "array", "object",
+    ] {
+        assert!(
+            compiler
+                .compile(
+                    "null + null",
+                    &IndexMap::new(),
+                    &schema(kind),
+                    ExpressionPurpose::Result,
+                )
+                .is_err(),
+            "{kind}"
+        );
+    }
+}
+
+#[test]
 fn conditional_overloads_unify_nested_container_parameters() {
     let compiler = ExpressionCompiler::default();
     for (left, right, accepted) in [

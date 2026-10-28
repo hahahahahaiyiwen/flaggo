@@ -285,6 +285,7 @@ def execute(args: argparse.Namespace) -> int:
     cases.extend(parser_stress_cases())
     cases.extend(cost_cases())
     cases.extend(expression_cases.review_cases())
+    cases.extend(expression_cases.nullable_cases())
     if len({case["id"] for case in cases}) != len(cases):
         raise ValueError("Fixture IDs must be unique.")
     requests = [

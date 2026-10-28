@@ -9,6 +9,10 @@ oracle; adding this crate does not switch launchers or authorize cutover.
 `ExpressionCompiler::compile` accepts typed attribute/result schemas and an
 expression purpose. It always checks the Flaggo profile, result type and static
 cost, then emits deterministic checked protobuf and its SHA-256 identity.
+Nullable standard overloads preserve ambiguous intermediate `dyn` types.
+The owned adapter checks calls bottom-up so those types reach parent calls,
+and explicitly persists `dyn` entries omitted by the upstream serializer.
+Dynamic intermediate values do not relax root result schemas or profile bounds.
 `materialize` takes only persisted `CheckedExpression` metadata, not source text;
 it validates the byte/checksum/reference/type/canonical/profile/cost bounds and
 does not parse source or rerun the source type checker. `CompiledExpression`
@@ -56,16 +60,18 @@ and executable validation, expression-normalized identities, syntax-only
 canonicalization and cancellation. It no longer owns a separate profile or
 checked-expression implementation.
 
-The differential corpus includes 371 syntax-only cases and 91 compiler-backed
+The differential corpus includes 373 syntax-only cases and 97 compiler-backed
 validation/identity cases. Syntax failures compare exact diagnostic text, not
 just rejection; contract adapters compare full validation issue arrays.
+Nullable regressions cover guarded and failing operators, nested dynamic calls,
+root-type rejection and both producers in all four restart directions.
 Focused regressions also exercise accepted 249-level nesting, rejected 250-level
 nesting and the 1,000/1,001 syntax AST boundary on a 512 KiB thread stack.
 
 This is library-level parity, not complete production-service parity. The
 crate does not fall back to .NET. `flaggo-decision` now composes the owned
 executable compiler/evaluator through immutable store-reader snapshots. SQLite
-store integration and
-service/API/OTel/full-loop verification (including mapping the contract
+store adapters are covered by cross-runtime persistence/lifecycle gates.
+Service/API/OTel/full-loop verification (including mapping the contract
 module's native JSON fault categories at the HTTP boundary)
 remain migration gates before cutover.

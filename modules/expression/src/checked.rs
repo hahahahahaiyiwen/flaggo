@@ -81,17 +81,129 @@ pub(crate) fn schema_type(value: &flaggo_contract::ValueSchema) -> cel_core::Cel
     }
 }
 
+fn type_environment() -> cel_core::Env {
+    let standard = cel_core::Env::with_standard_library();
+    let mut environment = cel_core::Env::new();
+    for mut declaration in standard.functions().values().cloned() {
+        declaration
+            .overloads
+            .retain(|overload| overload.id != "add_map_map");
+        environment.add_function(declaration);
+    }
+    environment
+}
+
+fn check_node(
+    node: &IdedExpr,
+    environment: &cel_core::Env,
+) -> Result<cel_core::CheckResult, String> {
+    let parsed = cel_core_proto::ParsedExpr {
+        expr: Some(to_proto(node)?),
+        source_info: Some(cel_core_proto::SourceInfo::default()),
+    };
+    let expression =
+        cel_core_proto::from_parsed_expr(&parsed).map_err(|error| error.to_string())?;
+    let result = environment.check(&expression);
+    if !result.is_ok() {
+        return Err(format!("checked compilation failed: {:?}", result.errors));
+    }
+    Ok(result)
+}
+
+fn check_call(
+    node: &IdedExpr,
+    arguments: &[cel_core::CelType],
+    environment: &cel_core::Env,
+) -> Result<cel_core::CheckResult, String> {
+    let mut synthetic = node.clone();
+    let Expr::Call(call) = &mut synthetic.expr else {
+        return Err("expected a call expression".to_owned());
+    };
+    let mut local = environment.clone();
+    for (index, (argument, kind)) in call.args.iter_mut().zip(arguments).enumerate() {
+        let name = format!("__flaggo_arg_{index}");
+        argument.expr = Expr::Ident(name.clone());
+        local.add_variable(name, kind.clone());
+    }
+    let name = call.func_name.clone();
+    let mut result = check_node(&synthetic, &local)?;
+    let id = i64::try_from(node.id).map_err(|error| error.to_string())?;
+    let reference = result
+        .get_reference(id)
+        .ok_or("checked call is missing its reference")?;
+    let declaration = environment
+        .functions()
+        .get(&name)
+        .ok_or("checked call is missing its declaration")?;
+    let mut types = declaration
+        .overloads
+        .iter()
+        .filter(|overload| reference.overload_ids.contains(&overload.id))
+        .map(|overload| &overload.result);
+    if let Some(first) = types.next()
+        && types.any(|kind| kind != first)
+    {
+        // cel-core keeps the last matching result; CEL uses dyn for ambiguous results.
+        result.type_map.insert(id, cel_core::CelType::Dyn);
+    }
+    result.type_map.retain(|key, _| *key == id);
+    result.reference_map.retain(|key, _| *key == id);
+    Ok(result)
+}
+
+pub(crate) fn nullable_call_type(
+    node: &IdedExpr,
+    arguments: &[cel_core::CelType],
+) -> Result<cel_core::CelType, String> {
+    let result = check_call(node, arguments, &type_environment())?;
+    result
+        .get_type(i64::try_from(node.id).map_err(|error| error.to_string())?)
+        .cloned()
+        .ok_or_else(|| "checked call is missing its type".to_owned())
+}
+
+fn check_nodes(
+    node: &IdedExpr,
+    environment: &cel_core::Env,
+) -> Result<cel_core::CheckResult, String> {
+    let Expr::Call(call) = &node.expr else {
+        return check_node(node, environment);
+    };
+    let children = call
+        .args
+        .iter()
+        .map(|argument| check_nodes(argument, environment))
+        .collect::<Result<Vec<_>, _>>()?;
+    let arguments = call
+        .args
+        .iter()
+        .zip(&children)
+        .map(|(node, result)| {
+            let id = i64::try_from(node.id).map_err(|error| error.to_string())?;
+            result
+                .get_type(id)
+                .cloned()
+                .ok_or_else(|| "checked argument is missing its type".to_owned())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut result = check_call(node, &arguments, environment)?;
+    for child in children {
+        result.type_map.extend(child.type_map);
+        result.reference_map.extend(child.reference_map);
+    }
+    Ok(result)
+}
+
 pub fn compile(
     expression: &IdedExpr,
     source: &str,
     schemas: &indexmap::IndexMap<String, flaggo_contract::ValueSchema>,
     canonical: String,
 ) -> Result<CheckedExpression, String> {
-    use cel_core::{CelType, Env};
+    use cel_core::CelType;
     use cel_core_proto::AstToProto;
     // A dynamic root declaration shadows the qualified schema declarations in cel-core.
-    let mut environment =
-        Env::with_standard_library().with_variable("attributes._random", CelType::Double);
+    let mut environment = type_environment().with_variable("attributes._random", CelType::Double);
     for (name, value) in schemas {
         environment.add_variable(format!("attributes.{name}"), schema_type(value));
     }
@@ -99,17 +211,25 @@ pub fn compile(
         expr: Some(to_proto(expression)?),
         source_info: Some(cel_core_proto::SourceInfo::default()),
     };
-    let expression =
+    let core_expression =
         cel_core_proto::from_parsed_expr(&parsed).map_err(|error| error.to_string())?;
-    let type_info = environment.check(&expression);
-    if !type_info.is_ok() {
-        return Err(format!(
-            "checked compilation failed: {:?}",
-            type_info.errors
-        ));
-    }
-    let ast = cel_core::Ast::new_checked(expression, source, type_info);
+    let type_info = check_nodes(expression, &environment)?;
+    let dynamic_ids = type_info
+        .type_map
+        .iter()
+        .filter_map(|(id, kind)| matches!(kind, CelType::Dyn).then_some(*id))
+        .collect::<Vec<_>>();
+    let ast = cel_core::Ast::new_checked(core_expression, source, type_info);
     let mut checked = ast.to_checked_expr().map_err(|error| error.to_string())?;
+    // The upstream serializer omits dyn entries; persisted CEL needs explicit metadata.
+    for id in dynamic_ids {
+        checked.type_map.insert(
+            id,
+            Type {
+                type_kind: Some(r#type::TypeKind::Dyn(())),
+            },
+        );
+    }
     fn normalize(node: &mut cel_core_proto::Expr) {
         if let Some(expr::ExprKind::CallExpr(call)) = &mut node.expr_kind {
             // cel-core-proto emits subtraction's name for unary negation; CEL uses "-_".
@@ -165,9 +285,7 @@ fn to_proto(node: &IdedExpr) -> Result<cel_core_proto::Expr, String> {
                 _ => return Err("unsupported literal for checked compilation".to_owned()),
             }),
         }),
-        Expr::Ident(name) if name == "attributes" => {
-            ExprKind::IdentExpr(expr::Ident { name: name.clone() })
-        }
+        Expr::Ident(name) => ExprKind::IdentExpr(expr::Ident { name: name.clone() }),
         Expr::Select(select) if !select.test => ExprKind::SelectExpr(Box::new(expr::Select {
             operand: Some(Box::new(to_proto(&select.operand)?)),
             field: select.field.clone(),
@@ -224,6 +342,7 @@ pub fn decode(stored: &CheckedExpression) -> Result<(IdedExpr, HashMap<i64, Type
 pub fn primitive(kind: &Type) -> Result<super::profile::Kind, String> {
     use super::profile::Kind;
     match kind.type_kind.as_ref() {
+        Some(r#type::TypeKind::Dyn(_)) => Ok(Kind::Dyn),
         Some(r#type::TypeKind::Null(_)) => Ok(Kind::Null),
         Some(r#type::TypeKind::Primitive(1)) => Ok(Kind::Bool),
         Some(r#type::TypeKind::Primitive(2)) => Ok(Kind::Int),

@@ -2,6 +2,7 @@
 
 import copy
 import json
+import expression_cases
 
 
 def contract():
@@ -88,6 +89,9 @@ def cases():
         cases.append(request("conditional-container-" + str(index), [
             rule(result={"expression": "attributes.choose ? attributes.a : attributes.b"}),
         ], model=model, attributes={"choose": False, "a": [], "b": []}))
+    for case in expression_cases.nullable_cases():
+        if case["resultType"] == "boolean":
+            cases.append(request(case["id"], [rule(predicate=case["expression"])]))
     for name, value in [
         ("missing", None), ("null", None), ("string", "0.5"), ("boolean", True),
         ("negative", -0.1), ("one", 1), ("above-one", 2), ("zero", 0),

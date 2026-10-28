@@ -33,6 +33,36 @@ def review_cases() -> list[dict]:
     return requests
 
 
+def nullable_cases() -> list[dict]:
+    sources = ["false && null < null", "true || null < null"]
+    for op in ("+", "-", "*", "/", "%", "<", "<=", ">", ">=", "==", "!="):
+        term = f"((null {op} null) == (null {op} null))"
+        sources.extend((f"false && {term}", f"true || {term}"))
+    for op in ("+", "-"):
+        term = f"(null {op} null)"
+        for expression in [
+            f"{term} == null", f"int({term}) == 0", f"bool({term})",
+            f"size({term}) == 0", f"{term} + 1 == 0", f"{term} - {term} == null",
+            f"{term} < {term}", f"{term} == true", f"true ? false : {term} == null",
+            f"!{term}", f"-{term} == null", f"{term} * {term} == null",
+            f"{term} / {term} == null", f"{term} % {term} == null",
+            f"bool({term} * {term})", f"true ? {term} : false",
+            f"false ? {term} : 1 > 0", f"{term} && false",
+            f"{term} + attributes.object == null",
+        ]:
+            sources.append(f"false && ({expression})")
+    sources.extend(f"null {op} null" for op in ("<", "<=", ">", ">="))
+    cases = [{
+        "id": f"nullable-{index}", "expression": source,
+        "resultType": "boolean", "compileOnly": False,
+    } for index, source in enumerate(sources)]
+    cases.extend({
+        "id": "nullable-root-" + kind, "expression": "null + null",
+        "resultType": kind, "compileOnly": True,
+    } for kind in ("null", "boolean", "integer", "number", "string", "array", "object"))
+    return cases
+
+
 def lexical_cases() -> list[str]:
     return [
         "true & false", "true | false", "a = b", "a @ b", "not valid { @",
