@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
+import { createDecisionClient } from "../../packages/sdk-typescript/dist/runtime/index.js";
 
 import {
   createHostLifecycle,
@@ -18,18 +19,15 @@ import {
 import { deployTetrisContract } from "./deploy-contract.mjs";
 import { startLocalFlaggoHosts } from "./local-flaggo.mjs";
 import { analysisInferenceEnvironment } from "./analysis-inference.mjs";
+import { parseIntegrationArguments } from "./integration-options.mjs";
+import { createCandidateObserver } from "./analysis-acceptance.mjs";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 const repositoryRoot = resolve(exampleDirectory, "../..");
 const execFileAsync = promisify(execFile);
-const supportedArguments = new Set(["--analysis"]);
-for (const argument of process.argv.slice(2)) {
-  if (!supportedArguments.has(argument)) {
-    throw new Error(`Unsupported Tetris integration argument '${argument}'.`);
-  }
-}
-const analysisEnabled = process.argv.includes("--analysis");
+const { analysisMode } = parseIntegrationArguments(process.argv.slice(2));
+const analysisEnabled = analysisMode !== undefined;
 const runDirectory = resolve(
   repositoryRoot,
   ".flaggo",
@@ -42,6 +40,7 @@ async function runIntegration(lifecycle) {
     repositoryRoot,
     exampleDirectory,
     runDirectory,
+    analysisMode,
   });
   const initialInbox = await readRawOtlpInboxHealth(hosts);
   assert.equal(initialInbox.retainedBatchCount, 0);
@@ -321,6 +320,7 @@ async function runIntegration(lifecycle) {
       contractName: deployed.contract.name,
       hosts,
       lifecycle,
+      runtimeConfig: deployed.runtimeConfig,
     })
     : undefined;
 
@@ -351,6 +351,7 @@ async function runIntegration(lifecycle) {
     repositoryRoot,
     exampleDirectory,
     runDirectory,
+    analysisMode,
   });
   const reopenedInbox = await readRawOtlpInboxHealth(restartedHosts);
   assert.equal(
@@ -408,9 +409,39 @@ async function runIntegration(lifecycle) {
     signal: lifecycle.signal,
   });
   assertEquivalentDecision(restartedDecision, analysis?.decisionAfterActivation ?? slowDecision.response);
+  const restartedSdkDecision = await decideWithSdk({
+    runtimeConfig: {
+      ...deployed.runtimeConfig,
+      services: {
+        ...deployed.runtimeConfig.services,
+        contractServiceUrl: restartedHosts.contractUrl,
+        decisionServiceUrl: restartedHosts.decisionUrl,
+        otlpIngestionUrl: restartedHosts.otelIngestionUrl,
+      },
+    },
+    fetch: restartedHosts.fetch,
+    contractName: deployed.contract.name,
+    attributes: slowDecision.request.attributes,
+  });
+  assertEquivalentDecision(restartedSdkDecision, restartedDecision);
+  const reopenedExecutable = await readActiveExecutable({
+    hosts: restartedHosts,
+    contractName: deployed.contract.name,
+    contractDigest: deployed.deployment.contractDigest,
+  });
+  assert.equal(reopenedExecutable.executableDigest, restartedDecision.executableDigest);
+  assert.equal(reopenedExecutable.lifecycleState, "active");
+  if (analysis !== undefined) {
+    assert.deepEqual(reopenedExecutable.provenance, analysis.provenance);
+    assert.equal(reopenedExecutable.stateVersion, analysis.stateVersion);
+    assert.equal(reopenedExecutable.createdAt, analysis.createdAt);
+    assert.equal(reopenedExecutable.activatedAt, analysis.activatedAt);
+  }
 
   process.stdout.write(`${JSON.stringify({
     status: "passed",
+    coreImplementation: "rust",
+    analysisMode: analysisMode ?? "disabled",
     contractDigest: deployed.deployment.contractDigest,
     executableDigest: deployed.deployment.activeExecutableDigest,
     headlessSessions: episodes,
@@ -437,6 +468,8 @@ async function runIntegration(lifecycle) {
     restartPersistence: {
       result: restartedDecision.result,
       executableDigest: restartedDecision.executableDigest,
+      sdkParity: true,
+      ...(analysis === undefined ? {} : { activationMetadataPreserved: true }),
     },
     retiredRuntimeFields: "absent",
   }, null, 2)}\n`);
@@ -449,32 +482,17 @@ async function runAsyncAnalysisActivationCheck({
   contractName,
   hosts,
   lifecycle,
+  runtimeConfig,
 }) {
-  let githubToken = (process.env.FLAGGO_ANALYSIS_INFERENCE ?? "github") === "github"
+  let githubToken = analysisMode === "copilot"
+    && (process.env.FLAGGO_ANALYSIS_INFERENCE ?? "github") === "github"
     ? await currentGitHubToken(lifecycle.signal) : undefined;
   const { host } = await hosts.startAsyncAnalysis({ githubToken });
   githubToken = undefined;
 
+  const observer = createCandidateObserver({ allowDraftHandoff: analysisMode === "deterministic" });
   const entry = await host.waitForStructuredLog(
-    (candidate) => {
-      if (
-        candidate["event.name"] === "flaggo.analysis.cycle.failed"
-        || candidate["event.name"] === "flaggo.service.failed"
-      ) {
-        throw new Error(
-          `Async Analysis failed: ${JSON.stringify(candidate)}`,
-        );
-      }
-      if (candidate["event.name"] !== "flaggo.analysis.cycle.completed") {
-        return false;
-      }
-      const outcome = candidate["flaggo.operation.outcome"];
-      if (outcome === "not_eligible" || outcome === "busy") return false;
-      if (outcome === "candidate") return true;
-      throw new Error(
-        `Async Analysis did not produce a Candidate: ${JSON.stringify(candidate)}`,
-      );
-    },
+    observer.predicate,
     {
       signal: lifecycle.signal,
       timeoutMilliseconds: 420000,
@@ -504,6 +522,53 @@ async function runAsyncAnalysisActivationCheck({
     await delay(250, undefined, { signal: lifecycle.signal });
   }
   assert.ok(decisionAfterActivation, "The admitted adaptive Candidate must actually activate.");
+  const sdkDecision = await decideWithSdk({
+    runtimeConfig,
+    fetch: hosts.fetch,
+    contractName,
+    attributes,
+  });
+  assertEquivalentDecision(sdkDecision, decisionAfterActivation);
+  const activated = await readActiveExecutable({
+    hosts, contractName, contractDigest,
+  });
+  assert.equal(activated.executableDigest, candidateExecutableDigest);
+  assert.equal(activated.lifecycleState, "active");
+  assert.equal(activated.provenance.source, "async-analysis");
+  assert.equal(activated.provenance.cycleId, entry["flaggo.analysis.cycle.id"]);
+  assert.equal(activated.provenance.attemptId, entry["flaggo.analysis.attempt.id"]);
+  assert.match(activated.provenance.workspaceId, /^sha256:[0-9a-f]{64}$/u);
+  assert.match(activated.provenance.analysisManifestDigest, /^sha256:[0-9a-f]{64}$/u);
+  if (analysisMode === "deterministic") {
+    assert.equal(activated.stateVersion, 3);
+    assert.equal(decisionAfterActivation.result, 200);
+    assert.deepEqual(decisionAfterActivation.evaluation, {
+      source: "rule", rule: "learned-low-pressure",
+    });
+    assert.equal(observer.handoffs.length, 1, "The fixture must independently review one saved draft.");
+    const checkpoint = observer.handoffs[0];
+    assert.equal(checkpoint["flaggo.analysis.cycle.id"], activated.provenance.cycleId);
+    const draftAttempt = checkpoint["flaggo.analysis.attempt.id"];
+    const reviewAttempt = activated.provenance.attemptId;
+    for (const id of [draftAttempt, reviewAttempt, activated.provenance.cycleId]) {
+      assert.match(id, /^[0-9a-f-]{36}$/u);
+    }
+    assert.notEqual(draftAttempt, reviewAttempt);
+    const cycleDirectory = resolve(hosts.paths.asyncAnalysisWorkspace,
+      activated.provenance.workspaceId.slice("sha256:".length),
+      "cycles", activated.provenance.cycleId);
+    const handoff = JSON.parse(await readFile(
+      resolve(cycleDirectory, "handoffs", `${draftAttempt}.json`), "utf8"));
+    const review = JSON.parse(await readFile(
+      resolve(cycleDirectory, "analysis", "attempts", reviewAttempt, "review.json"), "utf8"));
+    assert.equal(handoff.contractDigest, contractDigest);
+    assert.equal(handoff.cycleId, activated.provenance.cycleId);
+    assert.equal(handoff.attemptId, draftAttempt);
+    assert.equal(handoff.metadata.outcome, "draftReady");
+    assert.equal(review.approved, true);
+    assert.equal(review.proposalPath, handoff.metadata.proposalPath);
+    assert.equal(review.proposalDigest, handoff.metadata.proposalDigest);
+  }
   for (const intervalMs of [200, 800, 1_500]) {
     for (const history of [
       { active_play_ms_5s: 0, pieces_locked_5s: 1 },
@@ -529,6 +594,12 @@ async function runAsyncAnalysisActivationCheck({
     activeExecutableDigest: candidateExecutableDigest,
     candidateExecutableDigest,
     candidateActivated: true,
+    sdkParity: true,
+    provenance: activated.provenance,
+    stateVersion: activated.stateVersion,
+    createdAt: activated.createdAt,
+    activatedAt: activated.activatedAt,
+    reviewedDraftCheckpoints: observer.handoffs.length,
     decisionAfterActivation,
     cycleId: entry["flaggo.analysis.cycle.id"],
     actionDiagnostics,
@@ -1042,6 +1113,25 @@ async function postDecisionRest({
   assert.equal(response.ok, true, JSON.stringify(body));
   assertNoRetiredRuntimeFields(body);
   return body;
+}
+
+async function readActiveExecutable({ hosts, contractName, contractDigest }) {
+  const response = await hosts.fetch(`${hosts.contractUrl}/v3/decision-contracts/${
+    encodeURIComponent(contractName)
+  }/versions/${encodeURIComponent(contractDigest)}/executables`);
+  const catalog = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(catalog));
+  assert.equal(catalog.contractName, contractName);
+  assert.equal(catalog.contractDigest, contractDigest);
+  return catalog.activeExecutable;
+}
+
+async function decideWithSdk({ runtimeConfig, fetch, contractName, attributes }) {
+  const { _random, ...applicationAttributes } = attributes;
+  const client = createDecisionClient({ runtimeConfig, fetch, random: () => _random });
+  const response = await client.decide(contractName, { attributes: applicationAttributes });
+  assertNoRetiredRuntimeFields(response.value);
+  return response.value;
 }
 
 function assertEquivalentDecision(actual, expected) {

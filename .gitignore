@@ -33,14 +33,10 @@ coverage/
 playwright-report/
 test-results/
 
-# .NET artifacts
+# Historical build outputs may remain in an existing checkout.
 bin/
 obj/
 TestResults/
 
 # Rust artifacts
 target/
-
-# Build/package artifacts
-*.nupkg
-*.snupkg

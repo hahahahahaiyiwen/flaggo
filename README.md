@@ -73,7 +73,6 @@ endpoint and launch the playground:
 
 ```powershell
 npm ci
-dotnet restore Flaggo.slnx --configfile NuGet.config
 
 $env:FLAGGO_ANALYSIS_INFERENCE = "byok"
 $env:FLAGGO_ANALYSIS_BYOK_WIRE_API = "responses"
@@ -129,6 +128,7 @@ tools/         Repository development commands
 docs/          Product, architecture, scenarios, and boundary designs
 ```
 
-Logical architecture is defined by service and store ownership, not by the
-current assembly count. Prefer the smallest complete end-to-end behavior over
+All Flaggo service processes are Rust binaries; normal builds and launchers
+require no .NET SDK or runtime. Logical architecture is defined by service and
+store ownership, not by the binary count. Prefer the smallest complete end-to-end behavior over
 speculative platform breadth.

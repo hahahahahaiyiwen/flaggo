@@ -9,7 +9,6 @@ import {
   runWithCleanup,
   sqliteDatabaseUrl,
   startContractAndDecisionHosts,
-  startHost,
   startRustHost,
   waitForReady,
 } from "../tetris-integration/host-process.mjs";
@@ -40,20 +39,17 @@ export async function startAdaptiveWorkerService({
         ? lifecycle.signal
         : AbortSignal.any([init.signal, lifecycle.signal]),
     });
-  const commonConfiguration = {
-    ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
-  };
   const hosts = await startContractAndDecisionHosts({
     lifecycle,
-    createContractHost: () => startHost(
+    createContractHost: () => startRustHost(
       "adaptive-worker-contract-service",
-      resolve(
-        repositoryRoot,
-        "apps/contract-service/src/Flaggo.ContractService/bin/Debug/net10.0/Flaggo.ContractService.dll",
-      ),
+      "flaggo-contract-service",
       paths.contractLog,
       repositoryRoot,
-      commonConfiguration,
+      {
+        FLAGGO_CONTRACT_DATABASE_PATH: paths.database,
+        FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:0",
+      },
     ),
     waitForContractReady: (url, host, signal) =>
       waitForReady(
@@ -61,15 +57,15 @@ export async function startAdaptiveWorkerService({
         host,
         signal,
       ),
-    createDecisionHost: () => startHost(
+    createDecisionHost: () => startRustHost(
       "adaptive-worker-decision-service",
-      resolve(
-        repositoryRoot,
-        "apps/decision-service/src/Flaggo.DecisionService/bin/Debug/net10.0/Flaggo.DecisionService.dll",
-      ),
+      "flaggo-decision-service",
       paths.decisionLog,
       repositoryRoot,
-      commonConfiguration,
+      {
+        FLAGGO_DECISION_DATABASE_PATH: paths.database,
+        FLAGGO_DECISION_LISTEN_ADDRESS: "127.0.0.1:0",
+      },
     ),
     waitForDecisionReady: (url, host, signal) =>
       waitForReady(

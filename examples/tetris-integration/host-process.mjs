@@ -7,7 +7,6 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
 
-const dynamicLoopbackUrl = "http://127.0.0.1:0";
 const signalExitCodes = new Map([
   ["SIGHUP", 129],
   ["SIGINT", 130],
@@ -374,9 +373,7 @@ export function parseListeningUrl(line) {
   }
   const address = entry?.["event.name"] === "flaggo.service.started"
     ? entry?.["server.address"]
-    : entry?.Category === "Microsoft.Hosting.Lifetime"
-      ? entry?.State?.address
-      : undefined;
+    : undefined;
   if (typeof address !== "string") return undefined;
 
   let url;
@@ -467,19 +464,6 @@ export function createStructuredLogObserver(onListening, onEntry = () => {}) {
       buffer = "";
     },
   };
-}
-
-export function startHost(
-  name,
-  assembly,
-  logPath,
-  repositoryRoot,
-  configuration,
-) {
-  return startManagedProcess(
-    name, "dotnet", [assembly], logPath, repositoryRoot,
-    createHostEnvironment(configuration),
-  );
 }
 
 export function startRustHost(
@@ -797,20 +781,6 @@ export function startManagedProcess(
       })();
       await stopPromise;
     },
-  };
-}
-
-export function createHostEnvironment(
-  configuration,
-  parentEnvironment = process.env,
-) {
-  return {
-    ...parentEnvironment,
-    ...configuration,
-    ASPNETCORE_ENVIRONMENT: "Development",
-    DOTNET_ENVIRONMENT: "Development",
-    ASPNETCORE_URLS: dynamicLoopbackUrl,
-    Logging__Console__FormatterName: "json",
   };
 }
 

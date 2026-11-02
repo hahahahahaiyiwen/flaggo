@@ -59,8 +59,8 @@ authorize that already loaded resource rather than select it.
 | Decision and expression modules | In-process | Execute already checked deterministic behavior |
 
 Decision Service owns no semantic durable state. Both stores currently use the
-configured SQLite database, selected with `ConnectionStrings__Flaggo`; the
-default is `Data Source=flaggo.db`.
+configured SQLite database, selected with `FLAGGO_DECISION_DATABASE_PATH`; the
+default is `flaggo.db`.
 
 Readiness requires Contract Store and Executable Store only. It does not
 depend on Contract Service availability, OTel Ingestion, Evidence Materializer,
@@ -75,8 +75,7 @@ validation, not-found, dependency, integrity, and evaluation outcomes.
 Evaluation counters and duration histograms use only bounded outcome,
 evaluation-source, and failure-category dimensions.
 
-Console logging remains enabled, and structured JSON formatting can be selected
-through standard .NET logging configuration. Logs, metrics, and traces export
+Structured JSON console logging remains enabled. Logs, metrics, and traces export
 as OTLP/HTTP binary Protobuf only when standard
 `OTEL_EXPORTER_OTLP_*_ENDPOINT` configuration is present.
 
@@ -91,15 +90,66 @@ serve a request when it can coherently read the contract and executable stores.
 
 From the repository root:
 
+The Rust composition owns these three routes, the Decision runtime and both
+SQLite readers. All launchers use it; the superseded .NET sources and build
+paths are removed.
+
 ```powershell
-dotnet run --project apps\decision-service\src\Flaggo.DecisionService\Flaggo.DecisionService.csproj
+$env:FLAGGO_DECISION_DATABASE_PATH = 'C:\data\flaggo.db'
+$env:FLAGGO_DECISION_LISTEN_ADDRESS = '127.0.0.1:8081'
+cargo run --locked -p flaggo-decision-service
 ```
+
+The Rust database setting is a filesystem path, not a .NET connection string.
+Its default is `flaggo.db`; the listen default is `127.0.0.1:8081`.
+The former `ConnectionStrings__Flaggo` and `ASPNETCORE_URLS` settings are not consumed.
+When upgrading a local environment, explicitly carry its database path to both
+Rust services and update its listen settings; no state reset or data-copy step is needed.
+Legacy settings without their explicit Rust replacements fail startup with a
+configuration error before opening a database, rather than silently selecting
+the default path or port. Explicit Rust settings take precedence when both exist.
+Startup initializes the existing versioned schemas non-destructively and fails
+explicitly for unavailable or unsupported databases.
+
+The Rust process reuses the service-observability module and standard OTLP/HTTP
+Protobuf exporter configuration. It emits HTTP spans/durations and the registered
+decision counter/histogram with bounded dimensions, propagates W3C trace context,
+echoes validated correlation IDs, and keeps exact identities on operation spans
+only. Shutdown drains HTTP requests for at most 30 seconds, closes both pools
+and flushes telemetry; Unix also handles SIGTERM.
 
 ## Verify
 
+Focused verification includes a real spawned Rust process exporting all three
+signals to a test OTLP receiver, alongside router tests for semantic, native JSON,
+integrity, dependency, evaluation, result-schema and health failures:
+
 ```powershell
-dotnet build Flaggo.slnx -c Debug --no-restore
+cargo test --locked -p flaggo-service-hosting -p flaggo-decision-service
 ```
+
+The live .NET/Rust comparison is opt-in because it requires the unchanged .NET
+applications to be built from an explicit pinned historical checkout.
+It checks both Rust- and .NET-produced SQLite databases,
+including actual .NET Contract Service deployment, route aliases, error envelopes,
+health, media types and exact known-length/chunked request-size boundaries.
+
+Use the [combined historical acceptance runner](../../tools/core-parity/README.md#opt-in-live-http-acceptance)
+with an explicit `--reference-root`.
+
+Dynamic health timestamps and package versions are validated independently.
+Native JSON diagnostic suffixes remain serializer-specific; their problem type,
+status and invalid-body prefix are compared. Other tested response fields are
+compared without dropping runtime, checked-artifact or lifecycle identities.
+Contract management/activation is composed separately in the Rust Contract
+Service. The opt-in `npm run test:tetris-full-loop` gate exercises the
+unchanged TypeScript SDK and application through the real telemetry,
+materialization, deterministic analysis, Candidate and automatic-activation
+loop, then verifies SDK/REST decisions and exact authority/provenance after
+restart. It builds and runs without .NET; see the
+[full-loop instructions](../../examples/tetris-integration/README.md#rust-full-loop-acceptance).
+The [combined migration acceptance command](../../tools/core-parity/README.md#opt-in-live-http-acceptance)
+includes both live HTTP comparisons. .NET is not a normal build or test prerequisite.
 
 ## Related documents
 

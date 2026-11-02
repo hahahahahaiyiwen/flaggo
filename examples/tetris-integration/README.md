@@ -20,7 +20,7 @@ Flaggo service.
 
 ## Play with local Flaggo services
 
-Install the npm dependencies, .NET 10 SDK, and repository-pinned Rust
+Install the npm dependencies and repository-pinned Rust
 toolchain, then run:
 
 ```powershell
@@ -374,7 +374,54 @@ Run the credentialed live-agent extension separately:
 npm run test:tetris-analysis-integration
 ```
 
-That command captures `gh auth token` in memory without printing or persisting
+### Rust full-loop acceptance
+
+With the npm dependencies and repository-pinned Rust toolchain installed:
+
+```powershell
+npm run test:tetris-full-loop
+```
+
+This opt-in command builds the unchanged TypeScript SDK/application and the
+Rust workspace, then starts the actual Rust Contract and Decision services,
+OTel Ingestion, Evidence Materializer and Async Analysis against a new isolated
+database. All example launchers now use Rust core services without .NET.
+This command requires no GitHub/model credentials. Prepare the
+[analysis Python environment](../README.md#python-environment-for-live-analysis)
+first. Analysis uses the existing
+Tetris playground deterministic provider through the production analysis
+coordinator, SQL tools, durable workspace and HTTP Candidate-admission path;
+it does not stub admission, activation or runtime evaluation.
+
+The same real-host behavioral/evidence assertions below apply. Nine training
+episodes supply actual telemetry. The deterministic provider checkpoints a
+draft and a separate reviewer attempt reproduces its evidence analysis before
+submission. The harness tolerates only a recoverable event paired with a
+same-cycle/same-attempt completed session handoff, verifies the saved
+`draftReady` checkpoint and approved review refer to the same proposal, and
+still requires a distinct Candidate and automatic activation. Unrelated or
+uncorrelated errors, no-change/no-candidate outcomes and timeouts fail the run.
+This explicit checkpoint exception does not change the credentialed
+`--analysis` gate's stricter failure behavior.
+
+The gate compares unchanged SDK and REST decisions after activation and after
+restarting the hosts on the same database. It verifies learned behavior,
+no-data retention, active lifecycle/version, exact provenance and immutable
+creation/activation timestamps, as well as retained OTLP payloads, materialized
+evidence/provenance and the materializer checkpoint with no pending batches.
+The final JSON reports `coreImplementation: "rust"` and
+`analysisMode: "deterministic"`. This proves the deterministic learning-loop
+boundary, not live model quality or browser behavior.
+
+After building, the runner uses Rust hosts with no flags for the non-analysis
+behavioral slice, `--deterministic-analysis` for this gate, or `--analysis` for
+the separately credentialed provider. The temporary `--rust-core` selector
+and `test:tetris-rust-integration` migration script have been removed.
+
+### Credentialed analysis gate
+
+The `npm run test:tetris-analysis-integration` command captures `gh auth token`
+in memory without printing or persisting
 it, leaves `FLAGGO_ANALYSIS_MODEL` unset so the Copilot SDK selects its default,
 and enables redacted per-session model/tool events in `async-analysis.log`.
 The analysis fixture runs the same nine completed training episodes as the

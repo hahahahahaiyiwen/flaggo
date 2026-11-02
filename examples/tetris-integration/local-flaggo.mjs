@@ -5,7 +5,6 @@ import {
   parseMaterializationHealth,
   sqliteDatabaseUrl,
   startContractAndDecisionHosts,
-  startHost,
   startRustHost,
   waitForReady,
 } from "./host-process.mjs";
@@ -15,7 +14,11 @@ export async function startLocalFlaggoHosts({
   repositoryRoot,
   exampleDirectory,
   runDirectory,
+  analysisMode = "copilot",
 }) {
+  if (analysisMode !== "copilot" && analysisMode !== "deterministic") {
+    throw new TypeError("analysisMode must be 'copilot' or 'deterministic'.");
+  }
   await mkdir(runDirectory, { recursive: true });
   const paths = {
     database: resolve(runDirectory, "flaggo.db"),
@@ -26,9 +29,6 @@ export async function startLocalFlaggoHosts({
     copilotHome: resolve(runDirectory, "c"),
     evidenceMaterializerLog: resolve(runDirectory, "evidence-materializer.log"),
     otelIngestionLog: resolve(runDirectory, "otel-ingestion.log"),
-  };
-  const commonConfiguration = {
-    ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
   };
   const databaseUrl = sqliteDatabaseUrl(paths.database);
   const fetchWithAbort = (input, init = {}) =>
@@ -41,15 +41,16 @@ export async function startLocalFlaggoHosts({
 
   const hosts = await startContractAndDecisionHosts({
     lifecycle,
-    createContractHost: () => startHost(
+    createContractHost: () => startRustHost(
       "tetris-contract-service",
-      resolve(
-        repositoryRoot,
-        "apps/contract-service/src/Flaggo.ContractService/bin/Debug/net10.0/Flaggo.ContractService.dll",
-      ),
+      "flaggo-contract-service",
       paths.contractLog,
       repositoryRoot,
-      commonConfiguration,
+      {
+        FLAGGO_CONTRACT_DATABASE_PATH: paths.database,
+        FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:0",
+        FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS: "250",
+      },
     ),
     waitForContractReady: (url, host, signal) =>
       waitForReady(
@@ -57,15 +58,15 @@ export async function startLocalFlaggoHosts({
         host,
         signal,
       ),
-    createDecisionHost: () => startHost(
+    createDecisionHost: () => startRustHost(
       "tetris-decision-service",
-      resolve(
-        repositoryRoot,
-        "apps/decision-service/src/Flaggo.DecisionService/bin/Debug/net10.0/Flaggo.DecisionService.dll",
-      ),
+      "flaggo-decision-service",
       paths.decisionLog,
       repositoryRoot,
-      commonConfiguration,
+      {
+        FLAGGO_DECISION_DATABASE_PATH: paths.database,
+        FLAGGO_DECISION_LISTEN_ADDRESS: "127.0.0.1:0",
+      },
     ),
     waitForDecisionReady: (url, host, signal) =>
       waitForReady(
@@ -139,20 +140,21 @@ export async function startLocalFlaggoHosts({
   }
 
   async function startAsyncAnalysis({ githubToken } = {}) {
-    const inferenceEnvironment = analysisInferenceEnvironment({
+    const deterministic = analysisMode === "deterministic";
+    const inferenceEnvironment = deterministic ? {} : analysisInferenceEnvironment({
       ...process.env,
       ...(githubToken === undefined ? {} : { GH_TOKEN: githubToken }),
     });
     const host = lifecycle.startHost(() => startRustHost(
       "tetris-async-analysis",
-      "flaggo-async-analysis",
+      deterministic ? "flaggo-tetris-playground-analysis" : "flaggo-async-analysis",
       paths.asyncAnalysisLog,
       repositoryRoot,
       {
         FLAGGO_ANALYSIS_COPILOT_HOME: paths.copilotHome,
         ...inferenceEnvironment,
         FLAGGO_ANALYSIS_POLL_INTERVAL_MS: "1000",
-        FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: "600",
+        FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: deterministic ? "120" : "600",
         FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.asyncAnalysisWorkspace,
         FLAGGO_CONTRACT_CATALOG_URL:
           `${hosts.contractUrl}/v3/decision-contract-catalog/current`,

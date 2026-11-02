@@ -11,7 +11,6 @@ from [Project #3](https://github.com/users/hahahahahaiyiwen/projects/3).
 Requirements:
 
 - Python 3.11 or newer
-- .NET SDK 10
 - Node.js 20 or newer
 - Rust using the repository-pinned toolchain
 - Git
@@ -24,23 +23,31 @@ python -m pip install -r contracts\conformance\requirements.txt
 python tools\dev.py check
 ```
 
-Install JavaScript dependencies, restore through the repository NuGet
-configuration, and run a real-host smoke path:
+Install JavaScript dependencies and run a Rust real-host smoke path:
 
 ```powershell
 npm ci
-dotnet restore Flaggo.slnx --configfile NuGet.config
 npm run test:adaptive-worker
 ```
 
 No cloud account or external service is required.
 
-Build and verify the Rust workspace independently:
+All service processes are implemented in Rust. Build and verify the workspace:
 
 ```powershell
 npm run build:rust
 npm run check:rust
+npm run test:tetris-full-loop
 ```
+
+The full-loop gate uses deterministic analysis without model credentials;
+prepare the [analysis Python environment](examples/README.md#python-environment-for-live-analysis)
+first. Optional migration differential tests require a separate pinned historical
+.NET checkout, never a normal build dependency; see [core parity](tools/core-parity/README.md).
+Existing contract-v3/executable-v5 SQLite state is preserved without reset.
+Core services now use `FLAGGO_CONTRACT_DATABASE_PATH` /
+`FLAGGO_DECISION_DATABASE_PATH` and their `*_LISTEN_ADDRESS` settings rather
+than .NET connection-string/hosting configuration; see their READMEs.
 
 For fixture-only contract and SDK development, run:
 
@@ -110,9 +117,9 @@ belong only in adapters at application composition boundaries.
 
 Cross-cutting infrastructure is configured at application composition roots.
 Business capabilities use module-owned ports when substitutability is needed;
-the current stack injects `TimeProvider`, `IContractVersionStore`, and
-`IExecutableStore` rather than defining speculative shared-provider
-interfaces. Logical ownership follows Contract Service, Decision Service,
+the current Rust stack composes owned store readers and compiler/runtime ports
+rather than defining speculative shared-provider interfaces.
+Logical ownership follows Contract Service, Decision Service,
 Contract Store, and Executable Store.
 
 | Concern | Local implementation | Optional cloud adapter |

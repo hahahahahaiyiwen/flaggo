@@ -36,8 +36,8 @@ not depend on an app composition root or on the legacy
   analysis.
 - Raw OTLP Inbox persists complete validated OTLP export requests as a bounded,
   replayable work log without depending on its SQLx/SQLite adapter contract.
-- Hosting owns reusable .NET HTTP, correlation, Problem Details, health, and
-  OpenTelemetry composition without domain routes.
+- Hosting owns reusable Rust HTTP, correlation, Problem Details, health, and
+  OpenTelemetry request instrumentation without domain routes.
 - Service Observability owns the shared Rust Resource, OTLP exporter,
   structured-console, trace-propagation, and bounded-shutdown composition.
 
@@ -45,8 +45,8 @@ The former Audit, Policy, Reasoning, Registry, Evidence, and State modules were
 removed by #49. Do not reintroduce forwarding projects, namespace aliases,
 dual registrations, migration readers, or compatibility fixtures.
 
-Contract Store and Executable Store use direct
-`Microsoft.Data.Sqlite` dependencies and store-owned SQL. They share one
+Contract Store and Executable Store use direct SQLx/SQLite
+dependencies and store-owned SQL. They share one
 configured local database but no custom storage-infrastructure package.
 Raw OTLP Inbox and Evidence Store use direct SQLx/SQLite adapters and own
 separate schema components in that database; neither exposes its tables as a

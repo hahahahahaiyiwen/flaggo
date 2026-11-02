@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 
 import {
-  createHostEnvironment,
+  createRustHostEnvironment,
   createHostLifecycle,
   createStructuredLogObserver,
   installSignalHandlers,
@@ -16,14 +16,8 @@ import {
 
 function listeningLine(address) {
   return JSON.stringify({
-    EventId: 14,
-    LogLevel: "Information",
-    Category: "Microsoft.Hosting.Lifetime",
-    Message: `Now listening on: ${address}`,
-    State: {
-      Message: `Now listening on: ${address}`,
-      address,
-    },
+    "event.name": "flaggo.service.started",
+    "server.address": address,
   });
 }
 
@@ -73,20 +67,13 @@ describe("Tetris integration host discovery", () => {
     expect(endpoint.exited).toBe(true);
   });
 
-  it("forces both ASP.NET environment variables to Development", () => {
-    const environment = createHostEnvironment(
-      {
-        ASPNETCORE_ENVIRONMENT: "Staging",
-        DOTNET_ENVIRONMENT: "Test",
-      },
-      {
-        ASPNETCORE_ENVIRONMENT: "Production",
-        DOTNET_ENVIRONMENT: "Production",
-      },
+  it("passes explicit Rust host configuration over inherited values", () => {
+    const environment = createRustHostEnvironment(
+      { FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:0" },
+      { FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:8080" },
     );
 
-    expect(environment.ASPNETCORE_ENVIRONMENT).toBe("Development");
-    expect(environment.DOTNET_ENVIRONMENT).toBe("Development");
+    expect(environment.FLAGGO_CONTRACT_LISTEN_ADDRESS).toBe("127.0.0.1:0");
   });
 });
 

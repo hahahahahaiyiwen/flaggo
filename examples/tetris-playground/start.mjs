@@ -240,6 +240,10 @@ async function buildPlayground() {
     "build",
     "--locked",
     "-p",
+    "flaggo-contract-service",
+    "-p",
+    "flaggo-decision-service",
+    "-p",
     "flaggo-otel-ingestion",
     "-p",
     "flaggo-evidence-materializer",
@@ -247,13 +251,6 @@ async function buildPlayground() {
     options.analysisMode === "deterministic"
       ? "flaggo-tetris-playground-analysis"
       : "flaggo-async-analysis",
-  ]);
-  await runCommand("dotnet", [
-    "build",
-    "Flaggo.slnx",
-    "-c",
-    "Debug",
-    "--nologo",
   ]);
 }
 

@@ -13,7 +13,7 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, MetricExporter, Protocol, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
     Resource,
-    logs::SdkLoggerProvider,
+    logs::{SdkLogger, SdkLoggerProvider},
     metrics::{PeriodicReader, SdkMeterProvider},
     propagation::TraceContextPropagator,
     trace::SdkTracerProvider,
@@ -115,9 +115,12 @@ impl ServiceObservability {
                 .with_tracer(tracer)
                 .with_location(false)
         });
-        let log_layer = logger_provider
-            .as_ref()
-            .map(OpenTelemetryTracingBridge::new);
+        let log_layer = logger_provider.as_ref().map(|provider| {
+            OpenTelemetryTracingBridge::new(&ScopedLoggerProvider {
+                provider: provider.clone(),
+                scope: scope.clone(),
+            })
+        });
         tracing_subscriber::registry()
             .with(filter)
             .with(console)
@@ -161,6 +164,20 @@ impl ServiceObservability {
         } else {
             Err(ObservabilityError::Shutdown(failures.join("; ")))
         }
+    }
+}
+
+// The standard tracing bridge otherwise creates a versionless logger scope.
+struct ScopedLoggerProvider {
+    provider: SdkLoggerProvider,
+    scope: InstrumentationScope,
+}
+
+impl opentelemetry::logs::LoggerProvider for ScopedLoggerProvider {
+    type Logger = SdkLogger;
+
+    fn logger_with_scope(&self, _scope: InstrumentationScope) -> Self::Logger {
+        self.provider.logger_with_scope(self.scope.clone())
     }
 }
 

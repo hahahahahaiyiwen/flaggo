@@ -28,7 +28,6 @@ endpoints, and launcher process state.
 Install the repository prerequisites first:
 
 - Docker Desktop or another Docker engine with Compose
-- .NET 10 SDK
 - the repository-pinned Rust toolchain
 - Node.js and npm
 - A GitHub token with Copilot access, or explicit BYOK configuration, for live mode
@@ -37,7 +36,6 @@ From the repository root:
 
 ```powershell
 npm ci
-dotnet restore Flaggo.slnx --configfile NuGet.config
 $env:GH_TOKEN = (gh auth token)
 npm run tetris:playground
 ```
@@ -49,9 +47,9 @@ browser and Grafana URLs. Ports are dynamic; use the printed URLs rather than
 assuming defaults.
 
 Only the OpenTelemetry Collector and LGTM observability stack run in Docker.
-The launcher builds and starts Rust binaries from `target\debug` directly and
-C# services through `dotnet` with their `bin\Debug\net10.0` assemblies as local
-child processes. The Node gateway and gameplay sessions also run on the host.
+The launcher builds and starts all Flaggo services as Rust binaries from
+`target\debug` directly, without .NET. The Node gateway and gameplay sessions
+also run on the host.
 Flaggo's shared SQLite file lives in the run directory on the host; it is not
 a database container. LGTM storage is bind-mounted from that directory.
 
