@@ -238,7 +238,7 @@ class ParityHarnessTests(unittest.TestCase):
     def test_failed_probe_preserves_a_failure_report(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "failure.json"
-            with patch("sys.argv", ["run.py", "--report", str(report)]):
+            with patch("sys.argv", ["run.py", "--reference-root", "oracle", "--report", str(report)]):
                 with patch("run.execute", side_effect=RuntimeError("probe crashed")):
                     with patch("sys.stderr"):
                         self.assertEqual(2, run.main())

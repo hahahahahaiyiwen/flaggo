@@ -9,7 +9,6 @@ import { analysisInferenceEnvironment } from "../tetris-integration/analysis-inf
 import {
   sqliteDatabaseUrl,
   startContractAndDecisionHosts,
-  startHost,
   startManagedProcess,
   startRustHost,
   waitForReady,
@@ -190,22 +189,17 @@ export async function startFlaggoServices({
     lifecycle.signal,
   );
 
-  const commonConfiguration = {
-    ...telemetryEnvironment,
-    ConnectionStrings__Flaggo: `Data Source=${paths.database};Pooling=False`,
-  };
   const hosts = await startContractAndDecisionHosts({
     lifecycle,
-    createContractHost: () => startHost(
+    createContractHost: () => startRustHost(
       "tetris-playground-contract-service",
-      resolve(
-        repositoryRoot,
-        "apps/contract-service/src/Flaggo.ContractService/bin/Debug/net10.0/Flaggo.ContractService.dll",
-      ),
+      "flaggo-contract-service",
       paths.contractLog,
       repositoryRoot,
       {
-        ...commonConfiguration,
+        ...telemetryEnvironment,
+        FLAGGO_CONTRACT_DATABASE_PATH: paths.database,
+        FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:0",
         FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS: "250",
       },
     ),
@@ -215,15 +209,16 @@ export async function startFlaggoServices({
         host,
         signal,
       ),
-    createDecisionHost: () => startHost(
+    createDecisionHost: () => startRustHost(
       "tetris-playground-decision-service",
-      resolve(
-        repositoryRoot,
-        "apps/decision-service/src/Flaggo.DecisionService/bin/Debug/net10.0/Flaggo.DecisionService.dll",
-      ),
+      "flaggo-decision-service",
       paths.decisionLog,
       repositoryRoot,
-      commonConfiguration,
+      {
+        ...telemetryEnvironment,
+        FLAGGO_DECISION_DATABASE_PATH: paths.database,
+        FLAGGO_DECISION_LISTEN_ADDRESS: "127.0.0.1:0",
+      },
     ),
     waitForDecisionReady: (url, host, signal) =>
       waitForReady(

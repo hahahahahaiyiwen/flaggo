@@ -1,9 +1,30 @@
-# Core-server parity migration
+# Historical core-server parity
 
-Issue #82 temporarily keeps .NET as the reference while developing Rust
-replacements. Preserve current observable behavior; do not switch launchers,
-delete .NET, or reset persisted state until service, storage, HTTP, telemetry,
-and deterministic full-loop parity pass.
+The core services and all normal launchers/CI now use Rust. Superseded C#
+sources, projects, solution, NuGet configuration and .NET prerequisites have
+been removed after library, storage, HTTP, telemetry and unchanged-client
+deterministic full-loop acceptance. Existing SQLite state is preserved.
+
+The migration differential gates remain opt-in against a **separate historical
+checkout**, not a second maintained implementation or runtime fallback.
+Only these diagnostic commands require .NET SDK 10. Normal Cargo, npm and
+conformance commands do not build, discover or launch .NET.
+
+## Prepare the explicit historical oracle
+
+From the current repository, create a detached checkout of the frozen
+pre-cutover revision (fetch the issue branch/PR containing it first if needed):
+
+```powershell
+git worktree add --detach ..\flaggo-dotnet-oracle c4532a103d68a6659ca8ea94e9a9595c7265d14e
+```
+
+Every differential invocation requires `--reference-root`. The runner rejects
+the current tree, missing projects, a different revision or modified/untracked
+files before building either probe. Ignored build outputs are allowed; no sources are
+copied back into the current tree. The report records the resolved reference
+root and exact revision. The pinned checkout is historical test input, never
+part of default CI or service composition.
 
 ## Run the feasibility checks
 
@@ -13,19 +34,19 @@ From the repository root:
 python -m unittest discover -s tools\core-parity -p "test_*.py"
 cargo test --locked --manifest-path tools\core-parity\rust\Cargo.toml
 cargo test --locked -p flaggo-contract
-python tools\core-parity\run.py --profile --report .flaggo\core-parity\cel-report.json
+python tools\core-parity\run.py --reference-root ..\flaggo-dotnet-oracle --profile --report .flaggo\core-parity\cel-report.json
 ```
 
-The runner builds both probes, sends identical JSON-lines requests, validates
+The runner builds the historical .NET probe and current Rust probe, sends identical JSON-lines requests, validates
 response IDs and shapes, and writes a machine-readable report. Mismatches exit
 1; build/probe failures exit 2 and preserve a failure report. `--no-build` reuses
-existing binaries. The diagnostic probe retains an isolated Cargo workspace/lockfile, but its
+existing probe binaries. The diagnostic probe retains an isolated Cargo workspace/lockfile, but its
 bounded profile calls the production-owned `modules\expression` and
 `modules\contract` Rust crates. Their workspace members and dependencies are
 tracked in the root manifest/lockfile.
 
 Decision requests additionally call `flaggo-decision` and the owned executable
-compiler. The temporary .NET probe references the unchanged Decision service
+compiler. The historical .NET probe references the unchanged Decision service
 assembly so it exercises the real runtime, evaluator and telemetry classifier;
 explicit read-only fake stores isolate this gate from SQLite. Unused store
 operations fail explicitly rather than acting as fallback implementations.
@@ -41,6 +62,67 @@ Successful compilation/evaluation also requires exactly matching canonical CEL.
 The `jsonFaults` gate additionally compares native exception families, not just
 generic rejection status. Its `rawRoundtrip` action returns serialized JSON as
 text, preserving numeric lexemes without overflowing Python's transport floats.
+
+## Opt-in live HTTP acceptance
+
+Run the owned library/runtime/store corpus and both actual-host HTTP gates in
+one acceptance command:
+
+```powershell
+python tools\core-parity\run.py --reference-root ..\flaggo-dotnet-oracle --profile --http --report .flaggo\core-parity\acceptance.json
+```
+
+`--http` requires `--profile`: the unadapted upstream library is a diagnostic
+probe, not a service candidate. In addition to building the existing probes,
+the runner explicitly builds both unchanged .NET reference applications in
+Release **in the external historical checkout** and invokes the current Rust
+Contract and Decision HTTP gates together. It supplies
+`FLAGGO_DOTNET_REFERENCE_ROOT` only to that Cargo child; ignored gates fail
+explicitly if launched directly without a reference root.
+Cargo builds their Rust services and test binaries as needed. This is
+historical differential acceptance; no .NET sources remain in the current tree.
+
+The JSON report adds `httpServices` with status, total/matched comparisons,
+per-service/per-producer counts and the path to the sibling
+`acceptance.http.log`. That log records the reference build commands,
+test command, stdout and stderr. The current gates prove 78 management and
+58 runtime comparisons over both .NET- and Rust-produced databases, including
+automatic activation of differing .NET checked artifacts without rewriting.
+Their existing assertions/normalization policies are unchanged.
+
+Both gates emit versioned `FLAGGO_HTTP_PARITY` JSON records only after each
+producer's assertions complete. Acceptance requires successful process exit,
+exactly one record for each service/producer pair and at least the established
+39 Contract / 29 Decision comparisons per producer. Zero/ignored tests,
+missing/duplicate/malformed records, reduced counts and nonzero test/build exits
+cannot produce a passing report. Command/protocol failures exit 2 and replace
+the report with `probe-failure` and HTTP status `not-completed`; a log path is
+reported even if an earlier prerequisite failure prevented its creation.
+Library mismatches still exit 1.
+
+Without `--http`, the report explicitly says `httpServices.status` is
+`not-requested`; no additional reference host builds or HTTP tests run. Normal
+Rust test runs still leave the .NET-dependent gates ignored. For repeated
+acceptance, `--no-build --profile --http` skips probe and reference builds but
+still executes `cargo test`, which may rebuild stale/missing Rust artifacts.
+It never skips the live assertions or substitutes an old success report.
+
+Emitted-OTLP router/process tests and the unchanged-TypeScript-client full loop
+are separate gates, not silently credited by the live HTTP comparison report:
+
+```powershell
+cargo test --locked -p flaggo-contract-service -p flaggo-decision-service --test http
+npm run test:tetris-full-loop
+```
+
+The deterministic real Rust full loop verifies reviewed Candidate admission,
+automatic activation, SDK/REST behavior and exact authority/provenance
+persistence after restart without .NET or model credentials. See its
+[instructions and limits](../../examples/tetris-integration/README.md#rust-full-loop-acceptance).
+These local commands do not establish remote CI execution.
+The Contracts workflow runs the lightweight Python harness regressions, which
+mock command failures and require no reference hosts. It does not silently
+enable the opt-in live HTTP gates.
 
 ## Rust-owned expression module
 
@@ -84,10 +166,11 @@ artifacts must reload in both processes.
 
 ## Current coverage and remaining gates
 
-The profile corpus covers 106 expressions, including exact 4096-byte source,
+The original profile corpus covered 106 expressions, including exact 4096-byte source,
 32-level AST, 256-node AST and 1000-cost boundaries; parser nesting; Unicode;
 canonical precedence/escapes; conversions; overflow and error absorption.
-All 63 accepted expressions also undergo four cross-runtime restart checks.
+Later review regressions expand that corpus; the report records the current
+measured counts. All accepted expressions undergo four cross-runtime restart checks.
 Eight corruption cases cover checksum, canonical text, references, malformed
 protobuf, empty bytes, result type and undeclared attributes. Separate checks
 exercise the exact 65536-byte checked-protobuf limit using valid unknown-field
@@ -113,13 +196,11 @@ Literal/context JSON stays text in the protocol, preserving original property
 order. Separate Rust tests exercise the expression-validator port and zero-based
 schema/value depth boundaries.
 
-These are library-level migration results, not a whole-service replacement.
-Full schema/profile/cost and syntax conformance, complete compiler-backed
-validation diagnostics, complete strict JSON behavior,
-persisted SQLite compatibility,
-admission/activation concurrency, HTTP/OTel behavior and the deterministic
-end-to-end loop remain migration gates. Existing services and default launchers
-still use .NET.
+Without `--http`, these are library-level migration results, not a whole-service
+replacement. HTTP comparisons and separately executed emitted-OTel/full-loop
+gates extend the library/store proof; none alone authorizes cutover.
+All default launchers use Rust. The pinned historical oracle is used only
+when explicitly requested.
 
 The owned frontend closes the previous standard-macro expansion and native
 diagnostic mismatches. Regression cases cover ordinary macro-shaped calls,
@@ -166,7 +247,7 @@ single-entry materialization and exact 1,024-entry FIFO eviction.
 
 These decision-library results alone do not establish service parity.
 HTTP responses, emitted OTel signals and unchanged-client full-loop execution
-are still required before cutover. SQLite/lifecycle proof is a separate gate.
+have separate service-level gates. SQLite/lifecycle proof is also a separate gate.
 
 The `contractStore` gate calls the real .NET and Rust SQLite contract stores.
 Contract schema v3 is separate from executable schema v5. It covers immutable

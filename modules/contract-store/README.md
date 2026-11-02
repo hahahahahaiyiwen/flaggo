@@ -1,7 +1,7 @@
 # Contract-version persistence
 
 `flaggo-contract-store` implements the Rust SQLite contract-version store for
-issue #82 alongside the unchanged .NET implementation. The contract component
+the core services. The contract component
 uses schema **v3**; the separate executable component uses **v5**.
 `open` creates a connection pool, not a schema. Explicit `initialize` enables WAL,
 checks the component version and creates missing contract tables without
@@ -30,7 +30,6 @@ reference's seven-digit `Z` form. Catalog ordering is SQLite ordering.
 ```powershell
 cargo test --locked -p flaggo-contract-store
 cargo clippy --locked -p flaggo-contract-store --all-targets -- -D warnings
-python tools\core-parity\run.py --profile --report .flaggo\core-parity\cel-report.json
 ```
 
 Focused tests cover immutability, ownership/current concurrency, pagination,
@@ -39,6 +38,7 @@ fault routing. The differential harness compares real SQLite operations,
 reads both runtimes' databases with both readers, and checks that reinitialization
 and restart preserve exact stored bytes, timestamps, resources and current
 pointers. It also verifies coexistence with the actual .NET executable-v5 schema.
+The differential gate uses an [explicit historical oracle](../../tools/core-parity/README.md).
 Executable-v5 persistence, v4 migration and activation are verified separately
-by `flaggo-executable-store`. HTTP/OTel and full-loop compatibility remain
-service-level gates. No service cutover or state reset occurs.
+by `flaggo-executable-store`; HTTP/OTel and full-loop compatibility have separate
+service-level tests. No state reset occurs on Rust-only startup.

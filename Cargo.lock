@@ -726,6 +726,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "flaggo-contract-service"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "flaggo-contract",
+ "flaggo-contract-store",
+ "flaggo-decision",
+ "flaggo-executable-store",
+ "flaggo-expression",
+ "flaggo-service-hosting",
+ "flaggo-service-observability",
+ "opentelemetry",
+ "opentelemetry-proto",
+ "prost",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
+ "url",
+]
+
+[[package]]
 name = "flaggo-contract-store"
 version = "0.1.0"
 dependencies = [
@@ -751,6 +781,33 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "flaggo-decision-service"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "flaggo-contract",
+ "flaggo-contract-store",
+ "flaggo-decision",
+ "flaggo-executable-store",
+ "flaggo-expression",
+ "flaggo-service-hosting",
+ "flaggo-service-observability",
+ "futures-util",
+ "opentelemetry",
+ "opentelemetry-proto",
+ "prost",
+ "reqwest",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
 ]
 
 [[package]]
@@ -878,6 +935,28 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "flaggo-service-hosting"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "flaggo-contract",
+ "flaggo-service-observability",
+ "http-body-util",
+ "mime",
+ "opentelemetry",
+ "opentelemetry-http",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
+ "uuid",
 ]
 
 [[package]]
@@ -2638,6 +2717,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",

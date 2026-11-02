@@ -1,10 +1,10 @@
 # Contract domain
 
-The existing .NET implementation remains the production authority during issue
-#82. The parallel `flaggo-contract` Rust crate owns typed contract, schema,
-learning/evidence, authored/executable-rule, runtime-input and runtime-decision models, strict JSON
+The `flaggo-contract` Rust crate owns typed contract, schema,
+learning/evidence, authored/executable-rule, Candidate submission/provenance,
+activation request, runtime-input and runtime-decision models, strict JSON
 reading and writing, normalized SHA-256 identities and contract/schema/value/runtime-input/
-executable validation. It does not replace either HTTP service.
+executable validation. Both Rust HTTP services compose this module.
 
 Runtime decisions preserve contract/executable digests, literal result data and
 strict `rule`/`default` evaluation provenance. Provenance rejects unknown fields,
@@ -73,17 +73,20 @@ executable; null rules still fault during executable validation.
 Run `cargo test --locked -p flaggo-contract` and
 `cargo clippy --locked -p flaggo-contract --all-targets -- -D warnings`.
 The differential harness in `tools\core-parity` also calls this real crate
-against the unchanged .NET models and digest functions.
+against the pinned historical .NET models and digest functions through an
+explicit external checkout; see [core parity](../../tools/core-parity/README.md).
 
 The differential harness gates raw-number parsing/serialization, typed numeric
 bounds, defaults, literal returns, input validation, unique-item conversion and
 polymorphic discriminator/metadata failures, including native exception
 families and failure ordering. These close the previously recorded library
-number/discriminator gaps. Actual HTTP status/envelope mapping must still be
-verified when the Rust services are composed. The owned `flaggo-decision`
+number/discriminator gaps. Side-by-side Rust service tests now verify HTTP
+status/envelope mapping against actual .NET hosts and exported OTLP behavior;
+see the Contract and Decision Service READMEs for opt-in live gates and limits.
+The owned `flaggo-decision`
 runtime now validates admission inputs before resolving active executables.
 `flaggo-contract-store` now supplies SQLite contract-version persistence and its
 runtime reader. `flaggo-executable-store` supplies executable-v5 persistence,
-v4 migration and lifecycle operations. HTTP/OTel and full-loop verification
-remain cutover gates; library/store parity does
-not authorize replacing the existing services.
+v4 migration and lifecycle operations. Rust services are the default after
+the HTTP/OTel and unchanged-client full-loop gates passed. No .NET sources,
+runtime fallback or persisted-state reset are retained.

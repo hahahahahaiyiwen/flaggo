@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare .NET reference libraries with owned Rust expression/domain modules."""
+"""Compare .NET reference libraries/stores and optional live HTTP services with Rust."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ import domain_cases
 import decision_cases
 import expression_cases
 import json_fault_cases
+import http_cases
+import reference as historical_reference
 import store_cases
 import executable_store_cases
 import validation_cases
@@ -280,6 +282,8 @@ def validate_boundaries(responses: dict) -> None:
 
 
 def execute(args: argparse.Namespace) -> int:
+    reference_root = historical_reference.resolve(ROOT, args.reference_root)
+    reference_directory = reference_root / "tools" / "core-parity" / "dotnet"
     cases = json.loads((DIRECTORY / "expressions.json").read_text(encoding="utf-8"))
     cases.extend(boundary_cases())
     cases.extend(parser_stress_cases())
@@ -296,16 +300,16 @@ def execute(args: argparse.Namespace) -> int:
     ]
     if not args.no_build:
         subprocess.run(
-            ["dotnet", "build", str(DIRECTORY / "dotnet" / "Flaggo.CoreParity.csproj"),
+            ["dotnet", "build", str(reference_directory / "Flaggo.CoreParity.csproj"),
              "--configuration", "Release", "--nologo", "--verbosity", "quiet"],
-            cwd=ROOT, check=True,
+            cwd=reference_root, check=True,
         )
         subprocess.run(
             ["cargo", "build", "--locked", "--manifest-path",
              str(DIRECTORY / "rust" / "Cargo.toml")],
             cwd=ROOT, check=True,
         )
-    oracle = ["dotnet", str(DIRECTORY / "dotnet" / "bin" / "Release" / "net10.0" / "Flaggo.CoreParity.dll")]
+    oracle = ["dotnet", str(reference_directory / "bin" / "Release" / "net10.0" / "Flaggo.CoreParity.dll")]
     reference = output(oracle, requests)
     validate_boundaries(reference)
     executable = "flaggo-cel-parity-probe.exe" if sys.platform == "win32" else "flaggo-cel-parity-probe"
@@ -314,6 +318,7 @@ def execute(args: argparse.Namespace) -> int:
         command.append("--profile")
     candidate = output(command, requests)
     report = compare(requests, reference, candidate, canonical=args.profile)
+    report["reference"] = {"root": str(reference_root), "revision": historical_reference.REVISION}
     report["candidate"] = "owned-rust-core-libraries-and-stores" if args.profile else "upstream-library"
     vectors = json.loads((ROOT / "contracts" / "conformance" / "canonicalization-vectors-v1.json")
                          .read_text(encoding="utf-8"))["vectors"]
@@ -380,6 +385,17 @@ def execute(args: argparse.Namespace) -> int:
         report["rustCheckedByteBounds"] = compare(
             byte_cases, byte_expected, output(command, byte_cases), canonical=True)
         report["notYetVerified"].remove("Checked protobuf persistence and restart without parsing source")
+    report["httpServices"] = http_cases.verify(
+        ROOT, args.report.with_suffix(".http.log"),
+        enabled=args.http, build_reference=not args.no_build, reference_root=reference_root)
+    if args.http:
+        report["scope"] = (
+            "Core library/runtime/store and live HTTP migration acceptance; not cutover readiness.")
+        report["notYetVerified"].remove("Whole-service strict JSON and HTTP fault-envelope compatibility")
+        report["notYetVerified"].remove(
+            "Whole-service HTTP, emitted observability and unchanged-client full-loop parity")
+        report["notYetVerified"].append(
+            "Emitted observability and unchanged-client full-loop acceptance are separate commands.")
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     checks = {"expressions": report, "dotnetCanonicalJson": report["dotnetCanonicalJson"],
@@ -395,6 +411,8 @@ def execute(args: argparse.Namespace) -> int:
             "contractStore", "executableStore",
             "decisionRuntime", "dotnetExecutableDotnetRestart", "dotnetExecutableRustRestart",
             "rustExecutableDotnetRestart", "rustExecutableRustRestart", "executableCorruption"))
+    if args.http:
+        checks["httpServices"] = report["httpServices"]
     for name, check in checks.items():
         print(f"{name}: {check['matched']}/{check['cases']} cases match")
     print(f"report: {args.report}")
@@ -404,17 +422,29 @@ def execute(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--reference-root", type=Path, required=True,
+                        help="Separate clean checkout at the pinned pre-cutover revision.")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--http", action="store_true",
+                        help="Also build Release reference hosts and run both live HTTP gates.")
     args = parser.parse_args()
+    if args.http and not args.profile:
+        parser.error("--http requires --profile; the upstream-library probe is diagnostic only.")
     try:
         return execute(args)
     except (OSError, ValueError, RuntimeError, sqlite3.Error, subprocess.CalledProcessError) as error:
         print(f"Parity probe failed: {error}", file=sys.stderr)
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps({
+        failure = {
             "outcome": "probe-failure", "error": str(error),
-        }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        }
+        if args.http:
+            failure["httpServices"] = {
+                "status": "not-completed", "log": str(args.report.with_suffix(".http.log")),
+            }
+        args.report.write_text(json.dumps(
+            failure, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return 2
 
 

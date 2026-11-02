@@ -12,14 +12,7 @@ import {
   sqliteDatabaseUrl,
 } from "../host-process.mjs";
 
-test("listening observer accepts .NET and Rust service telemetry", () => {
-  assert.equal(
-    parseListeningUrl(JSON.stringify({
-      Category: "Microsoft.Hosting.Lifetime",
-      State: { address: "http://127.0.0.1:5010" },
-    })),
-    "http://127.0.0.1:5010",
-  );
+test("listening observer accepts Rust service telemetry", () => {
   assert.equal(
     parseListeningUrl(JSON.stringify({
       "event.name": "flaggo.service.started",

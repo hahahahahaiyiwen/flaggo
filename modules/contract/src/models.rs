@@ -452,3 +452,27 @@ pub struct DecisionContractValidationResult {
     pub contract_digest: Option<String>,
     pub issues: Vec<ValidationIssue>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnalysisCandidateSubmission {
+    pub rules: Vec<Option<ExecutableRule>>,
+    pub provenance: AnalysisCandidateProvenance,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnalysisCandidateProvenance {
+    pub workspace_id: String,
+    pub cycle_id: String,
+    pub attempt_id: String,
+    pub analysis_manifest_digest: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DecisionExecutableActivationRequest {
+    pub expected_active_executable_digest: String,
+    pub expected_active_state_version: i64,
+    pub expected_candidate_state_version: i64,
+}

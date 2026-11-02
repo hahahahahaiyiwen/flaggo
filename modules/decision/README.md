@@ -1,8 +1,8 @@
 # Decision domain and runtime
 
 `flaggo-decision` is the Rust-owned decision evaluator and request runtime for
-issue #82. It composes `flaggo-contract` and `flaggo-expression` alongside the
-unchanged .NET implementation; no service or launcher uses it by default yet.
+the core services. It composes `flaggo-contract` and `flaggo-expression`;
+the Rust Decision Service and all example launchers use it by default.
 
 `DecisionRuntime::decide` validates the requested identity, resolves the accepted
 contract, validates the complete `RuntimeInput`, then reads the current active
@@ -14,7 +14,8 @@ records before returning them and classify integrity/dependency/timeout/
 cancellation failures while preserving native argument/JSON faults.
 `flaggo-contract-store` and `flaggo-executable-store` now supply both real SQLite
 readers. Store integration tests exercise persisted checked-program evaluation
-and native/integrity error routing; actual HTTP/OTel composition remains pending.
+and native/integrity error routing. Service HTTP/OTel and unchanged-client
+full-loop behavior are verified separately.
 
 The cache keys the executable digest and ordered checked-rule identities,
 materializes each entry once across concurrent callers, and bounds successful cache population to
@@ -35,13 +36,12 @@ behavior and the expression engine's loop-free cancellation semantics.
 
 `DecisionError::telemetry_classification` preserves the existing service's
 outcome/category pairs; `EvaluationProvenance::source` preserves its source
-dimension. This verifies classification, not actual spans, metrics, HTTP
-status/envelopes or service identity. Those remain service-composition gates.
+dimension. Actual spans, metrics, HTTP status/envelopes and service identity
+are covered by the service-composition tests.
 
 ```powershell
 cargo test --locked -p flaggo-decision
 cargo clippy --locked -p flaggo-decision --all-targets -- -D warnings
-python tools\core-parity\run.py --profile --report .flaggo\core-parity\cel-report.json
 ```
 
 Focused tests cover activation replacement, validation/read ordering,
@@ -50,4 +50,5 @@ dynamic/default result validation, cancellation, failed-cache retry, checked
 identity changes, concurrent materialization and the exact cache bound.
 The differential harness also materializes complete executable artifacts in all
 four .NET/Rust producer/consumer combinations and rejects corrupted artifacts.
-No .NET fallback, persisted-state reset or service cutover is introduced.
+The optional differential gate uses the [explicit historical oracle](../../tools/core-parity/README.md).
+No .NET fallback or persisted-state reset is introduced.

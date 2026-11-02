@@ -1,7 +1,7 @@
 # Executable persistence and lifecycle
 
-`flaggo-executable-store` ports the SQLite executable-store API for issue #82
-alongside unchanged .NET. Explicit initialization owns component schema **v5**,
+`flaggo-executable-store` implements the SQLite executable-store API.
+Explicit initialization owns component schema **v5**,
 transactionally migrates **v4** admissions, and preserves contract-store v3 and
 other components. Failed migration rolls back its DDL, copied admissions and
 component version. Initialization never resets executable state.
@@ -45,7 +45,6 @@ HTTP management representations are a separate composition concern.
 ```powershell
 cargo test --locked -p flaggo-executable-store
 cargo clippy --locked -p flaggo-executable-store --all-targets -- -D warnings
-python tools\core-parity\run.py --profile --report .flaggo\core-parity\cel-report.json
 ```
 
 Tests cover concurrent admissions, basic/manual/automatic activation, stale
@@ -57,5 +56,6 @@ bytes. Read outputs are not normalized to hide those fields. Both producer
 databases are read, reinitialized, transitioned and migrated by both runtimes,
 with exact persisted-state snapshots and failed-migration rollback checks.
 
-This completes a library/store increment, not a service cutover. Rust HTTP,
-emitted OTel, unchanged-client full-loop and removal gates remain separate.
+The differential gate uses an [explicit historical oracle](../../tools/core-parity/README.md).
+Rust HTTP, emitted OTel and unchanged-client full-loop tests verify service
+composition separately. Existing persisted state is retained after cutover.

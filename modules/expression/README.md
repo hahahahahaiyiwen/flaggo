@@ -1,10 +1,10 @@
 # Flaggo expressions
 
 `flaggo-expression` is the Rust-owned bounded CEL compiler, checked-expression
-materializer and evaluator for the issue #82 migration. It implements the
+materializer and evaluator. It implements the
 contract module's `ExpressionCanonicalizer` and `ContractExpressionValidator`
-ports. The existing .NET services remain the active implementation and parity
-oracle; adding this crate does not switch launchers or authorize cutover.
+ports. Both core services use it; the optional parity oracle is a pinned
+historical checkout, not a second implementation in this tree.
 
 `ExpressionCompiler::compile` accepts typed attribute/result schemas and an
 expression purpose. It always checks the Flaggo profile, result type and static
@@ -52,11 +52,10 @@ Native diagnostics preserve one-based UTF-16 locations, sibling type errors
 without cascading parent errors, parameterized type names, and the reference's
 profile/declaration/type/result/static-cost failure ordering.
 
-## Verification and remaining gates
+## Verification
 
 ```powershell
 cargo test --locked -p flaggo-expression -p flaggo-contract
-python tools\core-parity\run.py --profile --report .flaggo\core-parity\cel-report.json
 ```
 
 The parity probe calls this crate directly, including compiler-backed contract
@@ -78,10 +77,10 @@ addition covers both operand orders through actual cross-runtime restarts.
 Focused regressions also exercise accepted 249-level nesting, rejected 250-level
 nesting and the 1,000/1,001 syntax AST boundary on a 512 KiB thread stack.
 
-This is library-level parity, not complete production-service parity. The
-crate does not fall back to .NET. `flaggo-decision` now composes the owned
+The [historical differential harness](../../tools/core-parity/README.md)
+provides library-level parity, not complete production-service proof. The
+crate does not fall back to .NET. `flaggo-decision` composes the owned
 executable compiler/evaluator through immutable store-reader snapshots. SQLite
 store adapters are covered by cross-runtime persistence/lifecycle gates.
-Service/API/OTel/full-loop verification (including mapping the contract
-module's native JSON fault categories at the HTTP boundary)
-remain migration gates before cutover.
+Service/API/OTel and unchanged-client full-loop tests separately verify the
+composition, including native JSON fault mapping at the HTTP boundary.

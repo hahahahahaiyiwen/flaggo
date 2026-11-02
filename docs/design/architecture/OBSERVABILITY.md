@@ -9,7 +9,7 @@ whose strict shape is defined by
 [`service-observability-profile-v1.schema.json`](../../../contracts/schemas/service-observability-profile-v1.schema.json).
 
 Contract Service, Decision Service, OTel Ingestion, Evidence Materializer, and
-Async Analysis implement the profile through shared .NET and Rust hosting
+Async Analysis implement the profile through shared Rust hosting and observability
 boundaries. New signals extend the registry and conformance checks before
 service code emits them.
 

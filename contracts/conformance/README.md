@@ -47,6 +47,6 @@ generator.
 The OTLP checks validate executable contract artifacts and fixture envelopes.
 They do not yet dispatch every profile fixture through a real ingestion host.
 
-The .NET host suites dispatch the same management and runtime fixtures through
+The Rust host suites dispatch the same management and runtime fixtures through
 real Contract Service and Decision Service hosts. The TypeScript SDK additionally
 checks the exact operations, scopes, headers, and schemas it consumes.

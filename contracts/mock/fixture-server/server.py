@@ -90,7 +90,7 @@ def load_fixtures() -> None:
     for path in sorted(FIXTURES_DIR.rglob("*.json")):
         with path.open(encoding="utf-8") as fh:
             fx = json.load(fh)
-        # Native Protobuf fixtures execute against the real .NET receiver.
+        # Native Protobuf fixtures execute against the real Rust ingestion receiver.
         if fx.get("sdkLocal") or fx.get("schemaNegative"):
             continue
         FIXTURES[fx["name"]] = fx

@@ -1,0 +1,35 @@
+[package]
+name = "flaggo-decision-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum.workspace = true
+chrono = "0.4.45"
+flaggo-contract = { path = "../../modules/contract" }
+flaggo-contract-store = { path = "../../modules/contract-store" }
+flaggo-decision = { path = "../../modules/decision" }
+flaggo-executable-store = { path = "../../modules/executable-store" }
+flaggo-expression = { path = "../../modules/expression" }
+flaggo-service-hosting.workspace = true
+flaggo-service-observability.workspace = true
+opentelemetry.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+
+[dev-dependencies]
+futures-util = "0.3.31"
+opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace"] }
+prost = "0.14.1"
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tempfile = "3.27.0"
+tower.workspace = true
+
+[lints]
+workspace = true
