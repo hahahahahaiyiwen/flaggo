@@ -57,6 +57,15 @@ also run on the host.
 Flaggo's shared SQLite file lives in the run directory on the host; it is not
 a database container. LGTM storage is bind-mounted from that directory.
 
+On native Linux, the collector uses host networking with dynamic loopback-only
+listeners so it can reach host-side ingestion. LGTM remains on the Compose
+bridge, exporting its OTLP port on loopback for the collector. Docker Desktop
+launches on Windows/macOS use bridge networking and host forwarding.
+On Linux shutdown, the launcher stops LGTM writers, then uses a one-shot
+container to return ownership of only the run's mounted LGTM data to the
+launching UID/GID. This keeps retained data readable and normal cleanup possible
+without running the launcher as root.
+
 The default mode is **live**, using the production Copilot SDK analysis provider.
 GitHub-backed inference is the default; use `GH_TOKEN` or `GITHUB_TOKEN`
 (`GH_TOKEN` takes precedence). Alternatively configure `FLAGGO_ANALYSIS_INFERENCE=byok`,

@@ -81,6 +81,7 @@ jobs:
       - run: npm run test:tetris-integration
       - run: npm run test:tetris-full-loop
       - run: npm run test:tetris-playground
+      - run: npm run test:tetris-playground:observability
       - run: npx playwright install --with-deps chromium
       - run: npm run test:tetris-playground:browser
       - run: npm run test:tetris-playground:e2e

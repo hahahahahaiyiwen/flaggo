@@ -53,6 +53,7 @@ a stronger per-decision logging requirement merely to satisfy the old test.
 | Identical sealed retries/lost replies, conflicting submissions and cached currentness | `analysis_pipeline.rs`, workspace tests and real Contract Service admission tests |
 | Prior runtime authority retained on failed/superseded work or failed activation | Coordinator and Contract Service tests; failed activation and SDK/REST assertions in the browser loop |
 | Bounded, partial, duplicated, reordered or stale action observations; stable inspection focus | `analysis-actions.test.mjs`, `browser-smoke.spec.mjs`, and real OTLP action correlation in `closed-loop.spec.mjs` |
+| Collector-to-loopback ingestion routing, LGTM fanout and retained-data cleanup on native Linux and Docker Desktop | `observability-stack.integration.mjs`, real pinned Collector/LGTM containers and a loopback-only ingestion test server |
 | Rust contracts, expressions, identity, stores and activation | Workspace Rust suites, contract conformance, terminal full-loop and adaptive-worker gates |
 | Explicit BYOK/auth/error configuration without fallback | Async Analysis configuration, Copilot adapter and launcher tests; recorded credentialed evidence below |
 
@@ -68,12 +69,14 @@ Useful focused commands:
 ```powershell
 cargo test -p flaggo-async-analysis -p flaggo-analysis-agent -p flaggo-analysis-workspace -p flaggo-evidence-store -p flaggo-tetris-playground-analysis --locked
 npm run test:tetris-playground
+npm run test:tetris-playground:observability
 npm run test:tetris-playground:browser
 npm run test:tetris-playground:e2e
 ```
 
 Failures retain bounded diagnostics and Playwright artifacts in
 `examples/tetris-playground/test-results`;
+the closed-loop diagnostics include the collector/LGTM log as well as analysis failures.
 fixture cleanup stops its services/containers and removes its run directory.
 Missing Python, Node, Docker or Chromium is a setup failure, not a successful
 or skipped exit. A missing completion event is not success.

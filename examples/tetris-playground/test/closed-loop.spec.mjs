@@ -49,6 +49,10 @@ test.afterEach(async ({}, testInfo) => {
   const path = testInfo.outputPath("async-analysis.log");
   await writeFile(path, log.slice(-65_536), "utf8");
   await testInfo.attach("analysis-diagnostics", { path });
+  const observabilityPath = testInfo.outputPath("observability.log");
+  await writeFile(observabilityPath,
+    (await readFile(resolve(host.runDirectory, "observability.log"))).subarray(-65_536));
+  await testInfo.attach("observability-diagnostics", { path: observabilityPath });
   const failures = await readAttemptFailureRecords(host.runDirectory);
   const failurePath = testInfo.outputPath("attempt-failures.json");
   await writeFile(failurePath, JSON.stringify(failures, null, 2), "utf8");

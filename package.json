@@ -37,6 +37,7 @@
     "test:tetris-integration": "npm run build:tetris-integration && npm run build:rust && node examples/tetris-integration/run.mjs",
     "test:tetris-full-loop": "npm run test:tetris-integration -- --deterministic-analysis",
     "test:tetris-playground": "npm run build:tetris-playground && node --test examples/tetris-playground/test/*.test.mjs",
+    "test:tetris-playground:observability": "node --test examples/tetris-playground/test/observability-stack.integration.mjs",
     "test:tetris-playground:browser": "npm run build:tetris-playground && playwright test --config examples/tetris-playground/playwright.config.mjs examples/tetris-playground/test/browser-smoke.spec.mjs",
     "test:tetris-playground:e2e": "playwright test --config examples/tetris-playground/playwright.config.mjs examples/tetris-playground/test/closed-loop.spec.mjs",
     "test:tetris-playground:live": "playwright test --config examples/tetris-playground/playwright.config.mjs examples/tetris-playground/test/live.spec.mjs",
