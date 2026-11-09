@@ -69,6 +69,7 @@ roadmap and status source. This page is orientation, not a second roadmap.
 | What is the canonical lifecycle and who owns each app or store boundary? | [Application boundaries and lifecycle](design/architecture/APP_BOUNDARIES.md) |
 | What does each runnable composition root own? | [`apps/`](../apps/README.md) |
 | What did the Phase 3 management/runtime milestone contain? | [Phase 3 implementation scope](design/PHASE_3.md) |
+| How is the integrated Phase 5 analysis loop verified? | [Phase 5 exit and acceptance map](design/PHASE_5.md) |
 | How do clients, services, workers, and stores fit together? | [Architecture overview](design/architecture/OVERVIEW.md) |
 | How do authoring clients deploy and inspect contracts? | [Contract clients and Contract Service](design/architecture/CONTRACT_SERVICE.md) |
 | How do applications and the SDK call runtime? | [Runtime client and Decision Service](design/architecture/RUNTIME.md) |

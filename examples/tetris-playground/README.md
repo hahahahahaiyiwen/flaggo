@@ -25,6 +25,10 @@ endpoints, and launcher process state.
 
 ## Run
 
+The [Phase 5 exit](../../docs/design/PHASE_5.md) documents the opt-in
+SQL/Python/review-revision scenario used by the deterministic browser gate.
+It preserves the normal demo behavior and does not claim live-model success.
+
 Install the repository prerequisites first:
 
 - Docker Desktop or another Docker engine with Compose

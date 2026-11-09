@@ -427,7 +427,8 @@ test("action inspection keeps selection, expanded details, and focus during game
   await expect(row).toContainText("Rows");
   await expect(row).toContainText("250");
   await expect(row).toContainText(`sha256:${"4".repeat(64)}`);
-  await expect(row).toContainText("Watermark");
+  await expect(row).not.toContainText("Watermark");
+  await expect(row).not.toContainText("Cutoff");
   await expect(row.locator(".action-trace")).toHaveAttribute("href", /explore.*tempo/u);
   await summary.focus();
   await page.evaluate(() => {

@@ -1,4 +1,5 @@
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -8,7 +9,7 @@ import { expect, test } from "@playwright/test";
 import { createDecisionClient } from "@flaggo/sdk/runtime";
 import { parseListeningUrl } from "../../tetris-integration/host-process.mjs";
 import { parseLokiResponse, parseTempoResponse } from "../dist/backend.js";
-import { startPlaygroundFixture } from "./playground-fixture.mjs";
+import { readAttemptFailureRecords, startPlaygroundFixture } from "./playground-fixture.mjs";
 
 const exampleDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -21,13 +22,16 @@ if (analysisMode !== "deterministic" && analysisMode !== "copilot") {
     "FLAGGO_PLAYGROUND_E2E_ANALYSIS_MODE must be deterministic or copilot.",
   );
 }
-const demoTimeout = analysisMode === "copilot" ? 660_000 : 90_000;
+const demoTimeout = analysisMode === "copilot" ? 660_000 : 240_000;
 let host;
 let playgroundUrl;
 
 test.beforeAll(async () => {
   test.setTimeout(660_000);
-  host = await startPlaygroundFixture({ mode: "benchmark", analysisMode, retain: true });
+  host = await startPlaygroundFixture({
+    mode: "benchmark", analysisMode, retain: true,
+    exitScenario: analysisMode === "deterministic",
+  });
   playgroundUrl = host.url;
 });
 
@@ -45,6 +49,10 @@ test.afterEach(async ({}, testInfo) => {
   const path = testInfo.outputPath("async-analysis.log");
   await writeFile(path, log.slice(-65_536), "utf8");
   await testInfo.attach("analysis-diagnostics", { path });
+  const failures = await readAttemptFailureRecords(host.runDirectory);
+  const failurePath = testInfo.outputPath("attempt-failures.json");
+  await writeFile(failurePath, JSON.stringify(failures, null, 2), "utf8");
+  await testInfo.attach("attempt-failures", { path: failurePath });
 });
 
 test("learns adaptive gravity and improves matched held-out gameplay", async ({
@@ -150,6 +158,10 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   expect(provenance.evidenceWatermark).toBeUndefined();
   expect(provenance.evidenceCutoff).toBeUndefined();
   expect(provenance.analysisManifestDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  let exitArtifacts;
+  if (analysisMode === "deterministic") {
+    exitArtifacts = await verifyReviewedPythonArtifacts(host.runDirectory, provenance, active.contractDigest);
+  }
   expect(state.controlLoop.candidate.candidateDigest).toBe(learned.executableDigest);
   expect(state.controlLoop.activation.executableDigest).toBe(learned.executableDigest);
   for (const service of state.services) {
@@ -256,7 +268,8 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     const completed = actionLogs.filter((log) =>
       log.eventName === "flaggo.analysis.action.completed");
     return ["session.start", "session.run", "evidence.describe",
-      "evidence.sql", "artifact.write", "proposal.submit"].every((kind) =>
+      "evidence.sql", "artifact.write", "proposal.submit",
+      ...(analysisMode === "deterministic" ? ["python.run"] : [])].every((kind) =>
       completed.some((log) => log.attributes["flaggo.analysis.action.kind"] === kind));
   }, { timeout: 60_000, message: "Candidate cycle must export granular action observations" }).toBe(true)
     .finally(async () => {
@@ -314,6 +327,28 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     expect(Number(log.attributes["flaggo.analysis.result.rows"])).toBeGreaterThan(0);
     expect(Number(log.attributes["flaggo.analysis.result.bytes"])).toBeGreaterThan(0);
   }
+  if (exitArtifacts !== undefined) {
+    const python = actionLogs.filter((log) => log.eventName === "flaggo.analysis.action.completed"
+      && log.attributes["flaggo.analysis.action.kind"] === "python.run");
+    expect(python).toHaveLength(1);
+    expect(python[0].attributes["flaggo.analysis.action.outcome"]).toBe("success");
+    expect(python[0].attributes["flaggo.analysis.artifact.digest"]).toBe(exitArtifacts.codeDigest);
+    expect(python[0].attributes["flaggo.analysis.attempt.id"]).toBe(exitArtifacts.proposer);
+    const response = await page.request.get(`${lokiUrl}/loki/api/v1/query_range?${new URLSearchParams({
+      query: `{service_name="flaggo-async-analysis"} | flaggo_analysis_cycle_id = "${provenance.cycleId}" | event_name = "flaggo.analysis.profile.selected"`,
+      start: String(BigInt(Date.parse(state.demo.startedAt) - 60_000) * 1_000_000n),
+      limit: "100", direction: "forward",
+    })}`);
+    expect(response.ok()).toBe(true);
+    const profiles = parseLokiResponse(await response.json());
+    for (const [attempt, profile] of [
+      [exitArtifacts.proposer, "proposer"], [exitArtifacts.reviewer, "reviewer"],
+      [exitArtifacts.reviser, "proposer"], [provenance.attemptId, "reviewer"],
+    ]) {
+      expect(profiles.some((log) => log.attributes["flaggo.analysis.attempt.id"] === attempt
+        && log.attributes["flaggo.analysis.profile"] === profile)).toBe(true);
+    }
+  }
   const cycleSelection = JSON.stringify([active.contractDigest, provenance.cycleId]);
   await expect.poll(() => page.locator("#analysis-cycle option")
     .evaluateAll((options) => options.map((option) => option.value)),
@@ -344,7 +379,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     await Promise.all(state.services.map(async ({ name }) => {
       const [logsResponse, tracesResponse] = await Promise.all([
         page.request.get(`${lokiUrl}/loki/api/v1/query_range?${new URLSearchParams({
-          query: `{service_name="${name}"} | trace_id != ""`,
+          query: `{service_name="${name}"}${name === "flaggo-decision-service" ? "" : ' | trace_id != ""'}`,
           start: String(BigInt(Date.parse(state.demo.startedAt) - 60_000) * 1_000_000n),
           limit: "10",
         })}`),
@@ -370,10 +405,11 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
         }
       }
     }));
-    return Object.values(telemetry).every(({ logs, spans, correlatedTrace }) =>
+    return Object.entries(telemetry).every(([name, { logs, spans, correlatedTrace }]) =>
       logs.length > 0 && spans.length > 0
-      && correlatedTrace !== undefined);
-  }, { timeout: 60_000, message: "Every service must have correlated logs and traces in LGTM" }).toBe(true)
+      // Successful decisions emit metrics/spans, not a per-request log.
+      && (name === "flaggo-decision-service" || correlatedTrace !== undefined));
+  }, { timeout: 60_000, message: "Every service must export its supported logs and traces to LGTM" }).toBe(true)
     .finally(async () => {
       const path = testInfo.outputPath("service-telemetry.json");
       await writeFile(path, JSON.stringify(telemetry, null, 2), "utf8");
@@ -381,7 +417,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     });
   await writeFile(evaluationPath, JSON.stringify({
     ...state, exitVerification: {
-      runtimeConfig, decisions, telemetry, actionLogs,
+      runtimeConfig, decisions, telemetry, actionLogs, exitArtifacts,
       rejectedActivation: await conflict.json(), rejectedExport: await rejectedExport.json(),
     },
   }, null, 2), "utf8");
@@ -391,3 +427,79 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     signal: AbortSignal.timeout(2_000),
   })).rejects.toThrow();
 });
+
+async function verifyReviewedPythonArtifacts(runDirectory, provenance, contractDigest) {
+  const root = resolve(runDirectory, "analysis-workspaces");
+  const workspaces = await readdir(root, { withFileTypes: true });
+  const workspace = workspaces.filter((entry) => entry.isDirectory());
+  expect(workspace).toHaveLength(1);
+  const cycle = resolve(root, workspace[0].name, "cycles", provenance.cycleId);
+  const analysis = resolve(cycle, "analysis");
+  const digest = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
+  const manifestBytes = await readFile(resolve(cycle, "analysis-manifest.json"));
+  expect(digest(manifestBytes)).toBe(provenance.analysisManifestDigest);
+  const manifest = JSON.parse(manifestBytes);
+  for (const file of manifest.files) {
+    const bytes = await readFile(resolve(cycle, file.path));
+    expect(bytes.length).toBe(file.size);
+    expect(digest(bytes)).toBe(file.digest);
+  }
+  const handoffs = await Promise.all((await readdir(resolve(cycle, "handoffs")))
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => readJson(resolve(cycle, "handoffs", file))));
+  const initial = handoffs.find((value) => value.metadata.outcome === "draftReady"
+    && value.metadata.revision === 0);
+  const change = handoffs.find((value) => value.metadata.outcome === "requestChange");
+  const revised = handoffs.find((value) => value.metadata.outcome === "draftReady"
+    && value.metadata.revision === 1);
+  expect(initial).toBeDefined();
+  expect(change).toBeDefined();
+  expect(revised).toBeDefined();
+  expect(new Set([initial.attemptId, change.attemptId, revised.attemptId,
+    provenance.attemptId]).size).toBe(4);
+  const original = await readJson(resolve(analysis, initial.metadata.proposalPath));
+  const corrected = await readJson(resolve(analysis, revised.metadata.proposalPath));
+  expect(original.rules[0].name).toBe("unsupported-constant-policy");
+  expect(corrected.rules).not.toEqual(original.rules);
+  const rejected = await readJson(resolve(analysis, change.metadata.reviewPath));
+  expect(rejected.approved).toBe(false);
+  expect(rejected.findings.length).toBeGreaterThan(0);
+  const approved = await readJson(resolve(analysis, "attempts", provenance.attemptId, "review.json"));
+  expect(approved.approved).toBe(true);
+  expect(approved.proposalDigest).toBe(revised.metadata.proposalDigest);
+  for (const handoff of [initial, revised]) {
+    for (const [path, expected] of Object.entries(handoff.metadata.evidenceDigests)) {
+      expect(digest(await readFile(resolve(analysis, path)))).toBe(expected);
+    }
+  }
+  expect(revised.metadata.evidencePaths).toEqual([
+    ...initial.metadata.evidencePaths, change.metadata.reviewPath,
+  ]);
+  const executions = await readdir(resolve(analysis, "executions"));
+  expect(executions).toHaveLength(1);
+  const execution = await readJson(resolve(analysis, "executions", executions[0], "result.json"));
+  expect(execution.report.execution.status).toBe("succeeded");
+  expect(execution.report.runtime.version).toMatch(/^3\./u);
+  expect(execution.submission.contractDigest).toBe(contractDigest);
+  expect(execution.submission.cycleId).toBe(provenance.cycleId);
+  expect(execution.submission.attemptId).toBe(initial.attemptId);
+  const codeDigest = digest(await readFile(resolve(analysis, execution.report.submittedCodePath)));
+  expect(execution.submission.codeDigest).toBe(codeDigest);
+  const evidence = await readJson(resolve(analysis, initial.metadata.evidencePaths[0]));
+  expect(evidence.signalCounts["flaggo.decision.received"]).toBeGreaterThan(0);
+  expect(evidence.rows.length).toBe(Object.values(evidence.signalCounts).reduce((a, b) => a + b, 0));
+  const history = (await readFile(resolve(analysis, "queries", "history.jsonl"), "utf8"))
+    .trim().split(/\r?\n/u).map(JSON.parse);
+  expect(history.length).toBeGreaterThan(0);
+  for (const query of history) {
+    expect(query.result.rows).toBeUndefined();
+    const saved = await readFile(resolve(analysis, query.result.resultPath));
+    expect(digest(saved)).toBe(query.result.contentDigest);
+    expect(query.result.totalRows).toBe(query.result.truncated ? null : query.result.savedRows);
+  }
+  return {
+    proposer: initial.attemptId, reviewer: change.attemptId, reviser: revised.attemptId,
+    codeDigest, queryCount: history.length, executionId: executions[0],
+  };
+}

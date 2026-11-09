@@ -1421,7 +1421,11 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
 
     #[tokio::test]
     async fn real_sqlite_to_python_artifacts_survive_workspace_restart_without_replay() {
-        use flaggo_evidence_store::{SqliteEvidenceAnalysisStore, SqliteEvidenceStore};
+        use flaggo_evidence_store::{
+            AuthorityScope, EvidenceMaterializationCommit, EvidenceObservation,
+            EvidenceObservationWrite, EvidenceStore, ForwardMaterializationKey,
+            MaterializerVersions, SourceKey, SqliteEvidenceAnalysisStore, SqliteEvidenceStore,
+        };
 
         let directory = tempfile::tempdir().unwrap();
         let database_url = format!(
@@ -1513,13 +1517,11 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
             .filesystem(&recovered.cycle_id, "attempt-2")
             .await
             .unwrap();
-        let summary: Value = serde_json::from_str(
-            &filesystem
-                .read_text("/workspace/analysis/summary.json")
-                .await
-                .unwrap(),
-        )
-        .unwrap();
+        let summary_text = filesystem
+            .read_text("/workspace/analysis/summary.json")
+            .await
+            .unwrap();
+        let summary: Value = serde_json::from_str(&summary_text).unwrap();
         assert_eq!(summary["count"], 0);
         let saved = filesystem
             .read_text(&format!(
@@ -1561,6 +1563,96 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
                 .unwrap()
                 .lines()
                 .count(),
+            1
+        );
+        let versions = MaterializerVersions {
+            materializer: "2".to_owned(),
+            decoder: "1".to_owned(),
+            identity: "2".to_owned(),
+            projection: "2".to_owned(),
+            routing: "1".to_owned(),
+        };
+        writer
+            .commit(EvidenceMaterializationCommit {
+                key: ForwardMaterializationKey {
+                    versions: versions.clone(),
+                },
+                inbox_batch_id: 1,
+                observations: vec![EvidenceObservationWrite {
+                    candidate_ordinal: 0,
+                    observation: EvidenceObservation {
+                        observation_id: sha256_digest(b"late-observation"),
+                        logical_source_id: sha256_digest(b"late-source"),
+                        content_digest: sha256_digest(b"{}"),
+                        authority: AuthorityScope {
+                            tenant: "local".to_owned(),
+                            application: "checkout".to_owned(),
+                            environment: "test".to_owned(),
+                        },
+                        source: SourceKey {
+                            signal: EvidenceSignal::Metric,
+                            instrumentation_scope: "checkout".to_owned(),
+                            signal_name: "request.duration".to_owned(),
+                            metric_kind: Some("histogram".to_owned()),
+                            metric_unit: Some("ms".to_owned()),
+                            parent_span_name: None,
+                        },
+                        observed_at_unix_nano: 1,
+                        observed_time_source: "timeUnixNano".to_owned(),
+                        protocol_kind: None,
+                        decision_id: None,
+                        contract_digest: Some(contract.contract_digest.clone()),
+                        payload_json: b"{}".to_vec(),
+                        versions,
+                    },
+                }],
+                diagnostics: vec![],
+            })
+            .await
+            .unwrap();
+        let tools = factory
+            .create(context(&recovered, "attempt-2"), contract, lease.clone())
+            .await
+            .unwrap();
+        let refreshed = tools
+            .run_sql("SELECT count(*) AS count FROM observations", None)
+            .await
+            .unwrap();
+        let refreshed_rows: Value = serde_json::from_str(
+            &filesystem
+                .read_text(&format!(
+                    "/workspace/analysis/{}",
+                    refreshed["resultPath"].as_str().unwrap()
+                ))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(refreshed_rows["rows"][0]["count"], 1);
+        assert_ne!(refreshed["resultPath"], result["resultPath"]);
+        assert_eq!(
+            filesystem
+                .read_text(&format!(
+                    "/workspace/analysis/{}",
+                    result["resultPath"].as_str().unwrap()
+                ),)
+                .await
+                .unwrap(),
+            saved
+        );
+        assert_eq!(
+            filesystem
+                .read_text("/workspace/analysis/summary.json")
+                .await
+                .unwrap(),
+            summary_text
+        );
+        assert_eq!(
+            filesystem
+                .read_directory("/workspace/analysis/executions")
+                .await
+                .unwrap()
+                .len(),
             1
         );
         reader.close().await;

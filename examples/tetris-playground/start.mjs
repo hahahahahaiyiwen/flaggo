@@ -156,7 +156,9 @@ async function startGateway({
         FLAGGO_PLAYGROUND_ADDRESS: address,
         FLAGGO_PLAYGROUND_MODE: mode,
         FLAGGO_PLAYGROUND_DEMO_TIMEOUT_MS:
-          analysisMode === "copilot" ? "600000" : "45000",
+          analysisMode === "copilot" ? "600000"
+            : process.env.FLAGGO_TETRIS_ANALYSIS_SCENARIO === "reviewed-python-exit"
+              ? "180000" : "45000",
         FLAGGO_PLAYGROUND_GRAFANA_URL: observability.endpoints.grafanaUrl,
         FLAGGO_PLAYGROUND_HEALTH_URLS: JSON.stringify(healthUrls),
         FLAGGO_PLAYGROUND_LOKI_URL: observability.endpoints.lokiUrl,
