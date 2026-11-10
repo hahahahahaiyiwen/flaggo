@@ -631,8 +631,10 @@ mod tests {
             for (index, row) in rows.iter_mut().enumerate() {
                 row["observation_sequence"] = json!(index + 1);
             }
-            let provider =
-                WorkflowAgentProvider::new(Arc::new(crate::TetrisPlaygroundAgentProvider), false);
+            let provider = WorkflowAgentProvider::new(
+                Arc::new(crate::TetrisPlaygroundAgentProvider::default()),
+                false,
+            );
             let mut handoff = None;
             for attempt_id in ["proposer", "reviewer"] {
                 let tools = Arc::new(WorkflowTools {

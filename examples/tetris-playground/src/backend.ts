@@ -65,6 +65,7 @@ const knownAttributeNames = [
   "flaggo.batch.id",
   "flaggo.analysis.cycle.id",
   "flaggo.analysis.attempt.id",
+  "flaggo.analysis.profile",
   ...actionAttributeNames,
   "flaggo.operation.name",
   "flaggo.operation.outcome",

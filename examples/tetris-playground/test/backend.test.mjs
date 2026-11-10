@@ -174,6 +174,22 @@ test("normalizes Loki labels and structured metadata to canonical attributes", (
   assert.equal(logs[0].observedAt, "2025-10-09T08:53:20.123Z");
 });
 
+test("normalizes role selection with the same attempt identity as action observations", () => {
+  const [log] = parseLokiResponse({ data: { result: [{
+    stream: { service_name: "flaggo-async-analysis" },
+    values: [["1760000000123000000", "Selected analysis profile", {
+      event_name: "flaggo.analysis.profile.selected",
+      flaggo_analysis_profile: "reviewer",
+      flaggo_analysis_cycle_id: "cycle-1",
+      flaggo_analysis_attempt_id: "attempt-2",
+    }]],
+  }] } });
+  assert.equal(log.eventName, "flaggo.analysis.profile.selected");
+  assert.equal(log.attributes["flaggo.analysis.profile"], "reviewer");
+  assert.equal(log.attributes["flaggo.analysis.cycle.id"], "cycle-1");
+  assert.equal(log.attributes["flaggo.analysis.attempt.id"], "attempt-2");
+});
+
 test("keeps recent activity when both broad Loki samples are saturated", async () => {
   const base = Date.parse("2025-10-09T08:53:20.000Z");
   const entries = Array.from({ length: 4_295 }, (_, index) => ({

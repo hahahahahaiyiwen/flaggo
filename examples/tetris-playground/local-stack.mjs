@@ -57,6 +57,7 @@ export async function startObservabilityStack({
     "loki",
     "tempo",
     "prometheus",
+    ...(process.platform === "linux" ? ["lgtmOtlp"] : []),
   ];
   const reservations = await Promise.all(
     names.map(() => reserveLoopbackPort()),
@@ -71,7 +72,17 @@ export async function startObservabilityStack({
   const composeEnvironment = {
     ...process.env,
     FLAGGO_OTLP_INGESTION_ENDPOINT:
-      `http://host.docker.internal:${ingestionPort}`,
+      `http://${process.platform === "linux" ? "127.0.0.1" : "host.docker.internal"}:${ingestionPort}`,
+    FLAGGO_PLAYGROUND_APPLICATION_OTLP_ENDPOINT: process.platform === "linux"
+      ? `127.0.0.1:${ports.applicationOtlp}` : "0.0.0.0:4318",
+    FLAGGO_PLAYGROUND_INTERNAL_OTLP_ENDPOINT: process.platform === "linux"
+      ? `127.0.0.1:${ports.internalOtlp}` : "0.0.0.0:4319",
+    FLAGGO_PLAYGROUND_COLLECTOR_HEALTH_ENDPOINT: process.platform === "linux"
+      ? `127.0.0.1:${ports.collectorHealth}` : "0.0.0.0:13133",
+    FLAGGO_PLAYGROUND_LGTM_OTLP_ENDPOINT: process.platform === "linux"
+      ? `http://127.0.0.1:${ports.lgtmOtlp}` : "http://lgtm:4318",
+    ...(process.platform === "linux"
+      ? { FLAGGO_PLAYGROUND_LGTM_OTLP_PORT: String(ports.lgtmOtlp) } : {}),
     FLAGGO_PLAYGROUND_APPLICATION_OTLP_PORT: String(ports.applicationOtlp),
     FLAGGO_PLAYGROUND_COLLECTOR_HEALTH_PORT: String(ports.collectorHealth),
     FLAGGO_PLAYGROUND_GRAFANA_PORT: String(ports.grafana),
@@ -91,6 +102,8 @@ export async function startObservabilityStack({
     projectName,
     "--file",
     resolve(exampleDirectory, composeFileName),
+    ...(process.platform === "linux"
+      ? ["--file", resolve(exampleDirectory, "compose.linux.yaml")] : []),
   ];
   const processHost = startManagedProcess(
     "tetris-playground-observability",
@@ -326,10 +339,28 @@ function wrapComposeHost({
     async stop() {
       stopPromise ??= (async () => {
         const failures = [];
+        const commandOptions = {
+          cwd: exampleDirectory,
+          env: composeEnvironment,
+          logPath: resolve(runDirectory, "observability-cleanup.log"),
+        };
         try {
           await processHost.stop();
         } catch (error) {
           failures.push(error);
+        }
+        if (process.platform === "linux") {
+          try {
+            await runCommand("docker", [...composeArguments, "stop"], commandOptions);
+            // Stopped writers cannot recreate root-owned files during ownership transfer.
+            await runCommand("docker", [
+              ...composeArguments, "run", "--rm", "--no-deps",
+              "--user", "0:0", "--entrypoint", "chown", "lgtm",
+              "-hR", `${process.getuid()}:${process.getgid()}`, "/data",
+            ], commandOptions);
+          } catch (error) {
+            failures.push(error);
+          }
         }
         try {
           await runCommand(
@@ -340,11 +371,7 @@ function wrapComposeHost({
               "--remove-orphans",
               ...(retain ? [] : ["--volumes"]),
             ],
-            {
-              cwd: exampleDirectory,
-              env: composeEnvironment,
-              logPath: resolve(runDirectory, "observability-cleanup.log"),
-            },
+            commandOptions,
           );
         } catch (error) {
           failures.push(error);

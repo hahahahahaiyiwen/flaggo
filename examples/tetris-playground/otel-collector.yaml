@@ -1,16 +1,16 @@
 extensions:
   health_check:
-    endpoint: 0.0.0.0:13133
+    endpoint: ${env:FLAGGO_PLAYGROUND_COLLECTOR_HEALTH_ENDPOINT}
 
 receivers:
   otlp/application:
     protocols:
       http:
-        endpoint: 0.0.0.0:4318
+        endpoint: ${env:FLAGGO_PLAYGROUND_APPLICATION_OTLP_ENDPOINT}
   otlp/internal:
     protocols:
       http:
-        endpoint: 0.0.0.0:4319
+        endpoint: ${env:FLAGGO_PLAYGROUND_INTERNAL_OTLP_ENDPOINT}
 
 processors:
   batch:
@@ -23,7 +23,7 @@ exporters:
     retry_on_failure:
       enabled: true
   otlphttp/lgtm:
-    endpoint: http://lgtm:4318
+    endpoint: ${env:FLAGGO_PLAYGROUND_LGTM_OTLP_ENDPOINT}
     retry_on_failure:
       enabled: true
 

@@ -36,9 +36,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
 async fn run() -> Result<(), Box<dyn Error>> {
     let config = AnalysisServiceConfig::from_environment()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let exit_scenario = match std::env::var("FLAGGO_TETRIS_ANALYSIS_SCENARIO").as_deref() {
+        Err(std::env::VarError::NotPresent) => false,
+        Ok("reviewed-python-exit") => true,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "FLAGGO_TETRIS_ANALYSIS_SCENARIO must be reviewed-python-exit when set",
+            )
+            .into());
+        }
+    };
     run_analysis_service(
         &config,
-        Arc::new(TetrisPlaygroundAgentProvider),
+        Arc::new(TetrisPlaygroundAgentProvider { exit_scenario }),
         shutdown_signal(),
         async { Ok(()) },
     )

@@ -29,7 +29,7 @@ export async function readAttemptFailureRecords(runDirectory) {
   return { workspaceAvailable: true, failures };
 }
 
-export async function startPlaygroundFixture({ mode, analysisMode, retain = false }) {
+export async function startPlaygroundFixture({ mode, analysisMode, retain = false, exitScenario = false }) {
   await mkdir(resolve(repositoryRoot, ".flaggo"), { recursive: true });
   const shutdownFile = resolve(repositoryRoot, ".flaggo", `playground-${randomUUID()}.stop`);
   let output = "";
@@ -43,6 +43,7 @@ export async function startPlaygroundFixture({ mode, analysisMode, retain = fals
     cwd: repositoryRoot,
     env: {
       ...process.env,
+      ...(exitScenario ? { FLAGGO_TETRIS_ANALYSIS_SCENARIO: "reviewed-python-exit" } : {}),
       FLAGGO_PLAYGROUND_SHUTDOWN_FILE: shutdownFile,
     },
     stdio: ["ignore", "pipe", "pipe"],

@@ -1,4 +1,5 @@
 mod evidence;
+mod exit_scenario;
 
 use std::sync::{
     Arc,
@@ -31,7 +32,10 @@ WHERE signal_name IN (\
     'tetris.experience.active_play_ms'\
 )";
 
-pub struct TetrisPlaygroundAgentProvider;
+#[derive(Default)]
+pub struct TetrisPlaygroundAgentProvider {
+    pub exit_scenario: bool,
+}
 
 #[async_trait]
 impl AgentProvider for TetrisPlaygroundAgentProvider {
@@ -45,6 +49,7 @@ impl AgentProvider for TetrisPlaygroundAgentProvider {
             )));
         }
         Ok(Arc::new(TetrisPlaygroundAgentSession {
+            exit_scenario: self.exit_scenario,
             current: work_state(specification.handoff.as_ref())?,
             directory: format!(
                 "/workspace/analysis/attempts/{}",
@@ -58,6 +63,7 @@ impl AgentProvider for TetrisPlaygroundAgentProvider {
 }
 
 struct TetrisPlaygroundAgentSession {
+    exit_scenario: bool,
     current: Option<WorkflowMetadata>,
     directory: String,
     tools: Arc<dyn AnalysisTools>,
@@ -78,8 +84,14 @@ impl AgentSession for TetrisPlaygroundAgentSession {
         {
             return self.review(draft).await;
         }
+        if self.exit_scenario
+            && let Some(draft) = self.current.as_ref()
+        {
+            return self.revise_exit_draft(draft).await;
+        }
         let page_size = evidence_page_size(&self.tools.describe().await?)?;
         let mut rows = Vec::new();
+        let mut query_paths = Vec::new();
         let mut cursor = 0;
         loop {
             if let Some(outcome) = self.yield_outcome().await? {
@@ -105,6 +117,7 @@ impl AgentSession for TetrisPlaygroundAgentSession {
                 .filesystem
                 .read_text(&format!("/workspace/analysis/{result_path}"))
                 .await?;
+            query_paths.push(result_path.to_owned());
             let page = serde_json::from_str(&saved).map_err(|error| {
                 AnalysisError::Evidence(format!("invalid saved query result: {error}"))
             })?;
@@ -123,6 +136,9 @@ impl AgentSession for TetrisPlaygroundAgentSession {
         }
         match analysis.proposal {
             Ok(rules) => {
+                if self.exit_scenario {
+                    return self.prepare_exit_draft(&query_paths).await;
+                }
                 self.filesystem
                     .create_directory(&self.directory, true)
                     .await?;
@@ -289,6 +305,20 @@ impl TetrisPlaygroundAgentSession {
             return Ok(outcome);
         }
         if !approved {
+            if self.exit_scenario && draft.revision == 0 {
+                let mut metadata = draft.clone();
+                metadata.outcome = WorkflowState::RequestChange;
+                metadata.review_path = Some(
+                    review_path
+                        .trim_start_matches("/workspace/analysis/")
+                        .to_owned(),
+                );
+                return Ok(AgentRunOutcome::Handoff {
+                    summary: "The constant policy is not supported by the saved contextual evidence; reproduce the supported rules".to_owned(),
+                    metadata: Some(serde_json::to_value(metadata)
+                        .map_err(|error| AnalysisError::Agent(error.to_string()))?),
+                });
+            }
             return Ok(AgentRunOutcome::Reject {
                 reason: "Saved evidence does not reproduce the proposed Tetris rules".to_owned(),
                 review_path: review_path
