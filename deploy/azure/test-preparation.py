@@ -1,8 +1,13 @@
 import importlib.util
+import copy
+import hashlib
+import io
 import json
 import sqlite3
 import tempfile
+import tarfile
 import unittest
+import zipfile
 from contextlib import closing, nullcontext
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -18,9 +23,81 @@ def load(name, file):
 gateway = load("gateway", "gateway.py")
 state_tool = load("state_tool", "state-tool.py")
 readiness = load("readiness", "wait-ready.py")
+reuse = load("reuse", "reuse-release.py")
 
 
 class PreparationTests(unittest.TestCase):
+    def test_artifact_replay_rejects_mismatched_run_workflow_or_failed_build(self):
+        evidence = json.loads(Path(__file__).with_name("release.provenance.json").read_text())
+        workflow = evidence["sourceWorkflow"]
+        run = {
+            "id": workflow["runId"], "workflow_id": workflow["id"], "path": workflow["path"],
+            "run_attempt": 1, "head_sha": evidence["sourceCommit"], "head_branch": workflow["branch"],
+            "repository": {"full_name": reuse.REPOSITORY},
+            "head_repository": {"full_name": reuse.REPOSITORY},
+            "event": "push", "status": "completed", "conclusion": "failure",
+        }
+        artifact = {
+            "id": evidence["artifact"]["id"], "name": evidence["artifact"]["name"],
+            "size_in_bytes": evidence["artifact"]["sizeBytes"],
+            "digest": "sha256:" + evidence["artifact"]["zipSha256FromGitHub"], "expired": False,
+            "workflow_run": {"id": run["id"], "head_sha": run["head_sha"], "head_branch": run["head_branch"]},
+        }
+        workflow_file = {"sha": workflow["gitBlob"], "path": workflow["path"]}
+        job = {
+            "id": workflow["releaseJobId"], "run_id": run["id"], "head_sha": run["head_sha"],
+            "name": "linux-release", "status": "completed", "conclusion": "failure",
+            "steps": [
+                {"name": "Build committed versioned artifacts", "conclusion": "success"},
+                {"name": "Relocate and probe without credentials or maintainer caches", "conclusion": "success"},
+                {"name": "Exercise installed private services and offline recovery on the runner", "conclusion": "failure"},
+                {"name": "Run actions/upload-artifact@v4", "conclusion": "success"},
+            ],
+        }
+        reuse.verify_metadata(evidence, run, artifact, workflow_file, job)
+        for index, key, value in [
+            (0, "head_sha", "wrong"), (0, "workflow_id", -1),
+            (1, "expired", True), (1, "digest", "wrong"), (2, "sha", "wrong"),
+            (3, "steps", []),
+        ]:
+            with self.subTest(key=key):
+                values = copy.deepcopy([run, artifact, workflow_file, job])
+                values[index][key] = value
+                with self.assertRaises(RuntimeError):
+                    reuse.verify_metadata(evidence, *values)
+
+    def test_artifact_replay_checks_all_digest_layers_before_extracting_release(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = json.dumps({
+                "format": "flaggo.release/v1", "sourceCommit": "source", "pythonLockSha256": "lock",
+            }).encode()
+            tar_bytes = io.BytesIO()
+            with tarfile.open(fileobj=tar_bytes, mode="w:gz") as archive:
+                member = tarfile.TarInfo("flaggo-relocated/release.json")
+                member.size = len(manifest)
+                archive.addfile(member, io.BytesIO(manifest))
+            zipped = root / "input.zip"
+            with zipfile.ZipFile(zipped, "w") as archive:
+                archive.writestr("_temp/flaggo-release.tar.gz", tar_bytes.getvalue())
+            expected = {
+                "sizeBytes": zipped.stat().st_size, "zipSha256FromGitHub": reuse.digest(zipped),
+                "archiveSha256VerifiedAfterDownload": hashlib.sha256(tar_bytes.getvalue()).hexdigest(),
+                "manifestSha256VerifiedAfterDownload": hashlib.sha256(manifest).hexdigest(),
+            }
+            evidence = {"sourceCommit": "source", "runtime": {"pythonLockSha256": "lock"}, "artifact": expected}
+            for key in ["zipSha256FromGitHub", "archiveSha256VerifiedAfterDownload",
+                        "manifestSha256VerifiedAfterDownload"]:
+                with self.subTest(key=key):
+                    changed = copy.deepcopy(evidence)
+                    changed["artifact"][key] = "wrong"
+                    with self.assertRaisesRegex(RuntimeError, "checksum"):
+                        reuse.extract_release(changed, zipped, root)
+                    self.assertFalse((root / "flaggo-relocated").exists())
+            self.assertEqual(reuse.extract_release(evidence, zipped, root),
+                             expected["manifestSha256VerifiedAfterDownload"])
+            self.assertEqual((root / "flaggo-relocated/release.json").read_bytes(), manifest)
+
     def test_readiness_retries_startup_connection_resets_then_requires_success(self):
         url = "http://127.0.0.1:3000/api/health"
         with patch.object(readiness.sys, "argv", ["wait-ready.py", url]), \

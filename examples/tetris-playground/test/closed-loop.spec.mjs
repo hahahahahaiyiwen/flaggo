@@ -159,6 +159,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
         })),
         activity: state.activity,
         backendFailures: state.backendFailures,
+        state,
       });
       return state.timeline.some((event) =>
         event.name === "flaggo.analysis.cycle.completed" && event.outcome === "candidate"

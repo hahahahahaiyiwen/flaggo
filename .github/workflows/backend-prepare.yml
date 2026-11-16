@@ -2,6 +2,11 @@ name: Backend preparation
 
 on:
   workflow_dispatch:
+    inputs:
+      replay_installed:
+        description: Replay the pinned retained release without building or resolving dependencies
+        type: boolean
+        default: false
   push:
     branches-ignore:
       - main
@@ -20,6 +25,7 @@ permissions:
 
 jobs:
   linux-python:
+    if: github.event_name != 'workflow_dispatch' || inputs.replay_installed != true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -70,6 +76,60 @@ jobs:
             ${{ runner.temp }}/flaggo-python/*.json
             ${{ runner.temp }}/flaggo-python/*.sha256
           if-no-files-found: error
+          retention-days: 7
+
+  installed-artifact:
+    if: github.event_name == 'workflow_dispatch' && inputs.replay_installed == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Authenticate provenance and extract the pinned sealed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 deploy/azure/reuse-release.py --output "$RUNNER_TEMP/flaggo-replay-input"
+      - name: Prepare the isolated test driver without modifying installed assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/flaggo-replay-input/flaggo-relocated"
+          python3 "$root/deploy/azure/state-tool.py" verify-release --release "$root" \
+            --release-sha256 2092cb98634600a7d76112897da8de50cf0e072a9d1565115e76a51be49ff98f
+          test ! -e node_modules
+          test ! -e examples/tetris-playground/dist
+          test ! -e examples/tetris-integration/dist
+          ln -s "$root/node_modules" node_modules
+          ln -s "$root/examples/tetris-playground/dist" examples/tetris-playground/dist
+          ln -s "$root/examples/tetris-integration/dist" examples/tetris-integration/dist
+          "$root/node/bin/node" --check examples/tetris-playground/test/closed-loop.spec.mjs
+          bash -n deploy/azure/verify-installed.sh
+      - name: Run one installed reproduction and gated restart/recovery checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=GITHUB_ACTIONS,PATH bash deploy/azure/verify-installed.sh \
+            "$RUNNER_TEMP/flaggo-replay-input/flaggo-relocated" "$RUNNER_TEMP"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-installed-replay-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/flaggo-replay-input/artifact-input-provenance.json
+            ${{ runner.temp }}/installed-*.json
+            ${{ runner.temp }}/installed-journal.log
+            ${{ runner.temp }}/analysis-stopped-parity.json
+            ${{ runner.temp }}/restored-parity.json
+            ${{ runner.temp }}/state-backup/backup.json
+            examples/tetris-playground/test-results/
+          if-no-files-found: warn
           retention-days: 7
 
   linux-release:

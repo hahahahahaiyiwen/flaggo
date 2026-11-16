@@ -94,6 +94,22 @@ contract binding. Do not publish the local gateway control routes.
 
 ## Release preparation
 
+The manually dispatched `Backend preparation` workflow has an
+`replay_installed=true` path for the one checksum-pinned retained release in
+`release.provenance.json`. It verifies the original run, workflow Git blob,
+successful packaging/probe steps, artifact identity and ZIP/archive/manifest
+hashes before extracting or executing anything. Only its download step receives
+the job's read-only GitHub token. The replay skips both Python resolution and
+the release build; it does not install application dependencies.
+
+The clean checkout is an isolated test driver linked to the sealed dependency
+and compiled-JavaScript trees. `/opt/flaggo/release` remains the unchanged,
+manifest-verified installation. Poll response bodies, correlation projections,
+last state and browser artifacts are retained even on assertion failure.
+Restart/recovery checks run only after the unchanged browser gate passes.
+There are no automatic dispatch/retry loops or Azure/provider credentials.
+This runner rehearsal is not Azure deployment or live-provider acceptance.
+
 Build from a clean recorded Git tree containing only approved backend changes.
 The preserved website diff in the current worktree must not enter the release.
 Record source and artifact hashes, target/toolchain, native dependencies,
