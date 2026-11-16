@@ -32,6 +32,7 @@ cleanup() {
   journal_args=()
   for unit in "${units[@]}"; do journal_args+=(-u "$unit"); done
   journalctl --no-pager "${journal_args[@]}" > "$scratch/installed-journal.log" 2>&1 || result=1
+  if test "$result" != 0; then tail -n 160 "$scratch/installed-journal.log"; fi
   if mountpoint --quiet /var/lib/flaggo; then
     if ! umount /var/lib/flaggo; then
       echo "Cleanup: state filesystem remains mounted" >&2
@@ -43,6 +44,11 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir /opt/flaggo /etc/flaggo /var/lib/flaggo
+cp -a "$root" /opt/flaggo/release
+root=/opt/flaggo/release
+chown -R root:root "$root"
+find "$root" -type d -exec chmod 755 {} +
+find "$root" -type f -exec chmod a+r {} +
 ln -s "$root" /opt/flaggo/current
 useradd --system --home-dir /var/lib/flaggo --no-create-home --shell /usr/sbin/nologin flaggo
 truncate -s 4G "$scratch/flaggo-smoke.img"
@@ -50,6 +56,18 @@ mkfs.ext4 -F -q "$scratch/flaggo-smoke.img"
 mount -o loop "$scratch/flaggo-smoke.img" /var/lib/flaggo
 chown flaggo:flaggo /var/lib/flaggo
 chmod 700 /var/lib/flaggo
+install -d -o flaggo -g flaggo -m 700 /var/lib/flaggo/copilot-home /var/lib/flaggo/copilot-home/probe
+python3 "$root/deploy/azure/state-tool.py" verify-release --release "$root" --release-sha256 "$release_hash"
+runuser -u flaggo -- env -i HOME=/var/lib/flaggo/copilot-home/probe \
+  PATH="$root/node/bin:/usr/bin:/bin" COPILOT_CLI_EXTRACT_DIR="$root/copilot" \
+  "$root/bin/flaggo-runtime-probe" /var/lib/flaggo/copilot-home/probe \
+  > "$scratch/installed-service-runtime.json"
+runuser -u flaggo -- env -i HOME=/var/lib/flaggo PATH=/usr/bin:/bin \
+  PYTHONHOME="$root/python" LD_LIBRARY_PATH="$root/python/lib" PYTHONDONTWRITEBYTECODE=1 \
+  MPLCONFIGDIR=/var/lib/flaggo/copilot-home/matplotlib \
+  "$root/python/bin/python3.12" "$root/deploy/azure/verify-python.py" \
+  --output /var/lib/flaggo/copilot-home/python-runtime.json
+cp /var/lib/flaggo/copilot-home/python-runtime.json "$scratch/installed-service-python.json"
 for source in "$root"/deploy/azure/config/*.env.example; do
   install -o root -g flaggo -m 640 "$source" "/etc/flaggo/$(basename "${source%.example}")"
 done
