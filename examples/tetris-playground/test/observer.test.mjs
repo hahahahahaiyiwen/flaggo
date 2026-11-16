@@ -292,6 +292,85 @@ test("reserves activity history independently of noisy decisions and not-eligibl
   assert.ok(view.timeline.length <= 325);
 });
 
+test("pins the active identity's successful chain without hiding latest rejected attempts", () => {
+  const contractDigest = `sha256:${"a".repeat(64)}`;
+  const executableDigest = `sha256:${"b".repeat(64)}`;
+  const otherDigest = `sha256:${"c".repeat(64)}`;
+  const cycleId = "8bac49cd-57a9-43d6-966e-92399ae5b2b6";
+  const otherCycle = "730ba064-b0d3-43f0-8a18-265d9a3ce779";
+  const event = (id, name, offset, attributes = {}) => ({
+    ...log(id, name.startsWith("flaggo.analysis.") ? "flaggo-async-analysis" : "flaggo-contract-service", name),
+    observedAt: new Date(Date.parse(current) + offset).toISOString(),
+    attributes: {
+      "flaggo.contract.digest": contractDigest,
+      "flaggo.candidate.digest": executableDigest,
+      "flaggo.executable.digest": executableDigest,
+      "flaggo.operation.outcome": "success",
+      ...attributes,
+    },
+  });
+  const logs = [
+    event("active-cycle", "flaggo.analysis.cycle.completed", 0, {
+      "flaggo.operation.outcome": "candidate", "flaggo.analysis.cycle.id": cycleId,
+    }),
+    event("admitted", "flaggo.candidate.admitted", 1),
+    event("activated", "flaggo.activation.completed", 2),
+    event("different-contract", "flaggo.candidate.admitted", 100, {
+      "flaggo.contract.digest": otherDigest,
+    }),
+    event("different-executable", "flaggo.activation.completed", 101, {
+      "flaggo.executable.digest": otherDigest,
+    }),
+    event("different-cycle", "flaggo.analysis.cycle.completed", 102, {
+      "flaggo.operation.outcome": "candidate", "flaggo.analysis.cycle.id": otherCycle,
+    }),
+    ...Array.from({ length: 300 }, (_, index) =>
+      event(`rejected-${index}`, "flaggo.candidate.rejected", 1_000 + index, {
+        "flaggo.operation.outcome": "conflict",
+        "flaggo.candidate.digest": "",
+      })),
+  ];
+  const activeExecutable = {
+    contractDigest, executableDigest, lifecycleState: "active", stateVersion: 1,
+    createdAt: current, executable: { contractDigest, kind: "rules", rules: [] },
+    provenance: { source: "async-analysis", cycleId },
+  };
+  const input = {
+    telemetry: { logs, spans: [], metrics: [], failures: [] },
+    processes: processStates(true), readiness: readyStates(), now, activeExecutable,
+  };
+  const view = createObserverView(input);
+  assert.deepEqual(view.controlLoop.correlatedTo, { contractDigest, executableDigest, cycleId });
+  assert.equal(view.controlLoop.analysis.cycleId, cycleId);
+  assert.equal(view.controlLoop.candidate.candidateDigest, executableDigest);
+  assert.equal(view.controlLoop.candidate.status, "success");
+  assert.equal(view.controlLoop.activation.executableDigest, executableDigest);
+  assert.equal(view.controlLoop.latest.candidate.status, "failure");
+  assert.equal(view.controlLoop.latest.candidate.name, "flaggo.candidate.rejected");
+  for (const id of ["active-cycle", "admitted", "activated", "rejected-299"]) {
+    assert.ok(view.timeline.some((item) => item.id === id), id);
+  }
+  assert.ok(view.timeline.length <= 328);
+  const next = createObserverView({
+    ...input, telemetry: { ...input.telemetry, logs: [] }, previous: view,
+  });
+  assert.equal(next.controlLoop.analysis.cycleId, cycleId);
+  assert.equal(next.controlLoop.latest.candidate.status, "failure");
+  const unscoped = createObserverView({
+    ...input, activeExecutable: { ...activeExecutable, provenance: { cycleId } },
+  });
+  assert.equal(unscoped.controlLoop.correlatedTo, undefined);
+  assert.equal(unscoped.controlLoop.candidate.status, "failure");
+  const changedAuthority = createObserverView({
+    ...input, previous: view,
+    activeExecutable: { ...activeExecutable, executableDigest: otherDigest },
+  });
+  assert.equal(changedAuthority.controlLoop.analysis, undefined);
+  assert.equal(changedAuthority.controlLoop.candidate, undefined);
+  assert.equal(changedAuthority.controlLoop.activation.executableDigest, otherDigest);
+  assert.equal(changedAuthority.controlLoop.latest.candidate.status, "failure");
+});
+
 test("derives health from process and readiness while retaining activity age", () => {
   const old = "2025-10-09T08:52:20.123Z";
   const processes = processStates(true);

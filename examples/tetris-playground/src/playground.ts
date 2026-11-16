@@ -619,6 +619,8 @@ export class TetrisPlayground {
         now: new Date(),
         applicationEvents: this.applicationEvents,
         previous: this.observer,
+        ...(this.executables.status === "ready" && this.executables.activeExecutable !== undefined
+          ? { activeExecutable: this.executables.activeExecutable } : {}),
       });
       this.changed();
     } finally {

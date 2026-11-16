@@ -9,9 +9,12 @@ import type {
   ClosedLoopEvent,
   ClosedLoopPhase,
   ControlLoopMilestone,
+  ControlLoopMilestones,
+  ControlLoopIdentity,
   ControlLoopProgress,
   EvidenceProgress,
   MetricView,
+  ManagedExecutableView,
   ProcessState,
   ReadinessState,
   ServiceStatus,
@@ -25,6 +28,7 @@ export interface ObserverInput {
   readonly now: Date;
   readonly applicationEvents?: readonly ClosedLoopEvent[];
   readonly previous?: ObserverView;
+  readonly activeExecutable?: ManagedExecutableView;
 }
 
 export interface ObserverView {
@@ -263,12 +267,21 @@ export function createObserverView(input: ObserverInput): ObserverView {
     failure.source === "loki" || failure.source === "tempo"
   );
   const lastSuccessfulPollAt = input.previous?.activity.lastSuccessfulPollAt;
+  const active = activeCycleEvents(events, input.activeExecutable);
   return {
     services: services.map((service) => serviceStatus(service, input)),
     evidence: evidenceProgress(input),
-    controlLoop: controlLoopProgress(events),
+    controlLoop: {
+      ...controlLoopProgress(active?.events ?? events),
+      latest: controlLoopProgress(events),
+      ...(active === undefined ? {} : { correlatedTo: active.identity }),
+    },
     metrics: input.telemetry.metrics.flatMap(registeredMetric),
-    timeline: selectTimelineEvents(events, 200),
+    timeline: [
+      ...selectTimelineEvents(events, 200),
+      ...(active?.events ?? []),
+    ].sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))
+      .filter(dedupeById()),
     activity: activityFailures.length === 0
       ? { status: "current", lastSuccessfulPollAt: input.now.toISOString() }
       : {
@@ -322,7 +335,7 @@ function isActivityPhase(phase: ClosedLoopPhase): boolean {
 
 function controlLoopProgress(
   timeline: readonly ClosedLoopEvent[],
-): ControlLoopProgress {
+): ControlLoopMilestones {
   return {
     ...latestMilestone(timeline, "analysis", "analysis"),
     ...latestMilestone(timeline, "candidate", "candidate"),
@@ -330,7 +343,39 @@ function controlLoopProgress(
   };
 }
 
-function latestMilestone<TKey extends keyof ControlLoopProgress>(
+function activeCycleEvents(
+  events: readonly ClosedLoopEvent[],
+  active: ManagedExecutableView | undefined,
+): { readonly identity: ControlLoopIdentity; readonly events: readonly ClosedLoopEvent[] } | undefined {
+  const provenance = active?.provenance;
+  if (active?.lifecycleState !== "active"
+    || provenance === null || typeof provenance !== "object"
+    || !("source" in provenance) || provenance.source !== "async-analysis"
+    || !("cycleId" in provenance) || typeof provenance.cycleId !== "string"
+    || provenance.cycleId === "") return undefined;
+  const identity = {
+    contractDigest: active.contractDigest,
+    executableDigest: active.executableDigest,
+    cycleId: provenance.cycleId,
+  };
+  const scoped = events.filter((event) =>
+    event.attributes["flaggo.contract.digest"] === identity.contractDigest);
+  return {
+    identity,
+    events: [
+      scoped.find((event) =>
+        event.name === "flaggo.analysis.cycle.completed" && event.outcome === "candidate"
+        && event.attributes["flaggo.analysis.cycle.id"] === identity.cycleId
+        && event.attributes["flaggo.candidate.digest"] === identity.executableDigest),
+      scoped.find((event) => event.name === "flaggo.candidate.admitted"
+        && event.attributes["flaggo.candidate.digest"] === identity.executableDigest),
+      scoped.find((event) => event.name === "flaggo.activation.completed"
+        && event.attributes["flaggo.executable.digest"] === identity.executableDigest),
+    ].filter((event): event is ClosedLoopEvent => event !== undefined),
+  };
+}
+
+function latestMilestone<TKey extends keyof ControlLoopMilestones>(
   timeline: readonly ClosedLoopEvent[],
   phase: ClosedLoopPhase,
   key: TKey,

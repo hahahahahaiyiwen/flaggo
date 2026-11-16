@@ -174,16 +174,31 @@ service-user SDK/Python probes, mounted service/observability readiness and
 default/authored baseline parity. The deterministic browser demonstration
 completed, but its correlated analysis/Candidate/activation assertion at
 `closed-loop.spec.mjs:151` timed out. Native admissions/activations and later
-duplicate-active Candidate conflicts are recorded; the precise browser/
-read-model cause is not established. Do not weaken the assertion or infer
+duplicate-active Candidate conflicts are recorded; that run's browser
+responses were not retained. Do not weaken the assertion or infer
 successful installed recovery: restart, analysis-down, backup/restore/reset
 and restored-parity checks were not reached.
 
 `release.provenance.json` records the exact failed run, independently verified
 download hashes, successful seams and unverified checks. Automatic retries
-stopped at this blocker. The workflow's browser artifact path was corrected
-to the actual example-local output directory; that collection-only change
-has not been rerun. No Azure operations or provider connection occurred.
+stopped at this blocker. The explicit artifact-only reproduction
+[43980808838](https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43980808838)
+subsequently verified the original sealed release without a rebuild and
+retained all 32 actual browser-poll bodies. Every poll had a rejected latest
+Candidate with no digest; the active cycle also disappeared in the final 16
+polls. Activation and active executable identity remained correct. This
+establishes an observer/test correlation defect, not an activation failure.
+
+The source fix correlates successful milestones by active contract/executable/
+cycle identity, keeps latest failures separately visible, and pins at most
+three matching chain events. The TypeScript build, 21 focused tests and replay
+of all 32 captured event sets pass without changing the browser predicate.
+**The fixed gateway is not in the sealed release and has not passed installed
+smoke.** Restart/recovery remain unexecuted; no further dispatch was made.
+The first artifact-only setup attempt failed exact symlink validation; safe
+extraction now preserves original link text, with whole-artifact offline Linux
+verification. Its one corrected dispatch was explicitly approved.
+No Azure operations or provider connection occurred.
 Artifacts expire after seven days: retain the reviewed archive, checksum,
 manifest and evidence in an approved private release store before deployment.
 No release-store upload is authorized by the workflow.

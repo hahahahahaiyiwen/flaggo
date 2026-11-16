@@ -325,6 +325,17 @@ The timeline recognizes only names and attributes published by
 are ignored rather than inferred. Backend query failures remain visible in the
 gateway state and do not masquerade as empty successful responses.
 
+When fresh active Async Analysis authority is available, `controlLoop` reports
+the observed successful milestones matching its contract digest, executable
+digest and provenance cycle ID; `correlatedTo` identifies that authority.
+`controlLoop.latest` separately preserves the latest attempt milestones,
+including failures. Up to three matching chain events are pinned alongside
+the bounded timeline so later rejected resubmissions cannot evict the active
+cycle. Missing chain facts remain missing rather than being inferred from
+timestamps or unrelated attempts; recent failures remain visible in the
+timeline. Without a fresh active analysis identity, the top-level milestones
+retain their latest-attempt behavior.
+
 ## Run the adaptive comparison in benchmark mode
 
 Launch with `--mode=benchmark`, then select **Run demo**. Benchmark mode has no

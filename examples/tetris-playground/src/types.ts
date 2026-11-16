@@ -92,10 +92,21 @@ export interface ControlLoopMilestone {
   readonly executableDigest?: string;
 }
 
-export interface ControlLoopProgress {
+export interface ControlLoopMilestones {
   readonly analysis?: ControlLoopMilestone;
   readonly candidate?: ControlLoopMilestone;
   readonly activation?: ControlLoopMilestone;
+}
+
+export interface ControlLoopIdentity {
+  readonly contractDigest: string;
+  readonly executableDigest: string;
+  readonly cycleId: string;
+}
+
+export interface ControlLoopProgress extends ControlLoopMilestones {
+  readonly latest: ControlLoopMilestones;
+  readonly correlatedTo?: ControlLoopIdentity;
 }
 
 export interface MetricView {
