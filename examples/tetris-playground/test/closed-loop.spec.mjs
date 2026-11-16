@@ -138,17 +138,43 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   await expect(page.locator(".health-pill.stopped")).toHaveCount(0);
   await expect(page.locator(".phase-activation").first()).toBeVisible();
   let state;
-  await expect.poll(async () => {
-    const response = await page.request.get(`${playgroundUrl}/api/state`);
-    expect(response.ok()).toBe(true);
-    state = await response.json();
-    const cycle = state.executables.activeExecutable.provenance?.cycleId;
-    return state.timeline.some((event) =>
-      event.name === "flaggo.analysis.cycle.completed" && event.outcome === "candidate"
-      && event.attributes["flaggo.analysis.cycle.id"] === cycle)
-      && state.controlLoop.candidate?.candidateDigest === learned.executableDigest
-      && state.controlLoop.activation?.executableDigest === learned.executableDigest;
-  }, { timeout: 30_000 }).toBe(true);
+  const correlationPolls = [];
+  try {
+    await expect.poll(async () => {
+      const response = await page.request.get(`${playgroundUrl}/api/state`);
+      expect(response.ok()).toBe(true);
+      state = await response.json();
+      const cycle = state.executables.activeExecutable.provenance?.cycleId;
+      correlationPolls.push({
+        observedAt: new Date().toISOString(),
+        activeExecutableDigest: state.executables.activeExecutable.executableDigest,
+        cycleId: cycle,
+        candidate: state.controlLoop.candidate,
+        activation: state.controlLoop.activation,
+        completedCandidateCycles: state.timeline.filter((event) =>
+          event.name === "flaggo.analysis.cycle.completed" && event.outcome === "candidate"
+        ).map((event) => ({
+          observedAt: event.observedAt,
+          cycleId: event.attributes["flaggo.analysis.cycle.id"],
+        })),
+        activity: state.activity,
+        backendFailures: state.backendFailures,
+      });
+      return state.timeline.some((event) =>
+        event.name === "flaggo.analysis.cycle.completed" && event.outcome === "candidate"
+        && event.attributes["flaggo.analysis.cycle.id"] === cycle)
+        && state.controlLoop.candidate?.candidateDigest === learned.executableDigest
+        && state.controlLoop.activation?.executableDigest === learned.executableDigest;
+    }, { timeout: 30_000 }).toBe(true);
+  } finally {
+    const correlationPath = testInfo.outputPath("correlation-state.json");
+    await writeFile(correlationPath, JSON.stringify({
+      expectedExecutableDigest: learned.executableDigest,
+      polls: correlationPolls,
+      lastState: state ?? null,
+    }, null, 2), "utf8");
+    await testInfo.attach("correlation-state", { path: correlationPath });
+  }
   await writeFile(evaluationPath, JSON.stringify(state, null, 2), "utf8");
   expect(state.backendFailures).toEqual([]);
   expect(state.metrics.length).toBeGreaterThan(0);
