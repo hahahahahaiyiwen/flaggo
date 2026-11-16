@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "778c3428c5b78e6b43d1f9507f163d03aec7a982",
+  "workflowRun": "https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43962715350",
+  "artifactId": 14273409405,
+  "artifactDigest": "sha256:a3efa01484ef34f948c0dcd4790b3a9e1da89fad4cbf2382416c9f96a4950eb0",
+  "lockSha256": "817ee1fd87fe78f68c97d24d29bf0eaedcb22c0cbdadad71bb1db53e1ecb8c0d",
+  "resolver": "uv 0.9.15",
+  "platform": "Linux x86-64, Ubuntu 24.04, CPython 3.12.16",
+  "verification": "pip --require-hashes --only-binary=:all:, wheel download report, and all six scientific imports",
+  "certificateVerification": "normal defaults; no insecure host or TLS bypass",
+  "artifactContents": [
+    "requirements-linux.txt",
+    "lock.sha256",
+    "source-commit.txt",
+    "resolver-version.txt",
+    "python-runtime.json",
+    "wheel-provenance.json"
+  ]
+}
