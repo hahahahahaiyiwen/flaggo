@@ -1,0 +1,19 @@
+[Unit]
+Description=Flaggo private Collector and LGTM
+Wants=docker.service network-online.target
+After=docker.service network-online.target
+RequiresMountsFor=/var/lib/flaggo
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/flaggo/current/deploy/azure
+ExecStartPre=/usr/bin/mountpoint --quiet /var/lib/flaggo
+ExecStartPre=/usr/bin/docker compose --project-name flaggo-backend config --quiet
+ExecStart=/usr/bin/docker compose --project-name flaggo-backend up --pull never --no-build --abort-on-container-exit
+ExecStop=/usr/bin/docker compose --project-name flaggo-backend stop --timeout 30
+Restart=always
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077

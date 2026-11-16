@@ -41,8 +41,8 @@ copy login caches or emit tokens.
 
 ## Process and persistence contract
 
-`systemd/flaggo@.service` is a native **service template**, not a complete
-installation. Instances for `contract-service`, `decision-service`,
+`systemd/flaggo@.service` is a native service template. Instances for
+`contract-service`, `decision-service`,
 `otel-ingestion`, `evidence-materializer` and `async-analysis` select
 `/opt/flaggo/current/bin/flaggo-<instance>`.
 
@@ -59,12 +59,13 @@ state and LGTM data also belong on the data disk. Exactly one materializer
 per database is supported. Unit cgroup cleanup is operational hygiene,
 **not a Python sandbox**.
 
-The template does not enable any service or imply readiness ordering.
-Start Contract Service and OTel Ingestion first and wait for their actual
-`/health/ready`; then Decision Service, materializer and the deliberately
-selected analysis entrypoint. Workers have no HTTP readiness route. A future
-supervisor installation must enforce this order and verify logs/freshness.
-Runtime availability must not depend on continued analysis/ingestion uptime.
+The instance drop-ins enforce bounded HTTP readiness ordering. The backend
+target starts the four base services and observability, but neither an analysis
+entrypoint nor the gateway. Select exactly one analysis unit explicitly;
+the smoke and live units conflict. Workers have no HTTP readiness route:
+verify their structured startup events and fresh work, not only a live PID.
+There is deliberately no runtime `Requires` relationship to analysis or
+observability; stopping those must not stop deterministic evaluation.
 
 The live analysis configuration deliberately uses unsupported
 `FLAGGO_ANALYSIS_INFERENCE=unconfigured` so copying it cannot implicitly
@@ -73,13 +74,19 @@ budgets must be explicitly approved before replacing that value. Deterministic
 deployment smoke instead uses the existing example-owned
 `flaggo-tetris-playground-analysis` binary, not a live-provider fallback.
 
-Node gateway and Collector/LGTM installation remain pending release packaging.
-Reuse their actual configurations and pin image digests. Native Linux Collector
+The gateway supervisor reads actual systemd MainPIDs and restarts its Node
+child when a worker restarts. A down worker remains visibly degraded; it is
+not assigned a fake healthy PID. A gateway restart resets its in-memory demo
+session, not durable authority. Its runtime configuration remains deliberately
+invalid until the exact contract binding is supplied.
+
+`compose.yaml` pins the same Collector/LGTM versions to their retrieved
+image digests. Release preparation copies the canonical playground Collector
+configuration rather than maintaining a fork. Native Linux Collector
 uses host networking with loopback receivers; application telemetry fans out
 to ingestion and LGTM, internal telemetry goes only to LGTM. Keep every backend
 listener private. Generate the gateway runtime configuration from the deployed
-contract binding and refresh its service PID map after process restarts.
-Do not fabricate healthy PIDs or publish the local gateway control routes.
+contract binding. Do not publish the local gateway control routes.
 
 ## Release preparation
 
@@ -106,17 +113,111 @@ failed wheel download/hash, unsupported interpreter or failed imports blocks
 release. Install the lock with hash verification in a clean Linux environment
 and record all six scientific-library import/version results.
 
-**Current blocker:** dependency resolution failed TLS handshakes to
-`files.pythonhosted.org` with Windows uv (including native trust), pip's dry-run
-resolver, and uv in an existing local Linux container. No lock was fabricated and certificate
-verification was not disabled. Generate/verify it on an approved working
-Linux build environment before claiming a reproducible Python release.
+The checked-in lock was generated and installed with normal TLS on the
+approved GitHub-hosted Linux runner. Its SHA256 is
+`817ee1fd87fe78f68c97d24d29bf0eaedcb22c0cbdadad71bb1db53e1ecb8c0d`;
+`requirements-linux.provenance.json` records its source, run and artifact.
+This resolves the local download-TLS blocker without weakening verification.
 
 Copilot also needs a clean-host runtime probe: Phase 5 used Rust SDK
 `1.0.17-preview.5`, CLI `1.0.92-5`, protocol `3`. Verify the SDK's actual lookup
 and distribution; do not assume copying the Rust binary packages the CLI or
-that a maintainer's login/cache is available. The unavailable SDK-specific
-Azure recipe has not validated this placement.
+that a maintainer's login/cache is available.
+
+`prepare-release.py --output <new-absolute-path>` builds a clean committed
+Linux x86-64 checkout with CPython 3.12 and the pinned Rust/Node toolchains.
+It packages native services, the deterministic example entrypoint, skills,
+SDK runtime assets, compiled gateway/UI and workspace dependencies, Node,
+Python and scientific wheels. `release.json` records file hashes, links,
+source/toolchain identities and native library dependencies. The target must
+provide compatible Ubuntu 24.04 system libraries; this is not a static or
+arbitrary-distribution binary release. No compiler, npm install or pip download
+runs at service startup.
+
+The approved Actions run
+[43963760647](https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43963760647)
+built source `52d1508ee959a23917cb031a79196d03921f6432`, moved the release
+away from its build location, and passed the protocol handshake and all
+scientific imports with an empty HOME and no credentials. It requested no
+inference. Its archive SHA256 is
+`687bd7b60ea15f6405bdde15af4fbd7afd2ad2e2d858ecc37e892dd97cf95023`.
+This is packaging evidence, not Azure acceptance or a live-provider cycle.
+
+The extended focused workflow also contains `verify-installed.sh`, restricted
+to an ephemeral GitHub-hosted runner. It installs the prepared units over a
+local mounted ext4 test filesystem, never provisions Azure. It exercises the
+existing deterministic browser assertions, real service restarts and offline
+recovery. Treat those checks as pending until their exact run succeeds.
+Artifacts expire after seven days: retain the reviewed archive, checksum,
+manifest and evidence in an approved private release store before deployment.
+No release-store upload is authorized by the workflow.
+
+## Explicit installed-target smoke
+
+The existing closed-loop test still launches and cleans up its own development
+fixture by default. Setting `FLAGGO_DEPLOYED_TARGET` instead requires an absolute
+`flaggo.deployed-smoke/v1` descriptor and `FLAGGO_DEPLOYED_SMOKE_CONFIRM` matching
+the mounted state's exact ID. Empty, missing or mismatched identities fail;
+they never select the development launcher. Only loopback endpoints and the
+deterministic reviewed-Python scenario are accepted. Run operator-side on the
+host where the release and sealed workspace paths can actually be inspected.
+
+`bind-smoke.mjs` creates the descriptor/runtime binding and verifies initial
+default SDK/REST parity against the actual contract default. It requires the
+existing state marker to be `flaggo.state/v1`, kind `disposable-smoke`, with
+the explicitly confirmed state ID. The prepared endpoint layout is fixed to
+the unit examples; it is not an endpoint-discovery fallback or public installer.
+First verify the installed release against an independently retained manifest
+hash using `state-tool.py verify-release`.
+
+The target test reuses the existing evidence, SQL/Python/artifact review chain,
+activation, exact-digest parity, failure-seam and telemetry assertions. It
+does not launch local services, delete target state, or stop the gateway.
+`verify-bound-decision.mjs` separately checks exact active-digest SDK/REST
+parity with analysis stopped and after restore. No target mode proves #86's
+visitor controls or completed live inference.
+
+## Offline operations
+
+These are maintainer tools, not commands to run before deployment approval.
+Root-owned releases are immutable and configuration stays under `/etc/flaggo`.
+Create the `flaggo` account, mount and verify the data filesystem, install the
+units/drop-ins and restricted configuration, and preload pinned container
+images before starting the target. Compose startup uses `--pull never`.
+Review ports, configuration and compatible native libraries on the actual
+selected OS image before enabling anything. No VM bootstrap is silently run.
+
+For updates: stage a new release beside the old one; verify its independently
+retained manifest hash and every file/link with `state-tool.py verify-release`.
+Stop the gateway, both analysis entrypoints, materializer, ingestion, decision,
+contract and observability; require zero MainPIDs and no open state handles.
+Back up before changing `current`. Switch the symlink only after schema
+compatibility review, then start the base target and explicitly selected
+analysis/gateway, checking health, structured worker starts and exact parity.
+Never delete the prior release or automatically roll a migrated database back.
+
+`state-tool.py backup` requires the configured `/var/lib/flaggo` mount's writers
+stopped. It checkpoints and checks SQLite, copies durable database/workspaces/
+observability coherently, and records release and configuration hashes. It
+does **not** export configuration values or `copilot-home` auth/session caches.
+The output directory is private. Store backup data encrypted and access-restricted;
+it can contain sensitive evidence even without provider credentials.
+
+`state-tool.py restore` checks the externally retained backup manifest hash,
+all saved bytes and the exact matching release hash, then restores only into
+a new separate path. It never switches or overwrites live state. Confirm
+sealed authority/artifact identity, reinstall secrets separately and restore
+`flaggo` ownership before any approved switch back to the mounted state tree.
+Checksums/SQLite integrity alone do not prove application-level recovery.
+
+`state-tool.py reset-disposable` additionally requires the exact confirmed
+`disposable-smoke` state ID. It creates a verified backup and moves only named
+demo state entries into a private archive; it deletes nothing, leaves the
+mount intact and issues a new state ID. Unknown state entries or a persistent
+identity block reset. Auth caches are neither archived nor removed. Rebind the
+fresh default contract before a new smoke; do not reuse an old descriptor.
+Actual-host recovery rehearsal, retention, access and recovery-point objectives
+remain deployment acceptance gates.
 
 ## Deployment acceptance and recovery gates
 
@@ -129,10 +230,8 @@ The following checks are not yet a deployed result or automated installer:
 
 - Record exact installed manifest/config/image identities and mounted paths.
   Verify real health endpoints, unique workers and denied internal ingress.
-- Add a deployed-target mode to the existing closed-loop assertions. The
-  current browser fixture launches fresh local processes; running it alone
-  cannot validate this infrastructure. Missing target identities must fail,
-  never select a local fallback.
+- Exercise the explicit deployed-target mode against the actual installed
+  Azure release. A successful local/runner fixture alone cannot validate it.
 - Exercise default decision parity, real Collector/inbox/materializer evidence,
   saved SQL/Python artifacts, invalid draft/review/revision/final review,
   Candidate admission, activation and subsequent exact-digest SDK/REST parity.

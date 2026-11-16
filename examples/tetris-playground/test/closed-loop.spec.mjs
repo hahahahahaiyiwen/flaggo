@@ -10,6 +10,7 @@ import { createDecisionClient } from "@flaggo/sdk/runtime";
 import { parseListeningUrl } from "../../tetris-integration/host-process.mjs";
 import { parseLokiResponse, parseTempoResponse } from "../dist/backend.js";
 import { readAttemptFailureRecords, startPlaygroundFixture } from "./playground-fixture.mjs";
+import { loadDeployedTarget } from "../../../deploy/azure/deployed-target.mjs";
 
 const exampleDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -25,10 +26,16 @@ if (analysisMode !== "deterministic" && analysisMode !== "copilot") {
 const demoTimeout = analysisMode === "copilot" ? 660_000 : 240_000;
 let host;
 let playgroundUrl;
+const deployed = Object.hasOwn(process.env, "FLAGGO_DEPLOYED_TARGET");
 
 test.beforeAll(async () => {
   test.setTimeout(660_000);
-  host = await startPlaygroundFixture({
+  if (deployed && analysisMode !== "deterministic") {
+    throw new Error("Deployed-target smoke only permits reviewed-python-exit analysis.");
+  }
+  host = deployed ? await loadDeployedTarget(
+    process.env.FLAGGO_DEPLOYED_TARGET, process.env.FLAGGO_DEPLOYED_SMOKE_CONFIRM,
+  ) : await startPlaygroundFixture({
     mode: "benchmark", analysisMode, retain: true,
     exitScenario: analysisMode === "deterministic",
   });
@@ -36,6 +43,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  if (deployed) return;
   await host?.close();
   if (host !== undefined) {
     await rm(host.runDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -45,6 +53,16 @@ test.afterAll(async () => {
 
 test.afterEach(async ({}, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus || host === undefined) return;
+  if (deployed) {
+    await testInfo.attach("deployed-target-identity", {
+      body: JSON.stringify(host.identity), contentType: "application/json",
+    });
+    const failures = await readAttemptFailureRecords(host.runDirectory);
+    await testInfo.attach("attempt-failures", {
+      body: JSON.stringify(failures), contentType: "application/json",
+    });
+    return;
+  }
   const log = await readFile(resolve(host.runDirectory, "async-analysis.log"), "utf8");
   const path = testInfo.outputPath("async-analysis.log");
   await writeFile(path, log.slice(-65_536), "utf8");
@@ -154,6 +172,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     expect(state.timeline.some((event) => event.phase === phase)).toBe(true);
   }
   const active = state.executables.activeExecutable;
+  if (deployed) expect(active.contractDigest).toBe(host.identity.contractDigest);
   const provenance = active.provenance;
   expect(active.contractDigest).toBe(state.executables.contractDigest);
   expect(provenance.source).toBe("async-analysis");
@@ -172,7 +191,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     expect(state.metrics.some((metric) => metric.service === service.name),
       `${service.name} must export operational metrics`).toBe(true);
   }
-  const urls = Object.fromEntries(await Promise.all([
+  const urls = deployed ? host.services : Object.fromEntries(await Promise.all([
     ["contractServiceUrl", "contract-service.log"],
     ["decisionServiceUrl", "decision-service.log"],
     ["otlpIngestionUrl", "otel-ingestion.log"],
@@ -236,24 +255,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     headers: { "Content-Type": "application/xml" }, data: "<invalid/>",
   });
   expect(rejectedExport.status()).toBe(415);
-  const execute = promisify(execFile);
-  const containers = await execute("docker", [
-    "ps", "--filter", `name=flaggo-playground-${host.child.pid}-`,
-    "--filter", "label=com.docker.compose.service=lgtm", "--format", "{{.ID}}",
-  ]);
-  const containerIds = containers.stdout.trim().split(/\r?\n/u).filter(Boolean);
-  expect(containerIds).toHaveLength(1);
-  const backendPorts = await execute("docker", [
-    "inspect", "--format", "{{json .NetworkSettings.Ports}}", containerIds[0],
-  ]);
-  const ports = JSON.parse(backendPorts.stdout);
-  const endpoint = (port) => {
-    expect(ports[port]).toHaveLength(1);
-    expect(ports[port][0].HostIp).toBe("127.0.0.1");
-    return `http://127.0.0.1:${ports[port][0].HostPort}`;
-  };
-  const tempoUrl = endpoint("3200/tcp");
-  const lokiUrl = endpoint("3100/tcp");
+  const { tempoUrl, lokiUrl } = deployed ? host.observability : await localObservabilityEndpoints();
   const actionProfile = JSON.parse(await readFile(
     resolve(exampleDirectory, "..", "..", "contracts", "otel",
       "flaggo-service-observability-profile-v1.json"), "utf8",
@@ -426,11 +428,33 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     },
   }, null, 2), "utf8");
   await testInfo.attach("phase4-exit-verification", { path: evaluationPath });
-  await host.close();
-  await expect(fetch(`${playgroundUrl}/api/health`, {
-    signal: AbortSignal.timeout(2_000),
-  })).rejects.toThrow();
+  if (!deployed) {
+    await host.close();
+    await expect(fetch(`${playgroundUrl}/api/health`, {
+      signal: AbortSignal.timeout(2_000),
+    })).rejects.toThrow();
+  }
 });
+
+async function localObservabilityEndpoints() {
+  const execute = promisify(execFile);
+  const containers = await execute("docker", [
+    "ps", "--filter", `name=flaggo-playground-${host.child.pid}-`,
+    "--filter", "label=com.docker.compose.service=lgtm", "--format", "{{.ID}}",
+  ]);
+  const containerIds = containers.stdout.trim().split(/\r?\n/u).filter(Boolean);
+  expect(containerIds).toHaveLength(1);
+  const backendPorts = await execute("docker", [
+    "inspect", "--format", "{{json .NetworkSettings.Ports}}", containerIds[0],
+  ]);
+  const ports = JSON.parse(backendPorts.stdout);
+  const endpoint = (port) => {
+    expect(ports[port]).toHaveLength(1);
+    expect(ports[port][0].HostIp).toBe("127.0.0.1");
+    return `http://127.0.0.1:${ports[port][0].HostPort}`;
+  };
+  return { tempoUrl: endpoint("3200/tcp"), lokiUrl: endpoint("3100/tcp") };
+}
 
 async function verifyReviewedPythonArtifacts(runDirectory, provenance, contractDigest) {
   const root = resolve(runDirectory, "analysis-workspaces");

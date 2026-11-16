@@ -1,0 +1,22 @@
+[Unit]
+Description=Flaggo private playground gateway and PID metadata supervisor
+After=flaggo-backend.target
+RequiresMountsFor=/var/lib/flaggo
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=flaggo
+Group=flaggo
+WorkingDirectory=/var/lib/flaggo
+EnvironmentFile=/etc/flaggo/common.env
+EnvironmentFile=/etc/flaggo/gateway.env
+ExecStartPre=/usr/bin/mountpoint --quiet /var/lib/flaggo
+ExecStart=/usr/bin/python3 /opt/flaggo/current/deploy/azure/gateway.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true

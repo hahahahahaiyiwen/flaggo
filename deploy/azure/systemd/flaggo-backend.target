@@ -1,0 +1,7 @@
+[Unit]
+Description=Flaggo private backend (analysis and gateway require explicit selection)
+Wants=flaggo@contract-service.service flaggo@decision-service.service flaggo@otel-ingestion.service flaggo@evidence-materializer.service flaggo-observability.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target

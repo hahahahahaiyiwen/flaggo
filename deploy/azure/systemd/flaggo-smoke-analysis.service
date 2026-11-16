@@ -1,0 +1,25 @@
+[Unit]
+Description=Flaggo deterministic reviewed-Python deployment smoke (no inference)
+Conflicts=flaggo@async-analysis.service
+Wants=flaggo@contract-service.service flaggo@otel-ingestion.service
+After=flaggo@contract-service.service flaggo@otel-ingestion.service
+RequiresMountsFor=/var/lib/flaggo
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=flaggo
+Group=flaggo
+WorkingDirectory=/var/lib/flaggo
+EnvironmentFile=/etc/flaggo/common.env
+EnvironmentFile=/etc/flaggo/smoke-analysis.env
+ExecStartPre=/usr/bin/mountpoint --quiet /var/lib/flaggo
+ExecStartPre=/usr/bin/python3 /opt/flaggo/current/deploy/azure/wait-ready.py http://127.0.0.1:8080/health/ready http://127.0.0.1:5090/health/ready
+ExecStart=/opt/flaggo/current/bin/flaggo-tetris-playground-analysis
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true

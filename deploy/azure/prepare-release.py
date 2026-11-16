@@ -81,18 +81,26 @@ def main():
     run("npm", "ci", "--ignore-scripts", env=environment)
     run("npm", "run", "build:tetris-playground", env=environment)
     (output / "node/bin").mkdir(parents=True)
-    shutil.copy2(shutil.which("node"), output / "node/bin/node")
+    node = Path(shutil.which("node")).resolve()
+    shutil.copy2(node, output / "node/bin/node")
+    shutil.copy2(node.parent.parent / "LICENSE", output / "node/LICENSE")
     for path in [
         "examples/tetris-playground/dist", "examples/tetris-playground/public",
         "examples/tetris-integration/dist", "packages/sdk-typescript", "node_modules",
+        "examples/tetris-playground/flaggo",
     ]:
         copy_tree(ROOT / path, output / path)
     for path in [
         "examples/tetris-playground/package.json", "examples/tetris-integration/package.json",
+        "examples/tetris-playground/flaggo.deploy.json", "examples/contract-deployment.mjs",
     ]:
         shutil.copy2(ROOT / path, output / path)
     # The application packages use relative workspace links. Preserve their layout.
     copy_tree(ROOT / "deploy/azure", output / "deploy/azure")
+    shutil.copy2(
+        ROOT / "examples/tetris-playground/otel-collector.yaml",
+        output / "deploy/azure/otel-collector.yaml",
+    )
     copy_tree(Path(sys.base_prefix), output / "python")
     python = output / "python/bin/python3.12"
     python_environment = {
@@ -120,6 +128,7 @@ def main():
     shutil.copy2(sdk_root / "cli-version-in-process.txt", output / "copilot-version.txt")
     shutil.copy2(sdk_root / "LICENSE", output / "COPILOT-SDK-LICENSE")
     files = []
+    symlinks = []
     for path in sorted(output.rglob("*")):
         if path.is_file() and not path.is_symlink():
             files.append({
@@ -130,6 +139,9 @@ def main():
             resolved = path.resolve()
             if not resolved.is_relative_to(output):
                 raise RuntimeError(f"Release symlink escapes the artifact: {path}")
+            symlinks.append({
+                "path": path.relative_to(output).as_posix(), "target": os.readlink(path),
+            })
     manifest = {
         "format": "flaggo.release/v1",
         "sourceCommit": commit,
@@ -140,6 +152,14 @@ def main():
         "copilotSdk": sdk["version"],
         "pythonLockSha256": digest(lock),
         "files": files,
+        "symlinks": symlinks,
+        "nativeDependencies": {
+            path.relative_to(output).as_posix(): run("ldd", str(path), capture=True)
+            for path in [
+                output / "bin/flaggo-async-analysis", output / "node/bin/node",
+                output / "python/bin/python3.12",
+            ]
+        },
     }
     (output / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 

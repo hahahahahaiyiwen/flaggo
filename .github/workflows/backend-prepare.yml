@@ -12,6 +12,8 @@ on:
       - modules/analysis-agent/examples/runtime-probe.rs
       - examples/tetris-playground/test/closed-loop.spec.mjs
       - deploy/azure/**
+      - '!deploy/azure/README.md'
+      - '!deploy/azure/*.provenance.json'
 
 permissions:
   contents: read
@@ -26,7 +28,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.16"
       - name: Resolve or reuse the Linux lock
         shell: bash
         run: |
@@ -80,7 +82,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.16"
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.5"
@@ -89,6 +91,8 @@ jobs:
         run: |
           set -euo pipefail
           rustup toolchain install 1.99.0 --profile minimal
+          python deploy/azure/test-preparation.py
+          node --test deploy/azure/deployed-target.test.mjs
           python deploy/azure/prepare-release.py --output "$RUNNER_TEMP/flaggo-release"
       - name: Relocate and probe without credentials or maintainer caches
         shell: bash
@@ -108,6 +112,12 @@ jobs:
             --output "$root/python-relocated.json"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/flaggo-release.tar.gz" flaggo-relocated
           sha256sum "$RUNNER_TEMP/flaggo-release.tar.gz" > "$RUNNER_TEMP/flaggo-release.sha256"
+      - name: Exercise installed private services and offline recovery on the runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=GITHUB_ACTIONS,PATH bash deploy/azure/verify-installed.sh \
+            "$RUNNER_TEMP/flaggo-relocated" "$RUNNER_TEMP"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -118,5 +128,11 @@ jobs:
             ${{ runner.temp }}/flaggo-relocated/release.json
             ${{ runner.temp }}/flaggo-relocated/runtime-probe.json
             ${{ runner.temp }}/flaggo-relocated/python-relocated.json
+            ${{ runner.temp }}/installed-*.json
+            ${{ runner.temp }}/installed-journal.log
+            ${{ runner.temp }}/analysis-stopped-parity.json
+            ${{ runner.temp }}/restored-parity.json
+            ${{ runner.temp }}/state-backup/backup.json
+            test-results/
           if-no-files-found: warn
           retention-days: 7
