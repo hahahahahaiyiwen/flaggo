@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployContracts } from "../../examples/contract-deployment.mjs";
+import { bindDecisionContract, createContractClient } from "@flaggo/sdk/management";
 import { loadDeployedTarget } from "./deployed-target.mjs";
 import { verifyDecisions } from "./verify-bound-decision.mjs";
 
@@ -39,10 +40,25 @@ const descriptor = {
 };
 await writeFile(descriptorPath, JSON.stringify(descriptor, null, 2));
 const target = await loadDeployedTarget(descriptorPath, identity.stateId);
-const parity = await verifyDecisions(
-  target, deployment.manifest.authority, deployment.contracts[0].contract.result.default,
+const canonical = deployment.contracts[0].contract;
+const defaultName = "deployment.default";
+const defaultContract = bindDecisionContract({
+  name: defaultName, expression_syntax: canonical.expression_syntax,
+  attributes: canonical.attributes, result: canonical.result,
+}, deployment.manifest.authority);
+const defaultDeployment = (await createContractClient({
+  baseUrl: services.contractServiceUrl,
+}).deploy(defaultContract)).value;
+const defaultTarget = {
+  ...target, identity: { ...target.identity, contractDigest: defaultDeployment.contractDigest },
+};
+const defaultParity = await verifyDecisions(
+  defaultTarget, deployment.manifest.authority, canonical.result.default, defaultName,
 );
-await writeFile(`${descriptorPath}.default-parity.json`, JSON.stringify(parity, null, 2));
+await writeFile(`${descriptorPath}.default-parity.json`, JSON.stringify(defaultParity, null, 2));
+await writeFile(`${descriptorPath}.baseline-parity.json`, JSON.stringify(
+  await verifyDecisions(target, deployment.manifest.authority), null, 2,
+));
 const runtimeConfig = {
   ...deployment.runtimeConfig,
   services: { ...services, otlpIngestionUrl: "http://127.0.0.1:4318" },

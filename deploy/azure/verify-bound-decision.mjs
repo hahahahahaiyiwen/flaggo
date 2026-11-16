@@ -4,16 +4,16 @@ import { pathToFileURL } from "node:url";
 import { createDecisionClient } from "@flaggo/sdk/runtime";
 import { loadDeployedTarget } from "./deployed-target.mjs";
 
-export async function verifyDecisions(target, authority, expectedDefault) {
+export async function verifyDecisions(target, authority, expectedDefault, contractName = "tetris.dropInterval") {
   const { contractServiceUrl, decisionServiceUrl } = target.services;
   const contractDigest = target.identity.contractDigest;
-  const base = `/v3/decision-contracts/tetris.dropInterval/versions/${contractDigest}`;
+  const base = `/v3/decision-contracts/${encodeURIComponent(contractName)}/versions/${contractDigest}`;
   const catalogResponse = await fetch(`${contractServiceUrl}${base}/executables`);
   assert.equal(catalogResponse.status, 200);
   const catalog = await catalogResponse.json();
   const runtimeConfig = {
     format: "flaggo.runtime-config/v1", authority, services: target.services,
-    bindings: { "tetris.dropInterval": { contractDigest } },
+    bindings: { [contractName]: { contractDigest } },
   };
   const client = createDecisionClient({ runtimeConfig, random: () => 0.25 });
   const decisions = [];
@@ -26,7 +26,7 @@ export async function verifyDecisions(target, authority, expectedDefault) {
       current_drop_interval_ms: 800, session_id: "deployment-parity",
       exposure_id: `unused-${pressure}`,
     };
-    const sdk = (await client.decide("tetris.dropInterval", { attributes })).value;
+    const sdk = (await client.decide(contractName, { attributes })).value;
     const response = await fetch(`${decisionServiceUrl}${base}/decisions`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ attributes: { ...attributes, _random: 0.25 } }),
@@ -36,7 +36,10 @@ export async function verifyDecisions(target, authority, expectedDefault) {
     for (const decision of [sdk, rest]) {
       assert.equal(decision.contractDigest, contractDigest);
       assert.equal(decision.executableDigest, catalog.activeExecutable.executableDigest);
-      if (expectedDefault !== undefined) assert.deepEqual(decision.result, expectedDefault);
+      if (expectedDefault !== undefined) {
+        assert.deepEqual(decision.result, expectedDefault);
+        assert.equal(decision.evaluation.source, "default");
+      }
     }
     assert.deepEqual(sdk.result, rest.result);
     assert.deepEqual(sdk.evaluation, rest.evaluation);

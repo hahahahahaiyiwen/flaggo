@@ -162,8 +162,12 @@ they never select the development launcher. Only loopback endpoints and the
 deterministic reviewed-Python scenario are accepted. Run operator-side on the
 host where the release and sealed workspace paths can actually be inspected.
 
-`bind-smoke.mjs` creates the descriptor/runtime binding and verifies initial
-default SDK/REST parity against the actual contract default. It requires the
+`bind-smoke.mjs` creates the descriptor/runtime binding and verifies baseline
+SDK/REST parity. Tetris has authored exploration rules, not an active default;
+a separate `deployment.default` probe reuses its canonical attributes/result
+without authored rules or learning and verifies the actual default result and
+`evaluation.source=default`. It does not replace Tetris's authored baseline.
+The helper requires the
 existing state marker to be `flaggo.state/v1`, kind `disposable-smoke`, with
 the explicitly confirmed state ID. The prepared endpoint layout is fixed to
 the unit examples; it is not an endpoint-discovery fallback or public installer.
