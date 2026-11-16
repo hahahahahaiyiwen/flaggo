@@ -100,6 +100,8 @@ def verify_state_copy(root, manifest):
 def backup(state, output, release_root, config, expected, stopped=assert_stopped):
     stopped()
     release_manifest = release(release_root, expected)
+    if not config.is_dir() or not list(config.glob("*.env")):
+        raise ValueError("Backup requires the actual installed environment configuration directory")
     if output.resolve().is_relative_to(state.resolve()):
         raise ValueError("Backup destination must be outside the state tree")
     with closing(sqlite3.connect(f"{(state / 'flaggo.db').as_uri()}?mode=rw", uri=True)) as db:
@@ -110,7 +112,10 @@ def backup(state, output, release_root, config, expected, stopped=assert_stopped
     for path in state.rglob("*"):
         if path.is_symlink():
             raise ValueError(f"Recovery state must not contain symlinks: {path}")
-    shutil.copytree(state, output / "state", ignore=shutil.ignore_patterns("copilot-home"))
+    shutil.copytree(
+        state, output / "state",
+        ignore=lambda directory, _names: {"copilot-home"} if Path(directory) == state else set(),
+    )
     files = [
         {"path": path.relative_to(output).as_posix(), "bytes": path.stat().st_size,
          "sha256": digest(path)}
@@ -152,7 +157,8 @@ def restore(source, destination, expected, release_hash, stopped=assert_stopped)
 def reset(state, archive, release_root, config, release_hash, state_id, stopped=assert_stopped):
     stopped()
     identity = read_json(state / ".flaggo-state.json")
-    if identity.get("kind") != "disposable-smoke" or identity.get("stateId") != state_id:
+    if (identity.get("format") != "flaggo.state/v1"
+            or identity.get("kind") != "disposable-smoke" or identity.get("stateId") != state_id):
         raise ValueError("Reset requires the exact disposable smoke state identity")
     names = {
         "flaggo.db", "flaggo.db-wal", "flaggo.db-shm", "analysis-workspaces",
@@ -202,6 +208,8 @@ def main():
     elif args.action == "backup":
         if args.state.resolve() != Path("/var/lib/flaggo"):
             raise ValueError("Online host backup only supports the configured state mount")
+        if not os.path.ismount(args.state):
+            raise RuntimeError("The configured state filesystem is not mounted")
         print(backup(
             args.state.resolve(), args.output.resolve(), args.release.resolve(),
             args.config.resolve(), args.release_sha256,
@@ -213,6 +221,8 @@ def main():
         )
         print("Restored offline copy verified; no live state was switched")
     elif args.action == "reset-disposable":
+        if not os.path.ismount("/var/lib/flaggo"):
+            raise RuntimeError("The configured state filesystem is not mounted")
         print(json.dumps(reset(
             Path("/var/lib/flaggo"), args.archive.resolve(), args.release.resolve(),
             args.config.resolve(), args.release_sha256, args.confirm_state_id,

@@ -129,5 +129,13 @@ systemctl start flaggo-backend.target flaggo@contract-service flaggo@decision-se
 python3 "$root/deploy/azure/wait-ready.py" http://127.0.0.1:8081/health/ready
 "$root/node/bin/node" "$root/deploy/azure/verify-bound-decision.mjs" \
   "$target" "$scratch/restored-parity.json"
+"$root/node/bin/node" --input-type=module -e '
+  import assert from "node:assert/strict";
+  import { readFileSync } from "node:fs";
+  const [before, after] = process.argv.slice(1).map((path) => JSON.parse(readFileSync(path, "utf8")));
+  assert.equal(before.activeExecutable.executableDigest, after.activeExecutable.executableDigest);
+  assert.deepEqual(before.decisions.map(({ sdk }) => [sdk.result, sdk.evaluation]),
+    after.decisions.map(({ sdk }) => [sdk.result, sdk.evaluation]));
+' "$scratch/analysis-stopped-parity.json" "$scratch/restored-parity.json"
 printf '{"scope":"ephemeral Linux runner, mounted ext4","deployedToAzure":false,"liveInference":false,"backupSha256":"%s","releaseSha256":"%s","checks":["installed deterministic closed loop","worker and gateway PID refresh","analysis-independent evaluation","quiesced restore","guarded disposable reset","restored exact-digest parity"]}\n' \
   "$backup_hash" "$release_hash" > "$scratch/installed-result.json"

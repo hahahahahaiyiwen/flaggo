@@ -50,6 +50,7 @@ class PreparationTests(unittest.TestCase):
             workspace = state / "analysis-workspaces" / "sealed"
             workspace.mkdir(parents=True)
             (workspace / "evidence.json").write_text('{"saved":"artifact"}', encoding="utf-8")
+            (workspace / "copilot-home").write_text("sealed artifact, not an auth cache", encoding="utf-8")
             (state / "copilot-home").mkdir()
             (state / "copilot-home" / "do-not-export").write_text("private-cache", encoding="utf-8")
             release = root / "release"
@@ -65,6 +66,7 @@ class PreparationTests(unittest.TestCase):
             archive = root / "backup"
             backup_hash = state_tool.backup(state, archive, release, config, release_hash, stopped)
             self.assertFalse((archive / "state/copilot-home").exists())
+            self.assertTrue((archive / "state/analysis-workspaces/sealed/copilot-home").is_file())
             self.assertNotIn("DO_NOT_EXPORT", (archive / "backup.json").read_text())
             restored = root / "restored"
             state_tool.restore(archive, restored, backup_hash, release_hash, stopped)

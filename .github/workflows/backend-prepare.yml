@@ -91,6 +91,8 @@ jobs:
         run: |
           set -euo pipefail
           rustup toolchain install 1.99.0 --profile minimal
+          python -c "from pathlib import Path; assert all(b'\r' not in p.read_bytes() for p in Path('deploy/azure').glob('*.sh')), 'Linux scripts must use LF'"
+          bash -n deploy/azure/verify-installed.sh
           python deploy/azure/test-preparation.py
           node --test deploy/azure/deployed-target.test.mjs
           python deploy/azure/prepare-release.py --output "$RUNNER_TEMP/flaggo-release"
