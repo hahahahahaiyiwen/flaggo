@@ -58,6 +58,7 @@ chown flaggo:flaggo /var/lib/flaggo
 chmod 700 /var/lib/flaggo
 install -d -o flaggo -g flaggo -m 700 /var/lib/flaggo/copilot-home /var/lib/flaggo/copilot-home/probe
 python3 "$root/deploy/azure/state-tool.py" verify-release --release "$root" --release-sha256 "$release_hash"
+cd /var/lib/flaggo
 runuser -u flaggo -- env -i HOME=/var/lib/flaggo/copilot-home/probe \
   PATH="$root/node/bin:/usr/bin:/bin" COPILOT_CLI_EXTRACT_DIR="$root/copilot" \
   "$root/bin/flaggo-runtime-probe" /var/lib/flaggo/copilot-home/probe \
