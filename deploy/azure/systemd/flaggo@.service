@@ -1,0 +1,26 @@
+[Unit]
+Description=Flaggo %i
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/flaggo
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=flaggo
+Group=flaggo
+WorkingDirectory=/var/lib/flaggo
+EnvironmentFile=/etc/flaggo/common.env
+EnvironmentFile=/etc/flaggo/%i.env
+ExecStartPre=/usr/bin/mountpoint --quiet /var/lib/flaggo
+ExecStart=/opt/flaggo/current/bin/flaggo-%i
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

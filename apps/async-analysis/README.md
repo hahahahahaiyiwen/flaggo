@@ -70,8 +70,11 @@ SDK state; prior drafts/reviews cannot be overwritten through these tools.
 See [Async Analysis](../../docs/design/architecture/ASYNC_ANALYSIS.md) for the
 transition table, artifact metadata and trusted-local review responsibilities.
 `modules/analysis-agent/src/context.rs` owns the assets, binds dynamic cycle
-identity as escaped XML, and prepares the writable templates. The current
-local packaging loads skills from the analysis-agent module source tree.
+identity as escaped XML, and prepares the writable templates. The default
+local packaging loads skills from the analysis-agent module source
+tree. Set `FLAGGO_ANALYSIS_SKILL_DIRECTORY` to a packaged skills directory when
+running outside the build checkout. Startup requires every configured profile's
+`<skill-name>/SKILL.md`; missing packaged skills fail explicitly.
 
 The SDK-native `create` and `edit` tools create files and make incremental
 edits through the workspace filesystem adapter, which enforces writable
@@ -312,6 +315,7 @@ protocol is an explicit operator action, not an automatic retry strategy.
 | `FLAGGO_CONTRACT_CATALOG_URL` | derived from Contract Service | Optional full current-catalog endpoint URL |
 | `FLAGGO_ANALYSIS_WORKSPACE_ROOT` | `./flaggo-analysis-workspaces` | Durable contract workspaces |
 | `FLAGGO_ANALYSIS_COPILOT_HOME` | `./flaggo-analysis-copilot` | Isolated local Copilot runtime state |
+| `FLAGGO_ANALYSIS_SKILL_DIRECTORY` | Analysis-agent module `agent/skills` | Packaged skills override; every required profile must have a `SKILL.md` |
 | `FLAGGO_ANALYSIS_INFERENCE` | `github` | Explicit `github` or `byok` inference |
 | `FLAGGO_ANALYSIS_MODEL` | Copilot SDK default in GitHub mode | Exact model/deployment; required for BYOK |
 | `GH_TOKEN` / `GITHUB_TOKEN` | logged-in `gh` user | Optional GitHub credential; `GH_TOKEN` takes precedence |

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "flaggosvc-dev-bf57"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "sessionId": {
+      "value": "bf579be8-73f2-4f9a-a054-f0f87443cdfe"
+    },
+    "deployedBy": {
+      "value": "UNASSIGNED"
+    },
+    "createdAt": {
+      "value": "2026-11-16T13:25:58.5067536-08:00"
+    },
+    "deployerObjectId": {
+      "value": ""
+    },
+    "enableVmKeyVaultAccess": {
+      "value": false
+    },
+    "enableVmBlobAccess": {
+      "value": false
+    }
+  }
+}

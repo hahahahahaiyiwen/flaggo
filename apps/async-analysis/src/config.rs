@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::python::PythonConfig;
-use flaggo_analysis_agent::context::analysis_skill_directory;
+use flaggo_analysis_agent::context::{ANALYSIS_SKILL_NAMES, analysis_skill_directory};
 use flaggo_analysis_agent::copilot::{ByokWireApi, CopilotInferenceConfig};
 
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
@@ -14,6 +14,7 @@ pub const CATALOG_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_URL"
 pub const CONTRACT_SERVICE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_SERVICE_URL";
 pub const WORKSPACE_ROOT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_WORKSPACE_ROOT";
 pub const COPILOT_HOME_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_COPILOT_HOME";
+pub const SKILL_DIRECTORY_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_SKILL_DIRECTORY";
 pub const MAX_AGENTS_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_MAX_AGENTS";
 pub const POLL_INTERVAL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_POLL_INTERVAL_MS";
 pub const MODEL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_MODEL";
@@ -103,13 +104,8 @@ impl AnalysisServiceConfig {
             python_defaults.executable,
         )?;
 
-        let skill_directory = analysis_skill_directory();
-        if !skill_directory.is_dir() {
-            return Err(format!(
-                "analysis skill directory does not exist: {}",
-                skill_directory.display()
-            ));
-        }
+        let skill_directory =
+            skill_directory(optional_nonempty(SKILL_DIRECTORY_ENVIRONMENT_VARIABLE)?)?;
         Ok(Self {
             cycle_limits: flaggo_analysis_domain::CycleLimits {
                 max_attempts: {
@@ -266,6 +262,24 @@ fn python_executable(configured: Option<String>, default: PathBuf) -> Result<Pat
     }
 }
 
+fn skill_directory(configured: Option<String>) -> Result<PathBuf, String> {
+    let directory = configured
+        .map(PathBuf::from)
+        .unwrap_or_else(analysis_skill_directory);
+    let directory = std::path::absolute(directory)
+        .map_err(|error| format!("{SKILL_DIRECTORY_ENVIRONMENT_VARIABLE}: {error}"))?;
+    for name in ANALYSIS_SKILL_NAMES {
+        let path = directory.join(name).join("SKILL.md");
+        if !path.is_file() {
+            return Err(format!(
+                "required analysis skill file does not exist: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(directory)
+}
+
 fn nonempty_or_default(name: &str, default: &str) -> Result<String, String> {
     match env::var(name) {
         Ok(value) if value.trim().is_empty() => Err(format!("{name} must not be empty")),
@@ -319,6 +333,31 @@ fn duration_seconds(name: &str, default: u64) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packaged_skills_override_the_checkout_default_and_require_all_profiles() {
+        assert_eq!(skill_directory(None).unwrap(), analysis_skill_directory());
+        let packaged = tempfile::tempdir().unwrap();
+        for name in ANALYSIS_SKILL_NAMES {
+            let directory = packaged.path().join(name);
+            std::fs::create_dir(&directory).unwrap();
+            std::fs::write(directory.join("SKILL.md"), "# Packaged skill\n").unwrap();
+        }
+        assert_eq!(
+            skill_directory(Some(packaged.path().to_str().unwrap().to_owned())).unwrap(),
+            packaged.path()
+        );
+        std::fs::remove_file(
+            packaged
+                .path()
+                .join(ANALYSIS_SKILL_NAMES[0])
+                .join("SKILL.md"),
+        )
+        .unwrap();
+        let error =
+            skill_directory(Some(packaged.path().to_str().unwrap().to_owned())).unwrap_err();
+        assert!(error.contains(ANALYSIS_SKILL_NAMES[0]));
+    }
 
     fn inference(values: &[(&str, &str)]) -> Result<CopilotInferenceConfig, String> {
         inference_configuration(|name| {

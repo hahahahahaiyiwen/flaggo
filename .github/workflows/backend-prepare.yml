@@ -1,0 +1,69 @@
+name: Backend preparation
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - .github/workflows/backend-prepare.yml
+      - apps/async-analysis/requirements*
+      - apps/async-analysis/src/config.rs
+      - deploy/azure/**
+
+permissions:
+  contents: read
+
+jobs:
+  linux-python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve or reuse the Linux lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/flaggo-python"
+          mkdir -p "$out"
+          python -m pip install uv==0.9.15
+          if test -f apps/async-analysis/requirements-linux.txt; then
+            cp apps/async-analysis/requirements-linux.txt "$out/requirements-linux.txt"
+          else
+            uv pip compile apps/async-analysis/requirements-linux.in \
+              --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+              --only-binary :all: --generate-hashes \
+              --default-index https://pypi.org/simple \
+              --output-file "$out/requirements-linux.txt"
+          fi
+          uv --version > "$out/resolver-version.txt"
+          printf '%s\n' "$GITHUB_SHA" > "$out/source-commit.txt"
+          sha256sum "$out/requirements-linux.txt" > "$out/lock.sha256"
+      - name: Verify hashes, wheels and scientific imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/flaggo-python"
+          python -m venv "$out/venv"
+          "$out/venv/bin/python" -m pip install \
+            --require-hashes --only-binary=:all: \
+            --index-url https://pypi.org/simple \
+            --report "$out/wheel-provenance.json" \
+            -r "$out/requirements-linux.txt"
+          "$out/venv/bin/python" deploy/azure/verify-python.py \
+            --output "$out/python-runtime.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-linux-python-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/flaggo-python/*.txt
+            ${{ runner.temp }}/flaggo-python/*.json
+            ${{ runner.temp }}/flaggo-python/*.sha256
+          if-no-files-found: error
+          retention-days: 7

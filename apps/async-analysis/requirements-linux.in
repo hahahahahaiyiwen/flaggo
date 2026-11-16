@@ -1,0 +1,3 @@
+# Maintainer-hosted backend: CPython 3.12, Linux x86-64.
+# Resolve all transitive dependencies and hashes into requirements-linux.txt.
+-r requirements.txt
