@@ -199,6 +199,14 @@ The first artifact-only setup attempt failed exact symlink validation; safe
 extraction now preserves original link text, with whole-artifact offline Linux
 verification. Its one corrected dispatch was explicitly approved.
 No Azure operations or provider connection occurred.
+An explicitly approved new-release rehearsal uses manual dispatch with
+`replay_installed=false`; this builds one new sealed release from the selected
+committed source and runs installed smoke and the gated recovery sequence.
+`replay_installed=true` retains the pinned old-release reproduction path and
+never substitutes corrected files into that release. Both paths always retain
+browser output and cleanup-time gateway HTTP body/transport diagnostics;
+an unavailable gateway is recorded explicitly, not treated as a successful
+snapshot. Workflow dispatch never authorizes Azure deployment.
 Artifacts expire after seven days: retain the reviewed archive, checksum,
 manifest and evidence in an approved private release store before deployment.
 No release-store upload is authorized by the workflow.

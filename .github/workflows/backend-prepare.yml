@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       replay_installed:
-        description: Replay the pinned retained release without building or resolving dependencies
+        description: Replay pinned release without building (false builds and validates a new sealed release)
         type: boolean
         default: false
   push:
@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   linux-python:
-    if: github.event_name != 'workflow_dispatch' || inputs.replay_installed != true
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -125,6 +125,7 @@ jobs:
             ${{ runner.temp }}/flaggo-replay-input/artifact-input-provenance.json
             ${{ runner.temp }}/installed-*.json
             ${{ runner.temp }}/installed-journal.log
+            ${{ runner.temp }}/installed-final-state.*
             ${{ runner.temp }}/analysis-stopped-parity.json
             ${{ runner.temp }}/restored-parity.json
             ${{ runner.temp }}/state-backup/backup.json
@@ -133,7 +134,7 @@ jobs:
           retention-days: 7
 
   linux-release:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.replay_installed != true)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -156,6 +157,10 @@ jobs:
           python deploy/azure/test-preparation.py
           node --test deploy/azure/deployed-target.test.mjs
           python deploy/azure/prepare-release.py --output "$RUNNER_TEMP/flaggo-release"
+          node --test examples/tetris-playground/test/observer.test.mjs \
+            examples/tetris-playground/test/backend.test.mjs \
+            examples/tetris-playground/test/gateway.test.mjs \
+            examples/tetris-playground/test/adaptive-demo.test.mjs
       - name: Relocate and probe without credentials or maintainer caches
         shell: bash
         run: |
@@ -192,6 +197,7 @@ jobs:
             ${{ runner.temp }}/flaggo-relocated/python-relocated.json
             ${{ runner.temp }}/installed-*.json
             ${{ runner.temp }}/installed-journal.log
+            ${{ runner.temp }}/installed-final-state.*
             ${{ runner.temp }}/analysis-stopped-parity.json
             ${{ runner.temp }}/restored-parity.json
             ${{ runner.temp }}/state-backup/backup.json

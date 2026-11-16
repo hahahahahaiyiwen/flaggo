@@ -22,6 +22,13 @@ cleanup() {
   result="$?"
   trap - EXIT
   cd /
+  if ! curl --silent --show-error --max-time 10 \
+    --output "$scratch/installed-final-state.body" \
+    --write-out '{"httpStatus":"%{http_code}","exitCode":%{exitcode}}\n' \
+    http://127.0.0.1:4310/api/state \
+    > "$scratch/installed-final-state-http.json" 2> "$scratch/installed-final-state-error.log"; then
+    echo "Cleanup: final gateway snapshot unavailable; HTTP/transport diagnostics retained." >&2
+  fi
   if ! systemctl stop "${units[@]}"; then
     echo "Cleanup: a service stop failed" >&2
     result=1
