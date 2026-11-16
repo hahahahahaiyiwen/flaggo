@@ -27,6 +27,17 @@ reuse = load("reuse", "reuse-release.py")
 
 
 class PreparationTests(unittest.TestCase):
+    def test_artifact_filter_preserves_exact_safe_link_text_and_rejects_escape(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            member = tarfile.TarInfo("flaggo-relocated/python/python")
+            member.type = tarfile.SYMTYPE
+            member.linkname = "./bin/python3.12"
+            self.assertEqual(reuse.release_member(member, temporary).linkname,
+                             "./bin/python3.12")
+            member.linkname = "../../../escape"
+            with self.assertRaises((tarfile.LinkOutsideDestinationError, RuntimeError)):
+                reuse.release_member(member, temporary)
+
     def test_artifact_replay_rejects_mismatched_run_workflow_or_failed_build(self):
         evidence = json.loads(Path(__file__).with_name("release.provenance.json").read_text())
         workflow = evidence["sourceWorkflow"]

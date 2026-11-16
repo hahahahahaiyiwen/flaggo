@@ -69,6 +69,18 @@ def verify_metadata(evidence, run, artifact, workflow_file, job):
             "The reviewed packaging/probe/upload steps did not succeed")
 
 
+def release_member(member, destination):
+    filtered = tarfile.data_filter(member, destination)
+    if member.issym() or member.islnk():
+        root = Path(destination).resolve()
+        origin = (root / member.name).parent if member.issym() else root
+        require((origin / member.linkname).resolve().is_relative_to(root),
+                "Original release link target escapes extraction directory")
+        # data_filter may normalize "./" away, changing manifest-covered link bytes.
+        filtered = filtered.replace(linkname=member.linkname)
+    return filtered
+
+
 def extract_release(evidence, archive_zip, output):
     expected = evidence["artifact"]
     require(archive_zip.stat().st_size == expected["sizeBytes"]
@@ -93,7 +105,7 @@ def extract_release(evidence, archive_zip, output):
                 "Sealed release source/lock identity mismatch")
         require(all(Path(member.name).parts[0] == "flaggo-relocated"
                     for member in archive.getmembers()), "Unexpected archive root")
-        archive.extractall(output, filter="data")
+        archive.extractall(output, filter=release_member)
     return hashlib.sha256(manifest_bytes).hexdigest()
 
 
