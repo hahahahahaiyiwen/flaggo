@@ -135,6 +135,6 @@ jobs:
             ${{ runner.temp }}/analysis-stopped-parity.json
             ${{ runner.temp }}/restored-parity.json
             ${{ runner.temp }}/state-backup/backup.json
-            test-results/
+            examples/tetris-playground/test-results/
           if-no-files-found: warn
           retention-days: 7

@@ -1,6 +1,6 @@
 # Maintainer Azure backend preparation
 
-This is **local scaffolding, not an installed or validated deployment**.
+This is **backend preparation, not an Azure deployment or deployment approval**.
 It does not replace the Tetris development launcher or offer an adopter
 installer. No resource creation, public ingress or provider credential is
 authorized by these files. The existing website and its resource group are
@@ -52,6 +52,10 @@ mount before starting, so an absent disk cannot silently create an empty
 SQLite database on the OS disk. Create root-owned configuration under
 `/etc/flaggo`; copy and review the matching `config/*.env.example` files,
 with restricted access for any subsequently approved secrets.
+Install root-owned, service-readable releases beneath `/opt/flaggo`, not inside
+a developer's private home or build directory. Run unprivileged probes from the
+unit's actual `/var/lib/flaggo` working directory. The supervisors use the
+bundled Python interpreter, not a host interpreter with a different stdlib.
 
 All store adapters share `/var/lib/flaggo/flaggo.db`. Keep its WAL/SHM beside
 it on this ordinary local filesystem, never Azure Files. Workspaces, Copilot
@@ -147,7 +151,23 @@ The extended focused workflow also contains `verify-installed.sh`, restricted
 to an ephemeral GitHub-hosted runner. It installs the prepared units over a
 local mounted ext4 test filesystem, never provisions Azure. It exercises the
 existing deterministic browser assertions, real service restarts and offline
-recovery. Treat those checks as pending until their exact run succeeds.
+recovery. **The full installed rehearsal is blocked**, not passed.
+[43974316189](https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43974316189)
+built source `8f249024291b22e640b9a2afc292ccb851c10401`, passed the actual
+service-user SDK/Python probes, mounted service/observability readiness and
+default/authored baseline parity. The deterministic browser demonstration
+completed, but its correlated analysis/Candidate/activation assertion at
+`closed-loop.spec.mjs:151` timed out. Native admissions/activations and later
+duplicate-active Candidate conflicts are recorded; the precise browser/
+read-model cause is not established. Do not weaken the assertion or infer
+successful installed recovery: restart, analysis-down, backup/restore/reset
+and restored-parity checks were not reached.
+
+`release.provenance.json` records the exact failed run, independently verified
+download hashes, successful seams and unverified checks. Automatic retries
+stopped at this blocker. The workflow's browser artifact path was corrected
+to the actual example-local output directory; that collection-only change
+has not been rerun. No Azure operations or provider connection occurred.
 Artifacts expire after seven days: retain the reviewed archive, checksum,
 manifest and evidence in an approved private release store before deployment.
 No release-store upload is authorized by the workflow.

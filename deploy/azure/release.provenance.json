@@ -1,0 +1,57 @@
+{
+  "format": "flaggo.preparation-evidence/v1",
+  "sourceCommit": "8f249024291b22e640b9a2afc292ccb851c10401",
+  "runUrl": "https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43974316189",
+  "runConclusion": "failure",
+  "completedUtc": "2026-11-16T23:04:03Z",
+  "artifact": {
+    "id": 14281150942,
+    "name": "backend-linux-release-8f249024291b22e640b9a2afc292ccb851c10401",
+    "zipSha256FromGitHub": "28590f0af3bf0a7029746140426ce83a12255529fc6a06fd0540f4410d1dbf2b",
+    "sizeBytes": 380467807,
+    "archiveSha256VerifiedAfterDownload": "1154fc8b7fbd73ac517c6c2da1cce6a06f85afa06f1a11e187dd578abda76301",
+    "manifestSha256VerifiedAfterDownload": "2092cb98634600a7d76112897da8de50cf0e072a9d1565115e76a51be49ff98f",
+    "retentionDays": 7,
+    "privateReleaseStoreUploadApproved": false
+  },
+  "runtime": {
+    "platform": "Linux x86-64, Ubuntu 24.04 compatible glibc 2.39",
+    "rust": "1.99.0",
+    "node": "22.23.5",
+    "python": "CPython 3.12.16",
+    "copilotSdk": "1.0.17-preview.5",
+    "copilotCli": "1.0.92-5",
+    "copilotProtocol": 3,
+    "pythonLockSha256": "817ee1fd87fe78f68c97d24d29bf0eaedcb22c0cbdadad71bb1db53e1ecb8c0d"
+  },
+  "verified": [
+    "Normal-TLS hash-locked Linux wheel installation and six scientific imports",
+    "Clean committed release build and relocation",
+    "Credential-free SDK protocol handshake without inference",
+    "Root-owned /opt release SDK/Python access as the flaggo service user",
+    "Actual mounted-ext4 systemd base services and private observability readiness",
+    "Separate default-only source=default and authored Tetris baseline SDK/REST parity",
+    "Deterministic browser demonstration reached completion and passed its held-out assertions before the failing correlation predicate",
+    "Six Python preparation regressions and three Node deployed-target guard tests"
+  ],
+  "blocked": {
+    "file": "examples/tetris-playground/test/closed-loop.spec.mjs",
+    "line": 151,
+    "failure": "The 30-second correlated analysis-completion/Candidate/activation predicate returned false.",
+    "observation": "The full native journal contains admissions, activations and completed cycles, followed by duplicate-active Candidate conflicts. The exact browser/read-model cause is not established.",
+    "assertionWeakened": false,
+    "automaticRetriesStopped": true,
+    "browserAttachmentsRetained": false,
+    "diagnosticsCorrection": "The workflow now targets the actual examples/tetris-playground/test-results directory; this collection-only correction has not been rerun."
+  },
+  "notVerified": [
+    "Assertions following the failed browser correlation predicate",
+    "Installed worker/gateway restart and analysis-down parity",
+    "Installed quiesced backup, restore, reset and restored exact-digest parity",
+    "Actual Azure image, allocation, capacity, ingress and recovery acceptance",
+    "Live-provider cycle and live-provider state recovery"
+  ],
+  "azureDeployed": false,
+  "providerCredentialsConnected": false,
+  "deploymentApproved": false
+}
