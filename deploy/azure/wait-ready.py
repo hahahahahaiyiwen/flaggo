@@ -16,7 +16,7 @@ def main():
                     if response.status != 200:
                         raise RuntimeError(f"{url} returned HTTP {response.status}")
                     break
-            except (urllib.error.URLError, TimeoutError) as error:
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
                 if attempt == 29:
                     raise RuntimeError(f"Readiness did not succeed: {url}") from error
                 time.sleep(1)

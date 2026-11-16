@@ -21,6 +21,7 @@ units=(flaggo-gateway flaggo-smoke-analysis flaggo@async-analysis
 cleanup() {
   result="$?"
   trap - EXIT
+  cd /
   if ! systemctl stop "${units[@]}"; then
     echo "Cleanup: a service stop failed" >&2
     result=1

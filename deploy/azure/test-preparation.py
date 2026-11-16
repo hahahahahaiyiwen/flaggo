@@ -3,9 +3,9 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
+from contextlib import closing, nullcontext
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 def load(name, file):
@@ -17,9 +17,33 @@ def load(name, file):
 
 gateway = load("gateway", "gateway.py")
 state_tool = load("state_tool", "state-tool.py")
+readiness = load("readiness", "wait-ready.py")
 
 
 class PreparationTests(unittest.TestCase):
+    def test_readiness_retries_startup_connection_resets_then_requires_success(self):
+        url = "http://127.0.0.1:3000/api/health"
+        with patch.object(readiness.sys, "argv", ["wait-ready.py", url]), \
+                patch.object(readiness.urllib.request, "urlopen", side_effect=[
+                    ConnectionResetError("starting"), readiness.urllib.error.URLError("not ready"),
+                    nullcontext(Mock(status=200)),
+                ]) as request, patch.object(readiness.time, "sleep") as pause:
+            readiness.main()
+            self.assertEqual(request.call_count, 3)
+            self.assertEqual(pause.call_count, 2)
+
+    def test_readiness_persistent_connection_reset_fails_with_the_url_and_cause(self):
+        url = "http://127.0.0.1:3000/api/health"
+        error = ConnectionResetError("still unavailable")
+        with patch.object(readiness.sys, "argv", ["wait-ready.py", url]), \
+                patch.object(readiness.urllib.request, "urlopen", side_effect=error) as request, \
+                patch.object(readiness.time, "sleep") as pause:
+            with self.assertRaisesRegex(RuntimeError, url) as failure:
+                readiness.main()
+            self.assertIs(failure.exception.__cause__, error)
+            self.assertEqual(request.call_count, 30)
+            self.assertEqual(pause.call_count, 29)
+
     def test_gateway_refreshes_real_pid_changes_and_preserves_degraded_status(self):
         start = Mock(side_effect=lambda env: Mock(poll=lambda: None))
         process = gateway.Gateway(start)
