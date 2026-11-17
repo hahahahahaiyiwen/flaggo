@@ -193,8 +193,7 @@ The source fix correlates successful milestones by active contract/executable/
 cycle identity, keeps latest failures separately visible, and pins at most
 three matching chain events. The TypeScript build, 21 focused tests and replay
 of all 32 captured event sets pass without changing the browser predicate.
-**The fixed gateway is not in the sealed release and has not passed installed
-smoke.** Restart/recovery remain unexecuted; no further dispatch was made.
+At that stage the fixed gateway was not sealed or installed-validated.
 The first artifact-only setup attempt failed exact symlink validation; safe
 extraction now preserves original link text, with whole-artifact offline Linux
 verification. Its one corrected dispatch was explicitly approved.
@@ -207,6 +206,29 @@ never substitutes corrected files into that release. Both paths always retain
 browser output and cleanup-time gateway HTTP body/transport diagnostics;
 an unavailable gateway is recorded explicitly, not treated as a successful
 snapshot. Workflow dispatch never authorizes Azure deployment.
+
+The separately approved new build
+[43983014659](https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43983014659)
+sealed source `6d7b62ceb8e62692c3dcbd93991dd73a0bb597d4`, including the
+observer fix. All 23,531 manifest-covered files and 28 exact links were verified.
+The installed original correlation predicate passed on its first poll while
+latest rejected attempts remained separately visible. Exact learned SDK/REST
+parity, reviewed Python/artifact/action checks and browser action inspection
+also passed.
+
+**Full installed smoke remains blocked** by the later 60-second LGTM assertion
+at `closed-loop.spec.mjs:445`. Final decision-service and evidence-materializer
+queries returned HTTP 200/success with empty log streams, although both had
+60 parsed spans. Other services had logs, spans and correlated traces. The
+captured query window starts at `2026-11-17T00:02:09.644Z`; materializer logs
+also require a nonempty trace ID. Whether service export behavior or the test's
+window/filter/log requirement causes this remains unestablished. No assertion
+was weakened, and no further run was dispatched. Browser trace/raw responses,
+final HTTP-200 gateway state and journal are retained in artifact `14284577237`.
+Restart, analysis-down and backup/restore/reset/restored parity were not reached.
+`correctedReleaseValidation` in the provenance file records this new release
+without changing the original pinned artifact-only replay identity.
+
 Artifacts expire after seven days: retain the reviewed archive, checksum,
 manifest and evidence in an approved private release store before deployment.
 No release-store upload is authorized by the workflow.
