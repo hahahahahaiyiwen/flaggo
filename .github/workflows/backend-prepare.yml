@@ -102,7 +102,7 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/flaggo-replay-input/flaggo-relocated"
           python3 "$root/deploy/azure/state-tool.py" verify-release --release "$root" \
-            --release-sha256 2092cb98634600a7d76112897da8de50cf0e072a9d1565115e76a51be49ff98f
+            --release-sha256 25d503d3d9d5128f451368dc8f9cecd7650f6b2fc3c02e1ea73ef1f94d5a3a6f
           test ! -e node_modules
           test ! -e examples/tetris-playground/dist
           test ! -e examples/tetris-integration/dist

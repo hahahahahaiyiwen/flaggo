@@ -201,8 +201,11 @@ No Azure operations or provider connection occurred.
 An explicitly approved new-release rehearsal uses manual dispatch with
 `replay_installed=false`; this builds one new sealed release from the selected
 committed source and runs installed smoke and the gated recovery sequence.
-`replay_installed=true` retains the pinned old-release reproduction path and
-never substitutes corrected files into that release. Both paths always retain
+`replay_installed=true` reuses only `artifactReplayPin` in the checked-in
+provenance file and never substitutes driver files into that release.
+The approved current pin is source `6d7b62c`, run `43983014659`, artifact
+`14284577237`; original old-release evidence remains historical. This mode has
+no arbitrary run/artifact override. Both paths always retain
 browser output and cleanup-time gateway HTTP body/transport diagnostics;
 an unavailable gateway is recorded explicitly, not treated as a successful
 snapshot. Workflow dispatch never authorizes Azure deployment.
@@ -232,7 +235,7 @@ No native emission or routing change is needed. Browser trace/raw responses,
 final HTTP-200 gateway state and journal are retained in artifact `14284577237`.
 Restart, analysis-down and backup/restore/reset/restored parity were not reached.
 `correctedReleaseValidation` in the provenance file records this new release
-without changing the original pinned artifact-only replay identity.
+while retaining the original historical release/replay evidence.
 
 The corrected test requires Decision evaluation spans (with existing per-service
 metrics checks), materializer page spans and committed batch-ID logs, and the

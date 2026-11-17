@@ -1,5 +1,30 @@
 {
   "format": "flaggo.preparation-evidence/v1",
+  "artifactReplayPin": {
+    "sourceCommit": "6d7b62ceb8e62692c3dcbd93991dd73a0bb597d4",
+    "sourceWorkflow": {
+      "id": 420635129,
+      "path": ".github/workflows/backend-prepare.yml",
+      "gitBlob": "6afb114f0ef700def15f19ebca1bf03918c72ba4",
+      "runId": 43983014659,
+      "runAttempt": 1,
+      "releaseJobId": 133703998773,
+      "branch": "hahahahahaiyiwen-flaggo-website",
+      "event": "workflow_dispatch"
+    },
+    "runConclusion": "failure",
+    "artifact": {
+      "id": 14284577237,
+      "name": "backend-linux-release-6d7b62ceb8e62692c3dcbd93991dd73a0bb597d4",
+      "sizeBytes": 392752122,
+      "zipSha256FromGitHub": "d340a4c78cff4fc11b504397aafec0daa3a3ed971de462dbce69e9f618e3b3a0",
+      "archiveSha256VerifiedAfterDownload": "c2f5654dbd8b332531fcb95c4ade5d751c455a124ab5273ac347f65e65c48383",
+      "manifestSha256VerifiedAfterDownload": "25d503d3d9d5128f451368dc8f9cecd7650f6b2fc3c02e1ea73ef1f94d5a3a6f"
+    },
+    "runtime": {
+      "pythonLockSha256": "817ee1fd87fe78f68c97d24d29bf0eaedcb22c0cbdadad71bb1db53e1ecb8c0d"
+    }
+  },
   "sourceCommit": "8f249024291b22e640b9a2afc292ccb851c10401",
   "sourceWorkflow": {
     "id": 420635129,

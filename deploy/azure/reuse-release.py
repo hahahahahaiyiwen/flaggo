@@ -42,7 +42,7 @@ def verify_metadata(evidence, run, artifact, workflow_file, job):
             and run["head_sha"] == source and run["head_branch"] == workflow["branch"]
             and run["repository"]["full_name"] == REPOSITORY
             and run["head_repository"]["full_name"] == REPOSITORY
-            and run["event"] == "push" and run["status"] == "completed"
+            and run["event"] == workflow["event"] and run["status"] == "completed"
             and run["conclusion"] == evidence["runConclusion"],
             "Retained run/source/workflow identity mismatch")
     require(workflow_file["sha"] == workflow["gitBlob"]
@@ -121,7 +121,9 @@ def main():
     require(not subprocess.check_output(
         ["git", "status", "--porcelain", "--untracked-files=no"], text=True,
     ).strip(), "Test-driver tracked files must be clean")
-    evidence = json.loads((ROOT / "deploy/azure/release.provenance.json").read_text())
+    evidence = json.loads(
+        (ROOT / "deploy/azure/release.provenance.json").read_text()
+    )["artifactReplayPin"]
     workflow = evidence["sourceWorkflow"]
     run = gh(f"actions/runs/{workflow['runId']}")
     artifact = gh(f"actions/artifacts/{evidence['artifact']['id']}")

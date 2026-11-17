@@ -70,14 +70,16 @@ printf passed > overall.passed
                 reuse.release_member(member, temporary)
 
     def test_artifact_replay_rejects_mismatched_run_workflow_or_failed_build(self):
-        evidence = json.loads(Path(__file__).with_name("release.provenance.json").read_text())
+        evidence = json.loads(
+            Path(__file__).with_name("release.provenance.json").read_text()
+        )["artifactReplayPin"]
         workflow = evidence["sourceWorkflow"]
         run = {
             "id": workflow["runId"], "workflow_id": workflow["id"], "path": workflow["path"],
             "run_attempt": 1, "head_sha": evidence["sourceCommit"], "head_branch": workflow["branch"],
             "repository": {"full_name": reuse.REPOSITORY},
             "head_repository": {"full_name": reuse.REPOSITORY},
-            "event": "push", "status": "completed", "conclusion": "failure",
+            "event": workflow["event"], "status": "completed", "conclusion": "failure",
         }
         artifact = {
             "id": evidence["artifact"]["id"], "name": evidence["artifact"]["name"],
@@ -98,9 +100,12 @@ printf passed > overall.passed
         }
         reuse.verify_metadata(evidence, run, artifact, workflow_file, job)
         for index, key, value in [
-            (0, "head_sha", "wrong"), (0, "workflow_id", -1),
-            (1, "expired", True), (1, "digest", "wrong"), (2, "sha", "wrong"),
-            (3, "steps", []),
+            (0, "id", -1), (0, "head_sha", "wrong"), (0, "workflow_id", -1),
+            (0, "event", "push"), (0, "run_attempt", 2),
+            (0, "path", "wrong"), (0, "head_branch", "wrong"),
+            (1, "id", -1), (1, "expired", True), (1, "digest", "wrong"),
+            (1, "workflow_run", {**artifact["workflow_run"], "head_sha": "wrong"}),
+            (2, "sha", "wrong"), (3, "id", -1), (3, "steps", []),
         ]:
             with self.subTest(key=key):
                 values = copy.deepcopy([run, artifact, workflow_file, job])
