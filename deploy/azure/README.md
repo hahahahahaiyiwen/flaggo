@@ -221,13 +221,32 @@ at `closed-loop.spec.mjs:445`. Final decision-service and evidence-materializer
 queries returned HTTP 200/success with empty log streams, although both had
 60 parsed spans. Other services had logs, spans and correlated traces. The
 captured query window starts at `2026-11-17T00:02:09.644Z`; materializer logs
-also require a nonempty trace ID. Whether service export behavior or the test's
-window/filter/log requirement causes this remains unestablished. No assertion
-was weakened, and no further run was dispatched. Browser trace/raw responses,
+also require a nonempty trace ID. Subsequent retained-evidence diagnosis
+established a test expectation mismatch: Decision Service's startup log was
+emitted at `00:01:16.100656Z`, outside this window; successful decisions
+deliberately have metrics/spans rather than per-request logs. Materializer
+page-commit logs are present in the gateway's actual Loki-log timeline, with
+batch IDs but no trace IDs. The synchronous trace filter excluded these valid
+durable-worker logs, contrary to the documented domain-identity correlation.
+No native emission or routing change is needed. Browser trace/raw responses,
 final HTTP-200 gateway state and journal are retained in artifact `14284577237`.
 Restart, analysis-down and backup/restore/reset/restored parity were not reached.
 `correctedReleaseValidation` in the provenance file records this new release
 without changing the original pinned artifact-only replay identity.
+
+The corrected test requires Decision evaluation spans (with existing per-service
+metrics checks), materializer page spans and committed batch-ID logs, and the
+existing other-service logs/spans/correlated traces. Original correlation and
+telemetry timeouts are unchanged. Focused offline regressions pass; **the full
+browser gate remains failed until a new explicit installed validation passes**.
+No further run was dispatched.
+
+The installed driver now records `installed-browser-result.json` and continues
+independent restart, analysis-down and recovery checks even if the browser fails.
+`installed-recovery-result.json` is written only after that sequence completes.
+Recovery still fails fast, and browser failure remains a nonzero overall exit;
+`installed-result.json` is produced only when both gates pass. This does not
+retroactively establish any previously unreached recovery result.
 
 Artifacts expire after seven days: retain the reviewed archive, checksum,
 manifest and evidence in an approved private release store before deployment.

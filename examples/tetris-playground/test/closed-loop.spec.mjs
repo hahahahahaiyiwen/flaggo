@@ -11,6 +11,7 @@ import { parseListeningUrl } from "../../tetris-integration/host-process.mjs";
 import { parseLokiResponse, parseTempoResponse } from "../dist/backend.js";
 import { readAttemptFailureRecords, startPlaygroundFixture } from "./playground-fixture.mjs";
 import { loadDeployedTarget } from "../../../deploy/azure/deployed-target.mjs";
+import { hasWorkloadTelemetry, serviceLogQuery } from "./service-telemetry.mjs";
 
 const exampleDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -412,7 +413,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     await Promise.all(state.services.map(async ({ name }) => {
       const [logsResponse, tracesResponse] = await Promise.all([
         page.request.get(`${lokiUrl}/loki/api/v1/query_range?${new URLSearchParams({
-          query: `{service_name="${name}"}${name === "flaggo-decision-service" ? "" : ' | trace_id != ""'}`,
+          query: serviceLogQuery(name),
           start: String(BigInt(Date.parse(state.demo.startedAt) - 60_000) * 1_000_000n),
           limit: "10",
         })}`),
@@ -438,11 +439,9 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
         }
       }
     }));
-    return Object.entries(telemetry).every(([name, { logs, spans, correlatedTrace }]) =>
-      logs.length > 0 && spans.length > 0
-      // Successful decisions emit metrics/spans, not a per-request log.
-      && (name === "flaggo-decision-service" || correlatedTrace !== undefined));
-  }, { timeout: 60_000, message: "Every service must export its supported logs and traces to LGTM" }).toBe(true)
+    return Object.entries(telemetry).every(([name, sample]) =>
+      hasWorkloadTelemetry(name, sample));
+  }, { timeout: 60_000, message: "Every service must export its workload-supported telemetry to LGTM" }).toBe(true)
     .finally(async () => {
       const path = testInfo.outputPath("service-telemetry.json");
       await writeFile(path, JSON.stringify(telemetry, null, 2), "utf8");

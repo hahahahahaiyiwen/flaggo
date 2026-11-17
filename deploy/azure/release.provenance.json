@@ -119,9 +119,22 @@
       "failure": "Every service must export its supported logs and traces to LGTM",
       "observation": "Final decision-service and evidence-materializer Loki results contain zero streams/logs; both have 60 parsed spans. Other services have logs, spans and a correlated trace.",
       "rawResponseEvidence": "Retained browser trace confirms both Loki queries returned HTTP 200, status success and empty streams. Query start is 2026-11-17T00:02:09.644Z; evidence-materializer additionally filters trace_id != empty.",
-      "rootCauseEstablished": false,
+      "rootCauseEstablished": true,
       "assertionWeakened": false,
       "automaticRetryPerformed": false
+    },
+    "retainedEvidenceDiagnosis": {
+      "cause": "Browser expectation mismatch with established service telemetry behavior, not a demonstrated export/routing defect.",
+      "decisionService": "Journal startup at 2026-11-17T00:01:16.100656Z precedes query start00:02:09.644Z; subsequent successful evaluations emit spans/metrics, not per-request logs. Only cleanup lifecycle logs follow.",
+      "materializer": "Sixty committed pages appear in the journal; final gateway Loki-log timeline retains five page-commit events with batch identity and no trace ID. Browser trace_id filter excludes valid domain-correlated worker logs.",
+      "contract": "docs/design/architecture/OBSERVABILITY.md and contracts/otel/flaggo-service-observability-profile-v1.json",
+      "correction": "Require decision evaluation spans and existing metrics; materializer page spans plus successful committed batch-ID logs without synchronous trace filter; preserve other-service log/trace checks.",
+      "independentRecovery": "Record browser outcome, then fail-fast recovery separately; retain browser failure as overall failure even if recovery passes.",
+      "localValidation": "27 Node tests including unchanged original predicate/capture checks; 10 preparation tests including four real Bash browser/recovery outcome combinations; retained-data workload projection passes.",
+      "nativeEmissionOrRoutingChanged": false,
+      "installedValidationRepeated": false,
+      "fullBrowserGateStillFailed": true,
+      "nextMinimalExecution": "Explicitly authenticated artifact-only replay of sealed source6d7b62c/artifact14284577237 with updated separate test driver; no native rebuild. Existing old-release pin must not be used or bypassed."
     },
     "correlationCaptureSha256": "83fed10b50337d57f0b1a330c3b9c2e5af5b09acdaab191f3b8ed4b37af49860",
     "serviceTelemetryCaptureSha256": "957879dde6c64f7e0da584d150cc1ee53daf3696a13102c53a62b7b2322e1efc",

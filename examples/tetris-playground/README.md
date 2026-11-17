@@ -336,6 +336,12 @@ timestamps or unrelated attempts; recent failures remain visible in the
 timeline. Without a fresh active analysis identity, the top-level milestones
 retain their latest-attempt behavior.
 
+The closed-loop telemetry check follows the same service profile: successful
+Decision Service evaluations require metrics and evaluation spans, not duplicate
+per-request logs. Materialization requires committed-page logs with exact batch
+identity and page spans; durable worker logs need not share synchronous trace
+context. Other applicable service log-to-trace checks remain required.
+
 ## Run the adaptive comparison in benchmark mode
 
 Launch with `--mode=benchmark`, then select **Run demo**. Benchmark mode has no

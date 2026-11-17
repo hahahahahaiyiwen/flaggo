@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { hasWorkloadTelemetry, serviceLogQuery } from "./service-telemetry.mjs";
 
 import {
   LgtmClient,
@@ -7,6 +8,38 @@ import {
   parsePrometheusResponse,
   parseTempoResponse,
 } from "../dist/backend.js";
+
+test("successful decision workloads require evaluation spans, not duplicate success logs", () => {
+  const sample = { logs: [], spans: [{ name: "flaggo.decision.evaluate" }] };
+  assert.equal(hasWorkloadTelemetry("flaggo-decision-service", sample), true);
+  assert.equal(hasWorkloadTelemetry("flaggo-decision-service", { ...sample, spans: [] }), false);
+  assert.equal(hasWorkloadTelemetry("flaggo-decision-service", {
+    ...sample, spans: [{ name: "unrelated" }],
+  }), false);
+});
+
+test("materialization requires committed batch logs without imposing synchronous trace context", () => {
+  const sample = {
+    logs: [{
+      eventName: "flaggo.materializer.page.committed",
+      attributes: { "flaggo.batch.id": "62", "flaggo.operation.outcome": "success" },
+    }],
+    spans: [{ name: "flaggo.materializer.page" }],
+  };
+  assert.equal(serviceLogQuery("flaggo-evidence-materializer"),
+    '{service_name="flaggo-evidence-materializer"}');
+  assert.equal(hasWorkloadTelemetry("flaggo-evidence-materializer", sample), true);
+  assert.equal(hasWorkloadTelemetry("flaggo-evidence-materializer", { ...sample, logs: [] }), false);
+  assert.equal(hasWorkloadTelemetry("flaggo-evidence-materializer", { ...sample, spans: [] }), false);
+  assert.equal(hasWorkloadTelemetry("flaggo-evidence-materializer", {
+    ...sample, logs: [{ ...sample.logs[0], attributes: {} }],
+  }), false);
+  assert.match(serviceLogQuery("flaggo-contract-service"), /trace_id != ""/u);
+  assert.equal(hasWorkloadTelemetry("flaggo-contract-service", sample), false);
+  assert.equal(hasWorkloadTelemetry("flaggo-contract-service", {
+    ...sample, correlatedTrace: { traceId: "observed" },
+  }), true);
+});
 
 test("queries both ends of the bounded Loki range", async () => {
   const requests = [];

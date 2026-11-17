@@ -3,7 +3,10 @@ import copy
 import hashlib
 import io
 import json
+import os
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 import tarfile
 import unittest
@@ -27,6 +30,34 @@ reuse = load("reuse", "reuse-release.py")
 
 
 class PreparationTests(unittest.TestCase):
+    def test_browser_failure_does_not_skip_recovery_or_turn_overall_status_green(self):
+        windows_bash = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+        bash = str(windows_bash) if os.name == "nt" and windows_bash.exists() else shutil.which("bash")
+        self.assertIsNotNone(bash, "Bash is required to validate installed-check orchestration")
+        helper = Path(__file__).with_name("installed-checks.sh").read_text()
+        for browser_status, recovery_status in [(0, 0), (7, 0), (0, 9), (7, 9)]:
+            with self.subTest(browser=browser_status, recovery=recovery_status), \
+                    tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                script = helper + f"""
+browser_check() {{ return {browser_status}; }}
+recovery_check() {{
+  printf started > recovery.started
+  (exit {recovery_status})
+  printf completed > recovery.completed
+}}
+run_installed_checks browser_check recovery_check .
+printf passed > overall.passed
+"""
+                result = subprocess.run([bash, "-ec", script], cwd=root, capture_output=True, text=True)
+                self.assertEqual(result.returncode, recovery_status or browser_status, result.stderr)
+                self.assertEqual(json.loads((root / "installed-browser-result.json").read_text()),
+                                 {"passed": browser_status == 0, "exitCode": browser_status})
+                self.assertTrue((root / "recovery.started").exists())
+                self.assertEqual((root / "recovery.completed").exists(), recovery_status == 0)
+                self.assertEqual((root / "overall.passed").exists(),
+                                 browser_status == 0 and recovery_status == 0)
+
     def test_artifact_filter_preserves_exact_safe_link_text_and_rejects_escape(self):
         with tempfile.TemporaryDirectory() as temporary:
             member = tarfile.TarInfo("flaggo-relocated/python/python")
