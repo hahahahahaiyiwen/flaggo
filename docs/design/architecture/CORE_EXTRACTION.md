@@ -123,7 +123,41 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C11 | Versioned capability negotiation, lossless result schema/profile and required query corpus are not implemented |
 | C12 | Local recovery behavior retained, but portable workflow/artifact/execution contracts still expose local filesystem assumptions and need extraction |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
-| Consumer/publication | Script and local build mechanism provided; exact execution evidence and public remote reachability must be recorded independently |
+| Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
+
+## Observed local verification
+
+The source pinned by the successful standalone consumer is
+`ef2541081231a2e12c738731a6bcf14bbf8d33c3` (authority/HTTP extraction plus its
+consumer-fixture correction). The build used an explicit local Git URL, not a
+remote branch or a path dependency. Its retained `Cargo.lock` SHA-256 is
+`c3f39fd7fd2b2d255ecd1cc00e16cbc40fc6e4b890d93d22e378093600b069df`.
+All ten transitive product crates resolved to that same Git revision; metadata
+contained no SQLx/SQLite package. Both HTTP compositions compiled, the canonical
+fixture digest matched, and exact-contract evaluation returned the expected
+default. Public remote reachability has **not** been tested or claimed.
+
+The first standalone run exposed a fixture helper's accidental reliance on
+workspace-unified `serde_json/preserve_order`. The helper now deserializes the
+typed fixture directly, retaining required schema discriminator order without
+requiring consumers to enable unrelated features. The corrected pinned run
+passed; the failed initial revision is not recorded as consumer-qualified.
+
+On the local Windows environment, the focused store/service/shared-HTTP command
+above passed **53 tests**, with **2 historical .NET differential tests ignored**
+(not passes). The packaged-skill test passed separately. Focused all-targets
+Clippy passed, and the shared crates also built without SQLite enabled.
+
+The deterministic Tetris full-loop passed against the extracted runnable apps:
+contract acceptance, SDK decisions, OTLP durable ingestion, evidence
+materialization/restart, reviewed deterministic analysis, Candidate admission,
+activation, SDK parity after activation and restart preservation. It reported
+1,004 evidence observations, a successful reviewed Candidate and active state
+version 3. This is deterministic local regression evidence, not live inference,
+provider access, multi-host consistency, tenant isolation or hosted policy proof.
+Node was absent from PATH; a session-local checksum-verified Node 22.23.5 and
+the repository lockfile's missing npm dependencies were used for this check.
+No machine-global runtime configuration or cloud resource was changed.
 
 Thus #94 must remain open. The next protocol work needs reviewed concrete
 scoped API/security, evidence-result/profile and artifact/execution capability
