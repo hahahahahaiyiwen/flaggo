@@ -3,7 +3,25 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { readAttemptFailureRecords } from "./playground-fixture.mjs";
+import { readAttemptFailureRecords, restartHumanSession } from "./playground-fixture.mjs";
+
+test("fresh-session setup surfaces failed or ineffective restarts", async () => {
+  const before = { human: { state: { sessionId: "old" } } };
+  for (const outcome of ["http-failure", "unchanged-session"]) {
+    await assert.rejects(restartHumanSession({
+      async get() { return { ok: () => true, json: async () => before }; },
+      async post() {
+        return {
+          ok: () => outcome !== "http-failure", status: () => 503,
+          json: async () => ({
+            human: { state: { sessionId: "old", status: "playing", gameOver: false, paused: false, score: 0 } },
+          }),
+        };
+      },
+    }, "http://playground.test"), outcome === "http-failure"
+      ? /HTTP 503/u : /fresh playing session/u);
+  }
+});
 
 async function fixture(context) {
   const root = await mkdtemp(resolve(tmpdir(), "flaggo-failure-records-"));

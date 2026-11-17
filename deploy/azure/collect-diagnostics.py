@@ -17,6 +17,7 @@ SCRATCH_FILES = (
     "analysis-stopped-parity.json", "restored-parity.json",
 )
 BROWSER_FILES = (
+    "human-session-setup.json",
     "adaptive-evaluation.json", "correlation-state.json", "analysis-actions.json",
     "service-telemetry.json", "trace.zip", "test-failed-1.png", "error-context.md",
 )

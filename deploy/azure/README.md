@@ -390,9 +390,8 @@ files,28 exact safe links and15 indexed diagnostics were verified. The
 diagnostic index has no collection errors and private state is excluded.
 
 **The run still failed.** The browser stopped at the unchanged initial hard-drop
-score assertion (line96,10 seconds), before starting the closed-loop demo or
-authority assertions. Trace records command HTTP200 and final Game over,
-not the exact pre-click game state/cause. Independent recovery completed
+score assertion (line90 in that seal,10 seconds), before starting the closed-loop demo or
+authority assertions. Independent recovery completed
 worker/gateway PID refresh, two authored-active decisions with analysis
 stopped, verified backup/offline restore/comparisons and the actual guarded
 reset (new state ID and matching backup proof retained). The next tar restore
@@ -405,9 +404,48 @@ The failed trace/screenshot, journal, restart/reset/parity files and reduced
 backup proof are retained. Later adaptive/correlation/telemetry outputs were
 never produced, not lost during upload. There was no automatic retry,
 assertion change, further build or Azure operation. Earlier6d7b62c browser
-success does not establish a pass for this new seal. Investigate these two
-new failures from retained evidence before another execution; complete
-installed recovery and deployment acceptance remain blocked.
+success does not establish a pass for this new seal. Complete installed
+recovery and deployment acceptance remain blocked.
+
+### Offline diagnosis and separate-driver corrections
+
+The retained trace shows the explicit Game over badge at46699.619ms, before
+hard-drop click `call@17` at46762.449ms (62.830ms earlier). Human gravity starts
+with the gateway; opening the page attaches to that existing session. Controls
+correctly do nothing after game over. This is a missing fresh-session test
+precondition, not evidence of broken gameplay/scoring. Browser setup now uses
+the existing restart API, verifies a new session identity, playing/unpaused/
+not-game-over/zero-score state and matching UI preconditions, then executes
+the original hard-drop assertion. Its timeout and all authority assertions
+are unchanged. Only the small session-identity/state proof is added to the
+exact diagnostic allowlist; independent recovery collection is unchanged.
+
+Ubuntu24 GNU tar1.35 reproduces the restore error with the original archive
+root `./` member, mounted destination, service UID and `--unlink-first`.
+The identical fixture succeeds under the earlier Bookworm tar1.34. The shared
+driver helper now archives only direct children, including hidden files with
+NUL-safe names, omitting the problematic root member. It retains
+`--unlink-first` to replace the root-owned reset marker, extracts as `flaggo`
+and leaves the destination mount's inode, mount ID and0700 mode intact.
+Marker/confirmation, archive/containment, quiescence and backup checks remain
+unchanged; there is no recursive chown or copy-delete reset fallback.
+
+All15 preparation tests pass on Ubuntu24, including actual bind/tmpfs mounts,
+restored marker/accepted SQLite digest/binary workspace bytes, retained cache
+and explicit source/extraction failures. All17 focused Node tests pass,
+including an aged real population whose hard-drop is a no-op until fresh
+setup, and failed/ineffective restart rejection. These are local regressions,
+not a passing installed browser or restored live SDK/REST parity result.
+
+No runtime application or state-tool bytes changed. The runner invokes the
+checked-out driver/helper/tests/collector separately; manifest-covered copies
+inside sealed `b109a917` remain untouched. The smallest next execution is one
+separately approved artifact-only replay of artifact14287597978, not a rebuild.
+Before that, review its exact source/run/job/workflow/ZIP/archive/manifest pin,
+update the old manifest guard and narrowly support this artifact's exact
+ZIP-root member layout (the old reuser expects `_temp/`); verify the whole
+artifact offline without relaxing archive/link checks. Those replay changes
+and the next dispatch have not been performed or authorized by this diagnosis.
 
 ## Deployment acceptance and recovery gates
 

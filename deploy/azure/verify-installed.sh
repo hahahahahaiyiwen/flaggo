@@ -163,8 +163,7 @@ recovery_check() {
     --release "$root" --release-sha256 "$release_hash" --confirm-state-id "$state_id" \
     > "$scratch/installed-reset.json"
   test ! -e /var/lib/flaggo/flaggo.db
-  tar -C "$scratch/restored-state" -cf - . \
-    | runuser -u flaggo -- tar -C /var/lib/flaggo --no-same-owner --unlink-first -xf -
+  restore_installed_state "$scratch/restored-state" /var/lib/flaggo flaggo
   systemctl start flaggo-backend.target flaggo@contract-service flaggo@decision-service \
     flaggo@otel-ingestion flaggo@evidence-materializer flaggo-observability
   python3 "$root/deploy/azure/wait-ready.py" http://127.0.0.1:8081/health/ready

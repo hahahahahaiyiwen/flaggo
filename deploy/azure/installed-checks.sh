@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 
+restore_installed_state() {
+  local source="$1" destination="$2" owner="$3"
+  test -f "$source/.flaggo-state.json"
+  test -f "$source/flaggo.db"
+  test "$(id -u "$owner")" != 0
+  # Archive only children: tar 1.35 --unlink-first also tries to remove ".".
+  find "$source" -mindepth 1 -maxdepth 1 -printf '%f\0' \
+    | tar -C "$source" --null -T - -cf - \
+    | runuser -u "$owner" -- tar -C "$destination" --no-same-owner --unlink-first -xf -
+}
+
 run_installed_checks() {
   local browser_status=0
   "$1" || browser_status="$?"

@@ -8,6 +8,20 @@ import { randomUUID } from "node:crypto";
 const exampleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(exampleDirectory, "../..");
 
+export async function restartHumanSession(request, url) {
+  const before = await request.get(`${url}/api/state`);
+  if (!before.ok()) throw new Error(`Human setup state failed with HTTP ${before.status()}.`);
+  const previousSessionId = (await before.json()).human.state.sessionId;
+  const response = await request.post(`${url}/api/commands/restart`);
+  if (!response.ok()) throw new Error(`Human restart failed with HTTP ${response.status()}.`);
+  const { sessionId, status, gameOver, paused, score } = (await response.json()).human.state;
+  if (typeof sessionId !== "string" || sessionId === previousSessionId
+    || status !== "playing" || gameOver || paused || score !== 0) {
+    throw new Error("Human setup did not create a fresh playing session.");
+  }
+  return { previousSessionId, sessionId, status, gameOver, paused, score };
+}
+
 export async function readAttemptFailureRecords(runDirectory) {
   const entries = await readdir(runDirectory, { withFileTypes: true });
   if (!entries.some((entry) => entry.name === "analysis-workspaces" && entry.isDirectory())) {

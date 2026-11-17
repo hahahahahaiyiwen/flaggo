@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
 import { createDecisionClient } from "@flaggo/sdk/runtime";
 import { parseListeningUrl } from "../../tetris-integration/host-process.mjs";
 import { parseLokiResponse, parseTempoResponse } from "../dist/backend.js";
-import { readAttemptFailureRecords, startPlaygroundFixture } from "./playground-fixture.mjs";
+import { readAttemptFailureRecords, restartHumanSession, startPlaygroundFixture } from "./playground-fixture.mjs";
 import { loadDeployedTarget } from "../../../deploy/azure/deployed-target.mjs";
 import { hasWorkloadTelemetry, serviceLogQuery } from "./service-telemetry.mjs";
 
@@ -86,6 +86,12 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   await expect(page.locator("#connection")).toHaveText("Live");
   await expect(page.locator("#board .cell")).toHaveCount(200);
 
+  const humanSetup = await restartHumanSession(page.request, playgroundUrl);
+  const humanSetupPath = testInfo.outputPath("human-session-setup.json");
+  await writeFile(humanSetupPath, JSON.stringify(humanSetup, null, 2), "utf8");
+  await testInfo.attach("human-session-setup", { path: humanSetupPath });
+  await expect(page.locator("#game-status")).toHaveText("Playing");
+  await expect(page.locator("#score")).toHaveText("0");
   await page.locator('[data-command="hard-drop"]').click();
   await expect(page.locator("#score")).not.toHaveText("0");
 

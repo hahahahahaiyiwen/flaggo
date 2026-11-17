@@ -20,7 +20,7 @@
     "browser": {
       "passed": false,
       "exitCode": 1,
-      "failure": "closed-loop.spec.mjs:96: initial hard-drop score remains0 for original10000ms assertion; POST returns200, final snapshot Game over. Exact pre-click state/causality not established.",
+      "failure": "closed-loop.spec.mjs:90 in sealed source: initial hard-drop score remains0 for original10000ms assertion. Retained trace proves Game over at46699.619ms before click call@17 at46762.449ms; missing fresh-session test setup, not an established gameplay defect.",
       "authorityAssertionsReached": false,
       "traceAndScreenshotRetained": true
     },
@@ -39,6 +39,27 @@
     "jobLogSha256": "3a820fb6e9f44045b1c3c19df5bb2505eaee76f5ef51dc7901b20c3d85a93ed9",
     "automaticRetry": false,
     "azureOperations": false,
+    "deploymentReady": false
+  },
+  "offlineDriverDiagnosis": {
+    "sealedRuntimeSource": "b109a917d48c0bd63ecbc4260a8dd957bfab3ffd",
+    "sealedArtifactId": 14287597978,
+    "traceSha256": "1bcda25c48ffea5ff07baf0d8f2245e2cc08632cf2f9b82867c31b5adc782b9b",
+    "browserCause": "Existing human population already game-over before click; page connection does not restart its session.",
+    "browserCorrection": "Existing restart API plus new session identity/playing/zero-score and UI preconditions; original score/authority assertions and timeouts unchanged.",
+    "restoreCause": "GNU tar1.35 --unlink-first attempts to unlink root './' archive member against mounted destination, returning EINVAL/exit2; identical tar1.34 fixture succeeds.",
+    "restoreCorrection": "Separate checked-out helper archives children without root member, retains unlink-first and service-user extraction. Sealed state-tool and application unchanged.",
+    "focusedValidation": {
+      "ubuntu24PreparationTests": "15 passed with actual mounts, service UID, unchanged root inode/mount ID/mode, marker, accepted SQLite digest, binary workspace/cache bytes and failure cases",
+      "nodeTests": "17 passed, including aged real population and failed/ineffective restart",
+      "shellAndBrowserSyntax": "passed",
+      "pythonRuntime": "Reused sealed CPython3.12.16; existing Bookworm libsqlite3 supplied only for SQLite test fixtures, native Ubuntu24 GNUtar1.35 unchanged; no network/install/build"
+    },
+    "newSealRequiredForDriverOnlyReplay": false,
+    "nextExecutionPrerequisite": "Separate approval plus reviewed exact b109 source/run/job/workflow/artifact hashes, old manifest guard update, exact ZIP-root layout handling and offline whole-artifact verification. Replay pin/workflow/reuser remain unchanged.",
+    "newActionsRunOrBuild": false,
+    "installedBrowserRevalidated": false,
+    "restoredLiveParityReached": false,
     "deploymentReady": false
   },
   "format": "flaggo.preparation-evidence/v1",

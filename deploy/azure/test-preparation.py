@@ -394,10 +394,15 @@ printf passed > overall.passed
             root = Path(temporary)
             state = root / "state"
             alias = root / "alias"
-            state.mkdir()
+            state.mkdir(mode=0o700)
             alias.mkdir()
             marker = {"format": "flaggo.state/v1", "kind": "disposable-smoke", "stateId": "exact"}
             (state / ".flaggo-state.json").write_text(json.dumps(marker))
+            workspace = state / "analysis-workspaces" / "sealed"
+            workspace.mkdir(parents=True)
+            (workspace / "evidence bytes.bin").write_bytes(b"accepted workspace\x00\xff")
+            (state / "copilot-home").mkdir(mode=0o700)
+            (state / "copilot-home/private-cache").write_bytes(b"do not replace")
             with closing(sqlite3.connect(state / "flaggo.db")) as db:
                 db.execute("CREATE TABLE authority (digest TEXT)")
                 db.execute("INSERT INTO authority VALUES ('sha256:accepted')")
@@ -416,10 +421,12 @@ printf passed > overall.passed
             try:
                 self.assertTrue(alias.samefile(state))
                 self.assertEqual(alias.stat().st_dev, archive.parent.stat().st_dev)
-                snapshot = {p.name: p.read_bytes() for p in state.iterdir()}
+                snapshot = {p.relative_to(state): p.read_bytes() for p in state.rglob("*")
+                            if p.is_file()}
                 with self.assertRaisesRegex(ValueError, "same filesystem and mount"):
                     state_tool.reset(alias, archive, release, config, release_hash, "exact", Mock())
-                self.assertEqual(snapshot, {p.name: p.read_bytes() for p in state.iterdir()})
+                self.assertEqual(snapshot, {p.relative_to(state): p.read_bytes()
+                                            for p in state.rglob("*") if p.is_file()})
                 self.assertFalse(archive.exists())
                 child = subprocess.Popen([
                     sys.executable, "-c",
@@ -447,21 +454,59 @@ printf passed > overall.passed
                 restored = root / "restored"
                 state_tool.restore(archive, restored, result["backupSha256"], release_hash, Mock())
                 root.chmod(0o711)
-                os.chown(state, 1000, 1000)
-                with subprocess.Popen(["tar", "-C", str(restored), "-cf", "-", "."],
-                                      stdout=subprocess.PIPE) as saved:
-                    subprocess.run(
-                        ["tar", "-C", str(alias), "--no-same-owner", "--unlink-first", "-xf", "-"],
-                        stdin=saved.stdout, user=1000, group=1000, check=True,
+                import pwd
+                try:
+                    owner = pwd.getpwnam("flaggo")
+                except KeyError:
+                    subprocess.run(["useradd", "--system", "--no-create-home", "flaggo"], check=True)
+                    owner = pwd.getpwnam("flaggo")
+                os.chown(state, owner.pw_uid, owner.pw_gid)
+                mount_identity = (alias.stat().st_dev, alias.stat().st_ino)
+                mount_domain = state_tool.rename_domain(alias)
+                self.assertNotEqual(mount_domain, state_tool.rename_domain(state))
+                helper = Path(__file__).with_name("installed-checks.sh").read_text()
+
+                def restore_copy(source, destination):
+                    return subprocess.run(
+                        ["bash", "-euo", "pipefail", "-c", helper + """
+restore_installed_state "$1" "$2" "$3"
+printf completed
+""", "restore-test", str(source), str(destination), owner.pw_name],
+                        capture_output=True, text=True,
                     )
-                    self.assertEqual(saved.wait(), 0)
-                self.assertEqual((alias / "flaggo.db").stat().st_uid, 1000)
+
+                failed_source = root / "incomplete-copy"
+                failed_source.mkdir()
+                before_marker = (alias / ".flaggo-state.json").read_bytes()
+                failed = restore_copy(failed_source, alias)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertNotIn("completed", failed.stdout)
+                self.assertEqual((alias / ".flaggo-state.json").read_bytes(), before_marker)
+                self.assertFalse((alias / "flaggo.db").exists())
+                blocked = root / "blocked"
+                blocked.mkdir(mode=0o700)
+                failed = restore_copy(restored, blocked)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertNotIn("completed", failed.stdout)
+                self.assertEqual(list(blocked.iterdir()), [])
+                successful = restore_copy(restored, alias)
+                self.assertEqual(successful.returncode, 0, successful.stderr)
+                self.assertEqual(successful.stdout, "completed")
+                self.assertEqual((alias.stat().st_dev, alias.stat().st_ino), mount_identity)
+                self.assertEqual(state_tool.rename_domain(alias), mount_domain)
+                self.assertEqual(alias.stat().st_mode & 0o777, 0o700)
+                self.assertEqual((alias / "flaggo.db").stat().st_uid, owner.pw_uid)
                 self.assertEqual(json.loads((alias / ".flaggo-state.json").read_text()), marker)
                 with closing(sqlite3.connect(alias / "flaggo.db")) as db:
                     self.assertEqual(db.execute("SELECT digest FROM authority").fetchone()[0],
                                      "sha256:accepted")
                 self.assertEqual(restored.stat().st_uid, 0)
                 self.assertEqual(archive.stat().st_uid, 0)
+                self.assertEqual((alias / "analysis-workspaces/sealed/evidence bytes.bin").read_bytes(),
+                                 b"accepted workspace\x00\xff")
+                self.assertEqual((alias / "copilot-home/private-cache").read_bytes(), b"do not replace")
+                self.assertEqual((restored / "analysis-workspaces/sealed/evidence bytes.bin").stat().st_uid,
+                                 0)
             finally:
                 subprocess.run(["umount", str(alias)], check=True)
 

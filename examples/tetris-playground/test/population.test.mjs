@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { createFlaggoDropIntervalProvider } from "../../tetris-integration/dist/flaggo/flaggo-provider.js";
 import { TetrisPopulation } from "../dist/population.js";
+import { restartHumanSession } from "./playground-fixture.mjs";
 
 function harness(context, options = {}) {
   let clock = 0;
@@ -107,6 +108,36 @@ function assertSessionRandom(sessionId, requests) {
   }
   return expected;
 }
+
+test("browser setup restarts an aged benchmark session before the unchanged hard-drop check", async (context) => {
+  const h = sdkHarness(context, { mode: "benchmark" });
+  h.population.start();
+  await h.advance(300_000);
+  const old = h.population.snapshot().human.state;
+  assert.equal(old.gameOver, true);
+  assert.equal(old.score, 0);
+  h.population.command("hard-drop");
+  assert.equal(h.population.snapshot().human.state.score, 0);
+  const response = () => ({ ok: () => true, json: async () => h.population.snapshot() });
+  const setup = await restartHumanSession({
+    async get(url) {
+      assert.equal(url, "http://playground.test/api/state");
+      return response();
+    },
+    async post(url) {
+      assert.equal(url, "http://playground.test/api/commands/restart");
+      h.population.command("restart");
+      return response();
+    },
+  }, "http://playground.test");
+  assert.equal(setup.previousSessionId, old.sessionId);
+  assert.notEqual(setup.sessionId, old.sessionId);
+  assert.equal(setup.gameOver, false);
+  assert.equal(setup.score, 0);
+  h.population.command("hard-drop");
+  assert.ok(h.population.snapshot().human.state.score > 0);
+  await h.advance(300_100);
+});
 
 for (const mode of ["live", "benchmark"]) {
   test(`${mode} human SDK randomness is session-hashed across refreshes and restart`, async (context) => {
