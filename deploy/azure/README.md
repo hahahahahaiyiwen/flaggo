@@ -219,7 +219,7 @@ latest rejected attempts remained separately visible. Exact learned SDK/REST
 parity, reviewed Python/artifact/action checks and browser action inspection
 also passed.
 
-**Full installed smoke remains blocked** by the later 60-second LGTM assertion
+That new-build run was blocked by the later 60-second LGTM assertion
 at `closed-loop.spec.mjs:445`. Final decision-service and evidence-materializer
 queries returned HTTP 200/success with empty log streams, although both had
 60 parsed spans. Other services had logs, spans and correlated traces. The
@@ -240,9 +240,8 @@ while retaining the original historical release/replay evidence.
 The corrected test requires Decision evaluation spans (with existing per-service
 metrics checks), materializer page spans and committed batch-ID logs, and the
 existing other-service logs/spans/correlated traces. Original correlation and
-telemetry timeouts are unchanged. Focused offline regressions pass; **the full
-browser gate remains failed until a new explicit installed validation passes**.
-No further run was dispatched.
+telemetry timeouts are unchanged. Focused offline regressions passed before
+the separately approved artifact-only validation below.
 
 The installed driver now records `installed-browser-result.json` and continues
 independent restart, analysis-down and recovery checks even if the browser fails.
@@ -250,6 +249,28 @@ independent restart, analysis-down and recovery checks even if the browser fails
 Recovery still fails fast, and browser failure remains a nonzero overall exit;
 `installed-result.json` is produced only when both gates pass. This does not
 retroactively establish any previously unreached recovery result.
+
+The single corrected artifact-only replay
+[43987207298](https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43987207298)
+used separate driver `ef8b488` against unchanged sealed runtime `6d7b62c`.
+Both build jobs were skipped. Provenance/extraction/isolation and manifest
+verification passed, and **the full deterministic browser test passed**.
+The fail-fast recovery sequence then passed restart assertions, analysis-down
+parity, quiesced backup, offline restore and database/workspace comparisons.
+These stage results are supported by console/source reachability, not retained
+per-file JSON/PID values.
+
+**Recovery remains blocked:** reset's first `Path.rename` crosses from mounted
+ext4 state into runner scratch and fails with `EXDEV` (`state-tool.py:175`).
+Reset and restored live exact-digest parity did not complete. A second blocker
+prevented evidence upload: the unprivileged artifact action cannot scan the
+intentionally root-private `state-backup` directory. No artifact was published;
+the new raw poll bodies, browser trace and per-file recovery results were lost.
+The full job log and its authenticated input proof are retained. Do not equate
+that log-only evidence with retained raw responses or complete recovery.
+No automatic redispatch or rebuild followed. Backup permissions must not be
+loosened merely to upload diagnostics; a future approved correction must stage
+only the already-approved diagnostic files outside private backup state.
 
 Artifacts expire after seven days: retain the reviewed archive, checksum,
 manifest and evidence in an approved private release store before deployment.

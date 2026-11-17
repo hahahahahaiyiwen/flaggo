@@ -169,6 +169,51 @@
     "privateReleaseStoreUploadApproved": false,
     "azureDeployed": false
   },
+  "correctedArtifactReplay": {
+    "runId": 43987207298,
+    "runUrl": "https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43987207298",
+    "runAttempt": 1,
+    "jobId": 133718339037,
+    "testDriverCommit": "ef8b48808c595bf6b0234651c4ba072616bbde96",
+    "testDriverWorkflowBlob": "e00d0171de12e6b51dde5b00f4c2cfb2087c0077",
+    "sealedRuntimeSourceCommit": "6d7b62ceb8e62692c3dcbd93991dd73a0bb597d4",
+    "sourceArtifactId": 14284577237,
+    "conclusion": "failure",
+    "buildJobsSkipped": true,
+    "inputProvenanceAndDigestLayersVerified": true,
+    "installedManifestVerificationPassed": true,
+    "fullBrowserGatePassed": true,
+    "browserResultEvidence": "Playwright console reports one passed test; browser JSON/trace upload subsequently failed.",
+    "recoveryReached": [
+      "Worker/gateway restart assertions and analysis-down parity completed before the fail-fast script reached backup/restore",
+      "Quiesced backup and offline restored database verification completed",
+      "Database and workspace comparisons completed before reset was invoked"
+    ],
+    "recoveryEvidenceLimit": "Sequential fail-fast console/source reachability, not retained per-file result JSON or PID values.",
+    "blocked": {
+      "operation": "reset-disposable",
+      "file": "deploy/azure/state-tool.py",
+      "line": 175,
+      "failure": "OSError errno18 EXDEV: first state-marker rename crosses mounted /var/lib/flaggo filesystem to runner scratch reset-archive/quiesced-original.",
+      "liveResetCompleted": false,
+      "restoredLiveParityReached": false,
+      "automaticRedispatchPerformed": false
+    },
+    "evidenceRetention": {
+      "uploadSucceeded": false,
+      "uploadedArtifactCount": 0,
+      "failure": "actions/upload-artifact EACCES scandir /home/runner/work/_temp/state-backup: backup is intentionally root-owned mode0700.",
+      "rawPollBodiesAndBrowserTraceRetained": false,
+      "perFileRecoveryResultsRetained": false,
+      "completeJobLogRetained": true,
+      "inputProvenanceRecoveredFromJobLog": true,
+      "jobLogSha256": "7948a15377c19945a07ad4f7a1241a926ef1349bd0557c319a61133f73f4e910"
+    },
+    "fullRecoveryGatePassed": false,
+    "buildPerformed": false,
+    "azureDeployed": false,
+    "providerCredentialsConnected": false
+  },
   "azureDeployed": false,
   "providerCredentialsConnected": false,
   "deploymentApproved": false
