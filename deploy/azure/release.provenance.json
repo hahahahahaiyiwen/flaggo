@@ -42,6 +42,7 @@
     "deploymentReady": false
   },
   "offlineDriverDiagnosis": {
+    "asOfDriverCommit": "7c209e70cfc03af0352e110da50c0fdbf41315f7",
     "sealedRuntimeSource": "b109a917d48c0bd63ecbc4260a8dd957bfab3ffd",
     "sealedArtifactId": 14287597978,
     "traceSha256": "1bcda25c48ffea5ff07baf0d8f2245e2cc08632cf2f9b82867c31b5adc782b9b",
@@ -64,25 +65,25 @@
   },
   "format": "flaggo.preparation-evidence/v1",
   "artifactReplayPin": {
-    "sourceCommit": "6d7b62ceb8e62692c3dcbd93991dd73a0bb597d4",
+    "sourceCommit": "b109a917d48c0bd63ecbc4260a8dd957bfab3ffd",
     "sourceWorkflow": {
       "id": 420635129,
       "path": ".github/workflows/backend-prepare.yml",
-      "gitBlob": "6afb114f0ef700def15f19ebca1bf03918c72ba4",
-      "runId": 43983014659,
+      "gitBlob": "2bbfdd865e5b86aad577b1e4e599ffac42abaee9",
+      "runId": 43990457633,
       "runAttempt": 1,
-      "releaseJobId": 133703998773,
+      "releaseJobId": 133729387440,
       "branch": "hahahahahaiyiwen-flaggo-website",
       "event": "workflow_dispatch"
     },
     "runConclusion": "failure",
     "artifact": {
-      "id": 14284577237,
-      "name": "backend-linux-release-6d7b62ceb8e62692c3dcbd93991dd73a0bb597d4",
-      "sizeBytes": 392752122,
-      "zipSha256FromGitHub": "d340a4c78cff4fc11b504397aafec0daa3a3ed971de462dbce69e9f618e3b3a0",
-      "archiveSha256VerifiedAfterDownload": "c2f5654dbd8b332531fcb95c4ade5d751c455a124ab5273ac347f65e65c48383",
-      "manifestSha256VerifiedAfterDownload": "25d503d3d9d5128f451368dc8f9cecd7650f6b2fc3c02e1ea73ef1f94d5a3a6f"
+      "id": 14287597978,
+      "name": "backend-linux-release-b109a917d48c0bd63ecbc4260a8dd957bfab3ffd",
+      "sizeBytes": 382019735,
+      "zipSha256FromGitHub": "385b13e2ec9b12256c085a25b899985cfefea6330253420b162d34b7c81182e6",
+      "archiveSha256VerifiedAfterDownload": "80a46dd306a9a28da0da756a2eb3ff1c1182edda9b4ab2ceb1e9063b035640cc",
+      "manifestSha256VerifiedAfterDownload": "246a2fe61cebd2aaeb327e73e9bb464c3ca82b8121893ccc3496ffcfbc3cdde7"
     },
     "runtime": {
       "pythonLockSha256": "817ee1fd87fe78f68c97d24d29bf0eaedcb22c0cbdadad71bb1db53e1ecb8c0d"

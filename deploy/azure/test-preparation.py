@@ -146,6 +146,12 @@ printf passed > overall.passed
             member.linkname = "../../../escape"
             with self.assertRaises((tarfile.LinkOutsideDestinationError, RuntimeError)):
                 reuse.release_member(member, temporary)
+            member.type = tarfile.LNKTYPE
+            with self.assertRaises((tarfile.LinkOutsideDestinationError, RuntimeError)):
+                reuse.release_member(member, temporary)
+            member = tarfile.TarInfo("../escape")
+            with self.assertRaises(tarfile.OutsideDestinationError):
+                reuse.release_member(member, temporary)
 
     def test_artifact_replay_rejects_mismatched_run_workflow_or_failed_build(self):
         evidence = json.loads(
@@ -204,7 +210,7 @@ printf passed > overall.passed
                 archive.addfile(member, io.BytesIO(manifest))
             zipped = root / "input.zip"
             with zipfile.ZipFile(zipped, "w") as archive:
-                archive.writestr("_temp/flaggo-release.tar.gz", tar_bytes.getvalue())
+                archive.writestr("flaggo-release.tar.gz", tar_bytes.getvalue())
             expected = {
                 "sizeBytes": zipped.stat().st_size, "zipSha256FromGitHub": reuse.digest(zipped),
                 "archiveSha256VerifiedAfterDownload": hashlib.sha256(tar_bytes.getvalue()).hexdigest(),
@@ -219,6 +225,15 @@ printf passed > overall.passed
                     with self.assertRaisesRegex(RuntimeError, "checksum"):
                         reuse.extract_release(changed, zipped, root)
                     self.assertFalse((root / "flaggo-relocated").exists())
+            legacy_zip = root / "legacy.zip"
+            with zipfile.ZipFile(legacy_zip, "w") as archive:
+                archive.writestr("_temp/flaggo-release.tar.gz", tar_bytes.getvalue())
+            changed = copy.deepcopy(evidence)
+            changed["artifact"].update(sizeBytes=legacy_zip.stat().st_size,
+                                       zipSha256FromGitHub=reuse.digest(legacy_zip))
+            with self.assertRaisesRegex(RuntimeError, "ZIP layout"):
+                reuse.extract_release(changed, legacy_zip, root)
+            self.assertFalse((root / "flaggo-relocated").exists())
             self.assertEqual(reuse.extract_release(evidence, zipped, root),
                              expected["manifestSha256VerifiedAfterDownload"])
             self.assertEqual((root / "flaggo-relocated/release.json").read_bytes(), manifest)

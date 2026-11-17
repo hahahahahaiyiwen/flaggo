@@ -88,7 +88,9 @@ def extract_release(evidence, archive_zip, output):
             "Downloaded artifact ZIP size/checksum mismatch")
     archive_tar = output / "flaggo-release.tar.gz"
     with zipfile.ZipFile(archive_zip) as zipped:
-        with zipped.open("_temp/flaggo-release.tar.gz") as source, archive_tar.open("wb") as target:
+        require(zipped.namelist().count("flaggo-release.tar.gz") == 1,
+                "Reviewed artifact ZIP layout mismatch")
+        with zipped.open("flaggo-release.tar.gz") as source, archive_tar.open("wb") as target:
             shutil.copyfileobj(source, target)
     require(digest(archive_tar) == expected["archiveSha256VerifiedAfterDownload"],
             "Sealed Linux archive checksum mismatch")

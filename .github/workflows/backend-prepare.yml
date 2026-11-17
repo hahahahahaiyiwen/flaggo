@@ -102,7 +102,7 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/flaggo-replay-input/flaggo-relocated"
           python3 "$root/deploy/azure/state-tool.py" verify-release --release "$root" \
-            --release-sha256 25d503d3d9d5128f451368dc8f9cecd7650f6b2fc3c02e1ea73ef1f94d5a3a6f
+            --release-sha256 246a2fe61cebd2aaeb327e73e9bb464c3ca82b8121893ccc3496ffcfbc3cdde7
           if ! cmp --silent deploy/azure/state-tool.py "$root/deploy/azure/state-tool.py"; then
             echo "Pinned release lacks the current recovery tool; an approved new seal is required." >&2
             exit 1
