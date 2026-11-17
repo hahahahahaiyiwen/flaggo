@@ -57,8 +57,11 @@ services or stores without changing those boundaries.
 Phase-1 work for [#93](https://github.com/hahahahahaiyiwen/flaggo/issues/93)
 records approved shared-core, namespace, authorization, consistency, worker and
 query models, plus the hosted threat-model baseline. Numeric operating targets
-and retention policy remain explicitly deferred. These documents do not change
-current wire contracts or establish distributed hosted acceptance.
+and retention/deletion policy are unresolved follow-ups blocking relevant
+hosted gates, not the narrowed #93 documentation gate. These documents do not
+change current wire contracts or establish distributed hosted acceptance.
+The [ADR follow-up register](architecture/PORTABLE_CORE.md#d6-d7-required-hosted-operating-envelope)
+provides public summaries, owners and links to the separately tracked policies.
 
 | Document | Scope |
 | --- | --- |

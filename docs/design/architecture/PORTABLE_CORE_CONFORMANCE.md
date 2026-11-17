@@ -6,7 +6,8 @@ Phase-1 plan for [#93](https://github.com/hahahahahaiyiwen/flaggo/issues/93).
 Read with the [ADR and decision register](PORTABLE_CORE.md) and
 [behavior decisions and proposals](DISTRIBUTED_BEHAVIOR.md). This is a specification of
 required evidence, not a test execution report or proof of hosted readiness.
-Pending decisions block their affected scenarios.
+Pending operational policies block their affected hosted scenarios, not the
+narrowed #93 documentation gate. Approved behavior models remain unchanged.
 
 ## Compatibility matrix
 
@@ -26,7 +27,7 @@ Pending decisions block their affected scenarios.
 | Analysis SQL | SQLite dialect/types, live per-query scope, allowlisted relation/functions | Negotiated versioned profile and canonical result semantics | Query/result contract change, D5; arbitrary SQL not portable |
 | Workspace | Local paths, filesystem projection, file locks | Scoped durable handles, conditional state/artifact publication | Local convenience retained; portable port change, D4/D7 |
 | Python execution | Trusted host process, inherited environment | Isolated bounded hosted execution with scoped inputs/outputs | Local convenience versus hosted-only operational guarantee, D7 |
-| Capacity/retention/recovery | Local configured defaults; no hosted SLO proof | Explicit approved limits, policy and verified restore | Hosted operating capability, D6/D7; no numeric target approved |
+| Capacity/retention/recovery | Local configured defaults; no hosted SLO proof | Explicit approved limits, policy and verified restore | Separate D6/D7 follow-up gates; no numeric target or retention policy approved by #93 |
 | Distribution | Public local libraries/apps | Same pinned core with private composition/adapters | No private dependency in public builds; phase-2 consumer-build gate |
 
 Versioned changes require a dedicated accepted contract revision with aligned
@@ -110,15 +111,30 @@ must be labelled deterministic; live inference acceptance is separate work.
 
 ## Issue acceptance ledger
 
-| #93 acceptance | Evidence in this draft | Remaining condition |
-| --- | --- | --- |
-| Public ownership/extension ADR | Portable-core ADR, public source links | Maintainer review; no private access needed |
-| Approved naming/auth/activation/fencing/query decisions | D1-D5 models approved with dated records | Concrete versioned artifacts and protocols remain later implementation gates |
-| Compatibility matrix | Matrix above | Update after choices; executable changes deferred to phase 2 |
-| Shared conformance plan and distributed-only separation | C01-C14 and gate definitions | Review plan; implement/run in the owning later phases |
-| Local execution/locks not hosted isolation | ADR and execution/worker sections | Documented; hosted claims remain prohibited without qualification |
-| Initial targets and threat model | D7 threat-model baseline approved; workload/SLO and retention explicitly deferred | **Pending numeric targets, retention/deletion and limits** before platform selection |
+This ledger assesses the narrowed architecture/documentation scope. "Covered"
+means the repository document contains the required decision or plan; it does
+not mean the implementation scenarios passed or that the issue is closed.
 
-Do not check off final #93 acceptance or close it while decision approvals are
-absent. Phase 1 produces agreed contracts and a qualification plan; it neither
-delivers refactoring nor satisfies hosted deployment acceptance.
+| Narrowed #93 acceptance | Repository evidence | Coverage / later gate |
+| --- | --- | --- |
+| Public ownership/extension ADR | [Owners and dependency rule](PORTABLE_CORE.md#approved-direction-owners-and-dependency-rule), contract layers and implementation-boundary evidence | Covered; no private repository access required |
+| Approved naming/auth/activation/fencing/query models | [D1-D5 decision register](PORTABLE_CORE.md#decision-register) and dated approvals | Covered; concrete versioned artifacts and protocols remain #94/hosted implementation gates |
+| Compatibility matrix | Matrix above | Covered; distinguish current wire behavior, intentional changes, local conveniences and hosted capabilities |
+| Shared conformance plan and distributed-only separation | C01-C14, scenario corpus, evidence requirements and distributed-only section | Covered as a plan; implementation and execution belong to the owning later phases |
+| Local execution/locks not hosted isolation | ADR implementation table and [execution boundary](DISTRIBUTED_BEHAVIOR.md#durable-artifacts-versus-execution-d4d7-proposal) | Covered; local locks and trusted Python are not hosted guarantees |
+| Threat-model baseline and enforceable-resource-limit obligations | ADR D7 approval and execution-boundary obligations | Covered at architecture level; numeric budgets, concrete controls and actual-target proof remain hosted gates |
+| Deferred workload/SLO and retention/deletion tracked separately | [Hosted operating envelope and owners](PORTABLE_CORE.md#d6-d7-required-hosted-operating-envelope); [hahahahahaiyiwen/flaggo-cloud#5](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/5) and [hahahahahaiyiwen/flaggo-cloud#6](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/6) | Covered as unresolved tracking with public summaries and hosted gate consequences; policy values are not approved or completed |
+
+No missing architecture-model approval is identified in D1-D5 or the D7
+baseline. Remaining review is to confirm this documentation coverage and
+linked follow-up/dependency tracking against the live narrowed issue, and
+verify durable public access to the document revision. A local commit or
+in-app attachment is not public-documentation acceptance evidence. Record an
+immutable public source revision or equivalent durable public document link
+in #93 before closure. The maintainer/coordinator owns that acceptance and
+closure; this ledger does not close the issue or imply a push or merge.
+
+Deferred operating targets and retention/deletion must not be checked off as
+completed merely because #93 can close. Phase 1 produces agreed architecture
+contracts and a qualification plan; it neither delivers refactoring nor
+satisfies hosted deployment acceptance.

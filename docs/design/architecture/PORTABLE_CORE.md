@@ -10,6 +10,14 @@ numeric operating targets, retention and remaining policy details are
 **pending, not guarantees**.
 This ADR does not change the current wire contracts or implement hosted behavior.
 
+**Scope separation approved 2026-11-17:** #93 covers the approved architecture
+and behavioral models, compatibility boundaries and conformance plan.
+Workload/SLO targets and retention/deletion policy are separate follow-ups
+blocking the relevant hosted gates, not completion of this documentation gate.
+The approved threat-model baseline and the obligation to enforce resource
+limits remain part of the architecture; choosing numeric limits and qualifying
+concrete isolation controls remain hosted work.
+
 Implementation evidence was inspected at public revision
 `c397329f608c04631d309f2cfff966a58d80fe2c`. "Current" below means that revision,
 not the historical backend-preparation branch or a deployed hosted service.
@@ -105,8 +113,8 @@ No operational numbers are inferred from local defaults.
 | D3 | Authoritative transactional/version-fenced activation reads; immutable artifact caching only; atomic accepted-ready publication and fenced admission | Consistency model approved 2026-11-17; implement and qualify in phases 2-3 |
 | D4 | At-least-once attempts with durable operation identities, atomic commits and storage-enforced monotonically increasing worker fences; OTLP observation-level deduplication | Guarantee model approved 2026-11-17; concrete protocols and retention windows still need specification/qualification |
 | D5 | Versioned query capability negotiation with common scoped relations/result semantics and required fixture coverage; no promise of identical arbitrary SQL | Portability model approved 2026-11-17; concrete result/profile schemas and minimum corpus must precede adapter claims |
-| D6 | Choose measured initial workload and numeric availability/latency/freshness/recovery targets before platform selection | Explicitly deferred by maintainer 2026-11-17; #93 acceptance, capacity qualification and platform selection remain blocked |
-| D7 | Hostile-tenant/untrusted-execution isolation, data lifecycle and enforceable per-scope limits | Threat-model baseline approved 2026-11-17; retention/deletion explicitly deferred the same day; numeric limits and concrete isolation controls pending |
+| D6 | Choose measured initial workload and numeric availability/latency/freshness/recovery targets before platform selection | Unresolved in [hahahahahaiyiwen/flaggo-cloud#5](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/5), outside #93; capacity qualification and target-dependent platform selection remain blocked |
+| D7 | Hostile-tenant/untrusted-execution isolation, data lifecycle and enforceable per-scope limits | Threat-model baseline and enforcement obligations approved; retention/deletion unresolved in [hahahahahaiyiwen/flaggo-cloud#6](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/6); numeric limits and concrete controls remain hosted gates |
 
 ### D1: naming and digest compatibility
 
@@ -156,10 +164,11 @@ approvals for authorization, atomic authority, worker and query models, their
 current counterparts and proposed protocol details. Approval of a model does
 not make its implementation complete or approve unspecified wire revisions.
 
-### D6-D7: required operating envelope
+### D6-D7: required hosted operating envelope
 
 The threat-model baseline is approved below. The remaining fields are
-**unfilled approval inputs**, not promised service levels:
+**unfilled approval inputs**, not promised service levels or additional #93
+documentation acceptance criteria:
 
 | Decision input | Required specification | Accountable owner |
 | --- | --- | --- |
@@ -188,8 +197,24 @@ values and supported failure domain still require approval and qualification.
 **Explicit deferrals, 2026-11-17:** the maintainer selected "Leave workload/SLO
 values pending; do not invent targets" and "Leave retention/deletion policy
 pending; do not reuse local defaults as hosted policy". Approved shared-core
-semantics may guide extraction, but these deferrals keep #93 acceptance,
-capacity qualification, hosted data lifecycle and platform selection blocked.
+semantics may guide extraction. The subsequent approved scope separation moves
+these unresolved policies out of #93 while retaining their capacity,
+hosted data-lifecycle and platform-selection blockers.
+
+The follow-up boundaries are:
+
+| Follow-up | Must resolve | Gates that remain blocked |
+| --- | --- | --- |
+| Workload and service objectives: [hahahahahaiyiwen/flaggo-cloud#5](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/5) | Approved workload envelope, availability/latency/freshness/recovery objectives and resource-budget inputs | Target-dependent platform/capacity decisions; capacity and SLO acceptance for the affected hosted slices; final release qualification |
+| Retention and deletion: [hahahahahaiyiwen/flaggo-cloud#6](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/6) | Policy by data class, retry/dedup recovery windows, deletion deadlines and backup/restore behavior | Hosted data-lifecycle acceptance, dependent evidence/learning retention and recovery behavior, final release qualification |
+
+These are tracked design obligations, not completed decisions. Correctness
+refactoring and conformance-fixture work can proceed without inventing target
+values. Closing a documentation issue cannot waive the follow-up gates.
+The hosted owner coordinates both follow-ups with the product maintainer and
+deployment owner identified above. The linked implementation repository is
+private; the categories, owners and gate consequences in this public table are
+sufficient to understand the unresolved obligations without access to it.
 
 Do not select Kubernetes, a broker, sharding, multi-region writes or per-service
 databases without those inputs. A shared transactional authority store is a
@@ -207,11 +232,17 @@ Some existing ports need revision; this ADR does not claim extraction is done.
 Phase 2 may extract shared behavior and local adapters on the approved D1-D5
 models. Scoped routes/security, result schemas and capability protocols still
 need reviewed executable artifacts before implementations claim conformance.
-This does not mark the whole phase-1 dependency complete: operating-envelope
-and data-policy gates remain blocked. Hosted implementation is outside #93
-and #94.
+The narrowed #93 gate can be accepted once its documentation criteria and
+explicit follow-up tracking are satisfied; D6 and the deferred parts of D7 do
+not block that acceptance. They continue to block the hosted gates above.
+Hosted implementation is outside #93 and #94.
 
-#93 remains open while D1-D7 or acceptance evidence is missing. A written
-proposal, passing local CI, the live static website and historical single-host
-diagnostics do not qualify a distributed hosted product. This design grants no
-deployment, spending, account/secret access or environment-mutation approval.
+The [acceptance ledger](PORTABLE_CORE_CONFORMANCE.md#issue-acceptance-ledger)
+separates documentation coverage from implementation and operational evidence.
+Issue closure is a maintainer/coordinator action after review, not a claim made
+by this ADR. Acceptance also requires durable, publicly accessible documentation
+evidence; local commits and in-app document attachments alone are insufficient.
+A written proposal, passing local CI, the live static website and historical
+single-host diagnostics do not qualify a distributed hosted product. This
+design grants no deployment, spending, account/secret access or
+environment-mutation approval.

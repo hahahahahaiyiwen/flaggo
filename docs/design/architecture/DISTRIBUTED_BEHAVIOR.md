@@ -9,6 +9,17 @@ approved implementations. Operation names below are semantic descriptions, not
 committed Rust traits or public endpoints. Existing wire semantics remain
 authoritative until explicitly revised.
 
+The narrowed #93 gate approves architecture/behavioral models and their
+qualification plan, not operational policy values. Workload/SLO and
+retention/deletion follow-ups are tracked in
+[hahahahahaiyiwen/flaggo-cloud#5](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/5)
+and [hahahahahaiyiwen/flaggo-cloud#6](https://github.com/hahahahahaiyiwen/flaggo-cloud/issues/6),
+respectively, with public summaries in the
+[ADR's hosted operating envelope](PORTABLE_CORE.md#d6-d7-required-hosted-operating-envelope).
+Their unresolved values continue to block dependent hosted gates even after
+the documentation gate is accepted. Concrete wire schemas and adapter protocols
+remain implementation work under #94 and the relevant hosted phases.
+
 ## D2: authorization and scope
 
 **Resource-API model approved 2026-11-17:** the maintainer selected "Approve
@@ -157,7 +168,8 @@ and version any changed rule. No end-to-end exactly-once claim is made. The
 minimum recommendation retains standard OTLP retries with observation-level
 deduplication; any optional producer idempotency key/window needs a separately
 documented extension. Retention of dedup records cannot silently be shorter
-than the advertised retry/recovery window (D7).
+than the advertised retry/recovery window. The separate retention/deletion
+follow-up owns those unresolved durations; the invariant is part of D4.
 
 On timeout, connection loss or cancellation near commit, the caller may not
 know whether the operation committed. Return an explicit uncertain/dependency
@@ -196,10 +208,10 @@ If claims and mutations use different systems, a design must prove how that
 check is atomic; otherwise co-locate the relevant authority.
 
 Storage decides lease validity using its authoritative time/order, not a worker
-wall clock. Lease duration/renewal/backoff are D6-D7 operating inputs, not fixed
-here. After lease loss: stop starting work, request execution cancellation and
-reject stale commits even if the old process continues running. A new owner
-gets a strictly newer epoch, reconciles committed records, and resumes only
+wall clock. Lease duration/renewal/backoff are hosted operating inputs, not
+fixed by #93. After lease loss: stop starting work, request execution
+cancellation and reject stale commits even if the old process continues
+running. A new owner gets a strictly newer epoch, reconciles committed records, and resumes only
 unfinished work. Cancellation is best effort for computation but mandatory
 for preventing subsequent unauthorized state changes.
 
@@ -217,7 +229,8 @@ for preventing subsequent unauthorized state changes.
 Inbox acknowledgement means retained durable ingestion, not eventual
 materialization forever. Existing receipt-age retention is independent of
 consumer progress. Hosted retention/backlog policy and supported loss envelope
-must be approved; local default limits do not establish hosted guarantees.
+must be approved through the separate follow-ups before dependent hosted
+acceptance; local default limits do not establish hosted guarantees.
 
 ## Durable artifacts versus execution (D4/D7 proposal)
 
