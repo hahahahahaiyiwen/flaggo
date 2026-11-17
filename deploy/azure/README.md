@@ -106,7 +106,8 @@ The clean checkout is an isolated test driver linked to the sealed dependency
 and compiled-JavaScript trees. `/opt/flaggo/release` remains the unchanged,
 manifest-verified installation. Poll response bodies, correlation projections,
 last state and browser artifacts are retained even on assertion failure.
-Restart/recovery checks run only after the unchanged browser gate passes.
+Restart/recovery checks run independently; either gate failing keeps the overall
+result failed.
 There are no automatic dispatch/retry loops or Azure/provider credentials.
 This runner rehearsal is not Azure deployment or live-provider acceptance.
 
@@ -346,6 +347,48 @@ identity block reset. Auth caches are neither archived nor removed. Rebind the
 fresh default contract before a new smoke; do not reuse an old descriptor.
 Actual-host recovery rehearsal, retention, access and recovery-point objectives
 remain deployment acceptance gates.
+
+### Locally corrected preparation defects (not yet sealed)
+
+Reset now rejects an existing, state-contained or incompatible archive before
+checkpointing SQLite, creating backup directories or moving any state. Both
+filesystem device and Linux mount identity must match for the archive's nearest
+existing parent and each named source entry. Equal device IDs alone are not
+enough: Linux also rejects rename across different bind mounts. There is no
+copy/delete fallback.
+
+The installed rehearsal mounts a private ext4 volume with sibling `state` and
+`reset-archive` paths, then bind-mounts `state` at `/var/lib/flaggo`. Reset uses
+`--state` to name the backing directory in the archive's mount view. That option
+must identify the **same inode/device** as the still-mounted configured state
+root, not an arbitrary alternative state directory. Stopped-writer/open-handle
+checks cover both aliases; exact disposable marker/confirmation, unknown-entry,
+external-archive, release and verified-backup guards remain required. Archives
+stay root-owned/private. Restore extracts into the live state as `flaggo` rather
+than recursively changing ownership of state or private backups.
+
+An always-run collection step now copies only the explicit diagnostic allowlist
+in `collect-diagnostics.py` into `flaggo-diagnostics`, with runner-owned0700
+directories and0600 files. The upload action reads that directory, never
+`state-backup`, restored copies or workspaces. Only a reduced backup proof
+(manifest hash, release/source identities and file count) is staged; backup
+contents, configuration values and evidence filenames are not. Browser poll
+bodies/last state and applicable trace are selected by exact filenames from
+the credential-free deterministic test output. The index records copied
+hashes, missing files and collection errors. Browser and recovery status files
+are recorded independently, including failure, without turning a failed gate
+green; detailed recovery/parity files remain required when those stages pass.
+
+Focused local Windows and Linux regressions cover unchanged-source rejection,
+real tmpfs/bind-mount behavior, supported reset, identity/quiescence guards,
+four browser/recovery outcomes and unprivileged diagnostic readability while
+backup access stays denied. This is **not** an installed replay or a successful
+GitHub upload/download. `state-tool.py` is manifest-covered and the installed
+driver executes that sealed copy. Therefore these changes require an explicitly
+approved new sealed release before installed reset/restored live exact-digest
+parity and downloadable evidence can be validated. Runtime6d7b62c is unchanged;
+the replay setup rejects a recovery tool differing from the driver instead of
+overlaying it. No new build, dispatch or Azure operation is implied.
 
 ## Deployment acceptance and recovery gates
 

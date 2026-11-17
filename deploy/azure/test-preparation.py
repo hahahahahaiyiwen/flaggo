@@ -7,6 +7,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import tarfile
 import unittest
@@ -27,6 +28,7 @@ gateway = load("gateway", "gateway.py")
 state_tool = load("state_tool", "state-tool.py")
 readiness = load("readiness", "wait-ready.py")
 reuse = load("reuse", "reuse-release.py")
+diagnostics = load("diagnostics", "collect-diagnostics.py")
 
 
 class PreparationTests(unittest.TestCase):
@@ -53,10 +55,86 @@ printf passed > overall.passed
                 self.assertEqual(result.returncode, recovery_status or browser_status, result.stderr)
                 self.assertEqual(json.loads((root / "installed-browser-result.json").read_text()),
                                  {"passed": browser_status == 0, "exitCode": browser_status})
+                self.assertEqual(json.loads((root / "installed-recovery-status.json").read_text()),
+                                 {"passed": recovery_status == 0, "exitCode": recovery_status})
                 self.assertTrue((root / "recovery.started").exists())
                 self.assertEqual((root / "recovery.completed").exists(), recovery_status == 0)
                 self.assertEqual((root / "overall.passed").exists(),
                                  browser_status == 0 and recovery_status == 0)
+                diagnostics.collect(root, root, os.getuid() if os.name == "posix" else 0,
+                                    os.getgid() if os.name == "posix" else 0)
+                staged = root / "flaggo-diagnostics"
+                for name in ("installed-browser-result.json", "installed-recovery-status.json"):
+                    self.assertEqual((staged / name).read_bytes(), (root / name).read_bytes())
+
+    def test_diagnostics_only_stage_allowlisted_proofs_without_private_backup_values(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            private = root / "state-backup"
+            private.mkdir(mode=0o700)
+            (private / "backup.json").write_text(json.dumps({
+                "format": "flaggo.backup/v1", "releaseSha256": "release",
+                "sourceCommit": "source", "files": [{"path": "private-evidence-name"}],
+                "configuration": [{"secret": "DO_NOT_EXPORT"}],
+            }))
+            (private / "flaggo.db").write_bytes(b"PRIVATE_DATABASE")
+            (root / "installed-secrets.json").write_text("NOT_ALLOWLISTED")
+            (root / "installed-reset.json").write_text('{"newStateId":"fresh"}')
+            browser = root / "examples/tetris-playground/test-results/example"
+            browser.mkdir(parents=True)
+            (browser / "correlation-state.json").write_text('{"polls":[{"actual":"body"}]}')
+            (browser / "private.env").write_text("DO_NOT_EXPORT")
+            owner = private.stat()
+            uid, gid = (1000, 1000) if os.name == "posix" and os.geteuid() == 0 else (
+                os.getuid() if os.name == "posix" else 0, os.getgid() if os.name == "posix" else 0,
+            )
+            result = diagnostics.collect(root, root, uid, gid)
+            self.assertEqual(result["errors"], [])
+            staged = root / "flaggo-diagnostics"
+            self.assertEqual((staged / "installed-reset.json").read_bytes(),
+                             (root / "installed-reset.json").read_bytes())
+            self.assertEqual((staged / "browser/example/correlation-state.json").read_bytes(),
+                             (browser / "correlation-state.json").read_bytes())
+            proof = json.loads((staged / "backup-proof.json").read_text())
+            self.assertEqual(proof["backupSha256"], state_tool.digest(private / "backup.json"))
+            self.assertEqual(proof["fileCount"], 1)
+            for path in staged.rglob("*"):
+                if path.is_file():
+                    self.assertNotIn(b"DO_NOT_EXPORT", path.read_bytes())
+                    self.assertNotIn(b"PRIVATE_DATABASE", path.read_bytes())
+                    self.assertNotIn(b"private-evidence-name", path.read_bytes())
+                    self.assertNotIn(b"NOT_ALLOWLISTED", path.read_bytes())
+                    if os.name == "posix":
+                        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                        self.assertEqual(path.stat().st_uid, uid)
+            self.assertEqual(private.stat().st_mode, owner.st_mode)
+            self.assertEqual(private.stat().st_uid, owner.st_uid)
+            if os.name == "posix":
+                self.assertEqual(staged.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(staged.stat().st_uid, uid)
+                if os.geteuid() == 0:
+                    os.chown(root, uid, gid)
+                    subprocess.run([
+                        sys.executable, "-c",
+                        "from pathlib import Path; import sys\n"
+                        "root=Path(sys.argv[1])\n"
+                        "for p in (root/'flaggo-diagnostics').rglob('*'):\n"
+                        " if p.is_file(): p.read_bytes()\n"
+                        "try: (root/'state-backup/backup.json').read_bytes()\n"
+                        "except PermissionError: pass\n"
+                        "else: raise AssertionError('private backup became readable')\n",
+                        str(root),
+                    ], user=uid, group=gid, check=True, cwd=root)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX symlink diagnostics")
+    def test_diagnostics_refuse_symlinked_allowlisted_file_without_following_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "private").write_text("secret")
+            (root / "installed-reset.json").symlink_to(root / "private")
+            result = diagnostics.collect(root, root, os.getuid(), os.getgid())
+            self.assertTrue(any("symlink refused" in error for error in result["errors"]))
+            self.assertFalse((root / "flaggo-diagnostics/installed-reset.json").exists())
 
     def test_artifact_filter_preserves_exact_safe_link_text_and_rejects_escape(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -252,6 +330,140 @@ printf passed > overall.passed
                 state_tool.reset(state, state / "archive", state, state, "hash", "operator-id", Mock())
             self.assertEqual(json.loads(marker.read_text())["kind"], "persistent")
             self.assertFalse((state / "archive").exists())
+
+    def test_reset_rejects_cross_filesystem_archive_before_backup_or_source_mutation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            state = root / "state"
+            state.mkdir()
+            (state / ".flaggo-state.json").write_text(json.dumps({
+                "format": "flaggo.state/v1", "kind": "disposable-smoke", "stateId": "exact",
+            }))
+            (state / "flaggo.db").write_bytes(b"must not open or checkpoint this database")
+            (state / "flaggo.db-wal").write_bytes(b"must not alter WAL")
+            snapshot = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in state.iterdir()}
+            for archive, message in [(state / "archive", "outside"), (root, "new path")]:
+                with self.subTest(archive=archive):
+                    with self.assertRaisesRegex(ValueError, message):
+                        state_tool.reset(state, archive, root, root, "hash", "exact", Mock())
+                    self.assertEqual(snapshot, {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                                                for p in state.iterdir()})
+            other = root / "other-volume"
+            other.mkdir()
+            original_stat = Path.stat
+
+            def other_device(path, *args, **kwargs):
+                result = original_stat(path, *args, **kwargs)
+                if path == other:
+                    fields = list(result)
+                    fields[2] += 1
+                    return os.stat_result(fields)
+                return result
+
+            with patch.object(Path, "stat", other_device):
+                with self.assertRaisesRegex(ValueError, "same filesystem"):
+                    state_tool.reset(state, other / "new/archive", root, root, "hash", "exact", Mock())
+            self.assertFalse((other / "new").exists())
+            self.assertEqual(snapshot, {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                                        for p in state.iterdir()})
+            if os.name == "posix" and Path("/dev/shm").is_dir():
+                if Path("/dev/shm").stat().st_dev != state.stat().st_dev:
+                    with tempfile.TemporaryDirectory(dir="/dev/shm") as separate_mount:
+                        archive = Path(separate_mount) / "archive"
+                        with self.assertRaisesRegex(ValueError, "same filesystem"):
+                            state_tool.reset(state, archive, root, root, "hash", "exact", Mock())
+                        self.assertFalse(archive.exists())
+                        self.assertEqual(snapshot, {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                                                    for p in state.iterdir()})
+
+    def test_reset_cli_cannot_redirect_to_unrelated_state(self):
+        with patch.object(sys, "argv", ["state-tool.py", "reset-disposable", "--state", ".",
+                                       "--archive", "archive", "--release", ".", "--release-sha256",
+                                       "hash", "--confirm-state-id", "exact"]), \
+                patch.object(state_tool.os.path, "ismount", return_value=True), \
+                patch.object(Path, "samefile", return_value=False), \
+                patch.object(state_tool, "reset") as reset:
+            with self.assertRaisesRegex(ValueError, "exact configured state mount"):
+                state_tool.main()
+            reset.assert_not_called()
+
+    @unittest.skipUnless(os.environ.get("FLAGGO_TEST_BIND_MOUNTS") == "1",
+                         "Requires explicitly enabled isolated Linux mount capability")
+    def test_reset_bind_alias_rejected_but_common_mount_archive_succeeds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "state"
+            alias = root / "alias"
+            state.mkdir()
+            alias.mkdir()
+            marker = {"format": "flaggo.state/v1", "kind": "disposable-smoke", "stateId": "exact"}
+            (state / ".flaggo-state.json").write_text(json.dumps(marker))
+            with closing(sqlite3.connect(state / "flaggo.db")) as db:
+                db.execute("CREATE TABLE authority (digest TEXT)")
+                db.execute("INSERT INTO authority VALUES ('sha256:accepted')")
+                db.commit()
+            release = root / "release"
+            release.mkdir()
+            (release / "release.json").write_text(json.dumps({
+                "format": "flaggo.release/v1", "sourceCommit": "test", "files": [],
+            }))
+            config = root / "config"
+            config.mkdir()
+            (config / "analysis.env").write_text("EXAMPLE=value")
+            release_hash = state_tool.digest(release / "release.json")
+            archive = root / "archive"
+            subprocess.run(["mount", "--bind", str(state), str(alias)], check=True)
+            try:
+                self.assertTrue(alias.samefile(state))
+                self.assertEqual(alias.stat().st_dev, archive.parent.stat().st_dev)
+                snapshot = {p.name: p.read_bytes() for p in state.iterdir()}
+                with self.assertRaisesRegex(ValueError, "same filesystem and mount"):
+                    state_tool.reset(alias, archive, release, config, release_hash, "exact", Mock())
+                self.assertEqual(snapshot, {p.name: p.read_bytes() for p in state.iterdir()})
+                self.assertFalse(archive.exists())
+                child = subprocess.Popen([
+                    sys.executable, "-c",
+                    "import sys,time; f=open(sys.argv[1]); print('ready',flush=True); time.sleep(60)",
+                    str(state / "flaggo.db"),
+                ], stdout=subprocess.PIPE, text=True)
+                try:
+                    self.assertEqual(child.stdout.readline().strip(), "ready")
+                    with patch.object(state_tool.subprocess, "run", return_value=Mock(stdout="0\n")):
+                        with self.assertRaisesRegex(RuntimeError, "state handle"):
+                            state_tool.assert_stopped(state)
+                finally:
+                    child.terminate()
+                    child.wait()
+                    child.stdout.close()
+                result = state_tool.reset(
+                    state, archive, release, config, release_hash, "exact", Mock(),
+                )
+                self.assertFalse((alias / "flaggo.db").exists())
+                self.assertNotEqual(json.loads((alias / ".flaggo-state.json").read_text())["stateId"],
+                                    "exact")
+                self.assertEqual(state_tool.digest(archive / "backup.json"), result["backupSha256"])
+                self.assertEqual((archive / "quiesced-original").stat().st_mode & 0o777, 0o700)
+                self.assertEqual((archive / "quiesced-original").stat().st_uid, 0)
+                restored = root / "restored"
+                state_tool.restore(archive, restored, result["backupSha256"], release_hash, Mock())
+                root.chmod(0o711)
+                os.chown(state, 1000, 1000)
+                with subprocess.Popen(["tar", "-C", str(restored), "-cf", "-", "."],
+                                      stdout=subprocess.PIPE) as saved:
+                    subprocess.run(
+                        ["tar", "-C", str(alias), "--no-same-owner", "--unlink-first", "-xf", "-"],
+                        stdin=saved.stdout, user=1000, group=1000, check=True,
+                    )
+                    self.assertEqual(saved.wait(), 0)
+                self.assertEqual((alias / "flaggo.db").stat().st_uid, 1000)
+                self.assertEqual(json.loads((alias / ".flaggo-state.json").read_text()), marker)
+                with closing(sqlite3.connect(alias / "flaggo.db")) as db:
+                    self.assertEqual(db.execute("SELECT digest FROM authority").fetchone()[0],
+                                     "sha256:accepted")
+                self.assertEqual(restored.stat().st_uid, 0)
+                self.assertEqual(archive.stat().st_uid, 0)
+            finally:
+                subprocess.run(["umount", str(alias)], check=True)
 
     def test_recovery_rejects_extra_files_and_manifest_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:

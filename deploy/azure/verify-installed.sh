@@ -5,6 +5,7 @@ test "${GITHUB_ACTIONS:-}" = true
 test "$(id -u)" = 0
 root="$(realpath "$1")"
 scratch="$(realpath "$2")"
+volume="$scratch/flaggo-state-volume"
 repository="$(cd "$(dirname "$0")/../.." && pwd)"
 test ! -e /opt/flaggo
 test ! -e /etc/flaggo
@@ -47,6 +48,12 @@ cleanup() {
       result=1
     fi
   fi
+  if mountpoint --quiet "$volume"; then
+    if ! umount "$volume"; then
+      echo "Cleanup: private state volume remains mounted" >&2
+      result=1
+    fi
+  fi
   exit "$result"
 }
 trap cleanup EXIT
@@ -61,7 +68,10 @@ ln -s "$root" /opt/flaggo/current
 useradd --system --home-dir /var/lib/flaggo --no-create-home --shell /usr/sbin/nologin flaggo
 truncate -s 4G "$scratch/flaggo-smoke.img"
 mkfs.ext4 -F -q "$scratch/flaggo-smoke.img"
-mount -o loop "$scratch/flaggo-smoke.img" /var/lib/flaggo
+install -d -m 700 "$volume"
+mount -o loop "$scratch/flaggo-smoke.img" "$volume"
+install -d -m 700 "$volume/state"
+mount --bind "$volume/state" /var/lib/flaggo
 chown flaggo:flaggo /var/lib/flaggo
 chmod 700 /var/lib/flaggo
 install -d -o flaggo -g flaggo -m 700 /var/lib/flaggo/copilot-home /var/lib/flaggo/copilot-home/probe
@@ -148,12 +158,13 @@ recovery_check() {
     --destination "$scratch/restored-state" --backup-sha256 "$backup_hash" --release-sha256 "$release_hash"
   cmp /var/lib/flaggo/flaggo.db "$scratch/restored-state/flaggo.db"
   diff -r /var/lib/flaggo/analysis-workspaces "$scratch/restored-state/analysis-workspaces"
-  python3 "$root/deploy/azure/state-tool.py" reset-disposable --archive "$scratch/reset-archive" \
+  python3 "$root/deploy/azure/state-tool.py" reset-disposable --state "$volume/state" \
+    --archive "$volume/reset-archive" \
     --release "$root" --release-sha256 "$release_hash" --confirm-state-id "$state_id" \
     > "$scratch/installed-reset.json"
   test ! -e /var/lib/flaggo/flaggo.db
-  cp -a "$scratch/restored-state/." /var/lib/flaggo/
-  chown -R flaggo:flaggo /var/lib/flaggo
+  tar -C "$scratch/restored-state" -cf - . \
+    | runuser -u flaggo -- tar -C /var/lib/flaggo --no-same-owner --unlink-first -xf -
   systemctl start flaggo-backend.target flaggo@contract-service flaggo@decision-service \
     flaggo@otel-ingestion flaggo@evidence-materializer flaggo-observability
   python3 "$root/deploy/azure/wait-ready.py" http://127.0.0.1:8081/health/ready

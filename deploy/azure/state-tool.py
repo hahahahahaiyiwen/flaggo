@@ -59,7 +59,7 @@ def release(root, expected):
     return manifest
 
 
-def assert_stopped():
+def assert_stopped(state=Path("/var/lib/flaggo")):
     if os.name != "posix" or os.geteuid() != 0:
         raise RuntimeError("Quiesced host operations require Linux root")
     for unit in UNITS:
@@ -70,6 +70,7 @@ def assert_stopped():
         if int(result.stdout.strip()) != 0:
             raise RuntimeError(f"Stop all writers before recovery operations: {unit}")
     # Include other host/container processes with open state handles.
+    roots = {"/var/lib/flaggo", str(state)}
     for process in Path("/proc").iterdir():
         if not process.name.isdecimal() or int(process.name) == os.getpid():
             continue
@@ -82,7 +83,7 @@ def assert_stopped():
                 target = os.readlink(descriptor)
             except FileNotFoundError:
                 continue
-            if target == "/var/lib/flaggo" or target.startswith("/var/lib/flaggo/"):
+            if any(target == root or target.startswith(root + "/") for root in roots):
                 raise RuntimeError(f"Process {process.name} still holds a state handle")
 
 
@@ -154,6 +155,19 @@ def restore(source, destination, expected, release_hash, stopped=assert_stopped)
     stopped()
 
 
+def rename_domain(path):
+    device = path.stat().st_dev
+    if not hasattr(os, "O_PATH"):
+        return device, None
+    descriptor = os.open(path, os.O_PATH | os.O_CLOEXEC)
+    try:
+        info = Path(f"/proc/self/fdinfo/{descriptor}").read_text()
+        mount = next(line.split()[1] for line in info.splitlines() if line.startswith("mnt_id:"))
+        return device, mount
+    finally:
+        os.close(descriptor)
+
+
 def reset(state, archive, release_root, config, release_hash, state_id, stopped=assert_stopped):
     stopped()
     identity = read_json(state / ".flaggo-state.json")
@@ -166,6 +180,19 @@ def reset(state, archive, release_root, config, release_hash, state_id, stopped=
     }
     if any(path.name not in names | {"lost+found", "copilot-home"} for path in state.iterdir()):
         raise ValueError("Unexpected state entries: reset requires operator review")
+    archive = archive.resolve()
+    if archive.is_relative_to(state.resolve()):
+        raise ValueError("Reset archive must be outside the state tree")
+    if archive.exists():
+        raise ValueError("Reset archive must be a new path")
+    parent = archive.parent
+    while not parent.exists():
+        parent = parent.parent
+    domain = rename_domain(parent)
+    if (not parent.is_dir() or domain != rename_domain(state)
+            or any(rename_domain(path) != domain for path in state.iterdir()
+                   if path.name in names)):
+        raise ValueError("Reset archive and named state entries must be on the same filesystem and mount")
     backup_hash = backup(state, archive, release_root, config, release_hash, stopped)
     originals = archive / "quiesced-original"
     originals.mkdir(mode=0o700)
@@ -196,6 +223,8 @@ def main():
     load.add_argument("--backup-sha256", required=True)
     load.add_argument("--release-sha256", required=True)
     clear = commands.add_parser("reset-disposable")
+    clear.add_argument("--state", type=Path, default=Path("/var/lib/flaggo"),
+                       help="Same-inode backing path of the configured state bind mount")
     clear.add_argument("--archive", type=Path, required=True)
     clear.add_argument("--release", type=Path, required=True)
     clear.add_argument("--config", type=Path, default=Path("/etc/flaggo"))
@@ -223,9 +252,13 @@ def main():
     elif args.action == "reset-disposable":
         if not os.path.ismount("/var/lib/flaggo"):
             raise RuntimeError("The configured state filesystem is not mounted")
+        state = args.state.resolve()
+        if not state.samefile("/var/lib/flaggo"):
+            raise ValueError("Reset state must identify the exact configured state mount")
         print(json.dumps(reset(
-            Path("/var/lib/flaggo"), args.archive.resolve(), args.release.resolve(),
+            state, args.archive.resolve(), args.release.resolve(),
             args.config.resolve(), args.release_sha256, args.confirm_state_id,
+            stopped=lambda: assert_stopped(state),
         )))
 
 

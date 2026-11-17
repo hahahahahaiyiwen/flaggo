@@ -103,6 +103,10 @@ jobs:
           root="$RUNNER_TEMP/flaggo-replay-input/flaggo-relocated"
           python3 "$root/deploy/azure/state-tool.py" verify-release --release "$root" \
             --release-sha256 25d503d3d9d5128f451368dc8f9cecd7650f6b2fc3c02e1ea73ef1f94d5a3a6f
+          if ! cmp --silent deploy/azure/state-tool.py "$root/deploy/azure/state-tool.py"; then
+            echo "Pinned release lacks the current recovery tool; an approved new seal is required." >&2
+            exit 1
+          fi
           test ! -e node_modules
           test ! -e examples/tetris-playground/dist
           test ! -e examples/tetris-integration/dist
@@ -117,20 +121,19 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=GITHUB_ACTIONS,PATH bash deploy/azure/verify-installed.sh \
             "$RUNNER_TEMP/flaggo-replay-input/flaggo-relocated" "$RUNNER_TEMP"
+      - name: Stage allowlisted diagnostics without exporting private state
+        if: always()
+        shell: bash
+        run: |
+          sudo --preserve-env=GITHUB_ACTIONS python3 deploy/azure/collect-diagnostics.py \
+            "$RUNNER_TEMP" "$GITHUB_WORKSPACE" "$(id -u)" "$(id -g)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: backend-installed-replay-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/flaggo-replay-input/artifact-input-provenance.json
-            ${{ runner.temp }}/installed-*.json
-            ${{ runner.temp }}/installed-journal.log
-            ${{ runner.temp }}/installed-final-state.*
-            ${{ runner.temp }}/analysis-stopped-parity.json
-            ${{ runner.temp }}/restored-parity.json
-            ${{ runner.temp }}/state-backup/backup.json
-            examples/tetris-playground/test-results/
-          if-no-files-found: warn
+          path: ${{ runner.temp }}/flaggo-diagnostics/
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 7
 
   linux-release:
@@ -185,6 +188,12 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=GITHUB_ACTIONS,PATH bash deploy/azure/verify-installed.sh \
             "$RUNNER_TEMP/flaggo-relocated" "$RUNNER_TEMP"
+      - name: Stage allowlisted diagnostics without exporting private state
+        if: always()
+        shell: bash
+        run: |
+          sudo --preserve-env=GITHUB_ACTIONS python3 deploy/azure/collect-diagnostics.py \
+            "$RUNNER_TEMP" "$GITHUB_WORKSPACE" "$(id -u)" "$(id -g)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -195,12 +204,7 @@ jobs:
             ${{ runner.temp }}/flaggo-relocated/release.json
             ${{ runner.temp }}/flaggo-relocated/runtime-probe.json
             ${{ runner.temp }}/flaggo-relocated/python-relocated.json
-            ${{ runner.temp }}/installed-*.json
-            ${{ runner.temp }}/installed-journal.log
-            ${{ runner.temp }}/installed-final-state.*
-            ${{ runner.temp }}/analysis-stopped-parity.json
-            ${{ runner.temp }}/restored-parity.json
-            ${{ runner.temp }}/state-backup/backup.json
-            examples/tetris-playground/test-results/
+            ${{ runner.temp }}/flaggo-diagnostics/
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
