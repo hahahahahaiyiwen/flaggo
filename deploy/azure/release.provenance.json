@@ -1,4 +1,46 @@
 {
+  "resetCorrectedSealedBuild": {
+    "sourceCommit": "b109a917d48c0bd63ecbc4260a8dd957bfab3ffd",
+    "runId": 43990457633,
+    "jobId": 133729387440,
+    "attempt": 1,
+    "workflowId": 420635129,
+    "workflowGitBlob": "2bbfdd865e5b86aad577b1e4e599ffac42abaee9",
+    "event": "workflow_dispatch",
+    "conclusion": "failure",
+    "artifactId": 14287597978,
+    "artifactBytes": 382019735,
+    "zipSha256": "385b13e2ec9b12256c085a25b899985cfefea6330253420b162d34b7c81182e6",
+    "archiveSha256": "80a46dd306a9a28da0da756a2eb3ff1c1182edda9b4ab2ceb1e9063b035640cc",
+    "manifestSha256": "246a2fe61cebd2aaeb327e73e9bb464c3ca82b8121893ccc3496ffcfbc3cdde7",
+    "manifestFilesVerified": 23533,
+    "exactSafeLinksVerified": 28,
+    "uploadedDownloadedDiagnosticsVerified": 15,
+    "diagnosticIndexErrors": [],
+    "browser": {
+      "passed": false,
+      "exitCode": 1,
+      "failure": "closed-loop.spec.mjs:96: initial hard-drop score remains0 for original10000ms assertion; POST returns200, final snapshot Game over. Exact pre-click state/causality not established.",
+      "authorityAssertionsReached": false,
+      "traceAndScreenshotRetained": true
+    },
+    "recovery": {
+      "passed": false,
+      "exitCode": 2,
+      "restartPids": {"workerBefore":11442,"workerAfter":13134,"gatewayBefore":11889,"gatewayAfter":13161},
+      "analysisDownParity": "two decisions, authored active sha256:a10d8890f38c0d750727e47228654504660920fd3ed4025e60e02522bac7fbfa",
+      "offlineRestoreAndComparisonsCompleted": true,
+      "resetCompleted": true,
+      "resetBackupSha256": "45c2c31ea5649376e9c725e8cc91bbf7c7432c6486790b5a04a295d0292ead5a",
+      "newStateId": "ea56326e-a932-4d3f-bf1c-5f5d0a9608ec",
+      "failure": "Post-reset restore tar --unlink-first reports '.: Cannot unlink: Invalid argument'; may have partially populated state.",
+      "restoredLiveParityReached": false
+    },
+    "jobLogSha256": "3a820fb6e9f44045b1c3c19df5bb2505eaee76f5ef51dc7901b20c3d85a93ed9",
+    "automaticRetry": false,
+    "azureOperations": false,
+    "deploymentReady": false
+  },
   "format": "flaggo.preparation-evidence/v1",
   "artifactReplayPin": {
     "sourceCommit": "6d7b62ceb8e62692c3dcbd93991dd73a0bb597d4",

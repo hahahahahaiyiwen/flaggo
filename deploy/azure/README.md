@@ -348,7 +348,7 @@ fresh default contract before a new smoke; do not reuse an old descriptor.
 Actual-host recovery rehearsal, retention, access and recovery-point objectives
 remain deployment acceptance gates.
 
-### Locally corrected preparation defects (not yet sealed)
+### Reset/evidence correction and bounded installed result
 
 Reset now rejects an existing, state-contained or incompatible archive before
 checkpointing SQLite, creating backup directories or moving any state. Both
@@ -382,13 +382,32 @@ green; detailed recovery/parity files remain required when those stages pass.
 Focused local Windows and Linux regressions cover unchanged-source rejection,
 real tmpfs/bind-mount behavior, supported reset, identity/quiescence guards,
 four browser/recovery outcomes and unprivileged diagnostic readability while
-backup access stays denied. This is **not** an installed replay or a successful
-GitHub upload/download. `state-tool.py` is manifest-covered and the installed
-driver executes that sealed copy. Therefore these changes require an explicitly
-approved new sealed release before installed reset/restored live exact-digest
-parity and downloadable evidence can be validated. Runtime6d7b62c is unchanged;
-the replay setup rejects a recovery tool differing from the driver instead of
-overlaying it. No new build, dispatch or Azure operation is implied.
+backup access stays denied. The separately approved new seal/run
+[43990457633](https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43990457633)
+built source `b109a917d48c0bd63ecbc4260a8dd957bfab3ffd` without an overlay.
+Artifact14287597978 uploaded and downloaded successfully; all23,533 sealed
+files,28 exact safe links and15 indexed diagnostics were verified. The
+diagnostic index has no collection errors and private state is excluded.
+
+**The run still failed.** The browser stopped at the unchanged initial hard-drop
+score assertion (line96,10 seconds), before starting the closed-loop demo or
+authority assertions. Trace records command HTTP200 and final Game over,
+not the exact pre-click game state/cause. Independent recovery completed
+worker/gateway PID refresh, two authored-active decisions with analysis
+stopped, verified backup/offline restore/comparisons and the actual guarded
+reset (new state ID and matching backup proof retained). The next tar restore
+failed with `.: Cannot unlink: Invalid argument` under `--unlink-first`;
+restored live exact-digest parity was not reached. Partial restore is possible.
+Browser exit1 and recovery exit2 remain independently recorded; successful
+diagnostic collection did not mask either.
+
+The failed trace/screenshot, journal, restart/reset/parity files and reduced
+backup proof are retained. Later adaptive/correlation/telemetry outputs were
+never produced, not lost during upload. There was no automatic retry,
+assertion change, further build or Azure operation. Earlier6d7b62c browser
+success does not establish a pass for this new seal. Investigate these two
+new failures from retained evidence before another execution; complete
+installed recovery and deployment acceptance remain blocked.
 
 ## Deployment acceptance and recovery gates
 
