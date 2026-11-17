@@ -12,6 +12,7 @@ chrono = "0.4.45"
 flaggo-contract = { path = "../../modules/contract" }
 flaggo-contract-store = { path = "../../modules/contract-store" }
 flaggo-decision = { path = "../../modules/decision" }
+flaggo-decision-http = { path = "../../modules/decision-http" }
 flaggo-executable-store = { path = "../../modules/executable-store" }
 flaggo-expression = { path = "../../modules/expression" }
 flaggo-service-hosting.workspace = true

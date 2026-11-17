@@ -302,7 +302,6 @@ async fn default_authority_is_ready_when_authored_rules_are_absent_or_opaque() {
         }
         let version = fixture.deploy(&document).await;
         let active = fixture
-            .lifecycle
             .executables
             .get_active(version["contractDigest"].as_str().unwrap(), None)
             .await
@@ -472,7 +471,7 @@ async fn native_faults_provenance_validation_and_dependency_failures() {
             .unwrap();
         assert_eq!(response.status(), status, "{body}");
     }
-    fixture.lifecycle.contracts.close().await;
+    fixture.contracts.close().await;
     let response = request(&fixture, "GET", BASE, None).await;
     assert_eq!(response.0, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(response.1["retry-after"], "1");
@@ -587,7 +586,6 @@ async fn worker_rejects_corruption_without_rewriting_and_continues_other_contrac
         assert_eq!(state, "inactive", "{mutation}");
         assert_eq!(
             fixture
-                .lifecycle
                 .executables
                 .get_active(version["contractDigest"].as_str().unwrap(), None)
                 .await
@@ -598,7 +596,6 @@ async fn worker_rejects_corruption_without_rewriting_and_continues_other_contrac
         );
         assert_eq!(
             fixture
-                .lifecycle
                 .executables
                 .get_active(second["contractDigest"].as_str().unwrap(), None)
                 .await
@@ -639,7 +636,6 @@ async fn worker_rejects_absent_policy_and_uses_atomic_currentness_fences() {
         .unwrap();
     assert_eq!(
         fixture
-            .lifecycle
             .executables
             .get(admitted["executableDigest"].as_str().unwrap(), None)
             .await
@@ -666,7 +662,6 @@ async fn worker_rejects_absent_policy_and_uses_atomic_currentness_fences() {
         .unwrap();
     assert_ne!(
         fixture
-            .lifecycle
             .executables
             .get_active(version["contractDigest"].as_str().unwrap(), None)
             .await
@@ -1277,7 +1272,6 @@ async fn actual_dotnet_management_and_cross_producer_activation() {
             cases.push(("POST", format!("{path}/candidates"), Some(body), 400));
         }
         let active = fixture
-            .lifecycle
             .executables
             .get_active(version["contractDigest"].as_str().unwrap(), None)
             .await
@@ -1362,14 +1356,12 @@ async fn actual_dotnet_management_and_cross_producer_activation() {
         .unwrap();
         if producer == "dotnet" {
             let stored = fixture
-                .lifecycle
                 .executables
                 .get(digest, None)
                 .await
                 .unwrap()
                 .unwrap();
             let accepted = fixture
-                .lifecycle
                 .contracts
                 .get(NAME, version["contractDigest"].as_str().unwrap(), None)
                 .await
@@ -1461,8 +1453,8 @@ async fn actual_dotnet_management_and_cross_producer_activation() {
         )
         .unwrap();
         let runtime = flaggo_decision::DecisionRuntime::new(
-            fixture.lifecycle.contracts.clone(),
-            fixture.lifecycle.executables.clone(),
+            fixture.contracts.clone(),
+            fixture.executables.clone(),
         );
         let rust_result = runtime
             .decide(

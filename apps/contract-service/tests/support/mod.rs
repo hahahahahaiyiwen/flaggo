@@ -1,7 +1,7 @@
 use flaggo_contract::{DecisionContract, strict_json};
 use flaggo_contract_service::ContractLifecycle;
 use flaggo_contract_store::SqliteContractVersionStore;
-use flaggo_executable_store::SqliteExecutableStore;
+use flaggo_executable_store::{SqliteContractAuthority, SqliteExecutableStore};
 use flaggo_expression::ExpressionCompiler;
 use serde_json::{Value, json};
 use std::{path::Path, process::Command, sync::Arc};
@@ -30,6 +30,8 @@ pub fn submission(cycle: &str, expression: &str, result: i32) -> Value {
 pub struct Fixture {
     pub directory: tempfile::TempDir,
     pub lifecycle: ContractLifecycle,
+    pub contracts: SqliteContractVersionStore,
+    pub executables: SqliteExecutableStore,
     pub pool: sqlx::SqlitePool,
 }
 
@@ -38,14 +40,12 @@ impl Fixture {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("http.db");
         let canonicalizer = Arc::new(ExpressionCompiler::default());
-        let contracts = SqliteContractVersionStore::open(&path, Some(canonicalizer.clone()))
-            .await
-            .unwrap();
-        let executables = SqliteExecutableStore::open(&path, Some(canonicalizer))
-            .await
-            .unwrap();
-        contracts.initialize(None).await.unwrap();
-        executables.initialize(None).await.unwrap();
+        let authority = Arc::new(
+            SqliteContractAuthority::open(&path, Some(canonicalizer))
+                .await
+                .unwrap(),
+        );
+        authority.initialize().await.unwrap();
         let pool = sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
         )
@@ -53,7 +53,9 @@ impl Fixture {
         .unwrap();
         Self {
             directory,
-            lifecycle: ContractLifecycle::new(contracts, executables),
+            contracts: authority.contracts().clone(),
+            executables: authority.executables().clone(),
+            lifecycle: ContractLifecycle::new(authority),
             pool,
         }
     }
@@ -71,8 +73,8 @@ impl Fixture {
     }
 
     pub async fn close(self) {
-        self.lifecycle.contracts.close().await;
-        self.lifecycle.executables.close().await;
+        self.contracts.close().await;
+        self.executables.close().await;
         self.pool.close().await;
         self.directory.close().unwrap();
     }

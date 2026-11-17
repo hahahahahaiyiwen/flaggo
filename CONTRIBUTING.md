@@ -111,6 +111,12 @@ publishing temporary coordination packages.
 
 ### Portability boundaries
 
+For the implemented authority/HTTP extraction, adapter contracts, focused
+checks and deliberately unfinished hosted gates, see
+[Shared-core extraction](docs/design/architecture/CORE_EXTRACTION.md).
+The [separate consumer check](tools/core-consumer/README.md) verifies immutable
+Git consumption without depending on runnable app packages.
+
 Flaggo must remain runnable without a managed cloud dependency. Domain and API
 logic use provider-neutral contracts and standard protocols; provider SDKs
 belong only in adapters at application composition boundaries.

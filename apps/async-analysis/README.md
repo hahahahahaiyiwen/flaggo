@@ -314,6 +314,7 @@ protocol is an explicit operator action, not an automatic retry strategy.
 | `FLAGGO_ANALYSIS_COPILOT_HOME` | `./flaggo-analysis-copilot` | Isolated local Copilot runtime state |
 | `FLAGGO_ANALYSIS_INFERENCE` | `github` | Explicit `github` or `byok` inference |
 | `FLAGGO_ANALYSIS_MODEL` | Copilot SDK default in GitHub mode | Exact model/deployment; required for BYOK |
+| `FLAGGO_ANALYSIS_SKILL_DIRECTORY` | Checkout analysis skills directory | Packaged skill root; startup requires every registered profile's `SKILL.md` |
 | `GH_TOKEN` / `GITHUB_TOKEN` | logged-in `gh` user | Optional GitHub credential; `GH_TOKEN` takes precedence |
 | `OPENAI_BASE_URL` | none | Full OpenAI-compatible inference base URL; read only in BYOK mode |
 | `FLAGGO_ANALYSIS_BYOK_WIRE_API` | none | Required `responses` or `completions` |

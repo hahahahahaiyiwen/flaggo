@@ -81,7 +81,7 @@ pub struct AnalysisCandidateAdmission {
 }
 
 impl AnalysisCandidateAdmission {
-    pub(crate) fn identity_matches(&self, other: &Self) -> bool {
+    pub fn identity_matches(&self, other: &Self) -> bool {
         self.workspace_id == other.workspace_id
             && self.cycle_id == other.cycle_id
             && self.attempt_id == other.attempt_id

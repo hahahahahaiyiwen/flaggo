@@ -57,6 +57,14 @@ pub trait ActiveExecutableReader: Send + Sync {
     ) -> impl Future<Output = Result<Option<Arc<ActiveExecutable>>, StoreReadError>> + Send;
 }
 
+/// Probe required storage capabilities without scanning stored artifacts.
+pub trait ReadinessProbe: Send + Sync {
+    fn is_available(
+        &self,
+        cancellation: Cancellation,
+    ) -> impl Future<Output = Result<bool, StoreReadError>> + Send;
+}
+
 type Materialized = Result<Arc<CompiledDecisionExecutable>, Arc<ExecutableMaterializationError>>;
 type Entry = Arc<OnceLock<Materialized>>;
 type CacheKey = (String, String);

@@ -76,13 +76,11 @@ impl ServiceError {
                 | E::AdmissionConflict { .. }
                 | E::LifecycleConflict { .. },
             ) => ("conflict", "conflict"),
-            Self::ContractStore(C::Database(sqlx::Error::PoolTimedOut))
-            | Self::ExecutableStore(E::Database(sqlx::Error::PoolTimedOut)) => {
-                ("unavailable", "timeout")
-            }
-            Self::ContractStore(C::Database(_))
-            | Self::ExecutableStore(E::Database(_))
-            | Self::Body(HttpJsonError::Body(_)) => ("unavailable", "dependency"),
+            Self::ContractStore(error) if error.is_timeout() => ("unavailable", "timeout"),
+            Self::ExecutableStore(error) if error.is_timeout() => ("unavailable", "timeout"),
+            Self::ContractStore(error) if error.is_dependency() => ("unavailable", "dependency"),
+            Self::ExecutableStore(error) if error.is_dependency() => ("unavailable", "dependency"),
+            Self::Body(HttpJsonError::Body(_)) => ("unavailable", "dependency"),
             Self::ContractStore(C::Cancelled) | Self::ExecutableStore(E::Cancelled) => {
                 ("cancelled", "cancelled")
             }
@@ -236,3 +234,14 @@ pub fn dependency_unavailable() -> Problem {
 }
 
 pub type Result<T> = std::result::Result<T, ServiceError>;
+
+impl From<flaggo_executable_store::AuthorityError> for ServiceError {
+    fn from(error: flaggo_executable_store::AuthorityError) -> Self {
+        match error {
+            flaggo_executable_store::AuthorityError::Contract(error) => Self::ContractStore(error),
+            flaggo_executable_store::AuthorityError::Executable(error) => {
+                Self::ExecutableStore(error)
+            }
+        }
+    }
+}

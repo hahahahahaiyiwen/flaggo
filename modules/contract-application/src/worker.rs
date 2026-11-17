@@ -45,8 +45,8 @@ impl ActivationWorker {
     pub async fn run_once(&mut self) -> Result<()> {
         let page = self
             .lifecycle
-            .executables
-            .list_pending(100, self.next_contract_name.as_deref(), None)
+            .authority
+            .list_pending(100, self.next_contract_name.as_deref())
             .await?;
         self.next_contract_name = page.next_contract_name;
         for snapshot in page.candidates {
@@ -56,10 +56,10 @@ impl ActivationWorker {
                 async {
                     record_candidate(&admission.executable_digest);
                     let (action, category) = self.assess(&snapshot).await?;
-                    let result = self.lifecycle.executables.resolve(&AnalysisCandidateResolutionCommand {
+                    let result = self.lifecycle.authority.resolve(&AnalysisCandidateResolutionCommand {
                         admission: admission.clone(), expected_candidate_state_version: snapshot.candidate_state_version,
                         expected_active_executable: snapshot.active_executable.clone(), action,
-                    }, None).await?;
+                    }).await?;
                     let outcome = match result.outcome {
                         Outcome::Activated => "success",
                         Outcome::Rejected => "rejected",
@@ -158,8 +158,8 @@ impl ActivationWorker {
         let admission = &snapshot.admission;
         let Some(accepted) = self
             .lifecycle
-            .contracts
-            .get(&admission.contract_name, &admission.contract_digest, None)
+            .authority
+            .get_contract(&admission.contract_name, &admission.contract_digest)
             .await?
         else {
             return Ok((Action::Reject, Some("not_found")));
@@ -175,8 +175,8 @@ impl ActivationWorker {
         }
         let Some(candidate) = self
             .lifecycle
-            .executables
-            .get(&admission.executable_digest, None)
+            .authority
+            .get_executable(&admission.executable_digest)
             .await?
         else {
             return Ok((Action::Reject, Some("not_found")));

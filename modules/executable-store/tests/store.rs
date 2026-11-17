@@ -19,6 +19,63 @@ struct Fixture {
 }
 
 #[tokio::test]
+async fn exhausted_activation_token_preserves_previous_authority() {
+    let fixture = Fixture::new().await;
+    let first = fixture.candidate(1);
+    let second = fixture.candidate(2);
+    for candidate in [&first, &second] {
+        fixture.store.put_candidate(candidate, None).await.unwrap();
+    }
+    fixture
+        .store
+        .activate(
+            &fixture.contract.contract_digest,
+            &first.executable_digest,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    sqlx::query("UPDATE decision_executables SET state_version = ? WHERE executable_digest = ?")
+        .bind(i64::MAX)
+        .bind(&first.executable_digest)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .store
+            .activate(
+                &fixture.contract.contract_digest,
+                &second.executable_digest,
+                None,
+                None
+            )
+            .await,
+        Err(ExecutableStoreError::Integrity(_))
+    ));
+    let active = fixture
+        .store
+        .get_active(&fixture.contract.contract_digest, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(active.executable_digest, first.executable_digest);
+    assert_eq!(active.state_version, i64::MAX);
+    assert_eq!(
+        fixture
+            .store
+            .get(&second.executable_digest, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        ExecutableLifecycleState::Candidate
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn competing_manual_activations_have_one_winner_and_supersede_the_loser() {
     let fixture = Fixture::new().await;
     let initial = fixture.candidate(1);

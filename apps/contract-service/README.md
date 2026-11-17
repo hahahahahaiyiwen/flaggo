@@ -7,6 +7,11 @@ executable lifecycle management. It establishes immutable contract identity,
 creates the required default executable, and is the only app allowed to grant
 runtime authority through activation.
 
+The reusable implementation lives in
+[`flaggo-contract-application`](../../modules/contract-application/README.md).
+This app composes its router and worker with `SqliteContractAuthority`, which
+publishes accepted-ready state and admits current Candidates transactionally.
+
 The canonical cross-app lifecycle is documented in
 [Application boundaries and lifecycle](../../docs/design/architecture/APP_BOUNDARIES.md).
 

@@ -33,16 +33,32 @@ impl SqliteExecutableStore {
     ) -> Result<ActivationResult> {
         check(&cancellation)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let result = self
+            .activate_in(&mut tx, contract, digest, expected, cancellation.clone())
+            .await?;
+        check(&cancellation)?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub(super) async fn activate_in(
+        &self,
+        connection: &mut SqliteConnection,
+        contract: &str,
+        digest: &str,
+        expected: Option<Option<&str>>,
+        cancellation: Cancellation,
+    ) -> Result<ActivationResult> {
         check(&cancellation)?;
         let selected: Option<String> = sqlx::query_scalar(
             "SELECT contract_digest FROM decision_executables WHERE executable_digest = ?",
         )
         .bind(digest)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *connection)
         .await?;
         let selected = selected.ok_or_else(|| ExecutableStoreError::NotFound(digest.into()))?;
         binding(digest, contract, &selected)?;
-        let active = active_identity(&mut tx, contract).await?;
+        let active = active_identity(connection, contract).await?;
         if let Some(expected) = expected
             && active
                 .as_ref()
@@ -55,7 +71,6 @@ impl SqliteExecutableStore {
             && active.executable_digest == digest
         {
             check(&cancellation)?;
-            tx.commit().await?;
             return Ok(ActivationResult {
                 executable_digest: digest.into(),
                 previous_executable_digest: Some(active.executable_digest.clone()),
@@ -63,21 +78,17 @@ impl SqliteExecutableStore {
                 changed: false,
             });
         }
-        sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = state_version + 1
+        let version = next_version(active.as_ref().map_or(0, |value| value.state_version))?;
+        sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = CASE WHEN state_version < 9223372036854775807 THEN state_version + 1 ELSE NULL END
             WHERE contract_digest = ? AND lifecycle_state = 'active'")
-            .bind(contract).execute(&mut *tx).await?;
-        let version = active
-            .as_ref()
-            .map_or(0, |value| value.state_version)
-            .wrapping_add(1);
+            .bind(contract).execute(&mut *connection).await?;
         let rows = sqlx::query("UPDATE decision_executables SET lifecycle_state = 'active', state_version = ?, activated_at = ?
             WHERE executable_digest = ?").bind(version).bind(timestamp::format_exact((self.clock)())?)
-            .bind(digest).execute(&mut *tx).await?.rows_affected();
+            .bind(digest).execute(&mut *connection).await?.rows_affected();
         if rows != 1 {
             return Err(ExecutableStoreError::NotFound(digest.into()));
         }
         check(&cancellation)?;
-        tx.commit().await?;
         Ok(ActivationResult {
             executable_digest: digest.into(),
             previous_executable_digest: active.map(|value| value.executable_digest),
@@ -158,10 +169,11 @@ impl SqliteExecutableStore {
                 &Some(active),
             ));
         }
-        let next = active
-            .state_version
-            .max(command.expected_candidate_state_version)
-            .wrapping_add(1);
+        let next = next_version(
+            active
+                .state_version
+                .max(command.expected_candidate_state_version),
+        )?;
         if !self
             .activate_expected(
                 &mut tx,
@@ -325,7 +337,7 @@ impl SqliteExecutableStore {
             if current.as_deref() != Some(&admission.contract_digest) {
                 result.outcome = Outcome::Superseded;
                 result.state_version =
-                    Some(command.expected_candidate_state_version.wrapping_add(1));
+                    Some(next_version(command.expected_candidate_state_version)?);
                 result.superseded_candidate_count =
                     supersede_stale(&mut tx, &admission.contract_name, current.as_deref()).await?;
             } else {
@@ -338,16 +350,16 @@ impl SqliteExecutableStore {
                     .bind(&admission.contract_name).bind(&admission.contract_digest).fetch_optional(&mut *tx).await?;
                 if newest.as_deref() == Some(&admission.executable_digest) {
                     if matches!(command.action, AnalysisCandidateResolutionAction::Reject) {
-                        let rows = sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = state_version + 1
+                        let next = next_version(command.expected_candidate_state_version)?;
+                        let rows = sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = ?
                             WHERE executable_digest = ? AND lifecycle_state = 'candidate' AND state_version = ?")
-                            .bind(&admission.executable_digest).bind(command.expected_candidate_state_version).execute(&mut *tx).await?.rows_affected();
+                            .bind(next).bind(&admission.executable_digest).bind(command.expected_candidate_state_version).execute(&mut *tx).await?.rows_affected();
                         if rows != 1 {
                             tx.rollback().await?;
                             return Ok(result);
                         }
                         result.outcome = Outcome::Rejected;
-                        result.state_version =
-                            Some(command.expected_candidate_state_version.wrapping_add(1));
+                        result.state_version = Some(next);
                         result.superseded_candidate_count = supersede_others(
                             &mut tx,
                             &admission.contract_name,
@@ -368,12 +380,13 @@ impl SqliteExecutableStore {
                                 tx.rollback().await?;
                                 return Ok(result);
                             }
-                            let next = active
-                                .as_ref()
-                                .map_or(command.expected_candidate_state_version, |value| {
-                                    value.state_version
-                                })
-                                .wrapping_add(1);
+                            let next = next_version(
+                                active
+                                    .as_ref()
+                                    .map_or(command.expected_candidate_state_version, |value| {
+                                        value.state_version
+                                    }),
+                            )?;
                             if !self
                                 .activate_expected(
                                     &mut tx,
@@ -488,9 +501,10 @@ async fn deactivate_expected(
     contract: &str,
     token: &ExecutableLifecycleToken,
 ) -> Result<bool> {
-    Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = state_version + 1
+    let next = next_version(token.state_version)?;
+    Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = ?
         WHERE contract_digest = ? AND executable_digest = ? AND lifecycle_state = 'active' AND state_version = ?")
-        .bind(contract).bind(&token.executable_digest).bind(token.state_version).execute(connection).await?.rows_affected() == 1)
+        .bind(next).bind(contract).bind(&token.executable_digest).bind(token.state_version).execute(connection).await?.rows_affected() == 1)
 }
 
 async fn supersede_stale(
@@ -498,7 +512,7 @@ async fn supersede_stale(
     name: &str,
     current: Option<&str>,
 ) -> Result<u64> {
-    Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = state_version + 1
+    Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = CASE WHEN state_version < 9223372036854775807 THEN state_version + 1 ELSE NULL END
         WHERE lifecycle_state = 'candidate' AND EXISTS (
             SELECT 1 FROM analysis_candidate_admissions AS candidate
             WHERE candidate.executable_digest = decision_executables.executable_digest
@@ -511,9 +525,15 @@ async fn supersede_others(
     name: &str,
     selected: &str,
 ) -> Result<u64> {
-    Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = state_version + 1
+    Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = CASE WHEN state_version < 9223372036854775807 THEN state_version + 1 ELSE NULL END
         WHERE executable_digest <> ? AND lifecycle_state = 'candidate' AND EXISTS (
             SELECT 1 FROM analysis_candidate_admissions AS candidate
             WHERE candidate.executable_digest = decision_executables.executable_digest AND candidate.contract_name = ?
         )").bind(selected).bind(name).execute(connection).await?.rows_affected())
+}
+
+fn next_version(version: i64) -> Result<i64> {
+    version
+        .checked_add(1)
+        .ok_or_else(|| integrity("Executable lifecycle state version is exhausted."))
 }

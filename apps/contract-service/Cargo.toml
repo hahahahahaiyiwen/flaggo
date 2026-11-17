@@ -10,6 +10,7 @@ rust-version.workspace = true
 axum.workspace = true
 chrono = "0.4.45"
 flaggo-contract = { path = "../../modules/contract" }
+flaggo-contract-application = { path = "../../modules/contract-application" }
 flaggo-contract-store = { path = "../../modules/contract-store" }
 flaggo-executable-store = { path = "../../modules/executable-store" }
 flaggo-expression = { path = "../../modules/expression" }
@@ -27,6 +28,8 @@ tracing-opentelemetry.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+async-trait = "0.1.89"
+flaggo-core-conformance = { path = "../../modules/core-conformance" }
 serde_json = { workspace = true, features = ["preserve_order"] }
 flaggo-decision = { path = "../../modules/decision" }
 opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace"] }

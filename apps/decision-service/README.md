@@ -8,6 +8,10 @@ loads the exact named contract version, resolves the executable active for the
 requested contract digest, evaluates that immutable executable against complete
 input, and returns a `RuntimeDecision`.
 
+The HTTP implementation lives in
+[`flaggo-decision-http`](../../modules/decision-http/README.md); this runnable
+app supplies SQLite readers and readiness probes to that public library.
+
 The canonical cross-app lifecycle is documented in
 [Application boundaries and lifecycle](../../docs/design/architecture/APP_BOUNDARIES.md).
 

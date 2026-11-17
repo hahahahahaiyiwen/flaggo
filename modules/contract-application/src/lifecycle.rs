@@ -8,52 +8,44 @@ use crate::{
     },
 };
 use flaggo_contract::{
-    AnalysisCandidateSubmission, ContractError, DecisionContract, DecisionContractValidationResult,
+    AnalysisCandidateSubmission, DecisionContract, DecisionContractValidationResult,
     DecisionExecutable, DecisionExecutableActivationRequest, ExecutableRule, JsonValue, RuleWhen,
     digests::is_sha256_digest,
     validation::{is_decision_name, validate_contract},
 };
-use flaggo_contract_store::{
-    AcceptedContractVersion, ContractStoreWriteResult, SqliteContractVersionStore,
-};
+use flaggo_contract_store::AcceptedContractVersion;
 use flaggo_executable_store::{
-    AnalysisCandidateAdmission, CandidateActivationCommand,
+    AnalysisCandidateAdmission, AuthorityError, CandidateActivationCommand, ContractAuthority,
     ExecutableLifecycleState as LifecycleState, ExecutableLifecycleToken, ExecutableStoreError,
-    SqliteExecutableStore, StoredExecutable,
+    StoredExecutable,
 };
 use flaggo_expression::{ExecutableCompilation, ExecutableCompiler, ExpressionCompiler};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::{future::Future, sync::Arc};
-use tokio::sync::Mutex;
 use tracing::Span;
 
 #[derive(Clone)]
 pub struct ContractLifecycle {
-    pub contracts: SqliteContractVersionStore,
-    pub executables: SqliteExecutableStore,
+    pub authority: Arc<dyn ContractAuthority>,
     pub(crate) compiler: Arc<ExecutableCompiler>,
     pub(crate) observability: ContractObservability,
-    current_mutation: Arc<Mutex<()>>,
     correlation: Option<String>,
 }
 
 impl ContractLifecycle {
-    pub fn new(contracts: SqliteContractVersionStore, executables: SqliteExecutableStore) -> Self {
-        Self::instrumented(contracts, executables, ContractObservability::new())
+    pub fn new(authority: Arc<dyn ContractAuthority>) -> Self {
+        Self::instrumented(authority, ContractObservability::new())
     }
 
     pub fn instrumented(
-        contracts: SqliteContractVersionStore,
-        executables: SqliteExecutableStore,
+        authority: Arc<dyn ContractAuthority>,
         observability: ContractObservability,
     ) -> Self {
         Self {
-            contracts,
-            executables,
+            authority,
             compiler: Arc::new(ExecutableCompiler::default()),
             observability,
-            current_mutation: Arc::new(Mutex::new(())),
             correlation: None,
         }
     }
@@ -125,7 +117,6 @@ impl ContractLifecycle {
                     rules: vec![],
                 },
             )?;
-            let default_digest = default.executable_digest.clone();
             let authored = contract
                 .authored_executable
                 .as_ref()
@@ -163,104 +154,36 @@ impl ContractLifecycle {
                     )
                 })
                 .transpose()?;
-            let created =
-                self.contracts.put(&pending, None).await? == ContractStoreWriteResult::Created;
-            let accepted = self
-                .contracts
-                .get(name, &digest, None)
-                .await?
-                .ok_or_else(|| {
-                    ServiceError::Integrity(
-                        "The accepted contract could not be read after persistence.".into(),
-                    )
-                })?;
-            let mut active = self.executables.get_active(&digest, None).await?;
-            if active.is_none() {
-                self.put_candidate(name, &digest, default, "default")
-                    .await?;
-                self.bootstrap_activation(name, &digest, &default_digest, None)
-                    .await?;
-                active = self.executables.get_active(&digest, None).await?;
+            let default = stored(default, Some(json!({"source": "default"}).into()));
+            let authored =
+                authored.map(|value| stored(value, Some(json!({"source": "authored"}).into())));
+            let publication = self
+                .authority
+                .publish_ready(&pending, &default, authored.as_ref())
+                .await?;
+            for executable_digest in &publication.bootstrap_activations {
+                self.observe("candidate.submit", name, Some(&digest), async {
+                    record_candidate(executable_digest);
+                    candidate_admitted(name, &digest, executable_digest);
+                    Ok(((), "success"))
+                })
+                .await?;
+                self.observe("candidate.activate", name, Some(&digest), async {
+                    record_candidate(executable_digest);
+                    activation_completed(name, &digest, executable_digest);
+                    Ok(((), "success"))
+                })
+                .await?;
             }
-            if let Some(authored) = authored
-                && active
-                    .as_ref()
-                    .is_some_and(|active| active.executable_digest == default_digest)
-            {
-                let authored_digest = authored.executable_digest.clone();
-                self.put_candidate(name, &digest, authored, "authored")
-                    .await?;
-                self.bootstrap_activation(name, &digest, &authored_digest, Some(&default_digest))
-                    .await?;
-                active = self.executables.get_active(&digest, None).await?;
-            }
-            let active = active.ok_or_else(|| {
-                ServiceError::Integrity(
-                    "Default executable activation did not produce runtime authority.".into(),
-                )
-            })?;
-            let _current = self.current_mutation.lock().await;
-            self.contracts.set_current(name, &digest, None).await?;
+            let active = publication.active;
             Span::current().record("flaggo.executable.digest", &active.executable_digest);
             Ok((
                 (
-                    project_version(&accepted, &active.executable_digest),
-                    created,
+                    project_version(&publication.accepted, &active.executable_digest),
+                    publication.created,
                 ),
                 "success",
             ))
-        })
-        .await
-    }
-
-    async fn bootstrap_activation(
-        &self,
-        name: &str,
-        contract: &str,
-        digest: &str,
-        expected: Option<&str>,
-    ) -> Result<()> {
-        let result = self
-            .observe("candidate.activate", name, Some(contract), async {
-                record_candidate(digest);
-                if let Some(expected) = expected {
-                    self.executables
-                        .activate(contract, digest, Some(expected), None)
-                        .await?;
-                } else {
-                    self.executables
-                        .activate_if_none(contract, digest, None)
-                        .await?;
-                }
-                activation_completed(name, contract, digest);
-                Ok(((), "success"))
-            })
-            .await;
-        match result {
-            Err(ServiceError::ExecutableStore(ExecutableStoreError::ActivationConflict {
-                ..
-            })) => Ok(()),
-            result => result,
-        }
-    }
-
-    async fn put_candidate(
-        &self,
-        name: &str,
-        digest: &str,
-        compilation: ExecutableCompilation,
-        source: &str,
-    ) -> Result<()> {
-        self.observe("candidate.submit", name, Some(digest), async {
-            record_candidate(&compilation.executable_digest);
-            let provenance = flaggo_contract::strict_json::deserialize(
-                &serde_json::to_vec(&json!({"source": source}))
-                    .map_err(ContractError::Serialization)?,
-            )?;
-            let stored = stored(compilation, Some(provenance));
-            self.executables.put_candidate(&stored, None).await?;
-            candidate_admitted(name, digest, &stored.executable_digest);
-            Ok(((), "success"))
         })
         .await
     }
@@ -269,13 +192,13 @@ impl ContractLifecycle {
         self.observe("contract.read", name, digest, async {
             validate_identity(name, digest)?;
             let accepted = match digest {
-                Some(digest) => self.contracts.get(name, digest, None).await?,
-                None => self.contracts.get_current(name, None).await?,
+                Some(digest) => self.authority.get_contract(name, digest).await?,
+                None => self.authority.get_current_contract(name).await?,
             };
             let result = match accepted {
                 Some(accepted) => self
-                    .executables
-                    .get_active(&accepted.contract_digest, None)
+                    .authority
+                    .get_active_executable(&accepted.contract_digest)
                     .await?
                     .map(|active| project_version(&accepted, &active.executable_digest)),
                 None => None,
@@ -292,7 +215,7 @@ impl ContractLifecycle {
 
     pub async fn catalog(&self) -> Result<(CurrentCatalog, String)> {
         self.observe("contract.catalog.read", "", None, async {
-            let mut current = self.contracts.list_all_current(None).await?;
+            let mut current = self.authority.list_current_contracts().await?;
             for accepted in &current {
                 self.require_active(&accepted.contract_digest).await?;
             }
@@ -359,10 +282,13 @@ impl ContractLifecycle {
         self.observe("contract.read", name, None, async {
             validate_name(name)?;
             validate_limit(limit)?;
-            let Some(current) = self.contracts.get_current(name, None).await? else {
+            let Some(current) = self.authority.get_current_contract(name).await? else {
                 return Ok((None, "not_found"));
             };
-            let page = self.contracts.list(name, limit, cursor, None).await?;
+            let page = self
+                .authority
+                .list_contract_versions(name, limit, cursor)
+                .await?;
             let mut versions = Vec::new();
             for accepted in page.versions {
                 let active = self.require_active(&accepted.contract_digest).await?;
@@ -410,8 +336,8 @@ impl ContractLifecycle {
             validate_digest(&provenance.workspace_id)?;
             validate_digest(&provenance.analysis_manifest_digest)?;
             let accepted = self
-                .contracts
-                .get(name, digest, None)
+                .authority
+                .get_contract(name, digest)
                 .await?
                 .ok_or(ServiceError::NotFound)?;
             let compiled = self.compiler.compile(
@@ -437,23 +363,14 @@ impl ContractLifecycle {
                 analysis_manifest_digest: provenance.analysis_manifest_digest.clone(),
                 created_at: stored.created_at,
             };
-            let _current = self.current_mutation.lock().await;
-            let current = self.contracts.get_current(name, None).await?;
-            if current
-                .as_ref()
-                .map(|current| current.contract_digest.as_str())
-                != Some(digest)
-            {
-                return Err(ServiceError::Stale {
-                    name: name.into(),
-                    requested: digest.into(),
-                    current: current.map(|current| current.contract_digest),
-                });
-            }
             let result = self
-                .executables
-                .put_analysis_candidate(&stored, &admission, None)
-                .await?;
+                .authority
+                .admit_current(&stored, &admission)
+                .await.map_err(|error| match error {
+                    AuthorityError::Executable(ExecutableStoreError::CurrentContractConflict { contract_name, expected, actual }) =>
+                        ServiceError::Stale { name: contract_name, requested: expected, current: actual },
+                    other => other.into(),
+                })?;
             candidate_admitted(name, digest, &result.executable_digest);
             let response = CandidateResult { contract_name: name.into(), contract_digest: digest.into(),
                 executable_digest: result.executable_digest, lifecycle_state: state_name(result.lifecycle_state),
@@ -474,7 +391,7 @@ impl ContractLifecycle {
         self.observe("contract.executables.read", name, Some(digest), async {
             validate_identity(name, Some(digest))?;
             validate_limit(limit)?;
-            if self.contracts.get(name, digest, None).await?.is_none() {
+            if self.authority.get_contract(name, digest).await?.is_none() {
                 return Ok((None, "not_found"));
             }
             let active = if history {
@@ -482,15 +399,10 @@ impl ContractLifecycle {
             } else {
                 Some(self.require_active(digest).await?)
             };
-            let page = if history {
-                self.executables
-                    .list_executables(digest, limit, cursor, None)
-                    .await?
-            } else {
-                self.executables
-                    .list_candidates(digest, limit, cursor, None)
-                    .await?
-            };
+            let page = self
+                .authority
+                .list_executables(digest, limit, cursor, history)
+                .await?;
             let rows = page.executables.iter().map(project_executable).collect();
             let response = if let Some(active) = active {
                 Span::current().record("flaggo.executable.digest", &active.executable_digest);
@@ -531,28 +443,25 @@ impl ContractLifecycle {
             {
                 return Err(ServiceError::InvalidArgument);
             }
-            if self.contracts.get(name, digest, None).await?.is_none() {
+            if self.authority.get_contract(name, digest).await?.is_none() {
                 return Err(ServiceError::NotFound);
             }
             let result = self
-                .executables
-                .activate_candidate(
-                    &CandidateActivationCommand {
-                        contract_name: name.into(),
-                        contract_digest: digest.into(),
-                        executable_digest: candidate.into(),
-                        expected_candidate_state_version: request.expected_candidate_state_version,
-                        expected_active_executable: ExecutableLifecycleToken {
-                            executable_digest: request.expected_active_executable_digest,
-                            state_version: request.expected_active_state_version,
-                        },
+                .authority
+                .activate_candidate(&CandidateActivationCommand {
+                    contract_name: name.into(),
+                    contract_digest: digest.into(),
+                    executable_digest: candidate.into(),
+                    expected_candidate_state_version: request.expected_candidate_state_version,
+                    expected_active_executable: ExecutableLifecycleToken {
+                        executable_digest: request.expected_active_executable_digest,
+                        state_version: request.expected_active_state_version,
                     },
-                    None,
-                )
+                })
                 .await?;
             let active = self
-                .executables
-                .get(&result.executable_digest, None)
+                .authority
+                .get_executable(&result.executable_digest)
                 .await?
                 .ok_or_else(|| {
                     ServiceError::Integrity(
@@ -575,8 +484,8 @@ impl ContractLifecycle {
     }
 
     async fn require_active(&self, digest: &str) -> Result<StoredExecutable> {
-        self.executables
-            .get_active(digest, None)
+        self.authority
+            .get_active_executable(digest)
             .await?
             .ok_or_else(|| {
                 ServiceError::Integrity(format!(

@@ -1,6 +1,13 @@
 # Executable persistence and lifecycle
 
 `flaggo-executable-store` implements the SQLite executable-store API.
+With default features disabled it exposes portable lifecycle DTOs/errors and
+the `ContractAuthority` semantic port without SQLx or SQLite. The default
+`sqlite` feature adds `SqliteExecutableStore` and `SqliteContractAuthority`.
+The latter constructs both logical stores over one pool and commits
+accepted-ready publication and current-checked admission atomically. It is the
+local management app's adapter; raw store writes remain lower-level test and
+migration facilities, not a substitute for application admission.
 Explicit initialization owns component schema **v5**,
 transactionally migrates **v4** admissions, and preserves contract-store v3 and
 other components. Failed migration rolls back its DDL, copied admissions and
@@ -30,6 +37,7 @@ unadmitted candidate. Manual activation uses the maximum active/candidate versio
 for its next token; automatic resolution preserves the reference's separate
 version rule. Failed transitions roll back deactivation and leave work pending.
 Cancellation is explicit; transactional writes check it before commit.
+Lifecycle tokens fail at integer exhaustion instead of wrapping or being reused.
 
 Stored reads preserve integrity versus native JSON/timestamp/argument/database
 faults. Executable and provenance JSON use strict token validation. Checked DTOs

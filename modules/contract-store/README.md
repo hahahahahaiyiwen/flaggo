@@ -7,6 +7,14 @@ uses schema **v3**; the separate executable component uses **v5**.
 checks the component version and creates missing contract tables without
 resetting existing data or other components.
 
+The default `sqlite` feature enables the local adapter. Disable default features
+to consume accepted-version DTOs, errors and timestamp/cursor contracts without
+SQLx. `ReadinessProbe` and runtime readers are implemented by the SQLite adapter.
+Adapter-only `from_pool`, `put_in`, `get_in` and `set_current_in` let the semantic
+authority adapter reuse existing persistence/integrity logic in one transaction;
+applications must use `ContractAuthority::publish_ready`, not compose these
+low-level writes themselves.
+
 Writes claim authority ownership atomically and insert immutable `(name, digest)`
 versions. Repeated writes preserve the original payload and acceptance time.
 An optional expression canonicalizer verifies and persists normalized expressions.

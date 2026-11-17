@@ -2,8 +2,7 @@ use flaggo_contract_service::{
     ContractLifecycle, INSTRUMENTATION_SCOPE, SERVICE_NAME, router,
     worker::{ActivationWorker, POLL_INTERVAL_VARIABLE, poll_interval, scan_failed},
 };
-use flaggo_contract_store::SqliteContractVersionStore;
-use flaggo_executable_store::SqliteExecutableStore;
+use flaggo_executable_store::SqliteContractAuthority;
 use flaggo_expression::ExpressionCompiler;
 use flaggo_service_observability::{ServiceObservability, reject_own_receiver};
 use std::{
@@ -63,19 +62,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let address = listener.local_addr()?;
     reject_own_receiver(address)?;
     let canonicalizer = Arc::new(ExpressionCompiler::default());
-    let contracts =
-        SqliteContractVersionStore::open(&database, Some(canonicalizer.clone())).await?;
-    let executables = match SqliteExecutableStore::open(&database, Some(canonicalizer)).await {
-        Ok(store) => store,
-        Err(error) => {
-            contracts.close().await;
-            return Err(error.into());
-        }
-    };
+    let authority = Arc::new(SqliteContractAuthority::open(&database, Some(canonicalizer)).await?);
     let result: Result<(), Box<dyn Error>> = async {
-        contracts.initialize(None).await?;
-        executables.initialize(None).await?;
-        let lifecycle = ContractLifecycle::new(contracts.clone(), executables.clone());
+        authority.initialize().await?;
+        let lifecycle = ContractLifecycle::new(authority.clone());
         let mut worker = ActivationWorker::new(lifecycle.clone());
         if let Err(error) = worker.run_once().await { scan_failed(&error); }
         let (worker_stop, worker_stopping) = tokio::sync::watch::channel(false);
@@ -107,8 +97,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         stopped??;
         Ok(())
     }.await;
-    contracts.close().await;
-    executables.close().await;
+    authority.close().await;
     tracing::event!(target: INSTRUMENTATION_SCOPE, tracing::Level::INFO, { "event.name" = "flaggo.service.stopped",
         flaggo.operation.outcome = if result.is_ok() { "success" } else { "failure" } }, "Contract Service stopped");
     result
@@ -147,6 +136,7 @@ fn failure_category(error: &(dyn Error + 'static)) -> &'static str {
         "timeout"
     } else if error.is::<flaggo_contract_store::ContractStoreError>()
         || error.is::<flaggo_executable_store::ExecutableStoreError>()
+        || error.is::<flaggo_executable_store::AuthorityError>()
         || error.is::<std::io::Error>()
     {
         "dependency"
