@@ -444,8 +444,42 @@ separately approved artifact-only replay of artifact14287597978, not a rebuild.
 Before that, review its exact source/run/job/workflow/ZIP/archive/manifest pin,
 update the old manifest guard and narrowly support this artifact's exact
 ZIP-root member layout (the old reuser expects `_temp/`); verify the whole
-artifact offline without relaxing archive/link checks. Those replay changes
-and the next dispatch have not been performed or authorized by this diagnosis.
+artifact offline without relaxing archive/link checks. At the offline-diagnosis handoff those replay changes and a next dispatch
+remained unapproved. The subsequent bounded approval and result follow.
+
+### Approved artifact-only replay: installed gates pass
+
+The single approved replay
+[43995525918](https://github.com/hahahahahaiyiwen/flaggo/actions/runs/43995525918),
+driver `1354e61bb0fa2698056ac9bcbf57f5a60f5df5d5`, reused sealed `b109a917`/
+artifact14287597978. Exact source/run/job/workflow/ZIP/archive/manifest pins
+were reviewed against the API, the reuser now accepts only its verified root
+ZIP member (no layout fallback), and offline extraction with the actual filter
+verified all23,533 files/28 links before dispatch. Path/link/manifest checks
+were retained. Both build/lock jobs skipped; no seal or installed file overlay.
+
+**Full browser and independent recovery passed, exit0/0.** The fresh human
+identity/setup proof is retained. Original score/authority/timeouts, SQL/Python
+review/revision, Candidate/activation, correlation and supported workload
+telemetry gates passed; latest failures remain visible separately. Worker
+PID2724->4669 and gateway3430->4699 refreshed. Analysis-down decisions,
+quiesced backup/offline restore/byte comparisons, actual guarded reset and
+restored live exact-digest parity all passed. Before/after parity JSON bodies
+are identical: active async-analysis executable
+`sha256:20ea5398cc29820219bb2327f75185b83975a947b3a482f071113f58d2b79af8`,
+SDK/REST results200 and1000 with identical evaluation metadata.
+
+Diagnostic artifact14289198392 uploaded/downloaded successfully; ZIP SHA256
+`b94a796391c44480d341937a680333aa879e0294f67ec5d39cac1a7bb0de329c`,
+all21 indexed files verified, no collection errors or private backup/workspace
+trees exported. Browser poll bodies/last state are retained. The exit-time
+gateway snapshot is unavailable because recovery intentionally leaves the
+gateway stopped; HTTP000/exit7/stderr are retained. Failure-only trace/
+screenshot/context are absent on pass. Earlier failed runs remain historical.
+
+This closes the bounded credential-free installed-preparation gaps, not Azure
+deployment acceptance, live-provider evidence or operating approvals. No
+retry, native/Node/Python rebuild, Azure/provider/site/PR/merge/closure action.
 
 ## Deployment acceptance and recovery gates
 
