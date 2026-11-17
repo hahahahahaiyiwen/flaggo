@@ -52,6 +52,20 @@ local loop. The GitHub Project and native issue graph are the roadmap authority.
 These documents define logical ownership. An implementation may co-locate
 services or stores without changing those boundaries.
 
+## Portable core and hosted design
+
+Phase-1 work for [#93](https://github.com/hahahahahaiyiwen/flaggo/issues/93)
+records approved shared-core, namespace, authorization, consistency, worker and
+query models, plus the hosted threat-model baseline. Numeric operating targets
+and retention policy remain explicitly deferred. These documents do not change
+current wire contracts or establish distributed hosted acceptance.
+
+| Document | Scope |
+| --- | --- |
+| [Portable-core ADR](architecture/PORTABLE_CORE.md) | Repository dependencies, implemented coupling, decision register and operating-envelope inputs |
+| [Distributed behavior decisions](architecture/DISTRIBUTED_BEHAVIOR.md) | Approved models and proposed protocol details for authorization, atomic authority, activation visibility, fenced workers, artifacts/execution and evidence queries |
+| [Compatibility and conformance plan](architecture/PORTABLE_CORE_CONFORMANCE.md) | Compatibility classes, concrete shared scenarios and separate distributed qualification gates |
+
 ## Contract semantics and wire models
 
 | Concern | Current design |
