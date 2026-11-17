@@ -72,6 +72,8 @@ transition table, artifact metadata and trusted-local review responsibilities.
 `modules/analysis-agent/src/context.rs` owns the assets, binds dynamic cycle
 identity as escaped XML, and prepares the writable templates. The current
 local packaging loads skills from the analysis-agent module source tree.
+Set `FLAGGO_ANALYSIS_SKILL_DIRECTORY` when using packaged assets outside that
+checkout. Startup requires every registered skill's `<skill-name>/SKILL.md`.
 
 The SDK-native `create` and `edit` tools create files and make incremental
 edits through the workspace filesystem adapter, which enforces writable

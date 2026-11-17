@@ -807,6 +807,7 @@ dependencies = [
  "flaggo-contract-application",
  "flaggo-contract-store",
  "flaggo-executable-store",
+ "serde",
  "serde_json",
  "tokio",
 ]

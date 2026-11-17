@@ -22,11 +22,19 @@ pub trait AuthorityFixture {
 }
 
 pub fn contract() -> DecisionContract {
-    let fixture: serde_json::Value = serde_json::from_slice(include_bytes!(
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        request: Request,
+    }
+    #[derive(serde::Deserialize)]
+    struct Request {
+        body: DecisionContract,
+    }
+    let fixture: Fixture = strict_json::deserialize(include_bytes!(
         "../../../contracts/fixtures/management/decision-contract/01-validate-valid.json"
     ))
     .unwrap();
-    strict_json::deserialize(&serde_json::to_vec(&fixture["request"]["body"]).unwrap()).unwrap()
+    fixture.request.body
 }
 
 fn candidate(cycle: &str, value: u32) -> AnalysisCandidateSubmission {

@@ -12,6 +12,7 @@ flaggo-contract = { path = "../contract" }
 flaggo-contract-application = { path = "../contract-application" }
 flaggo-contract-store = { path = "../contract-store", default-features = false }
 flaggo-executable-store = { path = "../executable-store", default-features = false }
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
