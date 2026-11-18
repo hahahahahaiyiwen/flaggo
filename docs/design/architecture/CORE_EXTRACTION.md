@@ -3,7 +3,7 @@
 Status: initial #94 extraction merged through #95 at
 `db44dc9ea35c3c50109e2e65ba2a536eab753971`. Downstream adapter integration
 identified a missed public-policy boundary; the acceptance correction below
-requires its own qualification and publication, not #95's earlier approval.
+is locally qualified but not published, and does not inherit #95's approval.
 This is not hosted qualification.
 Based on the approved architecture revision
 `83088e825a0380a2a629b3bdd37cf8ffaaf1ae80`. The accepted design models in
@@ -85,6 +85,20 @@ standalone consumer additionally executes the database-free corpus. Existing v4
 wire formats, digests, schemas and `flaggo.authority/v3` are unchanged. Historical
 remote consumer pins below do not qualify this correction; its exact local or
 published revision and consumer evidence must be reported separately.
+
+The correction's source revision is
+`79974bb950f90b65dfae0b82b7a3b7b7cd2aa341`. Focused executable-store,
+Contract Service, Decision Service and shared conformance tests pass (56 passed,
+two historical fixtures ignored); no-default-feature checked-parser tests and
+strict Clippy also pass. A fresh standalone **local Git** consumer executes the
+shared policy/integrity corpus, canonical/evaluation checks and compositions:
+all 20 product crates resolve to that exact revision, with no SQLx/SQLite or
+runnable-app dependency. Its retained lock SHA-256 is
+`4a1e3448f07d7bde85ca3fe7c4e04990697f56418752bc5bb14bd4cdba5d3bec`;
+manifest, lock and result are in session `files/pinned-consumer-policy-79974bb`.
+This is not remote publication, private-adapter integration or distributed
+qualification. Publication and downstream adoption remain pending coordinator
+review and authorization.
 
 Core crates disable store default features. SQLx and SQLite are absent from
 their normal dependency graph. Local store defaults still enable SQLite for
@@ -204,6 +218,7 @@ abandoned. New workspaces use the `flaggo.workspace/v2` full-resource hash domai
 | Expression/canonical identity | `flaggo.cel/v1`; unchanged contract/executable digest algorithms and fixtures |
 | SQLite schemas | Contract **4**, executable **6**, evidence **5**, raw inbox **2**; explicit authority/inbox/evidence migrations, no reset |
 | Authority capability | `flaggo.authority/v3`: full-scope atomic ready publication/fenced current admission, scoped catalog/pagination and activation/read contracts |
+| Shared authority policy | `flaggo.authority.policy/v1`: SQLx-free transition plans and persisted-artifact validation; `flaggo.authority-policy-conformance/v1` corpus and adapter parity |
 | Security capability | `flaggo.security.resource/v1`, independently injected policy; `flaggo.otlp.authorization/v1` retained producer/scope envelope |
 | OTLP profile | `flaggo.otlp-http` **2.0.0**; standard OTLP payloads/endpoints, whole-batch authorization, explicitly local numeric defaults |
 | Reusable fixture revision | `flaggo.authority-conformance/v3` (C07 namespace and C03-C05), `flaggo.admission-conformance/v1` (C04/C10 ownership/recovery), `flaggo.evidence-conformance/v3` (local C08/C09/C11 plus projection fencing outcomes) |
