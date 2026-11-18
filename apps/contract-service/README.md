@@ -18,8 +18,8 @@ The canonical cross-app lifecycle is documented in
 ## Responsibilities
 
 - Validate, canonicalize, and accept complete `DecisionContract` versions.
-- Establish global ownership of each contract name by its first accepted
-  declared authority.
+- Address each contract by its explicit tenant/application/environment/name;
+  the same name can exist independently in other scopes.
 - Compute `contractDigest` and persist immutable accepted versions.
 - Generate and activate the required default executable before reporting a
   version ready.
@@ -52,22 +52,25 @@ Service operation and is not part of this boundary.
 The implemented HTTP surface is:
 
 ```text
-POST /v3/decision-contracts/{contractName}/validate
-PUT  /v3/decision-contracts/{contractName}
-GET  /v3/decision-contracts/{contractName}
-GET  /v3/decision-contracts/{contractName}/versions
-GET  /v3/decision-contracts/{contractName}/versions/{contractDigest}
-POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates
-GET  /v3/decision-contract-catalog/current
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/validate
+PUT  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/candidates
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contract-catalog/current
 GET  /health/live
 GET  /health/ready
 ```
 
-The Management API currently has no authentication boundary. Declared
-authority is persisted contract data used for name ownership, telemetry
-routing, and evidence identity; it is not a caller-supplied lookup selector.
-Future authentication must authorize an already loaded resource rather than
-derive its storage identity from credentials.
+The shared router requires an independently injected authentication and
+authorization policy. The local binary explicitly selects `TrustedLocal`.
+Declared authority is resource identity, never a credential. Route and body
+scope must agree. Missing/invalid credentials return 401, hidden resources 404,
+forbidden operations 403, and unavailable authority 503.
+
+V4 replaces v3 without aliases. Existing local databases require the explicit
+atomic migration described in [CORE_EXTRACTION](../../docs/design/architecture/CORE_EXTRACTION.md#implemented-breaking-wire-cutover).
 
 ## State and dependencies
 
@@ -192,5 +195,5 @@ requires `--reference-root`; .NET is not a normal build or test prerequisite.
 - [Contract clients and Contract Service](../../docs/design/architecture/CONTRACT_SERVICE.md)
 - [Decision authority](../../docs/design/architecture/AUTHORITY.md)
 - [Decision contract lifecycle](../../docs/design/contracts/LIFECYCLE.md)
-- [Management API v3](../../contracts/openapi/flaggo-management-v3.yaml)
+- [Management API v4](../../contracts/openapi/flaggo-management-v4.yaml)
 - [Internal service observability](../../docs/design/architecture/OBSERVABILITY.md)

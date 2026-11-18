@@ -102,8 +102,9 @@ impl SqliteExecutableStore {
         command: &CandidateActivationCommand,
         cancellation: Cancellation,
     ) -> Result<CandidateActivationResult> {
+        let resource_key = command.resource.resource_key()?;
         for (parameter, value) in [
-            ("command.ContractName", &command.contract_name),
+            ("command.ContractName", &command.resource.name),
             ("command.ContractDigest", &command.contract_digest),
             ("command.ExecutableDigest", &command.executable_digest),
         ] {
@@ -147,10 +148,10 @@ impl SqliteExecutableStore {
         if state != State::Candidate || version != command.expected_candidate_state_version {
             return Err(candidate_conflict(command, state, version));
         }
-        let current = current_contract(&mut tx, &command.contract_name).await?;
+        let current = current_contract(&mut tx, &resource_key).await?;
         if current.as_deref() != Some(&command.contract_digest) {
             return Err(ExecutableStoreError::CurrentContractConflict {
-                contract_name: command.contract_name.clone(),
+                contract_name: command.resource.name.clone(),
                 expected: command.contract_digest.clone(),
                 actual: current,
             });
@@ -186,7 +187,7 @@ impl SqliteExecutableStore {
             return Err(candidate_conflict(command, state, version));
         }
         let superseded =
-            supersede_others(&mut tx, &command.contract_name, &command.executable_digest).await?;
+            supersede_others(&mut tx, &resource_key, &command.executable_digest).await?;
         check(&cancellation)?;
         tx.commit().await?;
         Ok(CandidateActivationResult {
@@ -200,37 +201,37 @@ impl SqliteExecutableStore {
     pub async fn list_pending(
         &self,
         page_size: i32,
-        after_contract_name: Option<&str>,
+        after_resource_key: Option<&str>,
         cancellation: Cancellation,
     ) -> Result<AnalysisCandidateActivationPage> {
         page_limit(page_size, 1000)?;
         check(&cancellation)?;
         let rows = sqlx::query("
             WITH ranked_candidates AS (
-                SELECT admission.workspace_id, admission.cycle_id, admission.attempt_id, admission.contract_name,
+                SELECT admission.resource_key, admission.workspace_id, admission.cycle_id, admission.attempt_id, admission.contract_name,
                        admission.contract_digest, admission.executable_digest, admission.analysis_manifest_digest,
                        admission.created_at, executable.state_version,
                        ROW_NUMBER() OVER (
-                           PARTITION BY admission.contract_name ORDER BY
+                           PARTITION BY admission.resource_key ORDER BY
                                CASE WHEN admission.contract_digest = current.contract_digest THEN 0 ELSE 1 END,
                                admission.created_at DESC, admission.executable_digest DESC,
                                admission.workspace_id DESC, admission.cycle_id DESC
                        ) AS candidate_rank
                 FROM decision_executables AS executable
                 CROSS JOIN analysis_candidate_admissions AS admission
-                LEFT JOIN decision_contract_current AS current ON current.contract_name = admission.contract_name
+                LEFT JOIN decision_contract_current AS current ON current.resource_key = admission.resource_key
                 WHERE executable.lifecycle_state = 'candidate'
                   AND admission.executable_digest = executable.executable_digest
-                  AND (? IS NULL OR admission.contract_name > ?)
+                  AND (? IS NULL OR admission.resource_key > ?)
             )
-            SELECT candidate.workspace_id, candidate.cycle_id, candidate.attempt_id, candidate.contract_name,
+            SELECT candidate.resource_key, candidate.workspace_id, candidate.cycle_id, candidate.attempt_id, candidate.contract_name,
                    candidate.contract_digest, candidate.executable_digest, candidate.analysis_manifest_digest,
                    candidate.created_at, candidate.state_version,
                    active.executable_digest AS active_digest, active.state_version AS active_version
             FROM ranked_candidates AS candidate LEFT JOIN decision_executables AS active
               ON active.contract_digest = candidate.contract_digest AND active.lifecycle_state = 'active'
-            WHERE candidate.candidate_rank = 1 ORDER BY candidate.contract_name ASC LIMIT ?")
-            .bind(after_contract_name).bind(after_contract_name).bind(page_size + 1).fetch_all(&self.pool).await?;
+            WHERE candidate.candidate_rank = 1 ORDER BY candidate.resource_key ASC LIMIT ?")
+            .bind(after_resource_key).bind(after_resource_key).bind(page_size + 1).fetch_all(&self.pool).await?;
         check(&cancellation)?;
         let mut candidates = rows
             .iter()
@@ -250,22 +251,22 @@ impl SqliteExecutableStore {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let next_contract_name = if candidates.len() > page_size as usize {
+        let next_resource_key = if candidates.len() > page_size as usize {
             candidates.pop();
             Some(
                 candidates
                     .last()
                     .expect("bounded pending page")
                     .admission
-                    .contract_name
-                    .clone(),
+                    .resource
+                    .resource_key()?,
             )
         } else {
             None
         };
         Ok(AnalysisCandidateActivationPage {
             candidates,
-            next_contract_name,
+            next_resource_key,
         })
     }
 
@@ -291,10 +292,11 @@ impl SqliteExecutableStore {
             ));
         }
         let admission = &command.admission;
+        let resource_key = admission.resource.resource_key()?;
         if [
             &admission.workspace_id,
             &admission.cycle_id,
-            &admission.contract_name,
+            &admission.resource.name,
             &admission.contract_digest,
             &admission.executable_digest,
         ]
@@ -312,9 +314,9 @@ impl SqliteExecutableStore {
         let row = sqlx::query("SELECT executable.lifecycle_state, executable.state_version, candidate.created_at
             FROM analysis_candidate_admissions AS candidate JOIN decision_executables AS executable
               ON executable.executable_digest = candidate.executable_digest
-            WHERE candidate.workspace_id = ? AND candidate.cycle_id = ? AND candidate.contract_name = ?
+            WHERE candidate.workspace_id = ? AND candidate.cycle_id = ? AND candidate.resource_key = ?
               AND candidate.contract_digest = ? AND candidate.executable_digest = ?")
-            .bind(&admission.workspace_id).bind(&admission.cycle_id).bind(&admission.contract_name)
+            .bind(&admission.workspace_id).bind(&admission.cycle_id).bind(&resource_key)
             .bind(&admission.contract_digest).bind(&admission.executable_digest).fetch_optional(&mut *tx).await?
             .ok_or_else(|| integrity(format!("Analysis admission for Candidate '{}' does not exist.", admission.executable_digest)))?;
         let state = parse_state(row.try_get("lifecycle_state")?)?;
@@ -333,21 +335,21 @@ impl SqliteExecutableStore {
         } else if version == command.expected_candidate_state_version
             && created_at == admission.created_at
         {
-            let current = current_contract(&mut tx, &admission.contract_name).await?;
+            let current = current_contract(&mut tx, &resource_key).await?;
             if current.as_deref() != Some(&admission.contract_digest) {
                 result.outcome = Outcome::Superseded;
                 result.state_version =
                     Some(next_version(command.expected_candidate_state_version)?);
                 result.superseded_candidate_count =
-                    supersede_stale(&mut tx, &admission.contract_name, current.as_deref()).await?;
+                    supersede_stale(&mut tx, &resource_key, current.as_deref()).await?;
             } else {
                 let newest: Option<String> = sqlx::query_scalar("SELECT candidate.executable_digest
                     FROM analysis_candidate_admissions AS candidate JOIN decision_executables AS executable
                       ON executable.executable_digest = candidate.executable_digest
-                    WHERE candidate.contract_name = ? AND candidate.contract_digest = ? AND executable.lifecycle_state = 'candidate'
+                    WHERE candidate.resource_key = ? AND candidate.contract_digest = ? AND executable.lifecycle_state = 'candidate'
                     ORDER BY candidate.created_at DESC, candidate.executable_digest DESC,
                              candidate.workspace_id DESC, candidate.cycle_id DESC LIMIT 1")
-                    .bind(&admission.contract_name).bind(&admission.contract_digest).fetch_optional(&mut *tx).await?;
+                    .bind(&resource_key).bind(&admission.contract_digest).fetch_optional(&mut *tx).await?;
                 if newest.as_deref() == Some(&admission.executable_digest) {
                     if matches!(command.action, AnalysisCandidateResolutionAction::Reject) {
                         let next = next_version(command.expected_candidate_state_version)?;
@@ -360,12 +362,9 @@ impl SqliteExecutableStore {
                         }
                         result.outcome = Outcome::Rejected;
                         result.state_version = Some(next);
-                        result.superseded_candidate_count = supersede_others(
-                            &mut tx,
-                            &admission.contract_name,
-                            &admission.executable_digest,
-                        )
-                        .await?;
+                        result.superseded_candidate_count =
+                            supersede_others(&mut tx, &resource_key, &admission.executable_digest)
+                                .await?;
                     } else {
                         let active = active_identity(&mut tx, &admission.contract_digest).await?;
                         if active == command.expected_active_executable {
@@ -405,7 +404,7 @@ impl SqliteExecutableStore {
                             result.state_version = Some(next);
                             result.superseded_candidate_count = supersede_others(
                                 &mut tx,
-                                &admission.contract_name,
+                                &resource_key,
                                 &admission.executable_digest,
                             )
                             .await?;
@@ -487,11 +486,11 @@ async fn active_identity(
     .transpose()
 }
 
-async fn current_contract(connection: &mut SqliteConnection, name: &str) -> Result<Option<String>> {
+async fn current_contract(connection: &mut SqliteConnection, key: &str) -> Result<Option<String>> {
     Ok(sqlx::query_scalar(
-        "SELECT contract_digest FROM decision_contract_current WHERE contract_name = ?",
+        "SELECT contract_digest FROM decision_contract_current WHERE resource_key = ?",
     )
-    .bind(name)
+    .bind(key)
     .fetch_optional(connection)
     .await?)
 }
@@ -509,27 +508,27 @@ async fn deactivate_expected(
 
 async fn supersede_stale(
     connection: &mut SqliteConnection,
-    name: &str,
+    key: &str,
     current: Option<&str>,
 ) -> Result<u64> {
     Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = CASE WHEN state_version < 9223372036854775807 THEN state_version + 1 ELSE NULL END
         WHERE lifecycle_state = 'candidate' AND EXISTS (
             SELECT 1 FROM analysis_candidate_admissions AS candidate
             WHERE candidate.executable_digest = decision_executables.executable_digest
-              AND candidate.contract_name = ? AND (? IS NULL OR candidate.contract_digest <> ?)
-        )").bind(name).bind(current).bind(current).execute(connection).await?.rows_affected())
+              AND candidate.resource_key = ? AND (? IS NULL OR candidate.contract_digest <> ?)
+        )").bind(key).bind(current).bind(current).execute(connection).await?.rows_affected())
 }
 
 async fn supersede_others(
     connection: &mut SqliteConnection,
-    name: &str,
+    key: &str,
     selected: &str,
 ) -> Result<u64> {
     Ok(sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = CASE WHEN state_version < 9223372036854775807 THEN state_version + 1 ELSE NULL END
         WHERE executable_digest <> ? AND lifecycle_state = 'candidate' AND EXISTS (
             SELECT 1 FROM analysis_candidate_admissions AS candidate
-            WHERE candidate.executable_digest = decision_executables.executable_digest AND candidate.contract_name = ?
-        )").bind(selected).bind(name).execute(connection).await?.rows_affected())
+            WHERE candidate.executable_digest = decision_executables.executable_digest AND candidate.resource_key = ?
+        )").bind(selected).bind(key).execute(connection).await?.rows_affected())
 }
 
 fn next_version(version: i64) -> Result<i64> {

@@ -2,6 +2,9 @@
 
 ## Status and scope
 
+The dated baseline below belongs to the #93 design gate. Implemented revisions
+and remaining #94 acceptance are tracked separately in [CORE_EXTRACTION](CORE_EXTRACTION.md).
+
 Phase-1 design for [#93](https://github.com/hahahahahaiyiwen/flaggo/issues/93),
 under [#85](https://github.com/hahahahahaiyiwen/flaggo/issues/85).
 The repository ownership direction below is **approved direction**, recorded

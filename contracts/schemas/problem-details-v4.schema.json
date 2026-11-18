@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flaggo.dev/contracts/schemas/problem-details-v3.schema.json",
+  "$id": "https://flaggo.dev/contracts/schemas/problem-details-v4.schema.json",
   "title": "RFC 9457 Problem Details",
   "description": "The standard application/problem+json object from RFC 9457 Appendix A. Problem type definitions may add extension members.",
   "type": "object",

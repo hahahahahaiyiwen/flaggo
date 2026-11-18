@@ -70,10 +70,10 @@ insufficient. Choose the smallest analysis that answers the question while
 retaining source, population and time boundaries.
 
 Saved query results declare their result/value formats and selected dialect
-profile. Cells are tagged values, not raw JSON numbers. In `code_interpreter`,
-use `from flaggo_evidence import load_rows` and `rows = load_rows(resultPath)`.
-This preserves int64 precision and binary64 bits; JSON cells decode with
-`Decimal`. Do not infer a column's type from the first row or reinterpret an
+profile. Cells are tagged values, not raw JSON numbers. Use the decoder described
+by the evidence tools when analyzing them in `code_interpreter`; preserve int64
+precision, binary64 bits and exact JSON numbers. Do not infer a column's type
+from the first row or reinterpret an
 unversioned legacy file. Projected observation IDs are not full aggregate
 lineage. Inspect `describe` capabilities before constructing SQL; a different
 provider's profile does not promise identical SQL syntax or arithmetic.

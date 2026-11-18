@@ -7,6 +7,8 @@ use std::{
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use flaggo_contract::ResourceScope;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[cfg(feature = "sqlite")]
@@ -17,7 +19,57 @@ pub use sqlite::SqliteRawOtlpInbox;
 
 pub const DEFAULT_MAX_RETAINED_PAYLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 pub const DEFAULT_HARD_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
-pub const DEFAULT_OTLP_PROFILE_VERSION: &str = "1.0.0";
+pub const DEFAULT_OTLP_PROFILE_VERSION: &str = "2.0.0";
+pub const OTLP_AUTHORIZATION_PROFILE: &str = "flaggo.otlp.authorization/v1";
+
+/// Trusted ingress metadata committed atomically with the unchanged OTLP bytes.
+/// Resource attributes alone are never evidence of producer authorization.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OtlpAuthorizationEnvelope {
+    profile: String,
+    producer: String,
+    scopes: Vec<ResourceScope>,
+}
+
+impl OtlpAuthorizationEnvelope {
+    pub fn new(
+        producer: String,
+        mut scopes: Vec<ResourceScope>,
+    ) -> Result<Self, InvalidAuthorization> {
+        scopes.sort();
+        scopes.dedup();
+        let envelope = Self {
+            profile: OTLP_AUTHORIZATION_PROFILE.into(),
+            producer,
+            scopes,
+        };
+        envelope.validate()?;
+        Ok(envelope)
+    }
+
+    pub fn validate(&self) -> Result<(), InvalidAuthorization> {
+        if self.profile != OTLP_AUTHORIZATION_PROFILE
+            || self.producer.trim().is_empty()
+            || self.producer.chars().any(char::is_control)
+            || self.scopes.iter().any(|scope| scope.validate().is_err())
+        {
+            return Err(InvalidAuthorization);
+        }
+        Ok(())
+    }
+
+    pub fn producer(&self) -> &str {
+        &self.producer
+    }
+    pub fn scopes(&self) -> &[ResourceScope] {
+        &self.scopes
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("Invalid or unsupported OTLP authorization envelope")]
+pub struct InvalidAuthorization;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OtlpSignal {
@@ -141,6 +193,7 @@ pub struct NewRawOtlpBatch {
     pub transport_compression: OtlpTransportCompression,
     pub otlp_profile_version: OtlpProfileVersion,
     pub payload: Vec<u8>,
+    pub authorization: OtlpAuthorizationEnvelope,
 }
 
 impl NewRawOtlpBatch {
@@ -151,6 +204,7 @@ impl NewRawOtlpBatch {
         transport_compression: OtlpTransportCompression,
         otlp_profile_version: OtlpProfileVersion,
         payload: Vec<u8>,
+        authorization: OtlpAuthorizationEnvelope,
     ) -> Self {
         Self {
             signal,
@@ -158,6 +212,7 @@ impl NewRawOtlpBatch {
             transport_compression,
             otlp_profile_version,
             payload,
+            authorization,
         }
     }
 }
@@ -204,6 +259,8 @@ pub struct RawOtlpInboxBatch {
     pub payload_length: u64,
     pub payload_sha256: PayloadSha256,
     pub payload: Vec<u8>,
+    /// None only for explicitly migrated, historically unverified batches.
+    pub authorization: Option<OtlpAuthorizationEnvelope>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -313,6 +370,8 @@ impl InboxClock for SystemInboxClock {
 
 #[derive(Debug, Error)]
 pub enum RawOtlpInboxError {
+    #[error(transparent)]
+    InvalidAuthorization(#[from] InvalidAuthorization),
     #[error(
         "raw OTLP inbox capacity exceeded: retained {retained_payload_bytes} bytes, incoming \
          {incoming_payload_bytes} bytes, maximum {max_retained_payload_bytes} bytes"

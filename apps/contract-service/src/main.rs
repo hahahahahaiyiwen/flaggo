@@ -34,6 +34,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
+    let arguments: Vec<_> = env::args().skip(1).collect();
+    if arguments == ["--migrate-v3-to-v4"] {
+        return migrate().await;
+    }
+    if !arguments.is_empty() {
+        return Err(ConfigurationError(
+            "Usage: flaggo-contract-service [--migrate-v3-to-v4]".into(),
+        )
+        .into());
+    }
     flaggo_service_hosting::reject_legacy_core_configuration(
         "FLAGGO_CONTRACT_DATABASE_PATH",
         "FLAGGO_CONTRACT_LISTEN_ADDRESS",
@@ -74,7 +84,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             flaggo.operation.outcome = "success", server.address = %format!("http://{address}") }, "Contract Service started");
         let result: Result<(), Box<dyn Error>> = async {
             let (stop, requested) = tokio::sync::oneshot::channel::<()>();
-            let server = axum::serve(listener, router(lifecycle))
+            let server = axum::serve(listener, router(lifecycle, Arc::new(flaggo_service_hosting::TrustedLocal)))
                 .with_graceful_shutdown(async { let _ = requested.await; }).into_future();
             tokio::pin!(server);
             tokio::select! {
@@ -101,6 +111,31 @@ async fn run() -> Result<(), Box<dyn Error>> {
     tracing::event!(target: INSTRUMENTATION_SCOPE, tracing::Level::INFO, { "event.name" = "flaggo.service.stopped",
         flaggo.operation.outcome = if result.is_ok() { "success" } else { "failure" } }, "Contract Service stopped");
     result
+}
+
+async fn migrate() -> Result<(), Box<dyn Error>> {
+    let database = env::var_os("FLAGGO_CONTRACT_DATABASE_PATH")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            ConfigurationError("Explicit migration requires FLAGGO_CONTRACT_DATABASE_PATH.".into())
+        })?;
+    if !database.is_file() {
+        return Err(ConfigurationError(
+            "Migration requires an existing SQLite authority file.".into(),
+        )
+        .into());
+    }
+    let authority =
+        SqliteContractAuthority::open(&database, Some(Arc::new(ExpressionCompiler::default())))
+            .await?;
+    let result = authority.migrate_scoped_resources().await;
+    authority.close().await;
+    let changed = result?;
+    tracing::info!(
+        changed,
+        "Scoped v4 authority migration completed; immutable content and provenance preserved"
+    );
+    Ok(())
 }
 
 async fn shutdown_signal() -> std::io::Result<()> {

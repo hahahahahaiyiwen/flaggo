@@ -5,6 +5,7 @@ use flaggo_decision::{
     DecisionRuntime, ReadinessProbe, StoreReadError,
 };
 use flaggo_expression::ExecutableCompiler;
+use flaggo_contract::ContractResourceId;
 
 #[derive(Clone)]
 struct Source {
@@ -13,8 +14,8 @@ struct Source {
 }
 
 impl ContractVersionReader for Source {
-    async fn get_contract(&self, name: &str, digest: &str, _: Cancellation) -> Result<Option<Arc<ContractVersion>>, StoreReadError> {
-        Ok((name == self.contract.contract.name && digest == self.contract.contract_digest).then(|| self.contract.clone()))
+    async fn get_contract(&self, resource: &ContractResourceId, digest: &str, _: Cancellation) -> Result<Option<Arc<ContractVersion>>, StoreReadError> {
+        Ok((*resource == ContractResourceId::try_from(&self.contract.contract).unwrap() && digest == self.contract.contract_digest).then(|| self.contract.clone()))
     }
 }
 
@@ -31,6 +32,7 @@ impl ReadinessProbe for Source {
 #[tokio::main]
 async fn main() {
     let contract = flaggo_core_conformance::contract();
+    let resource = ContractResourceId::try_from(&contract).unwrap();
     let digest = flaggo_contract::digests::contract_digest(&contract, Some(&flaggo_expression::ExpressionCompiler::default())).unwrap();
     assert_eq!(digest, "sha256:7394e6ec3d9eee8d559c4e5b44b15fb5ab7827e5307d5877f369ba0c9ded8098");
     let compiled = ExecutableCompiler::default().compile(&contract, &flaggo_contract::DecisionExecutable {
@@ -44,16 +46,19 @@ async fn main() {
             checked_executable: compiled.checked_executable,
         }),
     };
-    let _router = flaggo_decision_http::router(source.clone(), source.clone());
+    let _router = flaggo_decision_http::router(source.clone(), source.clone(), Arc::new(flaggo_service_hosting::TrustedLocal));
     // Compile the management composition without linking any local application or SQLite adapter.
     let _management = |authority: Arc<dyn flaggo_executable_store::ContractAuthority>| {
-        flaggo_contract_application::router(flaggo_contract_application::ContractLifecycle::new(authority))
+        flaggo_contract_application::router(flaggo_contract_application::ContractLifecycle::new(authority), Arc::new(flaggo_service_hosting::TrustedLocal))
     };
     let _workspace_contract = |lease: Arc<dyn flaggo_analysis_workspace::WorkspaceLease>| {
         lease.workspace_id().to_owned()
     };
     let _evidence_contract = |store: Arc<dyn flaggo_evidence_store::EvidenceStore>| store;
     let _inbox_contract = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| inbox;
+    let _ingestion = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| {
+        flaggo_otlp_http::router(inbox, Default::default(), Default::default(), Arc::new(flaggo_service_hosting::TrustedLocal))
+    };
     let cell = flaggo_evidence_store::EvidenceValue::Int64 { value: i64::MAX };
     let wire = serde_json::to_string(&cell).unwrap();
     assert_eq!(wire, r#"{"kind":"int64","value":"9223372036854775807"}"#);
@@ -63,7 +68,7 @@ async fn main() {
         "recent_placement_time_ms":500,"recovery_failures":0,"session_id":"consumer"
     }}"#).unwrap();
     let runtime = DecisionRuntime::new(source.clone(), source);
-    let decision = runtime.decide("tetris.dropInterval", &digest, &input, None).await.unwrap();
+    let decision = runtime.decide(&resource, &digest, &input, None).await.unwrap();
     assert_eq!(serde_json::to_value(&decision).unwrap()["result"], 500);
     println!("Pinned core digest/evaluation and HTTP composition passed (no SQLite).");
 }

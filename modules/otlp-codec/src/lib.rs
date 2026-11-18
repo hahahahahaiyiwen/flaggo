@@ -4,6 +4,7 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
+use flaggo_contract::ResourceScope;
 use flaggo_raw_otlp_inbox::{OtlpSignal, OtlpWireEncoding};
 use opentelemetry_proto::tonic::collector::{
     logs::v1::ExportLogsServiceRequest, metrics::v1::ExportMetricsServiceRequest,
@@ -17,6 +18,81 @@ pub enum OtlpExportRequest {
     Logs(ExportLogsServiceRequest),
     Metrics(ExportMetricsServiceRequest),
     Traces(ExportTraceServiceRequest),
+}
+
+impl OtlpExportRequest {
+    /// Validate every Resource, including Resources containing no observations.
+    pub fn resource_scopes(&self) -> Result<Vec<ResourceScope>, OtlpDecodeError> {
+        use opentelemetry_proto::tonic::{common::v1::any_value, resource::v1::Resource};
+        let resources: Vec<Option<&Resource>> = match self {
+            Self::Logs(request) => request
+                .resource_logs
+                .iter()
+                .map(|item| item.resource.as_ref())
+                .collect(),
+            Self::Metrics(request) => request
+                .resource_metrics
+                .iter()
+                .map(|item| item.resource.as_ref())
+                .collect(),
+            Self::Traces(request) => request
+                .resource_spans
+                .iter()
+                .map(|item| item.resource.as_ref())
+                .collect(),
+        };
+        let mut scopes = Vec::new();
+        for resource in resources {
+            let resource =
+                resource.ok_or_else(|| OtlpDecodeError::new("Resource scope is required"))?;
+            let field = |key| {
+                let mut values = resource
+                    .attributes
+                    .iter()
+                    .filter(|attribute| attribute.key == key);
+                let value = values
+                    .next()
+                    .and_then(|attribute| attribute.value.as_ref())
+                    .and_then(|value| value.value.as_ref());
+                match (value, values.next()) {
+                    (Some(any_value::Value::StringValue(value)), None) => Ok(value.clone()),
+                    _ => Err(OtlpDecodeError::new(
+                        "Resource scope fields must be unique strings",
+                    )),
+                }
+            };
+            scopes.push(
+                ResourceScope::new(
+                    field("flaggo.tenant")?,
+                    field("flaggo.application")?,
+                    field("flaggo.environment")?,
+                )
+                .map_err(|_| OtlpDecodeError::new("Resource scope is invalid"))?,
+            );
+        }
+        scopes.sort();
+        scopes.dedup();
+        Ok(scopes)
+    }
+
+    pub fn verify_authorization(
+        &self,
+        envelope: &flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope,
+    ) -> Result<(), OtlpDecodeError> {
+        envelope
+            .validate()
+            .map_err(|error| OtlpDecodeError::new(error.to_string()))?;
+        if self
+            .resource_scopes()?
+            .iter()
+            .any(|scope| !envelope.scopes().contains(scope))
+        {
+            return Err(OtlpDecodeError::new(
+                "Resource scope is outside the persisted authorization envelope",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

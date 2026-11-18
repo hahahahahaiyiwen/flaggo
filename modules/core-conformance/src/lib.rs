@@ -1,11 +1,12 @@
 //! Outcome-oriented authority scenarios for adapter authors.
 //! Each function requires fresh storage and two independently constructed clients.
-//! These local scenarios are not multi-host qualification or scoped/authenticated v4 tests.
+//! These scoped local scenarios are not multi-host qualification.
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use flaggo_contract::{
-    AnalysisCandidateSubmission, DecisionContract, DecisionExecutableActivationRequest, strict_json,
+    AnalysisCandidateSubmission, ContractResourceId, DecisionContract,
+    DecisionExecutableActivationRequest, strict_json,
 };
 use flaggo_contract_application::{ContractLifecycle, ServiceError};
 use flaggo_executable_store::{ContractAuthority, ExecutableLifecycleState};
@@ -13,7 +14,7 @@ use serde_json::json;
 
 pub mod evidence;
 
-pub const FIXTURE_REVISION: &str = "flaggo.authority-conformance/v1";
+pub const FIXTURE_REVISION: &str = "flaggo.authority-conformance/v2";
 
 #[async_trait]
 pub trait AuthorityFixture {
@@ -50,13 +51,106 @@ fn candidate(cycle: &str, value: u32) -> AnalysisCandidateSubmission {
     })).unwrap()).unwrap()
 }
 
+pub async fn c01_namespace(fixture: &impl AuthorityFixture) {
+    let first = ContractLifecycle::new(fixture.client());
+    let second = ContractLifecycle::new(fixture.independent_client());
+    let mut identities = std::collections::BTreeSet::new();
+    let mut versions = Vec::new();
+    for component in 0..4 {
+        let mut contract = contract();
+        match component {
+            1 => contract.authority.tenant = Some("other-tenant".into()),
+            2 => contract.authority.application = Some("other-application".into()),
+            3 => contract.authority.environment = Some("other-environment".into()),
+            _ => {}
+        }
+        let resource = ContractResourceId::try_from(&contract).unwrap();
+        let version = first.deploy(&resource, &contract).await.unwrap().0;
+        // A caller-chosen workspace/cycle cannot collide across resource scopes.
+        first
+            .submit(
+                &resource,
+                &version.contract_digest,
+                candidate("shared-cycle", 400),
+            )
+            .await
+            .unwrap();
+        identities.insert(resource.resource_key().unwrap());
+        versions.push((resource, version));
+    }
+    for (resource, expected) in &versions {
+        assert_eq!(
+            second.get(resource, None).await.unwrap().as_ref(),
+            Some(expected)
+        );
+        assert_eq!(
+            second
+                .versions(resource, 100, None)
+                .await
+                .unwrap()
+                .unwrap()
+                .versions
+                .len(),
+            1
+        );
+        assert_eq!(
+            second
+                .catalog(&resource.scope)
+                .await
+                .unwrap()
+                .0
+                .contracts
+                .len(),
+            1
+        );
+        for (other, version) in &versions {
+            if other != resource {
+                assert!(
+                    second
+                        .get(resource, Some(&version.contract_digest))
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
+    }
+    let mut cursor = None;
+    let mut observed = std::collections::BTreeSet::new();
+    loop {
+        let page = fixture
+            .independent_client()
+            .list_pending(1, cursor.as_deref())
+            .await
+            .unwrap();
+        for candidate in page.candidates {
+            assert!(
+                observed.insert(candidate.admission.resource.resource_key().unwrap()),
+                "scan cannot repeat resources"
+            );
+        }
+        match page.next_resource_key {
+            Some(next) => {
+                assert!(cursor.as_ref().is_none_or(|previous| previous < &next));
+                cursor = Some(next);
+            }
+            None => break,
+        }
+    }
+    assert_eq!(
+        observed, identities,
+        "paging must not skip identical names in different scopes"
+    );
+}
+
 pub async fn c03_publication(fixture: &impl AuthorityFixture) {
     let first = ContractLifecycle::new(fixture.client());
     let second = ContractLifecycle::new(fixture.independent_client());
     let contract = contract();
+    let resource = ContractResourceId::try_from(&contract).unwrap();
     let (a, b) = tokio::join!(
-        first.deploy(&contract.name, &contract),
-        second.deploy(&contract.name, &contract),
+        first.deploy(&resource, &contract),
+        second.deploy(&resource, &contract),
     );
     let (a, created_a) = a.unwrap();
     let (b, created_b) = b.unwrap();
@@ -73,52 +167,86 @@ pub async fn c03_publication(fixture: &impl AuthorityFixture) {
 
     let mut newer = contract.clone();
     newer.result.default = json!(600).into();
-    let newer = second.deploy(&newer.name, &newer).await.unwrap().0;
+    let newer = second.deploy(&resource, &newer).await.unwrap().0;
     assert_eq!(
         first
-            .get(&contract.name, None)
+            .get(&resource, None)
             .await
             .unwrap()
             .unwrap()
             .contract_digest,
         newer.contract_digest
     );
-    let redeployed = first.deploy(&contract.name, &contract).await.unwrap();
+    let redeployed = first.deploy(&resource, &contract).await.unwrap();
     assert!(!redeployed.1);
-    assert_eq!(second.get(&contract.name, None).await.unwrap().unwrap(), a);
+    assert_eq!(second.get(&resource, None).await.unwrap().unwrap(), a);
 
     let mut other_owner = contract.clone();
     other_owner.authority.tenant = Some("different-tenant".into());
     assert!(matches!(
-        second.deploy(&contract.name, &other_owner).await,
-        Err(ServiceError::ContractStore(
-            flaggo_contract_store::ContractStoreError::AuthorityConflict { .. }
-        ))
+        second.deploy(&resource, &other_owner).await,
+        Err(ServiceError::ResourceMismatch)
     ));
+    let other_resource = ContractResourceId::try_from(&other_owner).unwrap();
+    let other = second
+        .deploy(&other_resource, &other_owner)
+        .await
+        .unwrap()
+        .0;
+    assert_ne!(other.contract_digest, a.contract_digest);
+    assert_eq!(first.get(&resource, None).await.unwrap().unwrap(), a);
+    assert!(
+        first
+            .get(&other_resource, Some(&a.contract_digest))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        first
+            .catalog(&resource.scope)
+            .await
+            .unwrap()
+            .0
+            .contracts
+            .len(),
+        1
+    );
+    assert_eq!(
+        second
+            .catalog(&other_resource.scope)
+            .await
+            .unwrap()
+            .0
+            .contracts
+            .len(),
+        1
+    );
 }
 
 pub async fn c03_atomic_failure(fixture: &impl AuthorityFixture) {
     let lifecycle = ContractLifecycle::new(fixture.client());
     let contract = contract();
+    let resource = ContractResourceId::try_from(&contract).unwrap();
     let digest = lifecycle
-        .validate(&contract.name, &contract)
+        .validate(&resource, &contract)
         .await
         .unwrap()
         .contract_digest
         .unwrap();
     fixture.fail_publication(true).await;
-    assert!(lifecycle.deploy(&contract.name, &contract).await.is_err());
+    assert!(lifecycle.deploy(&resource, &contract).await.is_err());
     let reader = fixture.independent_client();
     assert!(
         reader
-            .get_contract(&contract.name, &digest)
+            .get_contract(&resource, &digest)
             .await
             .unwrap()
             .is_none()
     );
     assert!(
         reader
-            .get_current_contract(&contract.name)
+            .get_current_contract(&resource)
             .await
             .unwrap()
             .is_none()
@@ -141,9 +269,10 @@ pub async fn c03_atomic_failure(fixture: &impl AuthorityFixture) {
     fixture.fail_publication(false).await;
     let mut other_owner = contract.clone();
     other_owner.authority.tenant = Some("different-tenant".into());
+    let other_resource = ContractResourceId::try_from(&other_owner).unwrap();
     assert!(
         lifecycle
-            .deploy(&other_owner.name, &other_owner)
+            .deploy(&other_resource, &other_owner)
             .await
             .unwrap()
             .1,
@@ -155,11 +284,12 @@ pub async fn c04_admission(fixture: &impl AuthorityFixture) {
     let first = ContractLifecycle::new(fixture.client());
     let second = ContractLifecycle::new(fixture.independent_client());
     let contract = contract();
-    let version = first.deploy(&contract.name, &contract).await.unwrap().0;
+    let resource = ContractResourceId::try_from(&contract).unwrap();
+    let version = first.deploy(&resource, &contract).await.unwrap().0;
     let digest = &version.contract_digest;
     let (a, b) = tokio::join!(
-        first.submit(&contract.name, digest, candidate("same-cycle", 400)),
-        second.submit(&contract.name, digest, candidate("same-cycle", 400)),
+        first.submit(&resource, digest, candidate("same-cycle", 400)),
+        second.submit(&resource, digest, candidate("same-cycle", 400)),
     );
     let (a, created_a) = a.unwrap();
     let (b, created_b) = b.unwrap();
@@ -175,7 +305,7 @@ pub async fn c04_admission(fixture: &impl AuthorityFixture) {
         .len();
     assert!(
         second
-            .submit(&contract.name, digest, candidate("same-cycle", 450))
+            .submit(&resource, digest, candidate("same-cycle", 450))
             .await
             .is_err()
     );
@@ -191,17 +321,17 @@ pub async fn c04_admission(fixture: &impl AuthorityFixture) {
     );
     let mut newer = contract.clone();
     newer.result.default = json!(600).into();
-    second.deploy(&contract.name, &newer).await.unwrap();
-    // v3 checks currentness even before reconciling an identical old admission.
+    second.deploy(&resource, &newer).await.unwrap();
+    // Currentness is checked before reconciling an identical old admission.
     assert!(matches!(
         first
-            .submit(&contract.name, digest, candidate("same-cycle", 400))
+            .submit(&resource, digest, candidate("same-cycle", 400))
             .await,
         Err(ServiceError::Stale { .. })
     ));
     assert!(matches!(
         first
-            .submit(&contract.name, digest, candidate("new-cycle", 450))
+            .submit(&resource, digest, candidate("new-cycle", 450))
             .await,
         Err(ServiceError::Stale { .. })
     ));
@@ -221,15 +351,16 @@ pub async fn c05_activation(fixture: &impl AuthorityFixture) {
     let first = ContractLifecycle::new(fixture.client());
     let second = ContractLifecycle::new(fixture.independent_client());
     let contract = contract();
-    let version = first.deploy(&contract.name, &contract).await.unwrap().0;
+    let resource = ContractResourceId::try_from(&contract).unwrap();
+    let version = first.deploy(&resource, &contract).await.unwrap().0;
     let digest = &version.contract_digest;
     let a = first
-        .submit(&contract.name, digest, candidate("cycle-a", 400))
+        .submit(&resource, digest, candidate("cycle-a", 400))
         .await
         .unwrap()
         .0;
     let b = second
-        .submit(&contract.name, digest, candidate("cycle-b", 450))
+        .submit(&resource, digest, candidate("cycle-b", 450))
         .await
         .unwrap()
         .0;
@@ -245,8 +376,8 @@ pub async fn c05_activation(fixture: &impl AuthorityFixture) {
         expected_active_state_version: active.state_version,
     };
     let (a_result, b_result) = tokio::join!(
-        first.activate(&contract.name, digest, &a.executable_digest, request()),
-        second.activate(&contract.name, digest, &b.executable_digest, request()),
+        first.activate(&resource, digest, &a.executable_digest, request()),
+        second.activate(&resource, digest, &b.executable_digest, request()),
     );
     assert_ne!(a_result.is_ok(), b_result.is_ok(), "one activation wins");
     let winner = a_result.or(b_result).unwrap();
@@ -261,7 +392,7 @@ pub async fn c05_activation(fixture: &impl AuthorityFixture) {
         winner.executable.executable_digest
     );
     assert!(observed.state_version > active.state_version);
-    let redeployed = first.deploy(&contract.name, &contract).await.unwrap().0;
+    let redeployed = first.deploy(&resource, &contract).await.unwrap().0;
     assert_eq!(
         redeployed.active_executable_digest, observed.executable_digest,
         "redeploy must not reset learning"

@@ -697,6 +697,7 @@ dependencies = [
  "flaggo-analysis-agent",
  "flaggo-analysis-domain",
  "flaggo-analysis-workspace",
+ "flaggo-contract",
  "flaggo-evidence-store",
  "flaggo-service-observability",
  "opentelemetry",
@@ -882,6 +883,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "flaggo-contract",
  "flaggo-evidence-store",
  "flaggo-otlp-codec",
  "flaggo-raw-otlp-inbox",
@@ -957,11 +959,40 @@ dependencies = [
 name = "flaggo-otel-ingestion"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "flaggo-otlp-http",
+ "flaggo-raw-otlp-inbox",
+ "flaggo-service-hosting",
+ "flaggo-service-observability",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "flaggo-otlp-codec"
+version = "0.1.0"
+dependencies = [
+ "flaggo-contract",
+ "flaggo-raw-otlp-inbox",
+ "opentelemetry-proto",
+ "prost",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "flaggo-otlp-http"
+version = "0.1.0"
+dependencies = [
  "async-compression",
  "async-trait",
  "axum",
+ "base64 0.22.1",
+ "flaggo-contract",
  "flaggo-otlp-codec",
  "flaggo-raw-otlp-inbox",
+ "flaggo-service-hosting",
  "flaggo-service-observability",
  "flate2",
  "futures-util",
@@ -980,22 +1011,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "flaggo-otlp-codec"
-version = "0.1.0"
-dependencies = [
- "flaggo-raw-otlp-inbox",
- "opentelemetry-proto",
- "prost",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "flaggo-raw-otlp-inbox"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "flaggo-contract",
+ "serde",
+ "serde_json",
  "sha2",
  "sqlx",
  "tempfile",
@@ -1007,6 +1030,7 @@ dependencies = [
 name = "flaggo-service-hosting"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "flaggo-contract",
  "flaggo-service-observability",

@@ -12,6 +12,9 @@ use flaggo_analysis_agent::copilot::{ByokWireApi, CopilotInferenceConfig};
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
 pub const CATALOG_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_CATALOG_URL";
 pub const CONTRACT_SERVICE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_CONTRACT_SERVICE_URL";
+pub const TENANT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_TENANT";
+pub const APPLICATION_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_APPLICATION";
+pub const ENVIRONMENT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_ENVIRONMENT";
 pub const WORKSPACE_ROOT_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_WORKSPACE_ROOT";
 pub const COPILOT_HOME_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_COPILOT_HOME";
 pub const SKILL_DIRECTORY_ENVIRONMENT_VARIABLE: &str = "FLAGGO_ANALYSIS_SKILL_DIRECTORY";
@@ -49,6 +52,7 @@ pub struct AnalysisServiceConfig {
     pub database_url: String,
     pub catalog_url: Option<String>,
     pub contract_service_url: String,
+    pub resource_scope: flaggo_contract::ResourceScope,
     pub workspace_root: PathBuf,
     pub copilot_home: PathBuf,
     pub skill_directory: PathBuf,
@@ -67,6 +71,16 @@ pub struct AnalysisServiceConfig {
 
 impl AnalysisServiceConfig {
     pub fn from_environment() -> Result<Self, String> {
+        let required = |name| {
+            optional_nonempty(name)?
+                .ok_or_else(|| format!("{name} is required for the scoped v4 client"))
+        };
+        let resource_scope = flaggo_contract::ResourceScope::new(
+            required(TENANT_ENVIRONMENT_VARIABLE)?,
+            required(APPLICATION_ENVIRONMENT_VARIABLE)?,
+            required(ENVIRONMENT_ENVIRONMENT_VARIABLE)?,
+        )
+        .map_err(|error| error.to_string())?;
         let inference = inference_configuration(optional_nonempty)?;
         let max_agents = NonZeroUsize::new(parse_integer(
             MAX_AGENTS_ENVIRONMENT_VARIABLE,
@@ -107,6 +121,7 @@ impl AnalysisServiceConfig {
         let skill_directory =
             skill_directory(optional_nonempty(SKILL_DIRECTORY_ENVIRONMENT_VARIABLE)?)?;
         Ok(Self {
+            resource_scope,
             cycle_limits: flaggo_analysis_domain::CycleLimits {
                 max_attempts: {
                     let value = parse_integer("FLAGGO_ANALYSIS_CYCLE_MAX_ATTEMPTS", 8_u32)?;

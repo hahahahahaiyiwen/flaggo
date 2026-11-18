@@ -31,14 +31,14 @@ pub fn poll_interval(value: Option<&str>) -> std::result::Result<Duration, Strin
 
 pub struct ActivationWorker {
     lifecycle: ContractLifecycle,
-    next_contract_name: Option<String>,
+    next_resource_key: Option<String>,
 }
 
 impl ActivationWorker {
     pub fn new(lifecycle: ContractLifecycle) -> Self {
         Self {
             lifecycle,
-            next_contract_name: None,
+            next_resource_key: None,
         }
     }
 
@@ -46,13 +46,13 @@ impl ActivationWorker {
         let page = self
             .lifecycle
             .authority
-            .list_pending(100, self.next_contract_name.as_deref())
+            .list_pending(100, self.next_resource_key.as_deref())
             .await?;
-        self.next_contract_name = page.next_contract_name;
+        self.next_resource_key = page.next_resource_key;
         for snapshot in page.candidates {
             let admission = &snapshot.admission;
             let result = self.lifecycle.observability.observe_classified(
-                "candidate.activate", &admission.contract_name, Some(&admission.contract_digest), None,
+                "candidate.activate", &admission.resource.name, Some(&admission.contract_digest), None,
                 async {
                     record_candidate(&admission.executable_digest);
                     let (action, category) = self.assess(&snapshot).await?;
@@ -68,11 +68,11 @@ impl ActivationWorker {
                     };
                     let category = if result.outcome == Outcome::Rejected { category } else { None };
                     if result.outcome == Outcome::Activated {
-                        activation_completed(&admission.contract_name, &admission.contract_digest, &admission.executable_digest);
+                        activation_completed(&admission.resource.name, &admission.contract_digest, &admission.executable_digest);
                     } else {
                         tracing::event!(target: INSTRUMENTATION_SCOPE, tracing::Level::INFO, {
                             "event.name" = "flaggo.activation.resolved",
-                            flaggo.contract.name = admission.contract_name,
+                            flaggo.contract.name = admission.resource.name,
                             flaggo.contract.digest = admission.contract_digest,
                             flaggo.candidate.digest = admission.executable_digest,
                             flaggo.executable.digest = admission.executable_digest,
@@ -86,7 +86,7 @@ impl ActivationWorker {
             ).await;
             if let Err(error) = result {
                 tracing::warn!(target: INSTRUMENTATION_SCOPE, %error,
-                    flaggo.contract.name = admission.contract_name,
+                    flaggo.contract.name = admission.resource.name,
                     flaggo.candidate.digest = admission.executable_digest,
                     "Candidate processing failed; continuing scan");
             }
@@ -159,7 +159,7 @@ impl ActivationWorker {
         let Some(accepted) = self
             .lifecycle
             .authority
-            .get_contract(&admission.contract_name, &admission.contract_digest)
+            .get_contract(&admission.resource, &admission.contract_digest)
             .await?
         else {
             return Ok((Action::Reject, Some("not_found")));

@@ -7,7 +7,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use flaggo_contract::{DecisionContract, DecisionExecutable, strict_json};
+use flaggo_contract::{ContractResourceId, DecisionContract, DecisionExecutable, strict_json};
 use flaggo_decision::{
     ActiveExecutable, ActiveExecutableReader, Cancellation, ContractVersion, ContractVersionReader,
     ReadinessProbe, StoreReadError,
@@ -26,12 +26,13 @@ struct Source {
 impl ContractVersionReader for Source {
     async fn get_contract(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         digest: &str,
         _: Cancellation,
     ) -> Result<Option<Arc<ContractVersion>>, StoreReadError> {
         Ok(
-            (name == self.contract.contract.name && digest == self.contract.contract_digest)
+            (*resource == ContractResourceId::try_from(&self.contract.contract).unwrap()
+                && digest == self.contract.contract_digest)
                 .then(|| self.contract.clone()),
         )
     }
@@ -94,8 +95,14 @@ async fn injected_readers_observe_activation_and_never_serve_cached_authority_on
         active: Arc::new(Mutex::new(first)),
         unavailable: Arc::new(AtomicBool::new(false)),
     };
-    let router = flaggo_decision_http::router(source.clone(), source.clone());
-    let path = format!("/v3/decision-contracts/portable.example/versions/{digest}/decisions");
+    let router = flaggo_decision_http::router(
+        source.clone(),
+        source.clone(),
+        Arc::new(flaggo_service_hosting::TrustedLocal),
+    );
+    let path = format!(
+        "/v4/tenants/t/applications/a/environments/e/decision-contracts/portable.example/versions/{digest}/decisions"
+    );
     for (status, expected) in [
         (StatusCode::OK, Some(100)),
         (StatusCode::OK, Some(200)),

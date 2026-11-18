@@ -617,7 +617,7 @@ return errors === 0;
 validate34.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const validateRuntimeConfiguration = validate35;
-const schema38 = {"type":"object","additionalProperties":false,"required":["format","authority","services","bindings"],"properties":{"format":{"const":"flaggo.runtime-config/v1"},"authority":{"$ref":"#/$defs/AuthorityScope"},"services":{"$ref":"#/$defs/ServiceEndpoints"},"bindings":{"type":"object","propertyNames":{"$ref":"#/$defs/DecisionName"},"additionalProperties":{"$ref":"#/$defs/ContractBinding"},"minProperties":1,"maxProperties":128}},"description":"Generated immutable application configuration containing the same authority bound into every deployed DecisionContract."};
+const schema38 = {"type":"object","additionalProperties":false,"required":["format","authority","services","bindings"],"properties":{"format":{"const":"flaggo.runtime-config/v2"},"authority":{"$ref":"#/$defs/AuthorityScope"},"services":{"$ref":"#/$defs/ServiceEndpoints"},"bindings":{"type":"object","propertyNames":{"$ref":"#/$defs/DecisionName"},"additionalProperties":{"$ref":"#/$defs/ContractBinding"},"minProperties":1,"maxProperties":128}},"description":"Generated immutable v4 client configuration. The explicit authority selects tenant/application/environment routes and is not an authentication credential. Legacy runtime-config/v1 must be explicitly regenerated."};
 const schema43 = {"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z][A-Za-z0-9._-]*$"};
 
 function validate27(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
@@ -967,8 +967,8 @@ errors++;
 }
 }
 if(data.format !== undefined){
-if("flaggo.runtime-config/v1" !== data.format){
-const err5 = {instancePath:instancePath+"/format",schemaPath:"#/properties/format/const",keyword:"const",params:{allowedValue: "flaggo.runtime-config/v1"},message:"must be equal to constant"};
+if("flaggo.runtime-config/v2" !== data.format){
+const err5 = {instancePath:instancePath+"/format",schemaPath:"#/properties/format/const",keyword:"const",params:{allowedValue: "flaggo.runtime-config/v2"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err5];
 }

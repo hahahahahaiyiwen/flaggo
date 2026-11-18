@@ -18,26 +18,27 @@ use axum::{
 };
 use error::Result;
 use flaggo_contract::{
-    AnalysisCandidateSubmission, DecisionContract, DecisionExecutableActivationRequest,
+    AnalysisCandidateSubmission, ContractResourceId, DecisionContract,
+    DecisionExecutableActivationRequest, ResourceScope,
 };
-use flaggo_service_hosting::{RequestContext, json_response, read_json, with_http_contract};
+use flaggo_service_hosting::{
+    RequestContext, RequestSecurity, json_response, read_json, with_http_contract,
+    with_resource_security,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 pub const SERVICE_NAME: &str = "flaggo-contract-service";
 pub const INSTRUMENTATION_SCOPE: &str = "flaggo.contract-service";
-const BASE: &str = "/v3/decision-contracts/{contractName}";
-const VALIDATE: &str = "/v3/decision-contracts/{contractName}/validate";
-const VERSIONS: &str = "/v3/decision-contracts/{contractName}/versions";
-const VERSION: &str = "/v3/decision-contracts/{contractName}/versions/{contractDigest}";
-const CANDIDATES: &str =
-    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates";
-const EXECUTABLES: &str =
-    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables";
-const HISTORY: &str =
-    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/history";
-const ACTIVATE: &str = "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate";
-const CATALOG: &str = "/v3/decision-contract-catalog/current";
+const BASE: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}";
+const VALIDATE: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/validate";
+const VERSIONS: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions";
+const VERSION: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}";
+const CANDIDATES: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/candidates";
+const EXECUTABLES: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables";
+const HISTORY: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/history";
+const ACTIVATE: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate";
+const CATALOG: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contract-catalog/current";
 const ROUTES: &[&str] = &[
     BASE,
     VALIDATE,
@@ -52,21 +53,27 @@ const ROUTES: &[&str] = &[
     "/health/ready",
 ];
 
-pub fn router(lifecycle: ContractLifecycle) -> Router {
+pub fn router(
+    lifecycle: ContractLifecycle,
+    security: std::sync::Arc<dyn RequestSecurity>,
+) -> Router {
     with_http_contract(
-        Router::new()
-            .route(BASE, get(current).put(deploy))
-            .route(VALIDATE, post(validate))
-            .route(VERSIONS, get(versions))
-            .route(VERSION, get(version))
-            .route(CANDIDATES, post(submit))
-            .route(EXECUTABLES, get(executables))
-            .route(HISTORY, get(history))
-            .route(ACTIVATE, post(activate))
-            .route(CATALOG, get(catalog))
-            .route("/health/live", get(live))
-            .route("/health/ready", get(ready))
-            .with_state(lifecycle),
+        with_resource_security(
+            Router::new()
+                .route(BASE, get(current).put(deploy))
+                .route(VALIDATE, post(validate))
+                .route(VERSIONS, get(versions))
+                .route(VERSION, get(version))
+                .route(CANDIDATES, post(submit))
+                .route(EXECUTABLES, get(executables))
+                .route(HISTORY, get(history))
+                .route(ACTIVATE, post(activate))
+                .route(CATALOG, get(catalog))
+                .route("/health/live", get(live))
+                .route("/health/ready", get(ready))
+                .with_state(lifecycle),
+            security,
+        ),
         INSTRUMENTATION_SCOPE,
         env!("CARGO_PKG_VERSION"),
         ROUTES,
@@ -76,15 +83,16 @@ pub fn router(lifecycle: ContractLifecycle) -> Router {
 async fn validate(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path(name): Path<String>,
+    Path((tenant, application, environment, name)): Path<(String, String, String, String)>,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
     let result = async {
+        let resource = resource(tenant, application, environment, name)?;
         let contract: DecisionContract = read_json(&headers, body).await?;
         let validation = state
             .correlated(&context.correlation_id)
-            .validate(&name, &contract)
+            .validate(&resource, &contract)
             .await?;
         response(StatusCode::OK, &validation)
     }
@@ -95,15 +103,16 @@ async fn validate(
 async fn deploy(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path(name): Path<String>,
+    Path((tenant, application, environment, name)): Path<(String, String, String, String)>,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
     let result = async {
+        let resource = resource(tenant, application, environment, name)?;
         let contract: DecisionContract = read_json(&headers, body).await?;
         let (version, created) = state
             .correlated(&context.correlation_id)
-            .deploy(&name, &contract)
+            .deploy(&resource, &contract)
             .await?;
         let mut response = response(
             if created {
@@ -115,7 +124,11 @@ async fn deploy(
         )?;
         if created {
             let location = format!(
-                "/v3/decision-contracts/{name}/versions/{}",
+                "/v4/tenants/{}/applications/{}/environments/{}/decision-contracts/{}/versions/{}",
+                resource.scope.tenant,
+                resource.scope.application,
+                resource.scope.environment,
+                resource.name,
                 version.contract_digest
             );
             response.headers_mut().insert(
@@ -132,47 +145,58 @@ async fn deploy(
 async fn current(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path(name): Path<String>,
+    Path((tenant, application, environment, name)): Path<(String, String, String, String)>,
 ) -> Response {
-    finish(
+    let result = async {
+        let resource = resource(tenant, application, environment, name)?;
         optional(
             state
                 .correlated(&context.correlation_id)
-                .get(&name, None)
+                .get(&resource, None)
                 .await,
-        ),
-        &context,
-    )
+        )
+    }
+    .await;
+    finish(result, &context)
 }
 
 async fn version(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path((name, digest)): Path<(String, String)>,
+    Path((tenant, application, environment, name, digest)): Path<(
+        String,
+        String,
+        String,
+        String,
+        String,
+    )>,
 ) -> Response {
-    finish(
+    let result = async {
+        let resource = resource(tenant, application, environment, name)?;
         optional(
             state
                 .correlated(&context.correlation_id)
-                .get(&name, Some(&digest))
+                .get(&resource, Some(&digest))
                 .await,
-        ),
-        &context,
-    )
+        )
+    }
+    .await;
+    finish(result, &context)
 }
 
 async fn versions(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path(name): Path<String>,
+    Path((tenant, application, environment, name)): Path<(String, String, String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
     let result = async {
+        let resource = resource(tenant, application, environment, name)?;
         let (limit, cursor) = pagination(query.as_deref())?;
         optional(
             state
                 .correlated(&context.correlation_id)
-                .versions(&name, limit, cursor.as_deref())
+                .versions(&resource, limit, cursor.as_deref())
                 .await,
         )
     }
@@ -183,10 +207,14 @@ async fn versions(
 async fn catalog(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
+    Path(scope): Path<ResourceScope>,
     headers: HeaderMap,
 ) -> Response {
     let result = async {
-        let (catalog, etag) = state.correlated(&context.correlation_id).catalog().await?;
+        let (catalog, etag) = state
+            .correlated(&context.correlation_id)
+            .catalog(&scope)
+            .await?;
         let matched = headers
             .get_all(header::IF_NONE_MATCH)
             .iter()
@@ -212,15 +240,22 @@ async fn catalog(
 async fn submit(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path((name, digest)): Path<(String, String)>,
+    Path((tenant, application, environment, name, digest)): Path<(
+        String,
+        String,
+        String,
+        String,
+        String,
+    )>,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
     let result = async {
+        let resource = resource(tenant, application, environment, name)?;
         let submission: AnalysisCandidateSubmission = read_json(&headers, body).await?;
         let (value, created) = state
             .correlated(&context.correlation_id)
-            .submit(&name, &digest, submission)
+            .submit(&resource, &digest, submission)
             .await?;
         response(
             if created {
@@ -238,35 +273,64 @@ async fn submit(
 async fn executables(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path((name, digest)): Path<(String, String)>,
+    Path((tenant, application, environment, name, digest)): Path<(
+        String,
+        String,
+        String,
+        String,
+        String,
+    )>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    list_executables(state, context, name, digest, query, false).await
+    list_executables(
+        state,
+        context,
+        resource(tenant, application, environment, name),
+        digest,
+        query,
+        false,
+    )
+    .await
 }
 
 async fn history(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path((name, digest)): Path<(String, String)>,
+    Path((tenant, application, environment, name, digest)): Path<(
+        String,
+        String,
+        String,
+        String,
+        String,
+    )>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    list_executables(state, context, name, digest, query, true).await
+    list_executables(
+        state,
+        context,
+        resource(tenant, application, environment, name),
+        digest,
+        query,
+        true,
+    )
+    .await
 }
 
 async fn list_executables(
     state: ContractLifecycle,
     context: RequestContext,
-    name: String,
+    resource: Result<ContractResourceId>,
     digest: String,
     query: Option<String>,
     history: bool,
 ) -> Response {
     let result = async {
+        let resource = resource?;
         let (limit, cursor) = pagination(query.as_deref())?;
         optional(
             state
                 .correlated(&context.correlation_id)
-                .executables(&name, &digest, limit, cursor.as_deref(), history)
+                .executables(&resource, &digest, limit, cursor.as_deref(), history)
                 .await,
         )
     }
@@ -277,15 +341,23 @@ async fn list_executables(
 async fn activate(
     State(state): State<ContractLifecycle>,
     Extension(context): Extension<RequestContext>,
-    Path((name, digest, candidate)): Path<(String, String, String)>,
+    Path((tenant, application, environment, name, digest, candidate)): Path<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    )>,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
     let result = async {
+        let resource = resource(tenant, application, environment, name)?;
         let request: DecisionExecutableActivationRequest = read_json(&headers, body).await?;
         let value = state
             .correlated(&context.correlation_id)
-            .activate(&name, &digest, &candidate, request)
+            .activate(&resource, &digest, &candidate, request)
             .await?;
         response(StatusCode::OK, &value)
     }
@@ -313,6 +385,17 @@ async fn ready(
                     {"name": "executable-store", "status": if executables { "up" } else { "down" }, "required": true}]}))
     }.await;
     finish(result, &context)
+}
+
+fn resource(
+    tenant: String,
+    application: String,
+    environment: String,
+    name: String,
+) -> Result<ContractResourceId> {
+    let scope = ResourceScope::new(tenant, application, environment)
+        .map_err(|_| ServiceError::InvalidArgument)?;
+    ContractResourceId::new(scope, name).map_err(|_| ServiceError::InvalidArgument)
 }
 
 fn pagination(query: Option<&str>) -> Result<(i32, Option<String>)> {

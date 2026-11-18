@@ -2,10 +2,10 @@
   "name": "get-current-decision-contract",
   "scenario": 48,
   "invariant": "Management lookup by name returns the current accepted version without changing runtime's exact-digest requirement.",
-  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersion",
+  "responseSchema": "management-models-v4.schema.json#/$defs/DecisionContractVersion",
   "request": {
     "method": "GET",
-    "path": "/v3/decision-contracts/tetris.dropInterval",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval",
     "headers": {
     }
   },

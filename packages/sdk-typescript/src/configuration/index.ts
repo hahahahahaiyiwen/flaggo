@@ -16,3 +16,4 @@ export {
   InvalidFlaggoInputError,
 } from "../errors.js";
 export { SDK_VERSION } from "../generated/package-version.generated.js";
+export { resourceScopePath } from "../internal/resource.js";

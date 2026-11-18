@@ -65,7 +65,10 @@ impl Fixture {
             strict_json::deserialize(&serde_json::to_vec(document).unwrap()).unwrap();
         let version = self
             .lifecycle
-            .deploy(&contract.name, &contract)
+            .deploy(
+                &flaggo_contract::ContractResourceId::try_from(&contract).unwrap(),
+                &contract,
+            )
             .await
             .unwrap()
             .0;

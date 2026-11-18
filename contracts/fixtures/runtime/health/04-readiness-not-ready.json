@@ -2,7 +2,7 @@
   "name": "health-readiness-not-ready",
   "scenario": 38,
   "invariant": "Any required check that is not up produces 503 not-ready.",
-  "responseSchema": "runtime-models-v3.schema.json#/$defs/ReadinessResult",
+  "responseSchema": "runtime-models-v4.schema.json#/$defs/ReadinessResult",
   "request": {
     "method": "GET",
     "path": "/health/ready",

@@ -18,19 +18,19 @@ const packageMetadata = JSON.parse(
 
 const schemas = {
   runtime: {
-    source: resolve(schemaRoot, "runtime-models-v3.schema.json"),
+    source: resolve(schemaRoot, "runtime-models-v4.schema.json"),
     output: resolve(generatedRoot, "runtime-models.generated.ts"),
   },
   management: {
-    source: resolve(schemaRoot, "management-models-v3.schema.json"),
+    source: resolve(schemaRoot, "management-models-v4.schema.json"),
     output: resolve(generatedRoot, "management-models.generated.ts"),
   },
   deployment: {
-    source: resolve(schemaRoot, "deployment-models-v2.schema.json"),
+    source: resolve(schemaRoot, "deployment-models-v3.schema.json"),
     output: resolve(generatedRoot, "deployment-models.generated.ts"),
   },
   problem: {
-    source: resolve(schemaRoot, "problem-details-v3.schema.json"),
+    source: resolve(schemaRoot, "problem-details-v4.schema.json"),
     output: resolve(generatedRoot, "problem-details.generated.ts"),
   },
 };

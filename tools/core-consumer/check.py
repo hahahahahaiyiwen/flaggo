@@ -26,6 +26,8 @@ def main():
         "flaggo-contract-application", "flaggo-decision-http",
         "flaggo-executable-store", "flaggo-core-conformance", "flaggo-analysis-workspace",
         "flaggo-evidence-store", "flaggo-raw-otlp-inbox",
+        "flaggo-service-hosting",
+        "flaggo-otlp-http",
     ]
     manifest = '[package]\nname = "flaggo-pinned-consumer"\nversion = "0.1.0"\nedition = "2024"\n\n[workspace]\n\n[dependencies]\n'
     for crate in crates:
@@ -51,8 +53,10 @@ def main():
         "repository": args.repository, "revision": args.revision,
         "scope": "local-git-consumer" if args.repository.startswith("file:") else "remote-git-consumer",
         "result": "passed", "productPackages": sorted(item["name"] for item in products),
-        "wire": "v3", "authorityCapability": "flaggo.authority/v1",
-        "conformanceFixtures": "flaggo.authority-conformance/v1",
+        "wire": "v4", "authorityCapability": "flaggo.authority/v2",
+        "securityCapability": "flaggo.security.resource/v1",
+        "evidenceProfile": "flaggo.evidence.sqlite/v1",
+        "conformanceFixtures": "flaggo.authority-conformance/v2",
         "distributedQualification": False,
     }
     (output / "result.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

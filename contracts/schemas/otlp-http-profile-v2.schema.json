@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flaggo.dev/contracts/schemas/otlp-http-profile-v1.schema.json",
-  "title": "Flaggo OTLP HTTP profile v1",
+  "$id": "https://flaggo.dev/contracts/schemas/otlp-http-profile-v2.schema.json",
+  "title": "Flaggo OTLP HTTP profile v2",
   "description": "Capabilities selected by Flaggo from the upstream OTLP/HTTP specification. This profile does not redefine OTLP payload messages.",
   "type": "object",
   "additionalProperties": false,
@@ -22,13 +22,13 @@
   ],
   "properties": {
     "$schema": {
-      "const": "https://flaggo.dev/contracts/schemas/otlp-http-profile-v1.schema.json"
+      "const": "https://flaggo.dev/contracts/schemas/otlp-http-profile-v2.schema.json"
     },
     "profile": {
       "const": "flaggo.otlp-http"
     },
     "version": {
-      "const": "1.0.0"
+      "const": "2.0.0"
     },
     "upstream": {
       "type": "object",
@@ -157,9 +157,11 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "policy",
         "maximumDecompressedRequestBytes"
       ],
       "properties": {
+        "policy": { "const": "local-default-not-hosted-policy" },
         "maximumDecompressedRequestBytes": {
           "const": 67108864
         }
@@ -215,16 +217,15 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "required",
-        "phase"
+        "capability", "envelope", "resourceScopeRequired", "wholeBatch", "localPolicy", "failureStatuses"
       ],
       "properties": {
-        "required": {
-          "const": false
-        },
-        "phase": {
-          "const": 4
-        }
+        "capability": { "const": "flaggo.security.resource/v1" },
+        "envelope": { "const": "flaggo.otlp.authorization/v1" },
+        "resourceScopeRequired": { "const": true },
+        "wholeBatch": { "const": true },
+        "localPolicy": { "const": "explicit-trusted-local" },
+        "failureStatuses": { "const": [400, 401, 403, 404, 503] }
       }
     },
     "unsupportedTransports": {

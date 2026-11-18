@@ -6,7 +6,7 @@
 /**
  * Authored deployment manifest and generated immutable runtime configuration.
  */
-export type FlaggoDeploymentModelsV2 = DeploymentManifest | RuntimeConfiguration;
+export type FlaggoDeploymentModelsV3 = DeploymentManifest | RuntimeConfiguration;
 export type AuthorityIdentifier = string;
 /**
  * Portable ASCII forward-slash relative path contained by the deployment manifest directory.
@@ -38,10 +38,10 @@ export interface AuthorityScope {
   environment: AuthorityIdentifier;
 }
 /**
- * Generated immutable application configuration containing the same authority bound into every deployed DecisionContract.
+ * Generated immutable v4 client configuration. The explicit authority selects tenant/application/environment routes and is not an authentication credential. Legacy runtime-config/v1 must be explicitly regenerated.
  */
 export interface RuntimeConfiguration {
-  format: "flaggo.runtime-config/v1";
+  format: "flaggo.runtime-config/v2";
   authority: AuthorityScope;
   services: ServiceEndpoints;
   bindings: {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { context, propagation, trace } from "@opentelemetry/api";
 import {
   parseFlaggoRuntimeConfiguration,
+  resourceScopePath,
   type FlaggoRuntimeConfiguration,
   type RuntimeContractBinding,
 } from "@flaggo/sdk/configuration";
@@ -690,7 +691,7 @@ export class TetrisPlayground {
   }
 
   private executableCatalogUrl(): string {
-    return `${this.contractServiceUrl}/v3/decision-contracts/`
+    return `${this.contractServiceUrl}${resourceScopePath(this.runtimeConfig.authority)}/decision-contracts/`
       + `${encodeURIComponent(tetrisContractName)}/versions/`
       + `${encodeURIComponent(this.contractDigest)}/executables`;
   }

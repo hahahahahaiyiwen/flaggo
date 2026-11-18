@@ -32,6 +32,7 @@ where
         &config.contract_service_url,
         config.catalog_url.as_deref(),
         config.query_timeout,
+        config.resource_scope.clone(),
     )?);
     let evidence_store =
         Arc::new(SqliteEvidenceAnalysisStore::connect(&config.database_url).await?);

@@ -1,7 +1,7 @@
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 pub(crate) const SCHEMA: &str = "
-INSERT INTO flaggo_schema_versions(component, version) VALUES ('executable-store', 5)
+INSERT INTO flaggo_schema_versions(component, version) VALUES ('executable-store', 6)
 ON CONFLICT(component) DO UPDATE SET version = excluded.version;
 CREATE TABLE IF NOT EXISTS decision_executables (
     executable_digest TEXT PRIMARY KEY,
@@ -20,16 +20,17 @@ ON decision_executables(contract_digest) WHERE lifecycle_state = 'active';
 CREATE INDEX IF NOT EXISTS ix_executables_analysis_candidates
 ON decision_executables(executable_digest, state_version) WHERE lifecycle_state = 'candidate';
 CREATE TABLE IF NOT EXISTS analysis_candidate_admissions (
+    resource_key TEXT NOT NULL,
     workspace_id TEXT NOT NULL, cycle_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
     contract_name TEXT NOT NULL, contract_digest TEXT NOT NULL, executable_digest TEXT NOT NULL,
     analysis_manifest_digest TEXT NOT NULL, created_at TEXT NOT NULL,
-    PRIMARY KEY(workspace_id, cycle_id),
+    PRIMARY KEY(resource_key, workspace_id, cycle_id),
     FOREIGN KEY(executable_digest) REFERENCES decision_executables(executable_digest)
 );
 CREATE INDEX IF NOT EXISTS ix_analysis_candidates_contract
-ON analysis_candidate_admissions(contract_name, contract_digest, created_at);
+ON analysis_candidate_admissions(resource_key, contract_digest, created_at);
 CREATE INDEX IF NOT EXISTS ix_analysis_candidates_executable
-ON analysis_candidate_admissions(executable_digest, contract_name, contract_digest, created_at DESC);
+ON analysis_candidate_admissions(executable_digest, resource_key, contract_digest, created_at DESC);
 ";
 
 pub(crate) const MIGRATE_FOUR: &str = "

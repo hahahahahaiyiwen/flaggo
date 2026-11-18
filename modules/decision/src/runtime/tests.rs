@@ -15,12 +15,13 @@ struct Reader {
 impl ContractVersionReader for Reader {
     async fn get_contract(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         digest: &str,
         _: Cancellation,
     ) -> Result<Option<Arc<ContractVersion>>, StoreReadError> {
         Ok(
-            (name == self.version.contract.name && digest == self.version.contract_digest)
+            (*resource == ContractResourceId::try_from(&self.version.contract).unwrap()
+                && digest == self.version.contract_digest)
                 .then(|| Arc::clone(&self.version)),
         )
     }
@@ -50,6 +51,12 @@ fn contract() -> DecisionContract {
     }"#,
     )
     .unwrap()
+}
+
+fn resource(name: &str) -> ContractResourceId {
+    let mut resource = ContractResourceId::try_from(&contract()).unwrap();
+    resource.name = name.into();
+    resource
 }
 
 fn reader() -> Reader {
@@ -104,7 +111,7 @@ async fn runtime_observes_each_activation_and_keeps_cached_executables_immutable
     let request = input(json!({"_random":0.5}));
     let one = runtime
         .decide(
-            "runtime.test",
+            &resource("runtime.test"),
             &reader.version.contract_digest,
             &request,
             None,
@@ -114,7 +121,7 @@ async fn runtime_observes_each_activation_and_keeps_cached_executables_immutable
     *reader.active.lock().unwrap() = Some(Arc::clone(&second));
     let two = runtime
         .decide(
-            "runtime.test",
+            &resource("runtime.test"),
             &reader.version.contract_digest,
             &request,
             None,
@@ -130,7 +137,7 @@ async fn runtime_observes_each_activation_and_keeps_cached_executables_immutable
     assert!(matches!(
         runtime
             .decide(
-                "runtime.test",
+                &resource("runtime.test"),
                 &reader.version.contract_digest,
                 &request,
                 None
@@ -148,13 +155,15 @@ async fn validates_identity_then_contract_then_complete_input_before_active_read
         strict_json::deserialize(br#"{"attributes":{"x":"wrong","_unknown":1,"undeclared":2}}"#)
             .unwrap();
     assert!(matches!(
-        runtime.decide("bad name", "bad", &invalid, None).await,
+        runtime
+            .decide(&resource("bad name"), "bad", &invalid, None)
+            .await,
         Err(DecisionError::InvalidIdentity(_))
     ));
     assert!(matches!(
         runtime
             .decide(
-                "other.name",
+                &resource("other.name"),
                 &reader.version.contract_digest,
                 &invalid,
                 None
@@ -164,7 +173,7 @@ async fn validates_identity_then_contract_then_complete_input_before_active_read
     ));
     let error = runtime
         .decide(
-            "runtime.test",
+            &resource("runtime.test"),
             &reader.version.contract_digest,
             &invalid,
             None,
@@ -200,7 +209,7 @@ async fn rejects_cross_contract_active_binding_before_materialization() {
     let runtime = DecisionRuntime::new(reader.clone(), reader.clone());
     let error = runtime
         .decide(
-            "runtime.test",
+            &resource("runtime.test"),
             &reader.version.contract_digest,
             &input(json!({"_random":0.5})),
             None,
@@ -238,6 +247,40 @@ fn materialization_failure_is_evicted_and_same_identity_can_retry() {
     assert_eq!(compiled.executable_digest(), good.executable_digest);
     let cached = runtime.materialize(&reader.version, &good).unwrap();
     assert!(Arc::ptr_eq(&compiled, &cached));
+}
+
+#[tokio::test]
+async fn rejects_an_adapter_returning_another_resource_before_reading_activation() {
+    struct Misbound(Reader);
+    impl ContractVersionReader for Misbound {
+        async fn get_contract(
+            &self,
+            _: &ContractResourceId,
+            _: &str,
+            _: Cancellation,
+        ) -> Result<Option<Arc<ContractVersion>>, StoreReadError> {
+            Ok(Some(self.0.version.clone()))
+        }
+    }
+    let reader = reader();
+    let runtime = DecisionRuntime::new(Misbound(reader.clone()), reader.clone());
+    let mut other = resource("runtime.test");
+    other.scope.tenant = "another-tenant".into();
+    for (identity, digest) in [
+        (other, reader.version.contract_digest.clone()),
+        (
+            resource("runtime.test"),
+            format!("sha256:{}", "a".repeat(64)),
+        ),
+    ] {
+        assert!(matches!(
+            runtime
+                .decide(&identity, &digest, &input(json!({"_random": 0.5})), None)
+                .await,
+            Err(DecisionError::Integrity { .. })
+        ));
+    }
+    assert_eq!(reader.reads.load(Ordering::Relaxed), 0);
 }
 
 #[test]

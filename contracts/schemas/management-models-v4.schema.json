@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flaggo.dev/contracts/schemas/management-models-v3.schema.json",
-  "title": "Flaggo Management Models v3",
-  "description": "DecisionContract acceptance and status models for the Flaggo Management API v3.",
+  "$id": "https://flaggo.dev/contracts/schemas/management-models-v4.schema.json",
+  "title": "Flaggo Management Models v4",
+  "description": "Scoped DecisionContract acceptance and status models for the Flaggo Management API v4. Existing semantic content and digest algorithms are unchanged.",
   "type": "object",
   "$defs": {
     "Sha256Digest": {
@@ -1361,7 +1361,7 @@
           "description": "Current deployed contracts ordered by authority tenant, application, environment, contract name, and contractDigest."
         }
       },
-      "description": "Cross-authority materializer catalog. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity."
+      "description": "Current-contract catalog within one explicitly authorized resource scope. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity."
     },
     "DecisionContractVersionList": {
       "type": "object",

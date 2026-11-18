@@ -222,7 +222,7 @@ test("gateway serves state, commands, SSE, decisions, and graceful shutdown", {
         FLAGGO_PLAYGROUND_LOKI_URL: backendUrl,
         FLAGGO_PLAYGROUND_PROMETHEUS_URL: backendUrl,
         FLAGGO_PLAYGROUND_RUNTIME_CONFIG: JSON.stringify({
-          format: "flaggo.runtime-config/v1",
+          format: "flaggo.runtime-config/v2",
           authority: {
             tenant: "local",
             application: "tetris",

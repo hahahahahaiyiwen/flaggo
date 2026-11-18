@@ -3,7 +3,8 @@
 Status: **partial implementation of #94**, not closure or hosted qualification.
 Based on the approved architecture revision
 `83088e825a0380a2a629b3bdd37cf8ffaaf1ae80`. The accepted design models in
-[PORTABLE_CORE](PORTABLE_CORE.md) are not implemented wire revisions.
+[PORTABLE_CORE](PORTABLE_CORE.md) are distinguished from the concrete implemented
+revisions recorded below.
 
 ## Implemented ownership and adapter contract
 
@@ -11,6 +12,7 @@ Based on the approved architecture revision
 | --- | --- |
 | `flaggo-contract-application` | Shared validation, compilation, management HTTP/projections, Candidate admission and activation worker |
 | `flaggo-decision-http` | Shared runtime HTTP, telemetry and injected readiness; uses the existing `DecisionRuntime` |
+| `flaggo-otlp-http` | Shared OTLP transport, independent authentication, whole-batch authorization and durable append; no SQLite dependency |
 | `flaggo-contract-store`, without default features | Accepted-version types, errors, timestamp/cursor contracts |
 | `flaggo-executable-store`, without default features | Lifecycle types/errors and `ContractAuthority` semantic capability |
 | `SqliteContractAuthority` | Local atomic authority adapter over one shared SQLite pool |
@@ -19,9 +21,9 @@ Based on the approved architecture revision
 | `flaggo-analysis-workspace`, without default features | Path-free workflow and virtual filesystem contracts; local adapter remains feature-gated |
 | `flaggo-evidence-store` and `flaggo-raw-otlp-inbox`, without default features | Evidence/query and durable inbox contracts without SQLx or SQLite query-parser dependencies; existing local adapters remain defaults |
 
-`ContractAuthority` v1 describes the **current global-name v3** resource model.
-It is not the future full-scope identity/auth capability. Reads and mutations
-must share one authority domain. `publish_ready` commits name ownership,
+`ContractAuthority` v2 uses an explicit validated
+tenant/application/environment/name resource identity. Reads and mutations
+must share one authority domain. `publish_ready` commits resource ownership,
 immutable contract and bootstrap artifacts, activation and management current
 together. `admit_current` checks currentness and retries inside the same
 transaction as artifact/provenance insertion. Candidate/active state-token
@@ -52,47 +54,74 @@ The evidence and raw-inbox crates likewise separate their contracts from
 optional local adapters; the OTLP codec no longer enables SQLite transitively.
 Their local defaults remain unchanged. The subsequent query slice integrates
 explicit versioned profile selection, canonical cells, saved scope/read/limit
-metadata and Python/deterministic consumers. It does not yet add authorized
-ingestion or distributed projection fencing.
+metadata and Python/deterministic consumers. Ingestion now commits the unchanged
+payload with `flaggo.otlp.authorization/v1` producer/scope metadata only after
+every Resource has been authorized. Replay rechecks that envelope. Distributed
+projection fencing remains outstanding.
 
-## Approved next wire cutover
+## Implemented breaking wire cutover
 
 After reviewing this slice, the user selected
 **"Use v4 for the full-scope API (Recommended)"** and
 **"Replace v3 with an explicit breaking v4 cutover (Recommended)"**.
-The next route is therefore:
+The implemented route is:
 
 ```text
 /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}
 ```
 
-These are decisions for the next implementation, not a claim that v4 endpoints,
-schemas, SDKs or migrations exist. Current runnable apps still serve v3.
-The cutover must preserve unchanged-content digests and historical provenance,
-align wire/SDK/fixtures/local resource keys, and document migration explicitly;
-it must not silently reinterpret v3 names.
+Current runnable apps serve v4 only. Schemas, OpenAPI, generated SDK artifacts,
+fixtures, runtime configuration v2 and local clients use the explicit scope.
+Unchanged contract content retains its digest. HTTP composition requires an
+independently injected `RequestSecurity`; the local binaries explicitly select
+`TrustedLocal`. Missing/invalid identity returns 401, hidden scope 404, visible
+forbidden operation 403, and unavailable authorization authority 503. Declared
+scope is never a credential or an implicit alias selected from claims.
+
+Stop local writers and back up the shared database before explicit migrations:
+
+```powershell
+$env:FLAGGO_CONTRACT_DATABASE_PATH = "<existing local database file>"
+cargo run -p flaggo-contract-service -- --migrate-v3-to-v4
+$env:FLAGGO_DATABASE_URL = "<SQLite URL for that same file>"
+cargo run -p flaggo-otel-ingestion -- --migrate-v1-to-v2
+```
+
+The first operation atomically migrates contract schema 3 and executable schema
+4/5 to 4/6, deriving scope from existing accepted content. It preserves exact
+artifact/provenance bytes, digests, timestamps and lifecycle state; any invalid
+ownership or reference rolls back both stores. Neither migration starts HTTP.
+Startup refuses unsupported schemas rather than guessing or silently resetting.
+The inbox migration preserves legacy bytes and receipts with a **missing**
+authorization envelope, never fabricated past authentication. Such historical
+unverified batches produce an authorization diagnostic rather than new evidence;
+authorized re-ingestion is required to project them. Materializer decoder
+revision 5 does not claim that existing projection/checkpoint revisions were
+automatically replayed. Keep sealed historical runs unchanged.
 
 ## Compatibility record
 
 | Surface | This slice |
 | --- | --- |
 | Product revision | The Git commit containing this record; consumer runs additionally record their exact immutable source SHA in `result.json` |
-| Public HTTP and SDK | Management/runtime **v3**, unchanged routes, bodies and generated SDK artifacts |
+| Public HTTP and SDK | Management/runtime **v4**, explicit full scope; deployment schema v3 retains manifest v2 and requires runtime configuration v2 |
 | Expression/canonical identity | `flaggo.cel/v1`; unchanged contract/executable digest algorithms and fixtures |
-| SQLite schemas | Contract **3**, executable **5**, evidence **4**, raw inbox **1**; no reset or new migration |
-| Authority capability | `flaggo.authority/v1`: globally name-keyed atomic ready publication/current admission and existing activation/read contracts |
-| Reusable fixture revision | `flaggo.authority-conformance/v1` (C03-C05) and `flaggo.evidence-conformance/v1` (local C08/C09/C11 outcomes) |
+| SQLite schemas | Contract **4**, executable **6**, evidence **4**, raw inbox **2**; explicit authority/inbox migrations, no reset |
+| Authority capability | `flaggo.authority/v2`: full-scope atomic ready publication/current admission, scoped catalog/pagination and activation/read contracts |
+| Security capability | `flaggo.security.resource/v1`, independently injected policy; `flaggo.otlp.authorization/v1` retained producer/scope envelope |
+| OTLP profile | `flaggo.otlp-http` **2.0.0**; standard OTLP payloads/endpoints, whole-batch authorization, explicitly local numeric defaults |
+| Reusable fixture revision | `flaggo.authority-conformance/v2` (namespace and C03-C05) and `flaggo.evidence-conformance/v2` (local C08/C09/C11 outcomes) |
 | Evidence query | Explicit `flaggo.evidence.sqlite/v1` selection and `flaggo.evidence.query-result/v1` saved artifacts; provider SQL semantics are labelled, not arbitrary-SQL portable |
 | Canonical evidence cells | `flaggo.evidence.value/v1` integrated into typed rows, Python/agent guidance and deterministic consumers |
 | Workspace/execution | Path-free lease contract plus explicit local projection; existing local filesystem/lock/Python behavior, **not** a durable remote execution protocol or sandbox |
-| First hosted slice | Not qualified: scoped API/security revision and private distributed adapter still required |
+| First hosted slice | Not qualified: private identity/distributed adapters, isolation and actual multi-host scenarios remain required |
 
 Concurrency strengthens persistence without changing PUT retry semantics:
 identical redeployment preserves acceptance identity and learned activation;
 successful publication selects current, including an old-version redeploy.
 Admission still checks currentness **before** duplicate reconciliation, returning
-the existing v3 stale-contract response. Activation tokens, conflict mapping,
-catalog ETags, pagination and exact runtime lookup retain existing contracts.
+the stale-contract response. Activation tokens and exact runtime semantics are
+retained; resource-key pagination and catalog ETags are explicitly scope-bound.
 Bootstrap success telemetry is emitted only after the combined commit succeeds.
 
 ## Adding an adapter
@@ -121,7 +150,7 @@ cargo check -p flaggo-analysis-agent -p flaggo-analysis-workspace -p flaggo-evid
 npm run test:tetris-full-loop
 ```
 
-The [separate consumer](../../../tools/core-consumer/README.md) compiles both HTTP
+The [separate consumer](../../../tools/core-consumer/README.md) compiles all three HTTP
 compositions, runs a canonical fixture and evaluation against a Git revision,
 retains a lockfile and rejects accidental SQLite dependencies. An explicit local
 Git URL proves local immutable consumption only. It is not evidence that the
@@ -154,8 +183,8 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C01-C02 | Existing domain/compiler/runtime tests retained; injected-reader HTTP cache/failure test added. Full reusable cross-adapter corpus remains incomplete |
 | C03-C05 | Reusable local publication/failure/admission/activation outcomes added; existing store ABA/rollback coverage retained. Multi-process barrier/failure matrix and actual distributed proof remain outstanding |
 | C06 | Local injected-reader behavior only; multi-host acknowledgement/outage qualification remains phase 3 |
-| C07 | V4 and explicit breaking cutover approved above; scoped routes, resource keys, independent authentication/security/error artifacts, SDK and migration are not implemented |
-| C08-C09 | Reusable durable append, atomic projection/checkpoint, retry/dedup/conflict outcomes extracted; authorized whole-batch envelope and fenced projection protocol remain outstanding |
+| C07 | Scoped v4 keys/routes/SDK/artifacts, injected authentication and local migration implemented; namespace, security denial/no-write and migration preservation/rollback tests pass. Private identity adapter qualification remains later |
+| C08-C09 | Reusable durable append, atomic projection/checkpoint, retry/dedup/conflict outcomes and authorized whole-batch envelope implemented; replay rejects missing/mismatched authorization. Distributed fenced projection protocol remains outstanding |
 | C10 | Durable monotonic worker fences and authoritative stale-write rejection are not implemented |
 | C11 | Explicit result/profile selection, canonical cells, scope/read/limit/artifact metadata and Python/agent consumers integrated. Shared twelve-category SQLite profile corpus runs under two scopes; local deadline/cancellation and reuse checked. Actual second-provider qualification remains later |
 | C12 | Host paths removed from the lease contract and exact-claim local projection tested; durable conditional publication/fence/execution receipts and reusable recovery scenarios remain outstanding |
@@ -163,6 +192,16 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
 
 ## Observed local verification
+
+The scoped-v4/authorized-ingress slice passes the complete workspace suite
+(330 tests, four explicitly ignored historical/live fixtures), workspace Clippy,
+76 SDK tests, nine focused deployment/provider tests, and 1,201 offline
+wire/profile/capability checks. The four published OTLP fixtures are also
+dispatched through the actual shared receiver, including scoped binary/gzip
+payloads. The deterministic real-host Tetris loop verified scoped deployment,
+SDK/REST parity, authorized telemetry, proposal/review/admission, activation
+and restart persistence. These are local results, not distributed qualification
+or a new remote consumer pin. Scoped workspace/fencing/execution work remains.
 
 The source pinned by the successful standalone consumer is
 `ef2541081231a2e12c738731a6bcf14bbf8d33c3` (authority/HTTP extraction plus its

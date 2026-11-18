@@ -63,7 +63,7 @@ function jsonResponse(
   });
 }
 
-describe("v3 runtime client", () => {
+describe("v4 scoped runtime client", () => {
   it("posts one complete RuntimeInput to the exact contract version", async () => {
     const fetch = vi.fn<FetchLike>(async () => jsonResponse(
       decision(),
@@ -95,7 +95,7 @@ describe("v3 runtime client", () => {
     });
     const [url, init] = fetch.mock.calls[0]!;
     expect(String(url)).toBe(
-      `https://decisions.test/v3/decision-contracts/parallelism/versions/`
+      `https://decisions.test/v4/tenants/local/applications/sdk-test/environments/test/decision-contracts/parallelism/versions/`
       + `${encodeURIComponent(contractDigest)}/decisions`,
     );
     expect(init?.method).toBe("POST");

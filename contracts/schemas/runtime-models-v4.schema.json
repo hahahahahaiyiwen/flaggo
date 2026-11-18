@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flaggo.dev/contracts/schemas/runtime-models-v3.schema.json",
-  "title": "Flaggo runtime API models v3",
+  "$id": "https://flaggo.dev/contracts/schemas/runtime-models-v4.schema.json",
+  "title": "Flaggo runtime API models v4",
   "description": "Strict wire models for stateless DecisionContract evaluation and service health. The SDK constructs the complete RuntimeInput, including internal attributes and optional current exposure.",
   "$defs": {
     "DecisionName": {
@@ -74,7 +74,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Complete SDK-constructed attribute map. The v3 wire profile reserves underscore-prefixed names and defines only _random. Semantic validation rejects user attributes not declared by the contract."
+      "description": "Complete SDK-constructed attribute map. The v4 wire profile reserves underscore-prefixed names and defines only _random. Semantic validation rejects user attributes not declared by the contract."
     },
     "CurrentExposure": {
       "type": "object",

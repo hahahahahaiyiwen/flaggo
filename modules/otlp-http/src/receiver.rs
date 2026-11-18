@@ -14,9 +14,10 @@ use axum::{
 };
 use flaggo_otlp_codec::decode_export_request;
 use flaggo_raw_otlp_inbox::{
-    DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression,
-    OtlpWireEncoding, RawOtlpInboxError,
+    DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpAuthorizationEnvelope, OtlpSignal,
+    OtlpTransportCompression, OtlpWireEncoding, RawOtlpInboxError,
 };
+use flaggo_service_hosting::{Access, Operation, SecurityError};
 use futures_util::TryStreamExt;
 use mime::Mime;
 use opentelemetry::global;
@@ -85,6 +86,24 @@ async fn ingest_with_span(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
+    let principal = match state.security.authenticate(&headers).await {
+        Ok(principal) => principal,
+        Err(error) => {
+            return reject_request(
+                &state,
+                signal,
+                "unknown",
+                "unknown",
+                "denied",
+                "authorization",
+                None,
+                security_error(
+                    error,
+                    request_wire_encoding(&headers).unwrap_or(OtlpWireEncoding::ProtobufJson),
+                ),
+            );
+        }
+    };
     let wire_encoding = match request_wire_encoding(&headers) {
         Ok(value) => value,
         Err(error) => {
@@ -161,23 +180,99 @@ async fn ingest_with_span(
         }
     };
     let payload_size = u64::try_from(payload.len()).unwrap_or(u64::MAX);
-    if !validate_export_request_shape(signal, wire_encoding, &payload) {
+    let request = match decode_export_request(signal, wire_encoding, &payload) {
+        Ok(request) => request,
+        Err(_) => {
+            return reject_request(
+                &state,
+                signal,
+                wire_encoding.as_str(),
+                transport_compression.as_str(),
+                "invalid",
+                "validation",
+                Some(payload_size),
+                OtlpHttpError::new(
+                    StatusCode::BAD_REQUEST,
+                    INVALID_ARGUMENT,
+                    "Request body is not a valid export request for this OTLP signal.",
+                    wire_encoding,
+                ),
+            );
+        }
+    };
+    let scopes = match request.resource_scopes() {
+        Ok(scopes) => scopes,
+        Err(_) => {
+            return reject_request(
+                &state,
+                signal,
+                wire_encoding.as_str(),
+                transport_compression.as_str(),
+                "invalid",
+                "validation",
+                Some(payload_size),
+                OtlpHttpError::new(
+                    StatusCode::BAD_REQUEST,
+                    INVALID_ARGUMENT,
+                    "Every OTLP Resource must declare a valid, unambiguous Flaggo scope.",
+                    wire_encoding,
+                ),
+            );
+        }
+    };
+    for scope in &scopes {
+        let error = match state
+            .security
+            .authorize(&principal, scope, None, Operation::IngestOtlp)
+            .await
+        {
+            Ok(Access::Allowed) => continue,
+            Ok(Access::Hidden) => OtlpHttpError::new(
+                StatusCode::NOT_FOUND,
+                5,
+                "Resource not found.",
+                wire_encoding,
+            ),
+            Ok(Access::Forbidden) => OtlpHttpError::new(
+                StatusCode::FORBIDDEN,
+                7,
+                "Operation forbidden.",
+                wire_encoding,
+            ),
+            Err(error) => security_error(error, wire_encoding),
+        };
         return reject_request(
             &state,
             signal,
             wire_encoding.as_str(),
             transport_compression.as_str(),
-            "invalid",
-            "validation",
+            "denied",
+            "authorization",
             Some(payload_size),
-            OtlpHttpError::new(
-                StatusCode::BAD_REQUEST,
-                INVALID_ARGUMENT,
-                "Request body is not a valid export request for this OTLP signal.",
-                wire_encoding,
-            ),
+            error,
         );
     }
+    let authorization = match OtlpAuthorizationEnvelope::new(principal.subject, scopes) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            tracing::error!(%error, "Identity provider returned an invalid OTLP producer");
+            return reject_request(
+                &state,
+                signal,
+                wire_encoding.as_str(),
+                transport_compression.as_str(),
+                "unavailable",
+                "authorization",
+                Some(payload_size),
+                OtlpHttpError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    UNAVAILABLE,
+                    "Authorization unavailable.",
+                    wire_encoding,
+                ),
+            );
+        }
+    };
 
     let profile_version = DEFAULT_OTLP_PROFILE_VERSION
         .parse()
@@ -188,6 +283,7 @@ async fn ingest_with_span(
         transport_compression,
         profile_version,
         payload,
+        authorization,
     );
     match state.inbox.append(batch).await {
         Ok(_) => {
@@ -363,12 +459,28 @@ async fn read_limited(
     Ok(payload)
 }
 
-fn validate_export_request_shape(
-    signal: OtlpSignal,
-    wire_encoding: OtlpWireEncoding,
-    payload: &[u8],
-) -> bool {
-    decode_export_request(signal, wire_encoding, payload).is_ok()
+fn security_error(error: SecurityError, encoding: OtlpWireEncoding) -> OtlpHttpError {
+    match error {
+        SecurityError::Unauthenticated { challenge } => {
+            let mut error = OtlpHttpError::new(
+                StatusCode::UNAUTHORIZED,
+                16,
+                "Authentication required.",
+                encoding,
+            );
+            error.challenge = Some(challenge);
+            error
+        }
+        SecurityError::Unavailable(detail) => {
+            tracing::error!(%detail, "OTLP authorization authority unavailable");
+            OtlpHttpError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                UNAVAILABLE,
+                "Authorization unavailable.",
+                encoding,
+            )
+        }
+    }
 }
 
 fn success_response(encoding: OtlpWireEncoding) -> Response {
@@ -418,6 +530,7 @@ fn response(
 }
 
 struct OtlpHttpError {
+    challenge: Option<HeaderValue>,
     status: StatusCode,
     rpc_code: i32,
     message: &'static str,
@@ -433,6 +546,7 @@ impl OtlpHttpError {
         response_encoding: OtlpWireEncoding,
     ) -> Self {
         Self {
+            challenge: None,
             status,
             rpc_code,
             message,
@@ -459,7 +573,13 @@ impl OtlpHttpError {
             }))
             .expect("static google.rpc.Status JSON must serialize"),
         };
-        response(self.status, self.response_encoding, body, self.retry_after)
+        let mut response = response(self.status, self.response_encoding, body, self.retry_after);
+        if let Some(challenge) = self.challenge {
+            response
+                .headers_mut()
+                .insert(axum::http::header::WWW_AUTHENTICATE, challenge);
+        }
+        response
     }
 }
 
@@ -639,7 +759,10 @@ mod tests {
                 signal: OtlpSignal::Logs,
                 json: logs_json(),
                 protobuf: ExportLogsServiceRequest {
-                    resource_logs: vec![ResourceLogs::default()],
+                    resource_logs: vec![ResourceLogs {
+                        resource: Some(test_resource()),
+                        ..Default::default()
+                    }],
                 }
                 .encode_to_vec(),
             },
@@ -648,7 +771,10 @@ mod tests {
                 signal: OtlpSignal::Metrics,
                 json: metrics_json(),
                 protobuf: ExportMetricsServiceRequest {
-                    resource_metrics: vec![ResourceMetrics::default()],
+                    resource_metrics: vec![ResourceMetrics {
+                        resource: Some(test_resource()),
+                        ..Default::default()
+                    }],
                 }
                 .encode_to_vec(),
             },
@@ -657,7 +783,10 @@ mod tests {
                 signal: OtlpSignal::Traces,
                 json: traces_json(),
                 protobuf: ExportTraceServiceRequest {
-                    resource_spans: vec![ResourceSpans::default()],
+                    resource_spans: vec![ResourceSpans {
+                        resource: Some(test_resource()),
+                        ..Default::default()
+                    }],
                 }
                 .encode_to_vec(),
             },
@@ -758,6 +887,10 @@ mod tests {
         ];
 
         for (path, signal, payload) in cases {
+            let mut value: Value = serde_json::from_slice(payload).unwrap();
+            value.as_object_mut().unwrap().values_mut().next().unwrap()[0]["resource"] =
+                serde_json::to_value(test_resource()).unwrap();
+            let payload = serde_json::to_vec(&value).unwrap();
             let response = send(
                 inbox.clone(),
                 OtlpReceiverConfig::default(),
@@ -774,7 +907,7 @@ mod tests {
                 signal,
                 OtlpWireEncoding::ProtobufJson,
                 OtlpTransportCompression::Identity,
-                payload,
+                &payload,
             );
         }
     }
@@ -886,6 +1019,7 @@ mod tests {
             inbox.clone(),
             OtlpReceiverConfig::default(),
             RawOtlpInboxLimits::default(),
+            Arc::new(flaggo_service_hosting::TrustedLocal),
         )
         .oneshot(request(
             "/v1/metrics",
@@ -1088,7 +1222,12 @@ mod tests {
     }
 
     fn test_router(inbox: Arc<TestInbox>, config: OtlpReceiverConfig) -> Router {
-        router(inbox, config, RawOtlpInboxLimits::default())
+        router(
+            inbox,
+            config,
+            RawOtlpInboxLimits::default(),
+            Arc::new(flaggo_service_hosting::TrustedLocal),
+        )
     }
 
     async fn send(
@@ -1197,7 +1336,7 @@ mod tests {
     }
 
     fn logs_json() -> &'static [u8] {
-        br#"{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"1770000000000000000","body":{"stringValue":"hello"},"attributes":[{"key":"bytes","value":{"bytesValue":"AQID"}}]}]}]}]}"#
+        br#"{"resourceLogs":[{"resource":{"attributes":[{"key":"flaggo.tenant","value":{"stringValue":"local"}},{"key":"flaggo.application","value":{"stringValue":"test"}},{"key":"flaggo.environment","value":{"stringValue":"test"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"1770000000000000000","body":{"stringValue":"hello"},"attributes":[{"key":"bytes","value":{"bytesValue":"AQID"}}]}]}]}]}"#
     }
 
     fn mixed_authority_logs_json() -> &'static [u8] {
@@ -1205,10 +1344,183 @@ mod tests {
     }
 
     fn metrics_json() -> &'static [u8] {
-        br#"{"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"test.metric","gauge":{"dataPoints":[{"timeUnixNano":"1770000000000000000","asDouble":0.5}]}}]}]}]}"#
+        br#"{"resourceMetrics":[{"resource":{"attributes":[{"key":"flaggo.tenant","value":{"stringValue":"local"}},{"key":"flaggo.application","value":{"stringValue":"test"}},{"key":"flaggo.environment","value":{"stringValue":"test"}}]},"scopeMetrics":[{"metrics":[{"name":"test.metric","gauge":{"dataPoints":[{"timeUnixNano":"1770000000000000000","asDouble":0.5}]}}]}]}]}"#
     }
 
     fn traces_json() -> &'static [u8] {
-        br#"{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"test.span","startTimeUnixNano":"1770000000000000000","endTimeUnixNano":"1770000001000000000"}]}]}]}"#
+        br#"{"resourceSpans":[{"resource":{"attributes":[{"key":"flaggo.tenant","value":{"stringValue":"local"}},{"key":"flaggo.application","value":{"stringValue":"test"}},{"key":"flaggo.environment","value":{"stringValue":"test"}}]},"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"test.span","startTimeUnixNano":"1770000000000000000","endTimeUnixNano":"1770000001000000000"}]}]}]}"#
+    }
+
+    fn test_resource() -> opentelemetry_proto::tonic::resource::v1::Resource {
+        let value: Value = serde_json::from_slice(logs_json()).unwrap();
+        serde_json::from_value(value["resourceLogs"][0]["resource"].clone()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn dispatches_every_published_otlp_fixture_through_authorized_ingress() {
+        use base64::Engine as _;
+        let fixtures = [
+            include_str!("../../../contracts/fixtures/otlp/01-logs-json.json"),
+            include_str!("../../../contracts/fixtures/otlp/02-metrics-json.json"),
+            include_str!("../../../contracts/fixtures/otlp/03-traces-json.json"),
+            include_str!("../../../contracts/fixtures/otlp/04-logs-protobuf-gzip.json"),
+        ];
+        let inbox = TestInbox::new(AppendBehavior::Success);
+        for fixture in fixtures {
+            let fixture: Value = serde_json::from_str(fixture).unwrap();
+            assert_eq!(fixture["otlpProfileVersion"], DEFAULT_OTLP_PROFILE_VERSION);
+            let request = &fixture["request"];
+            let payload = if let Some(encoded) = request["bodyBase64"].as_str() {
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .unwrap()
+            } else {
+                serde_json::to_vec(&request["body"]).unwrap()
+            };
+            let response = send(
+                inbox.clone(),
+                OtlpReceiverConfig::default(),
+                request["path"].as_str().unwrap(),
+                request["headers"]["Content-Type"].as_str(),
+                request["headers"]["Content-Encoding"].as_str(),
+                payload,
+            )
+            .await;
+            assert_eq!(
+                response.status().as_u16(),
+                fixture["expected"]["status"].as_u64().unwrap() as u16
+            );
+            let stored = inbox.batches().pop().unwrap();
+            assert_eq!(stored.authorization.scopes().len(), 1);
+            super::decode_export_request(stored.signal, stored.wire_encoding, &stored.payload)
+                .unwrap()
+                .verify_authorization(&stored.authorization)
+                .unwrap();
+        }
+        assert_eq!(inbox.batches().len(), 4);
+    }
+
+    struct ScopeSecurity(super::Access);
+
+    #[async_trait]
+    impl flaggo_service_hosting::RequestSecurity for ScopeSecurity {
+        async fn authenticate(
+            &self,
+            headers: &axum::http::HeaderMap,
+        ) -> Result<flaggo_service_hosting::Principal, super::SecurityError> {
+            if headers
+                .get("authorization")
+                .is_some_and(|value| value == "Bearer test-key")
+            {
+                Ok(flaggo_service_hosting::Principal {
+                    subject: "producer-a".into(),
+                })
+            } else {
+                Err(super::SecurityError::Unauthenticated {
+                    challenge: axum::http::HeaderValue::from_static("Bearer"),
+                })
+            }
+        }
+
+        async fn authorize(
+            &self,
+            _: &flaggo_service_hosting::Principal,
+            scope: &flaggo_contract::ResourceScope,
+            name: Option<&str>,
+            operation: super::Operation,
+        ) -> Result<super::Access, super::SecurityError> {
+            assert_eq!(operation, super::Operation::IngestOtlp);
+            assert!(name.is_none());
+            Ok(if scope.tenant == "tenant-a" {
+                super::Access::Allowed
+            } else {
+                self.0
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticates_and_authorizes_every_resource_before_atomic_append() {
+        use super::Access;
+        for (access, expected) in [
+            (Access::Hidden, StatusCode::NOT_FOUND),
+            (Access::Forbidden, StatusCode::FORBIDDEN),
+            (Access::Allowed, StatusCode::OK),
+        ] {
+            let inbox = TestInbox::new(AppendBehavior::Success);
+            let app = router(
+                inbox.clone(),
+                OtlpReceiverConfig::default(),
+                RawOtlpInboxLimits::default(),
+                Arc::new(ScopeSecurity(access)),
+            );
+            let response = app
+                .clone()
+                .oneshot(request(
+                    "/v1/logs",
+                    Some("application/json"),
+                    None,
+                    mixed_authority_logs_json().to_vec(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.headers()["www-authenticate"], "Bearer");
+            assert!(inbox.batches().is_empty());
+
+            let mut input = request(
+                "/v1/logs",
+                Some("application/json"),
+                Some("gzip"),
+                gzip(mixed_authority_logs_json()),
+            );
+            input.headers_mut().insert(
+                "authorization",
+                axum::http::HeaderValue::from_static("Bearer test-key"),
+            );
+            let response = app.oneshot(input).await.unwrap();
+            assert_eq!(response.status(), expected);
+            let batches = inbox.batches();
+            if access == Access::Allowed {
+                assert_eq!(batches.len(), 1);
+                assert_eq!(batches[0].payload, mixed_authority_logs_json());
+                assert_eq!(batches[0].authorization.producer(), "producer-a");
+                assert_eq!(batches[0].authorization.scopes().len(), 2);
+            } else {
+                assert!(
+                    batches.is_empty(),
+                    "A forbidden Resource must reject the entire batch"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_or_ambiguous_scope_rejects_the_entire_batch() {
+        let inbox = TestInbox::new(AppendBehavior::Success);
+        for mutation in ["missing", "duplicate", "non-string"] {
+            let mut value: Value = serde_json::from_slice(mixed_authority_logs_json()).unwrap();
+            let attributes = value["resourceLogs"][1]["resource"]["attributes"]
+                .as_array_mut()
+                .unwrap();
+            match mutation {
+                "missing" => {
+                    attributes.remove(0);
+                }
+                "duplicate" => attributes.push(attributes[0].clone()),
+                _ => attributes[0]["value"] = serde_json::json!({"intValue":"1"}),
+            }
+            let response = send(
+                inbox.clone(),
+                OtlpReceiverConfig::default(),
+                "/v1/logs",
+                Some("application/json"),
+                None,
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(inbox.batches().is_empty());
+        }
     }
 }

@@ -1,11 +1,11 @@
 use std::{env, net::SocketAddr, time::Duration};
 
+use flaggo_otlp_http::{DEFAULT_MAXIMUM_DECOMPRESSED_REQUEST_BYTES, OtlpReceiverConfig};
 use flaggo_raw_otlp_inbox::RawOtlpInboxLimits;
 
 pub const DATABASE_URL_ENVIRONMENT_VARIABLE: &str = "FLAGGO_DATABASE_URL";
 pub const DEFAULT_DATABASE_URL: &str = "sqlite://flaggo.db";
 pub const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1:5090";
-pub const DEFAULT_MAXIMUM_DECOMPRESSED_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 pub const INBOX_HARD_RETENTION_SECONDS_ENVIRONMENT_VARIABLE: &str =
     "FLAGGO_OTLP_INBOX_HARD_RETENTION_SECONDS";
 pub const INBOX_MAX_PAYLOAD_BYTES_ENVIRONMENT_VARIABLE: &str =
@@ -13,40 +13,6 @@ pub const INBOX_MAX_PAYLOAD_BYTES_ENVIRONMENT_VARIABLE: &str =
 pub const LISTEN_ADDRESS_ENVIRONMENT_VARIABLE: &str = "FLAGGO_OTEL_INGESTION_LISTEN_ADDRESS";
 pub const MAXIMUM_DECOMPRESSED_REQUEST_BYTES_ENVIRONMENT_VARIABLE: &str =
     "FLAGGO_OTLP_MAXIMUM_DECOMPRESSED_REQUEST_BYTES";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OtlpReceiverConfig {
-    maximum_decompressed_request_bytes: usize,
-}
-
-impl OtlpReceiverConfig {
-    pub fn new(maximum_decompressed_request_bytes: usize) -> Result<Self, String> {
-        if maximum_decompressed_request_bytes == 0
-            || maximum_decompressed_request_bytes == usize::MAX
-        {
-            return Err(
-                "maximum decompressed OTLP request bytes must be between 1 and usize::MAX - 1"
-                    .to_owned(),
-            );
-        }
-        Ok(Self {
-            maximum_decompressed_request_bytes,
-        })
-    }
-
-    #[must_use]
-    pub const fn maximum_decompressed_request_bytes(self) -> usize {
-        self.maximum_decompressed_request_bytes
-    }
-}
-
-impl Default for OtlpReceiverConfig {
-    fn default() -> Self {
-        Self {
-            maximum_decompressed_request_bytes: DEFAULT_MAXIMUM_DECOMPRESSED_REQUEST_BYTES,
-        }
-    }
-}
 
 pub fn configured_listen_address() -> Result<SocketAddr, String> {
     let value = env::var(LISTEN_ADDRESS_ENVIRONMENT_VARIABLE)

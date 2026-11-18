@@ -1,8 +1,10 @@
 import { InvalidServerResponseError } from "../errors.js";
+import type { AuthorityScope } from "../configuration/types.js";
 import type {
   DecisionContractValidationResult as GeneratedValidationResult,
   DecisionContractVersion as GeneratedDecisionContractVersion,
   DecisionContractVersionList as GeneratedDecisionContractVersionList,
+  DecisionContract as GeneratedDecisionContract,
 } from "../generated/management-models.generated.js";
 import {
   validateDecisionContract,
@@ -18,6 +20,7 @@ import {
   record,
 } from "../internal/guards.js";
 import { createTransport } from "../internal/transport.js";
+import { resourceScopePath, sameAuthority } from "../internal/resource.js";
 import {
   assertInputSchema,
   assertResponseSchema,
@@ -40,7 +43,7 @@ function validateConfiguration(
     raw === undefined
     || !hasOnlyKeys(
       raw,
-      new Set(["baseUrl", "fetch", "timeoutMs", "retry"]),
+      new Set(["baseUrl", "authority", "fetch", "timeoutMs", "retry"]),
     )
   ) {
     inputError("/", "Contract client configuration contains unknown members.");
@@ -70,6 +73,7 @@ function validationResultOrThrow(
 function versionOrThrow<TResult extends JsonValue>(
   value: unknown,
   expectedName: string,
+  expectedAuthority: AuthorityScope,
   expectedDigest?: Sha256Digest,
 ): DecisionContractVersion<TResult> {
   assertResponseSchema(
@@ -81,6 +85,7 @@ function versionOrThrow<TResult extends JsonValue>(
   if (
     version.name !== expectedName
     || version.contract.name !== expectedName
+    || !sameAuthority(version.contract.authority, expectedAuthority)
     || (
       expectedDigest !== undefined
       && version.contractDigest !== expectedDigest
@@ -155,25 +160,27 @@ export function createContractClient(
   configuration: ContractClientConfiguration,
 ): ContractClient {
   validateConfiguration(configuration);
+  const scopePath = resourceScopePath(configuration.authority);
+  const authority = Object.freeze({ ...configuration.authority });
   const transport = createTransport(configuration);
+  function validateContract(value: unknown): void {
+    assertInputSchema(validateDecisionContract, value, "DecisionContract");
+    if (!sameAuthority((value as GeneratedDecisionContract).authority, authority)) {
+      inputError("/authority", "DecisionContract authority must match the client's explicit resource scope.");
+    }
+  }
 
   return {
     async validate(contract, options = {}) {
       const name = contractName(contract);
       return transport.request({
         method: "POST",
-        path: `/v3/decision-contracts/${encodeURIComponent(name)}/validate`,
+        path: `${scopePath}/decision-contracts/${encodeURIComponent(name)}/validate`,
         body: contract,
         options,
         successStatuses: [200],
         responseDescription: "contract validation",
-        validateBody(value) {
-          assertInputSchema(
-            validateDecisionContract,
-            value,
-            "DecisionContract",
-          );
-        },
+        validateBody: validateContract,
         parse: validationResultOrThrow,
       });
     },
@@ -182,20 +189,14 @@ export function createContractClient(
       const name = contractName(contract);
       return transport.request({
         method: "PUT",
-        path: `/v3/decision-contracts/${encodeURIComponent(name)}`,
+        path: `${scopePath}/decision-contracts/${encodeURIComponent(name)}`,
         body: contract,
         options,
         successStatuses: [200, 201],
         responseDescription: "contract deployment",
-        validateBody(value) {
-          assertInputSchema(
-            validateDecisionContract,
-            value,
-            "DecisionContract",
-          );
-        },
+        validateBody: validateContract,
         parse(value) {
-          return versionOrThrow(value, name);
+          return versionOrThrow(value, name, authority);
         },
       });
     },
@@ -204,12 +205,12 @@ export function createContractClient(
       assertDecisionName(contractNameValue);
       return transport.request({
         method: "GET",
-        path: `/v3/decision-contracts/${encodeURIComponent(contractNameValue)}`,
+        path: `${scopePath}/decision-contracts/${encodeURIComponent(contractNameValue)}`,
         options,
         successStatuses: [200],
         responseDescription: "current contract read",
         parse(value) {
-          return versionOrThrow(value, contractNameValue);
+          return versionOrThrow(value, contractNameValue, authority);
         },
       });
     },
@@ -219,13 +220,13 @@ export function createContractClient(
       assertSha256Digest(contractDigest);
       return transport.request({
         method: "GET",
-        path: `/v3/decision-contracts/${encodeURIComponent(contractNameValue)}`
+        path: `${scopePath}/decision-contracts/${encodeURIComponent(contractNameValue)}`
           + `/versions/${encodeURIComponent(contractDigest)}`,
         options,
         successStatuses: [200],
         responseDescription: "exact contract-version read",
         parse(value) {
-          return versionOrThrow(value, contractNameValue, contractDigest);
+          return versionOrThrow(value, contractNameValue, authority, contractDigest);
         },
       });
     },
@@ -236,7 +237,7 @@ export function createContractClient(
       const suffix = parameters.size === 0 ? "" : `?${parameters.toString()}`;
       return transport.request({
         method: "GET",
-        path: `/v3/decision-contracts/${encodeURIComponent(contractNameValue)}`
+        path: `${scopePath}/decision-contracts/${encodeURIComponent(contractNameValue)}`
           + `/versions${suffix}`,
         options,
         successStatuses: [200],

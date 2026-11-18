@@ -82,8 +82,8 @@ flowchart TB
     evidenceStore[("Evidence Store")]
     analysis{"Async Analysis"}
 
-    deploy -->|Management API v3| contract
-    runtime -->|Runtime API v3: exact name and digest| decision
+    deploy -->|Management API v4| contract
+    runtime -->|Runtime API v4: exact name and digest| decision
     decision -->|RuntimeDecision| runtime
     telemetry -->|OTLP/HTTP| receiver
 
@@ -172,7 +172,7 @@ project.
 | Transition | Authority holder | Result |
 | --- | --- | --- |
 | Establish validation or deployment scope | Contract Service | Tenant, application, and environment declared by the submitted contract |
-| Claim contract-name ownership | Contract Service | The first accepted declared authority owns the name globally |
+| Address contract resources | Contract Service | Full tenant/application/environment/name identity; independent authenticated operation authorization |
 | Accept contract | Contract Service | Server-computed immutable `contractDigest` containing declared authority and a name-keyed management current pointer |
 | Generate candidate | Contract Service for default/authored paths; Async Analysis for learned paths | Immutable proposal bound to one exact digest; no runtime authority |
 | Validate and admit candidate | Contract Service | Contract-conformant immutable executable and provenance |

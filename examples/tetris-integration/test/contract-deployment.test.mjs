@@ -91,7 +91,7 @@ test("deployment manifest deploys each contract with one PUT", async () => {
     assert.equal(requests[0].init.method, "PUT");
     assert.equal(
       String(requests[0].input),
-      "https://contracts.test/v3/decision-contracts/demo.interval",
+      "https://contracts.test/v4/tenants/local/applications/deployment-test/environments/test/decision-contracts/demo.interval",
     );
     assert.deepEqual(
       JSON.parse(String(requests[0].init.body)),
@@ -100,7 +100,7 @@ test("deployment manifest deploys each contract with one PUT", async () => {
     assert.deepEqual(result.contracts[0].contract, deployedContract);
     assert.equal(result.contracts[0].deployment.contractDigest, contractDigest);
     assert.deepEqual(JSON.parse(JSON.stringify(result.runtimeConfig)), {
-      format: "flaggo.runtime-config/v1",
+      format: "flaggo.runtime-config/v2",
       authority,
       services,
       bindings: {

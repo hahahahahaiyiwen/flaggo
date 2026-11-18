@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flaggo.dev/contracts/schemas/deployment-models-v2.schema.json",
-  "title": "Flaggo Deployment Models v2",
+  "$id": "https://flaggo.dev/contracts/schemas/deployment-models-v3.schema.json",
+  "title": "Flaggo Deployment Models v3",
   "description": "Authored deployment manifest and generated immutable runtime configuration.",
   "oneOf": [
     {
@@ -133,7 +133,7 @@
       ],
       "properties": {
         "format": {
-          "const": "flaggo.runtime-config/v1"
+          "const": "flaggo.runtime-config/v2"
         },
         "authority": {
           "$ref": "#/$defs/AuthorityScope"
@@ -153,7 +153,7 @@
           "maxProperties": 128
         }
       },
-      "description": "Generated immutable application configuration containing the same authority bound into every deployed DecisionContract."
+      "description": "Generated immutable v4 client configuration. The explicit authority selects tenant/application/environment routes and is not an authentication credential. Legacy runtime-config/v1 must be explicitly regenerated."
     }
   }
 }

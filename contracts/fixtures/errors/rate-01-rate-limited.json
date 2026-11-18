@@ -2,11 +2,11 @@
   "name": "runtime-rate-limited",
   "scenario": 35,
   "invariant": "Runtime rate limiting returns 429 rate-limited with Retry-After; SDK fallback behavior is outside this contract.",
-  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
-  "responseSchema": "problem-details-v3.schema.json",
+  "requestSchema": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "problem-details-v4.schema.json",
   "request": {
     "method": "POST",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
     "headers": {
       "Content-Type": "application/json"
     },
@@ -28,7 +28,7 @@
       "type": "https://flaggo.dev/problems/rate-limited",
       "title": "Rate limited",
       "status": 429,
-      "instance": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+      "instance": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
       "detail": "Request rate exceeded."
     }
   }

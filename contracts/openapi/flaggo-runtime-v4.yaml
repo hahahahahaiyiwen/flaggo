@@ -1,0 +1,332 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flaggo Runtime API",
+    "version": "4.0.0",
+    "description": "Breaking scoped v4 API. Resource identity is tenant/application/environment/name; contractDigest still covers unchanged authority and semantic content. Authentication is an independently supplied host capability, never inferred from route or body declarations. Missing or invalid identity returns 401, hidden scope/resource returns 404, and a visible but forbidden operation returns 403. Authority outages fail closed with 503. Trusted local composition explicitly opts out of credential checks. No hosted identity provider or token protocol is selected by this public contract.",
+    "license": {
+      "name": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://decision.flaggo.dev",
+      "description": "Decision Service"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "runtime-decisions",
+      "description": "Runtime decisions produced from exact DecisionContract versions"
+    },
+    {
+      "name": "health",
+      "description": "Liveness and readiness"
+    }
+  ],
+  "paths": {
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions": {
+      "post": {
+        "tags": [
+          "runtime-decisions"
+        ],
+        "operationId": "createRuntimeDecision",
+        "summary": "Create a runtime decision from an exact DecisionContract version.",
+        "description": "Loads the exact immutable version by full scoped resource identity and digest; never resolves current. Resolves authoritative active state on each request, evaluates the immutable program, and returns without persisting request state. Wrong-scope digests return 404.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/RuntimeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision produced by the executable active for the exact contract digest.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/RuntimeDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/ProblemWithRetryAfter"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProblemWithRetryAfter"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthLive",
+        "summary": "Liveness probe. No external dependency checks.",
+        "responses": {
+          "200": {
+            "description": "Process can serve the handler.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/LivenessResult"
+                }
+              }
+            }
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": false,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthReady",
+        "summary": "Readiness probe over required and optional dependencies.",
+        "description": "200 ready requires every check up. 200 degraded is allowed when only optional checks are impaired. Any required check that is not up returns 503 not-ready.",
+        "responses": {
+          "200": {
+            "description": "Ready or degraded readiness.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not-ready: a required dependency is not up.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": false,
+          "mechanism": "host-defined"
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ContractNamePath": {
+        "name": "contractName",
+        "in": "path",
+        "required": true,
+        "description": "Stable user-owned identity of the named DecisionContract resource.",
+        "schema": {
+          "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/DecisionName"
+        }
+      },
+      "ContractDigestPath": {
+        "name": "contractDigest",
+        "in": "path",
+        "required": true,
+        "description": "Exact immutable DecisionContract version used for runtime authority. It must belong to contractName; runtime never substitutes the current version.",
+        "schema": {
+          "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "CorrelationIdHeader": {
+        "name": "X-Flaggo-Correlation-Id",
+        "in": "header",
+        "required": false,
+        "description": "Optional client-supplied tracing correlation id.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "TenantPath": {
+        "name": "tenant",
+        "in": "path",
+        "required": true,
+        "description": "Explicit resource identity, not an authentication credential.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        }
+      },
+      "ApplicationPath": {
+        "name": "application",
+        "in": "path",
+        "required": true,
+        "description": "Explicit resource identity, not an authentication credential.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        }
+      },
+      "EnvironmentPath": {
+        "name": "environment",
+        "in": "path",
+        "required": true,
+        "description": "Explicit resource identity, not an authentication credential.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        }
+      }
+    },
+    "headers": {
+      "CorrelationId": {
+        "description": "Server request-correlation identifier returned on every response.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RetryAfter": {
+        "description": "RFC 9110 Retry-After delay in seconds.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "RFC 9457 Problem Details error. Programs branch on the problem type URI and HTTP status, never on title or detail.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../schemas/problem-details-v4.schema.json"
+            }
+          }
+        }
+      },
+      "ProblemWithRetryAfter": {
+        "description": "RFC 9457 Problem Details error with an advisory Retry-After header.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../schemas/problem-details-v4.schema.json"
+            }
+          }
+        }
+      }
+    }
+  }
+}

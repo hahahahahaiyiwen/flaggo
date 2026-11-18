@@ -7,6 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-trait = "0.1.89"
 axum.workspace = true
 flaggo-contract = { path = "../contract" }
 flaggo-service-observability.workspace = true

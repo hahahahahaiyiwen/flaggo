@@ -43,13 +43,35 @@ impl DecodedBatch {
 }
 
 pub fn decode_batch(batch: &RawOtlpInboxBatch) -> DecodedBatch {
-    decode_export_request(batch.signal, batch.wire_encoding, &batch.payload)
-        .map(|request| match request {
-            OtlpExportRequest::Logs(request) => decompose_logs(request, batch.received_at),
-            OtlpExportRequest::Metrics(request) => decompose_metrics(request, batch.received_at),
-            OtlpExportRequest::Traces(request) => decompose_traces(request, batch.received_at),
-        })
-        .unwrap_or_else(|error| decode_failure(error.to_string()))
+    let request = match decode_export_request(batch.signal, batch.wire_encoding, &batch.payload) {
+        Ok(request) => request,
+        Err(error) => return decode_failure(error.to_string()),
+    };
+    let authorized = batch
+        .authorization
+        .as_ref()
+        .ok_or_else(|| "No verified authorization envelope was retained.".to_owned())
+        .and_then(|envelope| {
+            request
+                .verify_authorization(envelope)
+                .map_err(|error| error.to_string())
+        });
+    if let Err(error) = authorized {
+        return DecodedBatch {
+            candidates: Vec::new(),
+            diagnostics: vec![DecoderDiagnostic {
+                candidate_ordinal: None,
+                code: "otlp.authorization_failed".into(),
+                message: "The retained OTLP batch is not authorized for projection.".into(),
+                detail: json!({ "error": error }),
+            }],
+        };
+    }
+    match request {
+        OtlpExportRequest::Logs(request) => decompose_logs(request, batch.received_at),
+        OtlpExportRequest::Metrics(request) => decompose_metrics(request, batch.received_at),
+        OtlpExportRequest::Traces(request) => decompose_traces(request, batch.received_at),
+    }
 }
 
 fn decode_failure(error: String) -> DecodedBatch {

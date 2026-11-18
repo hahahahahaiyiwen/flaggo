@@ -2,6 +2,9 @@
 
 ## Status
 
+The baseline compatibility matrix describes the #93 design gate. Current
+implemented revisions and local results are recorded in [CORE_EXTRACTION](CORE_EXTRACTION.md).
+
 Phase-1 plan for [#93](https://github.com/hahahahahaiyiwen/flaggo/issues/93).
 Read with the [ADR and decision register](PORTABLE_CORE.md) and
 [behavior decisions and proposals](DISTRIBUTED_BEHAVIOR.md). This is a specification of

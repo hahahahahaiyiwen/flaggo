@@ -13,7 +13,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FIXTURE_REVISION: &str = "flaggo.evidence-conformance/v1";
+pub const FIXTURE_REVISION: &str = "flaggo.evidence-conformance/v2";
 
 #[async_trait]
 pub trait InboxFixture {
@@ -30,6 +30,8 @@ pub async fn c08_durable_acceptance(fixture: &impl InboxFixture) {
         transport_compression: OtlpTransportCompression::Identity,
         otlp_profile_version: DEFAULT_OTLP_PROFILE_VERSION.parse().unwrap(),
         payload: br#"{"resourceLogs":[]}"#.to_vec(),
+        authorization: OtlpAuthorizationEnvelope::new("conformance-producer".into(), vec![])
+            .unwrap(),
     };
     let first = inbox.append(batch.clone()).await.unwrap();
     fixture.fail_append(true).await;
@@ -52,6 +54,7 @@ pub async fn c08_durable_acceptance(fixture: &impl InboxFixture) {
         "transport duplicates remain separate durable batches"
     );
     for (row, receipt) in rows.iter().zip([first, second]) {
+        assert_eq!(row.authorization.as_ref(), Some(&batch.authorization));
         assert_eq!(row.payload, batch.payload);
         assert_eq!(row.inbox_batch_id, receipt.inbox_batch_id);
         assert_eq!(row.payload_sha256, receipt.payload_sha256);

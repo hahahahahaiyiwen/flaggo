@@ -313,6 +313,9 @@ protocol is an explicit operator action, not an automatic retry strategy.
 | `FLAGGO_CONTRACT_SERVICE_URL` | `http://127.0.0.1:5000` | Base URL for current-contract reads and Candidate admission |
 | `FLAGGO_CONTRACT_CATALOG_URL` | derived from Contract Service | Optional full current-catalog endpoint URL |
 | `FLAGGO_ANALYSIS_WORKSPACE_ROOT` | `./flaggo-analysis-workspaces` | Durable contract workspaces |
+| `FLAGGO_ANALYSIS_TENANT` | required | Explicit tenant for v4 catalog and contract requests |
+| `FLAGGO_ANALYSIS_APPLICATION` | required | Explicit application for v4 requests |
+| `FLAGGO_ANALYSIS_ENVIRONMENT` | required | Explicit environment for v4 requests |
 | `FLAGGO_ANALYSIS_COPILOT_HOME` | `./flaggo-analysis-copilot` | Isolated local Copilot runtime state |
 | `FLAGGO_ANALYSIS_INFERENCE` | `github` | Explicit `github` or `byok` inference |
 | `FLAGGO_ANALYSIS_MODEL` | Copilot SDK default in GitHub mode | Exact model/deployment; required for BYOK |

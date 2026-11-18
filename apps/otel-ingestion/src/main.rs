@@ -22,9 +22,18 @@ const MAXIMUM_RETENTION_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60)
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let database_url = configured_database_url()?;
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--migrate-v1-to-v2"] {
+        SqliteRawOtlpInbox::migrate_v1_to_v2(&database_url).await?;
+        println!("Inbox schema migrated; legacy batches remain explicitly unverified.");
+        return Ok(());
+    }
+    if !arguments.is_empty() {
+        return Err(io::Error::other("Usage: flaggo-otel-ingestion [--migrate-v1-to-v2]").into());
+    }
     let inbox_limits = configured_inbox_limits()?;
     let listen_address = configured_listen_address()?;
-    let receiver = configured_receiver()?;
+    let receiver = configured_receiver()?.with_local_health_details();
     let listener = TcpListener::bind(listen_address).await?;
     let address = listener.local_addr()?;
     reject_own_receiver(address)?;
@@ -84,7 +93,13 @@ async fn run(
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let server = axum::serve(
         listener,
-        instrumented_router(inbox.clone(), receiver, inbox_limits, observability.clone()),
+        instrumented_router(
+            inbox.clone(),
+            receiver,
+            inbox_limits,
+            observability.clone(),
+            Arc::new(flaggo_service_hosting::TrustedLocal),
+        ),
     )
     .with_graceful_shutdown(wait_for_shutdown(shutdown_receiver.clone()))
     .into_future();
@@ -301,6 +316,11 @@ mod tests {
                     .parse()
                     .expect("profile version"),
                 vec![1, 2, 3],
+                flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new(
+                    "trusted-test".into(),
+                    vec![],
+                )
+                .unwrap(),
             ))
             .await
             .expect("durable append");

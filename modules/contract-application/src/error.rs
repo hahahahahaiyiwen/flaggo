@@ -11,8 +11,8 @@ pub enum ServiceError {
     InvalidQuery,
     #[error("The request path or query parameters are invalid.")]
     InvalidArgument,
-    #[error("The route contractName must equal the DecisionContract name.")]
-    NameMismatch,
+    #[error("The route scope and name must equal the DecisionContract authority and name.")]
+    ResourceMismatch,
     #[error("The decision contract failed semantic validation.")]
     InvalidContract,
     #[error("The requested DecisionContract resource does not exist.")]
@@ -49,7 +49,7 @@ impl ServiceError {
             )
             | Self::InvalidQuery
             | Self::InvalidArgument
-            | Self::NameMismatch
+            | Self::ResourceMismatch
             | Self::InvalidContract
             | Self::Compilation(
                 ExecutableCompilationError::Validation(_)
@@ -68,8 +68,7 @@ impl ServiceError {
                 ("invalid", "not_found")
             }
             Self::Stale { .. } => ("stale", "conflict"),
-            Self::ContractStore(C::AuthorityConflict { .. })
-            | Self::ExecutableStore(
+            Self::ExecutableStore(
                 E::ActivationConflict { .. }
                 | E::CandidateConflict { .. }
                 | E::CurrentContractConflict { .. }
@@ -123,10 +122,10 @@ impl ServiceError {
                 "Invalid request",
                 "The request path or query parameters are invalid.".into(),
             ),
-            Self::NameMismatch => (
+            Self::ResourceMismatch => (
                 StatusCode::CONFLICT,
-                "contract-name-mismatch",
-                "Contract name mismatch",
+                "contract-resource-mismatch",
+                "Contract resource mismatch",
                 self.to_string(),
             ),
             Self::InvalidContract => (
@@ -162,21 +161,6 @@ impl ServiceError {
                 "stale-contract-digest",
                 "Stale contract digest",
                 self.to_string(),
-            ),
-            Self::ContractStore(C::AuthorityConflict {
-                contract_name,
-                existing_authority,
-                ..
-            }) => (
-                StatusCode::CONFLICT,
-                "contract-name-authority-conflict",
-                "Contract name authority conflict",
-                format!(
-                    "Contract name '{contract_name}' is already owned by authority '{}/{}/{}'.",
-                    existing_authority.tenant.as_deref().unwrap_or(""),
-                    existing_authority.application.as_deref().unwrap_or(""),
-                    existing_authority.environment.as_deref().unwrap_or("")
-                ),
             ),
             Self::ExecutableStore(E::AdmissionConflict { .. }) => (
                 StatusCode::CONFLICT,

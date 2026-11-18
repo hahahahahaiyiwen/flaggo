@@ -611,7 +611,7 @@ async fn rejects_an_unsupported_owned_schema_version() {
         RawOtlpInboxError::UnsupportedSchemaVersion {
             component: "raw-otlp-inbox",
             found: 99,
-            expected: 1
+            expected: 2
         }
     ));
 }
@@ -665,7 +665,74 @@ async fn preserves_schema_versions_owned_by_other_components() {
     pool.close().await;
 
     assert_eq!(contract_version, 7);
-    assert_eq!(inbox_version, 1);
+    assert_eq!(inbox_version, 2);
+}
+
+#[tokio::test]
+async fn explicit_migration_preserves_legacy_bytes_without_inventing_authorization() {
+    let fixture = TestInbox::create(RawOtlpInboxLimits::default()).await;
+    fixture
+        .inbox
+        .append(batch(
+            OtlpSignal::Logs,
+            OtlpWireEncoding::ProtobufJson,
+            OtlpTransportCompression::Identity,
+            br#"{"resourceLogs":[]}"#.to_vec(),
+        ))
+        .await
+        .unwrap();
+    let original = fixture
+        .inbox
+        .read_after(None, NonZeroU16::new(1).unwrap())
+        .await
+        .unwrap()
+        .remove(0);
+    fixture.inbox.close().await;
+    let pool = SqlitePool::connect(&fixture.database_url).await.unwrap();
+    sqlx::query("ALTER TABLE raw_otlp_inbox_batches DROP COLUMN authorization_json")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE flaggo_schema_versions SET version = 1 WHERE component = 'raw-otlp-inbox'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    assert!(matches!(
+        SqliteRawOtlpInbox::connect(&fixture.database_url, RawOtlpInboxLimits::default()).await,
+        Err(RawOtlpInboxError::UnsupportedSchemaVersion {
+            found: 1,
+            expected: 2,
+            ..
+        })
+    ));
+    assert!(
+        SqliteRawOtlpInbox::migrate_v1_to_v2(&fixture.database_url)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !SqliteRawOtlpInbox::migrate_v1_to_v2(&fixture.database_url)
+            .await
+            .unwrap()
+    );
+    let migrated =
+        SqliteRawOtlpInbox::connect(&fixture.database_url, RawOtlpInboxLimits::default())
+            .await
+            .unwrap();
+    let actual = migrated
+        .read_after(None, NonZeroU16::new(1).unwrap())
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        actual,
+        flaggo_raw_otlp_inbox::RawOtlpInboxBatch {
+            authorization: None,
+            ..original
+        }
+    );
+    migrated.close().await;
 }
 
 #[test]
@@ -697,6 +764,8 @@ fn batch(
             .parse()
             .expect("profile version"),
         payload,
+        flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new("trusted-test".into(), vec![])
+            .unwrap(),
     )
 }
 

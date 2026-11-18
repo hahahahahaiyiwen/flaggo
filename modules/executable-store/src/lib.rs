@@ -16,7 +16,7 @@ use flaggo_contract::ContractError;
 #[cfg(feature = "sqlite")]
 use flaggo_contract::digests::{ExpressionCanonicalizer, executable_digest, is_sha256_digest};
 #[cfg(feature = "sqlite")]
-use flaggo_contract::{DecisionExecutable, strict_json};
+use flaggo_contract::{ContractResourceId, DecisionExecutable, strict_json};
 #[cfg(feature = "sqlite")]
 use flaggo_contract_store::cursor;
 use flaggo_contract_store::timestamp;
@@ -44,7 +44,9 @@ pub enum ExecutableStoreError {
         message: String,
         out_of_range: bool,
     },
-    #[error("Unsupported executable-store schema version {0}; expected 5.")]
+    #[error(
+        "Unsupported executable-store schema version {0}; expected 6. Migrate scoped resources explicitly."
+    )]
     UnsupportedSchema(i64),
     #[error("Executable '{0}' does not exist.")]
     NotFound(String),
@@ -132,6 +134,7 @@ mod sqlite {
 
     pub(super) mod authority;
     mod lifecycle;
+    mod migration;
 
     type Result<T> = std::result::Result<T, ExecutableStoreError>;
     type Clock = Arc<dyn Fn() -> DateTime<FixedOffset> + Send + Sync>;
@@ -194,11 +197,6 @@ mod sqlite {
             .fetch_optional(&mut *transaction)
             .await?;
             match version {
-                Some(4) => {
-                    sqlx::raw_sql(schema::MIGRATE_FOUR)
-                        .execute(&mut *transaction)
-                        .await?;
-                }
                 Some(SCHEMA_VERSION) | None => {}
                 Some(version) => return Err(ExecutableStoreError::UnsupportedSchema(version)),
             }
@@ -251,11 +249,13 @@ mod sqlite {
             self.validate_stored(stored)?;
             validate_admission(stored, admission)?;
             check(&cancellation)?;
+            let resource_key = admission.resource.resource_key()?;
             let existing = sqlx::query(
-                "SELECT workspace_id, cycle_id, attempt_id, contract_name,
+                "SELECT resource_key, workspace_id, cycle_id, attempt_id, contract_name,
             contract_digest, executable_digest, analysis_manifest_digest, created_at
-            FROM analysis_candidate_admissions WHERE workspace_id = ? AND cycle_id = ?",
+            FROM analysis_candidate_admissions WHERE resource_key = ? AND workspace_id = ? AND cycle_id = ?",
             )
+            .bind(&resource_key)
             .bind(&admission.workspace_id)
             .bind(&admission.cycle_id)
             .fetch_optional(&mut *connection)
@@ -303,13 +303,14 @@ mod sqlite {
             insert_candidate(connection, stored).await?;
             sqlx::query(
                 "INSERT INTO analysis_candidate_admissions(
-            workspace_id, cycle_id, attempt_id, contract_name, contract_digest, executable_digest,
-            analysis_manifest_digest, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            resource_key, workspace_id, cycle_id, attempt_id, contract_name, contract_digest, executable_digest,
+            analysis_manifest_digest, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
+            .bind(&resource_key)
             .bind(&admission.workspace_id)
             .bind(&admission.cycle_id)
             .bind(&admission.attempt_id)
-            .bind(&admission.contract_name)
+            .bind(&admission.resource.name)
             .bind(&admission.contract_digest)
             .bind(&admission.executable_digest)
             .bind(&admission.analysis_manifest_digest)
@@ -428,7 +429,7 @@ mod sqlite {
                 checked_executable_json, provenance_json, lifecycle_state, state_version,
                 created_at, activated_at FROM decision_executables LIMIT 0")
                 .fetch_all(&self.pool).await?;
-            sqlx::query("SELECT workspace_id, cycle_id, attempt_id, contract_name, contract_digest,
+            sqlx::query("SELECT resource_key, workspace_id, cycle_id, attempt_id, contract_name, contract_digest,
                 executable_digest, analysis_manifest_digest, created_at FROM analysis_candidate_admissions LIMIT 0")
                 .fetch_all(&self.pool).await?;
             check(&cancellation)?;
@@ -622,6 +623,7 @@ mod sqlite {
         stored: &StoredExecutable,
         admission: &AnalysisCandidateAdmission,
     ) -> Result<()> {
+        admission.resource.resource_key()?;
         if admission.contract_digest != stored.executable.contract_digest
             || admission.executable_digest != stored.executable_digest
             || admission.created_at != stored.created_at
@@ -635,7 +637,7 @@ mod sqlite {
             &admission.workspace_id,
             &admission.cycle_id,
             &admission.attempt_id,
-            &admission.contract_name,
+            &admission.resource.name,
         ]
         .iter()
         .any(|value| value.trim().is_empty())
@@ -650,6 +652,12 @@ mod sqlite {
     }
 
     fn read_admission(row: &SqliteRow, exact: bool) -> Result<AnalysisCandidateAdmission> {
+        let resource = ContractResourceId::from_resource_key(row.try_get("resource_key")?)?;
+        if resource.name != row.try_get::<String, _>("contract_name")? {
+            return Err(integrity(
+                "Admission resource key and contract name disagree.",
+            ));
+        }
         let text: &str = row.try_get("created_at")?;
         let created_at = if exact {
             timestamp::parse_exact(text)?
@@ -662,7 +670,7 @@ mod sqlite {
             workspace_id: row.try_get("workspace_id")?,
             cycle_id: row.try_get("cycle_id")?,
             attempt_id: row.try_get("attempt_id")?,
-            contract_name: row.try_get("contract_name")?,
+            resource,
             contract_digest: row.try_get("contract_digest")?,
             executable_digest: row.try_get("executable_digest")?,
             analysis_manifest_digest: row.try_get("analysis_manifest_digest")?,

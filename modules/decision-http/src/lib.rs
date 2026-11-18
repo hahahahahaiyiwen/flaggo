@@ -8,13 +8,14 @@ use axum::{
     response::{IntoResponse as _, Response},
     routing::{get, post},
 };
-use flaggo_contract::{ContractError, RuntimeInput};
+use flaggo_contract::{ContractError, ContractResourceId, ResourceScope, RuntimeInput};
 use flaggo_decision::{
     ActiveExecutableReader, ContractVersionReader, DecisionError, DecisionRuntime, ReadinessProbe,
     StoreReadError,
 };
 use flaggo_service_hosting::{
-    HttpJsonError, Problem, RequestContext, json_response, read_json, with_http_contract,
+    HttpJsonError, Problem, RequestContext, RequestSecurity, json_response, read_json,
+    with_http_contract, with_resource_security,
 };
 use tracing::{Instrument as _, Span};
 
@@ -23,8 +24,7 @@ pub use observability::DecisionObservability;
 
 pub const SERVICE_NAME: &str = "flaggo-decision-service";
 pub const INSTRUMENTATION_SCOPE: &str = "flaggo.decision-service";
-const DECISION_ROUTE: &str =
-    "/v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions";
+const DECISION_ROUTE: &str = "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions";
 const ROUTES: &[&str] = &[DECISION_ROUTE, "/health/live", "/health/ready"];
 
 #[derive(Clone)]
@@ -35,18 +35,24 @@ struct AppState<C, E> {
     observability: DecisionObservability,
 }
 
-pub fn router<C, E>(contracts: C, executables: E) -> Router
+pub fn router<C, E>(contracts: C, executables: E, security: Arc<dyn RequestSecurity>) -> Router
 where
     C: ContractVersionReader + ReadinessProbe + Clone + 'static,
     E: ActiveExecutableReader + ReadinessProbe + Clone + 'static,
 {
-    instrumented_router(contracts, executables, DecisionObservability::new())
+    instrumented_router(
+        contracts,
+        executables,
+        DecisionObservability::new(),
+        security,
+    )
 }
 
 pub fn instrumented_router<C, E>(
     contracts: C,
     executables: E,
     observability: DecisionObservability,
+    security: Arc<dyn RequestSecurity>,
 ) -> Router
 where
     C: ContractVersionReader + ReadinessProbe + Clone + 'static,
@@ -59,11 +65,14 @@ where
         observability,
     };
     with_http_contract(
-        Router::new()
-            .route(DECISION_ROUTE, post(decide::<C, E>))
-            .route("/health/live", get(liveness))
-            .route("/health/ready", get(readiness::<C, E>))
-            .with_state(state),
+        with_resource_security(
+            Router::new()
+                .route(DECISION_ROUTE, post(decide::<C, E>))
+                .route("/health/live", get(liveness))
+                .route("/health/ready", get(readiness::<C, E>))
+                .with_state(state),
+            security,
+        ),
         INSTRUMENTATION_SCOPE,
         env!("CARGO_PKG_VERSION"),
         ROUTES,
@@ -73,7 +82,13 @@ where
 async fn decide<C, E>(
     State(state): State<AppState<C, E>>,
     Extension(context): Extension<RequestContext>,
-    Path((name, digest)): Path<(String, String)>,
+    Path((tenant, application, environment, name, digest)): Path<(
+        String,
+        String,
+        String,
+        String,
+        String,
+    )>,
     headers: HeaderMap,
     body: Body,
 ) -> Response
@@ -96,6 +111,14 @@ where
     );
     async {
         let mut operation = state.observability.start();
+        let resource = match ResourceScope::new(tenant, application, environment)
+            .and_then(|scope| ContractResourceId::new(scope, name.clone())) {
+                Ok(resource) => resource,
+                Err(error) => {
+                    operation.fail(&error, "invalid", "validation");
+                    return invalid_argument().response(&context);
+                }
+            };
         let input: RuntimeInput = match read_json(&headers, body).await {
             Ok(input) => input,
             Err(error) => {
@@ -121,7 +144,7 @@ where
                 return problem.response(&context);
             }
         };
-        match state.runtime.decide(&name, &digest, &input, None).await {
+        match state.runtime.decide(&resource, &digest, &input, None).await {
             Ok(decision) => match json_response(StatusCode::OK, &decision) {
                 Ok(response) => {
                     Span::current().record("flaggo.executable.digest", &decision.executable_digest);

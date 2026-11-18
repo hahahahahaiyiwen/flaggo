@@ -6,6 +6,7 @@ use flaggo_analysis_domain::{
     AnalysisAuthority, AnalysisContract, AnalysisContractIdentity, AnalysisError,
     AnalysisEvidenceSource, AttemptContext, CandidateRecord, CatalogUpdate,
 };
+use flaggo_contract::ResourceScope;
 use reqwest::{
     Client, Response, StatusCode, Url,
     header::{ETAG, IF_NONE_MATCH},
@@ -22,6 +23,7 @@ pub struct ContractServiceClient {
     client: Client,
     base_url: Url,
     catalog_url: Url,
+    scope: ResourceScope,
 }
 
 impl ContractServiceClient {
@@ -29,7 +31,9 @@ impl ContractServiceClient {
         base_url: &str,
         catalog_url: Option<&str>,
         timeout: Duration,
+        scope: ResourceScope,
     ) -> Result<Self, AnalysisError> {
+        scope.validate().map_err(contract_error)?;
         let base_url = Url::parse(base_url)
             .map_err(|error| AnalysisError::Contract(format!("invalid service URL: {error}")))?;
         if !matches!(base_url.scheme(), "http" | "https") {
@@ -50,8 +54,9 @@ impl ContractServiceClient {
                     client: client.clone(),
                     base_url: base_url.clone(),
                     catalog_url: base_url.clone(),
+                    scope: scope.clone(),
                 };
-                temporary.endpoint(["v3", "decision-contract-catalog", "current"])?
+                temporary.endpoint(["decision-contract-catalog", "current"])?
             }
         };
         if !matches!(catalog_url.scheme(), "http" | "https") {
@@ -63,6 +68,7 @@ impl ContractServiceClient {
             client,
             base_url,
             catalog_url,
+            scope,
         })
     }
 
@@ -75,6 +81,15 @@ impl ContractServiceClient {
             AnalysisError::Contract("Contract Service URL cannot be a base URL".to_owned())
         })?;
         path.pop_if_empty();
+        path.extend([
+            "v4",
+            "tenants",
+            &self.scope.tenant,
+            "applications",
+            &self.scope.application,
+            "environments",
+            &self.scope.environment,
+        ]);
         path.extend(segments);
         drop(path);
         Ok(url)
@@ -84,12 +99,19 @@ impl ContractServiceClient {
         &self,
         contract_name: &str,
     ) -> Result<Option<AcceptedVersionWire>, AnalysisError> {
-        let url = self.endpoint(["v3", "decision-contracts", contract_name])?;
+        let url = self.endpoint(["decision-contracts", contract_name])?;
         let response = self.client.get(url).send().await.map_err(contract_error)?;
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        ensure_success(response).await.map(Some)
+        let version: AcceptedVersionWire = ensure_success(response).await?;
+        let projection = project_contract(&version.contract)?;
+        if projection.name != contract_name || projection.authority != self.scope {
+            return Err(AnalysisError::Contract(
+                "Contract Service returned a different scoped resource.".into(),
+            ));
+        }
+        Ok(Some(version))
     }
 }
 
@@ -123,6 +145,11 @@ impl ContractService for ContractServiceClient {
         let mut contracts = Vec::new();
         for entry in catalog.contracts {
             let projection = project_contract(&entry.contract)?;
+            if projection.authority != self.scope {
+                return Err(AnalysisError::Contract(
+                    "Contract catalog contains a resource outside its requested scope.".into(),
+                ));
+            }
             if projection.learning.is_some() {
                 contracts.push(AnalysisContractIdentity {
                     name: projection.name,
@@ -158,7 +185,6 @@ impl ContractService for ContractServiceClient {
             ));
         }
         let url = self.endpoint([
-            "v3",
             "decision-contracts",
             &context.contract.name,
             "versions",
@@ -346,16 +372,9 @@ struct AcceptedVersionWire {
 
 #[derive(Deserialize)]
 struct ContractProjection {
-    authority: AuthorityWire,
+    authority: ResourceScope,
     name: String,
     learning: Option<LearningWire>,
-}
-
-#[derive(Deserialize)]
-struct AuthorityWire {
-    tenant: String,
-    application: String,
-    environment: String,
 }
 
 #[derive(Deserialize)]
@@ -563,10 +582,10 @@ mod tests {
     async fn start_server() -> (String, Arc<TestState>, tokio::task::JoinHandle<()>) {
         let state = Arc::new(TestState::default());
         let app = Router::new()
-            .route("/v3/decision-contract-catalog/current", get(catalog))
-            .route("/v3/decision-contracts/{contract_name}", get(current))
+            .route("/v4/tenants/local/applications/checkout/environments/test/decision-contract-catalog/current", get(catalog))
+            .route("/v4/tenants/local/applications/checkout/environments/test/decision-contracts/{contract_name}", get(current))
             .route(
-                "/v3/decision-contracts/{contract_name}/versions/{contract_digest}/candidates",
+                "/v4/tenants/local/applications/checkout/environments/test/decision-contracts/{contract_name}/versions/{contract_digest}/candidates",
                 post(candidate),
             )
             .with_state(Arc::clone(&state));
@@ -585,8 +604,13 @@ mod tests {
     #[tokio::test]
     async fn reads_learning_catalog_and_current_contract_with_etag() {
         let (base_url, _state, server) = start_server().await;
-        let client =
-            ContractServiceClient::new(&base_url, None, Duration::from_secs(2)).expect("client");
+        let client = ContractServiceClient::new(
+            &base_url,
+            None,
+            Duration::from_secs(2),
+            ResourceScope::new("local".into(), "checkout".into(), "test".into()).unwrap(),
+        )
+        .expect("client");
 
         let update = client
             .list_current_learning_contracts(None)
@@ -636,8 +660,13 @@ mod tests {
     #[tokio::test]
     async fn submits_trusted_candidate_provenance() {
         let (base_url, state, server) = start_server().await;
-        let client =
-            ContractServiceClient::new(&base_url, None, Duration::from_secs(2)).expect("client");
+        let client = ContractServiceClient::new(
+            &base_url,
+            None,
+            Duration::from_secs(2),
+            ResourceScope::new("local".into(), "checkout".into(), "test".into()).unwrap(),
+        )
+        .expect("client");
         let context = AttemptContext {
             workspace_id: "sha256:wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
                 .to_owned(),

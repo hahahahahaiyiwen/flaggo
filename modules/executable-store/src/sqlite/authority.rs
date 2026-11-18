@@ -1,5 +1,6 @@
 use super::*;
 use async_trait::async_trait;
+use flaggo_contract::{ContractResourceId, ResourceScope};
 use flaggo_contract_store::{
     AcceptedContractVersion, ContractStoreWriteResult, ContractVersionPage,
     SqliteContractVersionStore,
@@ -30,6 +31,18 @@ impl SqliteContractAuthority {
         self.contracts.initialize(None).await?;
         self.executables.initialize(None).await?;
         Ok(())
+    }
+
+    /// Explicit, atomic local migration; no startup reset or silent namespace reinterpretation.
+    pub async fn migrate_scoped_resources(&self) -> AuthorityResult<bool> {
+        let mut tx = self.executables.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let contracts = self.contracts.migrate_v3_to_v4_in(&mut tx).await?;
+        let executables = self
+            .executables
+            .migrate_scoped_resources_in(&mut tx)
+            .await?;
+        tx.commit().await?;
+        Ok(contracts || executables)
     }
 
     pub fn contracts(&self) -> &SqliteContractVersionStore {
@@ -83,14 +96,15 @@ impl ContractAuthority for SqliteContractAuthority {
         if !default.executable.rules.is_empty() {
             return Err(argument("default", "A default executable must not contain rules.").into());
         }
-        let name = &version.contract.name;
+        let resource = ContractResourceId::try_from(&version.contract)
+            .map_err(flaggo_contract_store::ContractStoreError::from)?;
         let digest = &version.contract_digest;
         let mut tx = self.executables.pool.begin_with("BEGIN IMMEDIATE").await?;
         let created = self.contracts.put_in(&mut tx, version, None).await?
             == ContractStoreWriteResult::Created;
         let accepted = self
             .contracts
-            .get_in(&mut tx, name, digest, None)
+            .get_in(&mut tx, &resource, digest, None)
             .await?
             .ok_or_else(|| integrity("Published contract is missing from its transaction."))?;
         let mut active = active_in(&mut tx, digest).await?;
@@ -130,7 +144,7 @@ impl ContractAuthority for SqliteContractAuthority {
         let active =
             active.ok_or_else(|| integrity("Publication did not establish runtime authority."))?;
         self.contracts
-            .set_current_in(&mut tx, name, digest, None)
+            .set_current_in(&mut tx, &resource, digest, None)
             .await?;
         tx.commit().await?;
         Ok(ReadyPublication {
@@ -148,14 +162,19 @@ impl ContractAuthority for SqliteContractAuthority {
     ) -> AuthorityResult<AnalysisCandidateStoreResult> {
         let mut tx = self.executables.pool.begin_with("BEGIN IMMEDIATE").await?;
         let current: Option<String> = sqlx::query_scalar(
-            "SELECT contract_digest FROM decision_contract_current WHERE contract_name = ?",
+            "SELECT contract_digest FROM decision_contract_current WHERE resource_key = ?",
         )
-        .bind(&admission.contract_name)
+        .bind(
+            admission
+                .resource
+                .resource_key()
+                .map_err(ExecutableStoreError::from)?,
+        )
         .fetch_optional(&mut *tx)
         .await?;
         if current.as_deref() != Some(&admission.contract_digest) {
             return Err(ExecutableStoreError::CurrentContractConflict {
-                contract_name: admission.contract_name.clone(),
+                contract_name: admission.resource.name.clone(),
                 expected: admission.contract_digest.clone(),
                 actual: current,
             }
@@ -171,30 +190,33 @@ impl ContractAuthority for SqliteContractAuthority {
 
     async fn get_contract(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         digest: &str,
     ) -> AuthorityResult<Option<AcceptedContractVersion>> {
-        Ok(self.contracts.get(name, digest, None).await?)
+        Ok(self.contracts.get(resource, digest, None).await?)
     }
 
     async fn get_current_contract(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
     ) -> AuthorityResult<Option<AcceptedContractVersion>> {
-        Ok(self.contracts.get_current(name, None).await?)
+        Ok(self.contracts.get_current(resource, None).await?)
     }
 
-    async fn list_current_contracts(&self) -> AuthorityResult<Vec<AcceptedContractVersion>> {
-        Ok(self.contracts.list_all_current(None).await?)
+    async fn list_current_contracts(
+        &self,
+        scope: &ResourceScope,
+    ) -> AuthorityResult<Vec<AcceptedContractVersion>> {
+        Ok(self.contracts.list_all_current(scope, None).await?)
     }
 
     async fn list_contract_versions(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         limit: i32,
         cursor: Option<&str>,
     ) -> AuthorityResult<ContractVersionPage> {
-        Ok(self.contracts.list(name, limit, cursor, None).await?)
+        Ok(self.contracts.list(resource, limit, cursor, None).await?)
     }
 
     async fn get_executable(&self, digest: &str) -> AuthorityResult<Option<StoredExecutable>> {

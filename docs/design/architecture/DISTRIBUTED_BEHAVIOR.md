@@ -2,6 +2,9 @@
 
 ## Status
 
+The dated baseline below belongs to the #93 design gate. Implemented revisions
+and remaining #94 acceptance are tracked separately in [CORE_EXTRACTION](CORE_EXTRACTION.md).
+
 Supporting design for [the portable-core ADR](PORTABLE_CORE.md), issue #93.
 D2-D5 models and the D7 threat-model baseline have dated approvals below or in
 the ADR. Proposed protocol details and unfilled operating policies are not

@@ -23,10 +23,11 @@ full valid shape of a `LogRecord`.
 
 ## Flaggo OTLP/HTTP profile
 
-`flaggo-otlp-http-profile-v1.json` pins the OTLP specification and protobuf
+`flaggo-otlp-http-profile-v2.json` pins the OTLP specification and protobuf
 definitions that remain authoritative for payloads. The Flaggo profile only
 selects signals, endpoints, encodings, compression, limits, response behavior,
-authentication phase, and unsupported transports.
+independent authentication/whole-batch authorization, and unsupported transports.
+Its numeric limits are local defaults, not hosted operating policy.
 
 The profile deliberately has no custom request or response schema for
 `/v1/logs`, `/v1/metrics`, or `/v1/traces`. Standard OpenTelemetry exporters
@@ -35,7 +36,10 @@ must be able to use these endpoints without a Flaggo-specific transport.
 Phase 4 requires both standard OTLP/HTTP encodings (`application/json` and
 `application/x-protobuf`) with identity or gzip request compression. A
 successful response acknowledges that the complete valid export request was
-durably appended to the Raw OTLP Inbox. Item-level decoding, selection, and
+authorized for every declared Resource scope and durably appended with its
+trusted producer/scope envelope to the Raw OTLP Inbox. Local listeners
+explicitly opt into the trusted-local policy; scope declarations are never
+credentials. Item-level decoding, selection, and
 materialization happen asynchronously, so the receiver does not return OTLP
 partial-success responses.
 

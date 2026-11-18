@@ -7,28 +7,16 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-async-compression = { version = "0.4.32", features = ["tokio", "gzip"] }
 axum.workspace = true
-flaggo-otlp-codec = { version = "0.1.0", path = "../../modules/otlp-codec" }
+flaggo-otlp-http = { version = "0.1.0", path = "../../modules/otlp-http" }
 flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../../modules/raw-otlp-inbox" }
 flaggo-service-observability.workspace = true
-futures-util = "0.3.31"
-mime = "0.3.17"
-opentelemetry.workspace = true
-opentelemetry-http.workspace = true
-opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace", "with-serde"] }
-prost = "0.14.1"
-serde_json.workspace = true
+flaggo-service-hosting = { version = "0.1.0", path = "../../modules/hosting" }
 tokio.workspace = true
-tokio-util = { version = "0.7.16", features = ["io"] }
 tracing.workspace = true
-tracing-opentelemetry.workspace = true
 
 [dev-dependencies]
-async-trait = "0.1.89"
-flate2 = "1.1.5"
 tempfile = "3.27.0"
-tower.workspace = true
 
 [lints]
 workspace = true

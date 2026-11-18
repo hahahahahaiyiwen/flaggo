@@ -8,8 +8,9 @@ use crate::{
     },
 };
 use flaggo_contract::{
-    AnalysisCandidateSubmission, DecisionContract, DecisionContractValidationResult,
-    DecisionExecutable, DecisionExecutableActivationRequest, ExecutableRule, JsonValue, RuleWhen,
+    AnalysisCandidateSubmission, ContractResourceId, DecisionContract,
+    DecisionContractValidationResult, DecisionExecutable, DecisionExecutableActivationRequest,
+    ExecutableRule, JsonValue, ResourceScope, RuleWhen,
     digests::is_sha256_digest,
     validation::{is_decision_name, validate_contract},
 };
@@ -70,13 +71,18 @@ impl ContractLifecycle {
 
     pub async fn validate(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         contract: &DecisionContract,
     ) -> Result<DecisionContractValidationResult> {
+        let name = &resource.name;
         self.observe("contract.validate", name, None, async {
-            validate_name(name)?;
-            if name != contract.name {
-                return Err(ServiceError::NameMismatch);
+            resource
+                .resource_key()
+                .map_err(|_| ServiceError::InvalidArgument)?;
+            if ContractResourceId::try_from(contract).map_err(|_| ServiceError::InvalidContract)?
+                != *resource
+            {
+                return Err(ServiceError::ResourceMismatch);
             }
             let validation = validate_contract(contract, Some(&ExpressionCompiler::default()))?;
             if let Some(digest) = &validation.contract_digest {
@@ -94,11 +100,12 @@ impl ContractLifecycle {
 
     pub async fn deploy(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         contract: &DecisionContract,
     ) -> Result<(ContractVersion, bool)> {
+        let name = resource.name.as_str();
         self.observe("contract.deploy", name, None, async {
-            let validation = self.validate(name, contract).await?;
+            let validation = self.validate(resource, contract).await?;
             let digest = validation
                 .contract_digest
                 .filter(|_| validation.status == "valid")
@@ -188,12 +195,20 @@ impl ContractLifecycle {
         .await
     }
 
-    pub async fn get(&self, name: &str, digest: Option<&str>) -> Result<Option<ContractVersion>> {
+    pub async fn get(
+        &self,
+        resource: &ContractResourceId,
+        digest: Option<&str>,
+    ) -> Result<Option<ContractVersion>> {
+        let name = resource.name.as_str();
+        resource
+            .resource_key()
+            .map_err(|_| ServiceError::InvalidArgument)?;
         self.observe("contract.read", name, digest, async {
             validate_identity(name, digest)?;
             let accepted = match digest {
-                Some(digest) => self.authority.get_contract(name, digest).await?,
-                None => self.authority.get_current_contract(name).await?,
+                Some(digest) => self.authority.get_contract(resource, digest).await?,
+                None => self.authority.get_current_contract(resource).await?,
             };
             let result = match accepted {
                 Some(accepted) => self
@@ -213,9 +228,12 @@ impl ContractLifecycle {
         .await
     }
 
-    pub async fn catalog(&self) -> Result<(CurrentCatalog, String)> {
+    pub async fn catalog(&self, scope: &ResourceScope) -> Result<(CurrentCatalog, String)> {
+        scope
+            .validate()
+            .map_err(|_| ServiceError::InvalidArgument)?;
         self.observe("contract.catalog.read", "", None, async {
-            let mut current = self.authority.list_current_contracts().await?;
+            let mut current = self.authority.list_current_contracts(scope).await?;
             for accepted in &current {
                 self.require_active(&accepted.contract_digest).await?;
             }
@@ -253,7 +271,11 @@ impl ContractLifecycle {
                     .then(left.contract_digest.cmp(&right.contract_digest))
             });
             let mut hash = Sha256::new();
-            hash.update(b"flaggo-current-contract-catalog-v1");
+            hash.update(b"flaggo-current-contract-catalog-v2");
+            for component in [&scope.tenant, &scope.application, &scope.environment] {
+                hash.update(component.as_bytes());
+                hash.update([0]);
+            }
             let mut contracts = Vec::new();
             for accepted in current {
                 hash.update(accepted.contract_digest.as_bytes());
@@ -275,19 +297,23 @@ impl ContractLifecycle {
 
     pub async fn versions(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         limit: i32,
         cursor: Option<&str>,
     ) -> Result<Option<VersionList>> {
+        let name = resource.name.as_str();
+        resource
+            .resource_key()
+            .map_err(|_| ServiceError::InvalidArgument)?;
         self.observe("contract.read", name, None, async {
             validate_name(name)?;
             validate_limit(limit)?;
-            let Some(current) = self.authority.get_current_contract(name).await? else {
+            let Some(current) = self.authority.get_current_contract(resource).await? else {
                 return Ok((None, "not_found"));
             };
             let page = self
                 .authority
-                .list_contract_versions(name, limit, cursor)
+                .list_contract_versions(resource, limit, cursor)
                 .await?;
             let mut versions = Vec::new();
             for accepted in page.versions {
@@ -314,10 +340,14 @@ impl ContractLifecycle {
 
     pub async fn submit(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         digest: &str,
         submission: AnalysisCandidateSubmission,
     ) -> Result<(CandidateResult, bool)> {
+        let name = resource.name.as_str();
+        resource
+            .resource_key()
+            .map_err(|_| ServiceError::InvalidArgument)?;
         self.observe("candidate.submit", name, Some(digest), async {
             validate_identity(name, Some(digest))?;
             let provenance = &submission.provenance;
@@ -337,7 +367,7 @@ impl ContractLifecycle {
             validate_digest(&provenance.analysis_manifest_digest)?;
             let accepted = self
                 .authority
-                .get_contract(name, digest)
+                .get_contract(resource, digest)
                 .await?
                 .ok_or(ServiceError::NotFound)?;
             let compiled = self.compiler.compile(
@@ -357,7 +387,7 @@ impl ContractLifecycle {
                 workspace_id: provenance.workspace_id.clone(),
                 cycle_id: provenance.cycle_id.clone(),
                 attempt_id: provenance.attempt_id.clone(),
-                contract_name: name.into(),
+                resource: resource.clone(),
                 contract_digest: digest.into(),
                 executable_digest: stored.executable_digest.clone(),
                 analysis_manifest_digest: provenance.analysis_manifest_digest.clone(),
@@ -382,16 +412,25 @@ impl ContractLifecycle {
 
     pub async fn executables(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         digest: &str,
         limit: i32,
         cursor: Option<&str>,
         history: bool,
     ) -> Result<Option<ExecutableListing>> {
+        let name = resource.name.as_str();
+        resource
+            .resource_key()
+            .map_err(|_| ServiceError::InvalidArgument)?;
         self.observe("contract.executables.read", name, Some(digest), async {
             validate_identity(name, Some(digest))?;
             validate_limit(limit)?;
-            if self.authority.get_contract(name, digest).await?.is_none() {
+            if self
+                .authority
+                .get_contract(resource, digest)
+                .await?
+                .is_none()
+            {
                 return Ok((None, "not_found"));
             }
             let active = if history {
@@ -428,11 +467,15 @@ impl ContractLifecycle {
 
     pub async fn activate(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         digest: &str,
         candidate: &str,
         request: DecisionExecutableActivationRequest,
     ) -> Result<ActivationResult> {
+        let name = resource.name.as_str();
+        resource
+            .resource_key()
+            .map_err(|_| ServiceError::InvalidArgument)?;
         self.observe("candidate.activate", name, Some(digest), async {
             record_candidate(candidate);
             validate_identity(name, Some(digest))?;
@@ -443,13 +486,18 @@ impl ContractLifecycle {
             {
                 return Err(ServiceError::InvalidArgument);
             }
-            if self.authority.get_contract(name, digest).await?.is_none() {
+            if self
+                .authority
+                .get_contract(resource, digest)
+                .await?
+                .is_none()
+            {
                 return Err(ServiceError::NotFound);
             }
             let result = self
                 .authority
                 .activate_candidate(&CandidateActivationCommand {
-                    contract_name: name.into(),
+                    resource: resource.clone(),
                     contract_digest: digest.into(),
                     executable_digest: candidate.into(),
                     expected_candidate_state_version: request.expected_candidate_state_version,

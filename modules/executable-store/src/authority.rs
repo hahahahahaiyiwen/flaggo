@@ -1,6 +1,7 @@
-//! Semantic authority contract v1 for the existing globally name-keyed v3 API.
+//! Semantic authority contract v2 for explicitly scoped v4 resources.
 //! Mutations commit their preconditions and complete outcomes atomically.
 use async_trait::async_trait;
+use flaggo_contract::{ContractResourceId, ResourceScope};
 use flaggo_contract_store::{AcceptedContractVersion, ContractStoreError, ContractVersionPage};
 
 use crate::*;
@@ -24,7 +25,7 @@ pub struct ReadyPublication {
 
 /// One implementation must own the complete authority transaction domain.
 /// A successful publication exposes no accepted version without activation.
-/// Admission checks currentness before retry lookup, preserving v3 ordering.
+/// Admission checks currentness before retry lookup, preserving stale ordering.
 /// Active reads must observe acknowledged activation or a later committed one.
 #[async_trait]
 pub trait ContractAuthority: Send + Sync {
@@ -43,17 +44,20 @@ pub trait ContractAuthority: Send + Sync {
 
     async fn get_contract(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         digest: &str,
     ) -> AuthorityResult<Option<AcceptedContractVersion>>;
     async fn get_current_contract(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
     ) -> AuthorityResult<Option<AcceptedContractVersion>>;
-    async fn list_current_contracts(&self) -> AuthorityResult<Vec<AcceptedContractVersion>>;
+    async fn list_current_contracts(
+        &self,
+        scope: &ResourceScope,
+    ) -> AuthorityResult<Vec<AcceptedContractVersion>>;
     async fn list_contract_versions(
         &self,
-        name: &str,
+        resource: &ContractResourceId,
         limit: i32,
         cursor: Option<&str>,
     ) -> AuthorityResult<ContractVersionPage>;

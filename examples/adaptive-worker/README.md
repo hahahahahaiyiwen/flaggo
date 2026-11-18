@@ -12,8 +12,8 @@ deployment. The local environment:
 2. starts Flaggo OTel Ingestion against the same database;
 3. injects the manifest authority and deploys the resulting complete contract
    through
-   `PUT /v3/decision-contracts/demo.workerBatchSize`;
-4. generates one immutable `flaggo.runtime-config/v1` document containing the
+   `PUT /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/demo.workerBatchSize`;
+4. generates one immutable `flaggo.runtime-config/v2` document containing the
    manifest authority, all three service URLs, and the returned exact
    authority-bound `contractDigest`; and
 5. gives that configuration to both the decision client and telemetry

@@ -11,7 +11,7 @@ Usage:
     python contracts/mock/fixture-server/server.py --port 8080
 
 Then send a request naming the fixture:
-    curl -si -X POST http://localhost:8080/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions \
+    curl -si -X POST http://localhost:8080/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions \
          -H "X-Flaggo-Fixture: runtime-rule-result" \
          -H "Content-Type: application/json" --data '{"attributes":{"_random":0.42}}'
 
@@ -37,9 +37,9 @@ SCHEMAS_DIR = CONTRACTS / "schemas"
 FIXTURE_HEADER = "X-Flaggo-Fixture"
 SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 SCHEMA_FILES = [
-    "runtime-models-v3.schema.json",
-    "management-models-v3.schema.json",
-    "problem-details-v3.schema.json",
+    "runtime-models-v4.schema.json",
+    "management-models-v4.schema.json",
+    "problem-details-v4.schema.json",
 ]
 
 # name -> fixture dict, loaded once at startup

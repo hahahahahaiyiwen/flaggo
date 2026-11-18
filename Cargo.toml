@@ -20,6 +20,7 @@ members = [
     "modules/expression",
     "modules/hosting",
     "modules/otlp-codec",
+    "modules/otlp-http",
     "modules/raw-otlp-inbox",
     "modules/service-observability",
 ]

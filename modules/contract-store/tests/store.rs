@@ -1,4 +1,4 @@
-use flaggo_contract::{DecisionContract, digests, strict_json};
+use flaggo_contract::{ContractResourceId, DecisionContract, digests, strict_json};
 use flaggo_contract_store::{
     AcceptedContractVersion, ContractStoreError, ContractStoreWriteResult,
     SqliteContractVersionStore, timestamp,
@@ -53,6 +53,10 @@ fn version(default: i64) -> AcceptedContractVersion {
     }
 }
 
+fn resource() -> ContractResourceId {
+    ContractResourceId::try_from(&version(99).contract).unwrap()
+}
+
 #[tokio::test]
 async fn immutable_canonical_versions_persist_with_exact_timestamps_and_schema() {
     let (directory, store, pool) = fixture().await;
@@ -98,7 +102,7 @@ async fn immutable_canonical_versions_persist_with_exact_timestamps_and_schema()
         .await
         .unwrap();
     let stored = restarted
-        .get("store.parity", &first.contract_digest, None)
+        .get(&resource(), &first.contract_digest, None)
         .await
         .unwrap()
         .unwrap();
@@ -126,7 +130,7 @@ async fn immutable_canonical_versions_persist_with_exact_timestamps_and_schema()
 }
 
 #[tokio::test]
-async fn concurrent_authority_claims_have_one_winner_and_no_partial_version() {
+async fn concurrent_same_name_publications_are_independent_across_scopes() {
     let (_directory, store, pool) = fixture().await;
     store.initialize(None).await.unwrap();
     let first = version(99);
@@ -141,28 +145,21 @@ async fn concurrent_authority_claims_have_one_winner_and_no_partial_version() {
             .iter()
             .filter(|result| matches!(result, Ok(ContractStoreWriteResult::Created)))
             .count(),
-        1
-    );
-    assert_eq!(
-        outcomes
-            .iter()
-            .filter(|result| matches!(result, Err(ContractStoreError::AuthorityConflict { .. })))
-            .count(),
-        1
+        2
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM decision_contract_versions")
             .fetch_one(&pool)
             .await
             .unwrap(),
-        1
+        2
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM decision_contract_resources")
             .fetch_one(&pool)
             .await
             .unwrap(),
-        1
+        2
     );
     store.close().await;
     pool.close().await;
@@ -178,32 +175,32 @@ async fn history_cursor_matches_tied_timestamp_order_and_missing_selection_is_at
     }
     assert!(
         store
-            .get_current("store.parity", None)
+            .get_current(&resource(), None)
             .await
             .unwrap()
             .is_none()
     );
     store
-        .set_current("store.parity", &versions[0].contract_digest, None)
+        .set_current(&resource(), &versions[0].contract_digest, None)
         .await
         .unwrap();
     let missing = format!("sha256:{}", "0".repeat(64));
     assert!(matches!(
-        store.set_current("store.parity", &missing, None).await,
+        store.set_current(&resource(), &missing, None).await,
         Err(ContractStoreError::NotFound { .. })
     ));
     assert_eq!(
         store
-            .get_current("store.parity", None)
+            .get_current(&resource(), None)
             .await
             .unwrap()
             .unwrap()
             .contract_digest,
         versions[0].contract_digest
     );
-    let first = store.list("store.parity", 2, None, None).await.unwrap();
+    let first = store.list(&resource(), 2, None, None).await.unwrap();
     let second = store
-        .list("store.parity", 2, first.next_cursor.as_deref(), None)
+        .list(&resource(), 2, first.next_cursor.as_deref(), None)
         .await
         .unwrap();
     assert_eq!(first.versions.len(), 2);
@@ -223,7 +220,14 @@ async fn history_cursor_matches_tied_timestamp_order_and_missing_selection_is_at
             .collect::<Vec<_>>(),
         expected
     );
-    assert_eq!(store.list_all_current(None).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .list_all_current(&resource().scope, None)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     store.close().await;
     pool.close().await;
 }
@@ -262,18 +266,15 @@ async fn concurrent_current_updates_serialize_without_snapshot_upgrade_failures(
     let second = version(2);
     store.put(&first, None).await.unwrap();
     store.put(&second, None).await.unwrap();
+    let resource = resource();
     for _ in 0..16 {
         let (left, right) = tokio::join!(
-            store.set_current("store.parity", &first.contract_digest, None),
-            store.set_current("store.parity", &second.contract_digest, None),
+            store.set_current(&resource, &first.contract_digest, None),
+            store.set_current(&resource, &second.contract_digest, None),
         );
         left.unwrap();
         right.unwrap();
-        let current = store
-            .get_current("store.parity", None)
-            .await
-            .unwrap()
-            .unwrap();
+        let current = store.get_current(&resource, None).await.unwrap().unwrap();
         assert!(
             [
                 first.contract_digest.as_str(),
@@ -336,7 +337,7 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
     let input = strict_json::deserialize(br#"{"attributes":{"_random":0.5}}"#).unwrap();
     assert!(matches!(
         runtime
-            .decide("store.parity", &version.contract_digest, &input, None)
+            .decide(&resource(), &version.contract_digest, &input, None)
             .await,
         Err(DecisionError::ActiveExecutableNotFound(_))
     ));
@@ -353,7 +354,7 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
         .unwrap();
     assert!(matches!(
         runtime
-            .decide("store.parity", &version.contract_digest, &input, None)
+            .decide(&resource(), &version.contract_digest, &input, None)
             .await,
         Err(DecisionError::Integrity { .. })
     ));
@@ -363,7 +364,7 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
         .await
         .unwrap();
     let error = runtime
-        .decide("store.parity", &version.contract_digest, &input, None)
+        .decide(&resource(), &version.contract_digest, &input, None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -379,14 +380,11 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
         .await
         .unwrap();
     let error = runtime
-        .decide("store.parity", &version.contract_digest, &input, None)
+        .decide(&resource(), &version.contract_digest, &input, None)
         .await
         .unwrap_err();
-    assert!(matches!(
-        error,
-        DecisionError::Store(StoreReadError::InvalidArgument(_))
-    ));
-    assert_eq!(error.telemetry_classification(), ("invalid", "validation"));
+    assert!(matches!(error, DecisionError::Integrity { .. }));
+    assert_eq!(error.telemetry_classification(), ("failure", "integrity"));
     let overflow = String::from_utf8(bytes).unwrap().replace(
         "\"type\":\"integer\"",
         "\"type\":\"integer\",\"minimum\":1e400",
@@ -397,7 +395,7 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
         .await
         .unwrap();
     let error = runtime
-        .decide("store.parity", &version.contract_digest, &input, None)
+        .decide(&resource(), &version.contract_digest, &input, None)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -422,14 +420,14 @@ async fn schema_validation_preserves_other_components_and_does_not_rewrite_versi
         .fetch_one(&pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE flaggo_schema_versions SET version=4 WHERE component='contract-store'")
+    sqlx::query("UPDATE flaggo_schema_versions SET version=99 WHERE component='contract-store'")
         .execute(&pool)
         .await
         .unwrap();
     assert!(!store.is_available(None).await.unwrap());
     assert!(matches!(
         store.initialize(None).await,
-        Err(ContractStoreError::UnsupportedSchema(4))
+        Err(ContractStoreError::UnsupportedSchema(99))
     ));
     assert_eq!(
         sqlx::query_scalar::<_, i64>(

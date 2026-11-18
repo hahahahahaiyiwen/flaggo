@@ -219,19 +219,19 @@ async fn decodes_original_protobuf_field_names_for_every_signal() {
     fixture
         .append_raw(
             OtlpSignal::Logs,
-            br#"{"resource_logs":[{"scope_logs":[{"log_records":[{"time_unix_nano":"1","body":{"string_value":"hello"}}]}]}]}"#,
+            &scoped_raw(br#"{"resource_logs":[{"scope_logs":[{"log_records":[{"time_unix_nano":"1","body":{"string_value":"hello"}}]}]}]}"#),
         )
         .await;
     fixture
         .append_raw(
             OtlpSignal::Metrics,
-            br#"{"resource_metrics":[{"scope_metrics":[{"metrics":[{"name":"load","gauge":{"data_points":[{"time_unix_nano":"1","as_int":"2"}]}}]}]}]}"#,
+            &scoped_raw(br#"{"resource_metrics":[{"scope_metrics":[{"metrics":[{"name":"load","gauge":{"data_points":[{"time_unix_nano":"1","as_int":"2"}]}}]}]}]}"#),
         )
         .await;
     fixture
         .append_raw(
             OtlpSignal::Traces,
-            br#"{"resource_spans":[{"scope_spans":[{"spans":[{"name":"work","start_time_unix_nano":"1","end_time_unix_nano":"2"}]}]}]}"#,
+            &scoped_raw(br#"{"resource_spans":[{"scope_spans":[{"spans":[{"name":"work","start_time_unix_nano":"1","end_time_unix_nano":"2"}]}]}]}"#),
         )
         .await;
 
@@ -500,7 +500,7 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
         .await;
     let result = materializer.run_once(&catalog).await.unwrap();
 
-    assert_eq!(result.observations_created, 1);
+    assert_eq!(result.observations_created, 0);
     assert_eq!(result.diagnostics_created, 1);
     assert_eq!(
         fixture
@@ -512,7 +512,7 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
             .await
             .unwrap()
             .len(),
-        1
+        0
     );
     assert!(
         fixture
@@ -798,6 +798,7 @@ impl Fixture {
                 OtlpTransportCompression::Identity,
                 OtlpProfileVersion::from_str(DEFAULT_OTLP_PROFILE_VERSION).unwrap(),
                 payload,
+                test_authorization(),
             ))
             .await
             .unwrap();
@@ -811,6 +812,7 @@ impl Fixture {
                 OtlpTransportCompression::Identity,
                 OtlpProfileVersion::from_str(DEFAULT_OTLP_PROFILE_VERSION).unwrap(),
                 payload.to_vec(),
+                test_authorization(),
             ))
             .await
             .unwrap();
@@ -824,6 +826,57 @@ impl Fixture {
 
 struct TestClock {
     current: Mutex<DateTime<Utc>>,
+}
+
+fn test_authorization() -> flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope {
+    flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new(
+        "trusted-test".into(),
+        ["local", "acme"]
+            .into_iter()
+            .map(|tenant| {
+                flaggo_contract::ResourceScope::new(
+                    tenant.into(),
+                    "test-app".into(),
+                    "test-env".into(),
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn scoped_raw(payload: &[u8]) -> Vec<u8> {
+    let mut value: serde_json::Value = serde_json::from_slice(payload).unwrap();
+    value.as_object_mut().unwrap().values_mut().next().unwrap()[0]["resource"] =
+        serde_json::to_value(resource()).unwrap();
+    serde_json::to_vec(&value).unwrap()
+}
+
+#[tokio::test]
+async fn replay_rechecks_authorization_without_trusting_resource_claims() {
+    let fixture = Fixture::new().await;
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, vec![application_log()])
+        .await;
+    let mut batches = fixture
+        .inbox
+        .read_after(None, NonZeroU16::new(1).unwrap())
+        .await
+        .unwrap();
+    let batch = &mut batches[0];
+    assert_eq!(decode_batch(batch).candidate_count(), 1);
+    batch.authorization = Some(
+        flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new("other-producer".into(), vec![])
+            .unwrap(),
+    );
+    for authorization in [batch.authorization.take(), None] {
+        batch.authorization = authorization;
+        let decoded = decode_batch(batch);
+        assert_eq!(decoded.candidate_count(), 0);
+        assert_eq!(decoded.diagnostics[0].code, "otlp.authorization_failed");
+    }
+    fixture.close().await;
 }
 
 impl TestClock {

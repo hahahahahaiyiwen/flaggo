@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { expect, test } from "@playwright/test";
 import { createDecisionClient } from "@flaggo/sdk/runtime";
+import { resourceScopePath } from "@flaggo/sdk/configuration";
 import { parseListeningUrl } from "../../tetris-integration/host-process.mjs";
 import { parseLokiResponse, parseTempoResponse } from "../dist/backend.js";
 import { readAttemptFailureRecords, startPlaygroundFixture } from "./playground-fixture.mjs";
@@ -184,12 +185,13 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   })));
   const manifest = JSON.parse(await readFile(resolve(exampleDirectory, "flaggo.deploy.json"), "utf8"));
   const runtimeConfig = {
-    format: "flaggo.runtime-config/v1",
+    format: "flaggo.runtime-config/v2",
     authority: manifest.authority,
     services: urls,
     bindings: { "tetris.dropInterval": { contractDigest: active.contractDigest } },
   };
   const client = createDecisionClient({ runtimeConfig, random: () => 0.25 });
+  const scopePath = resourceScopePath(runtimeConfig.authority);
   const decisions = [];
   for (const pressure of [0.1, 0.3]) {
     const attributes = {
@@ -202,7 +204,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     };
     const sdk = (await client.decide("tetris.dropInterval", { attributes })).value;
     const restResponse = await page.request.post(
-      `${urls.decisionServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/decisions`,
+      `${urls.decisionServiceUrl}${scopePath}/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/decisions`,
       { data: { attributes: { ...attributes, _random: 0.25 } } },
     );
     expect(restResponse.ok()).toBe(true);
@@ -219,7 +221,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     decisions.push({ attributes, sdk, rest });
   }
   const conflict = await page.request.post(
-    `${urls.contractServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables/${baseline.executableDigest}/activate`,
+    `${urls.contractServiceUrl}${scopePath}/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables/${baseline.executableDigest}/activate`,
     { data: {
       expectedActiveExecutableDigest: baseline.executableDigest,
       expectedActiveStateVersion: 0,
@@ -228,7 +230,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   );
   expect(conflict.status()).toBe(409);
   const catalog = await page.request.get(
-    `${urls.contractServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables`,
+    `${urls.contractServiceUrl}${scopePath}/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables`,
   );
   expect(catalog.ok()).toBe(true);
   expect((await catalog.json()).activeExecutable.executableDigest).toBe(learned.executableDigest);

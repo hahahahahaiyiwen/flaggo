@@ -38,7 +38,7 @@ test("Tetris exports new windows only, preserving all four gauges, retries, and 
     const telemetry = new TetrisTelemetryProviders({
       capture: true,
       runtimeConfig: {
-        format: "flaggo.runtime-config/v1",
+        format: "flaggo.runtime-config/v2",
         authority: { tenant: "local", application: "tetris", environment: "otel-test" },
         services: { contractServiceUrl: url, decisionServiceUrl: url, otlpIngestionUrl: url },
         bindings: {
@@ -182,7 +182,7 @@ test("terminal metric export is diagnosed without changing gameplay or authority
       server.close((error) => error ? reject(error) : resolve())));
     const url = `http://127.0.0.1:${server.address().port}`;
     const runtimeConfig = {
-      format: "flaggo.runtime-config/v1",
+      format: "flaggo.runtime-config/v2",
       authority: { tenant: "local", application: "tetris", environment: "export-failure" },
       services: { contractServiceUrl: url, decisionServiceUrl: url, otlpIngestionUrl: url },
       bindings: { "tetris.dropInterval": { contractDigest } },

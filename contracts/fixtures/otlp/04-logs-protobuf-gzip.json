@@ -12,7 +12,7 @@
       "Content-Type": "application/x-protobuf",
       "Content-Encoding": "gzip"
     },
-    "bodyBase64": "H4sIAAAAAAAC/+OSE5IRkkqSSMtJTE/P10tJTc4szszP0ytKTU7NLEtNAQBF92uBIAAAAA=="
+    "bodyBase64": "H4sIAAAAAAAC/z3LMQqDQBAF0CYx4UOaqSRIjuB50k7WrwxsZmV3EI8fC0n9eNjxRo/HnHVZyhh09ZAbrrkkzXhBTtF1zZY0rLjc0QWjWsPwd/pmtfiXR+9wCbaQQZ6f/vSJydqRx8pE2zj9AKAm9F96AAAA"
   },
   "expected": {
     "status": 200,
@@ -20,5 +20,6 @@
       "Content-Type": "application/x-protobuf"
     },
     "bodyBase64": ""
-  }
+  },
+  "otlpProfileVersion": "2.0.0"
 }

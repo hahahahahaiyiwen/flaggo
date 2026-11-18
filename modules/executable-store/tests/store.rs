@@ -1,4 +1,6 @@
-use flaggo_contract::{DecisionContract, DecisionExecutable, digests, strict_json};
+use flaggo_contract::{
+    ContractResourceId, DecisionContract, DecisionExecutable, digests, strict_json,
+};
 use flaggo_contract_store::{AcceptedContractVersion, SqliteContractVersionStore, timestamp};
 use flaggo_decision::{ActiveExecutableReader, DecisionRuntime, StoreReadError};
 use flaggo_executable_store::*;
@@ -99,7 +101,7 @@ async fn competing_manual_activations_have_one_winner_and_supersede_the_loser() 
             .await
             .unwrap();
         commands.push(CandidateActivationCommand {
-            contract_name: "store.parity".into(),
+            resource: ContractResourceId::try_from(&fixture.contract.contract).unwrap(),
             contract_digest: fixture.contract.contract_digest.clone(),
             executable_digest: record.executable_digest,
             expected_candidate_state_version: 0,
@@ -143,7 +145,7 @@ async fn competing_manual_activations_have_one_winner_and_supersede_the_loser() 
 }
 
 #[tokio::test]
-async fn concurrent_v4_initialization_migrates_once_without_resetting_records() {
+async fn explicit_concurrent_schema_four_migration_preserves_records() {
     let fixture = Fixture::new().await;
     let record = fixture.candidate(1);
     fixture
@@ -163,12 +165,23 @@ async fn concurrent_v4_initialization_migrates_once_without_resetting_records() 
     .execute(&fixture.pool)
     .await
     .unwrap();
+    assert!(matches!(
+        fixture.store.initialize(None).await,
+        Err(ExecutableStoreError::UnsupportedSchema(4))
+    ));
+    let first = SqliteContractAuthority::open(fixture.directory.path().join("store.db"), None)
+        .await
+        .unwrap();
+    let second = SqliteContractAuthority::open(fixture.directory.path().join("store.db"), None)
+        .await
+        .unwrap();
     let (a, b) = tokio::join!(
-        fixture.store.initialize(None),
-        fixture.store.initialize(None)
+        first.migrate_scoped_resources(),
+        second.migrate_scoped_resources()
     );
-    a.unwrap();
-    b.unwrap();
+    assert_ne!(a.unwrap(), b.unwrap());
+    first.close().await;
+    second.close().await;
     assert_eq!(
         sqlx::query_scalar::<_, Vec<u8>>("SELECT executable_json FROM decision_executables")
             .fetch_one(&fixture.pool)
@@ -190,7 +203,7 @@ async fn concurrent_v4_initialization_migrates_once_without_resetting_records() 
         .fetch_all(&fixture.pool)
         .await
         .unwrap();
-    assert_eq!(columns.len(), 8);
+    assert_eq!(columns.len(), 9);
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT version FROM flaggo_schema_versions WHERE component='executable-store'"
@@ -198,7 +211,7 @@ async fn concurrent_v4_initialization_migrates_once_without_resetting_records() 
         .fetch_one(&fixture.pool)
         .await
         .unwrap(),
-        5
+        6
     );
     fixture.close().await;
 }
@@ -237,7 +250,11 @@ impl Fixture {
         };
         contracts.put(&contract, None).await.unwrap();
         contracts
-            .set_current(&contract.contract.name, &contract.contract_digest, None)
+            .set_current(
+                &ContractResourceId::try_from(&contract.contract).unwrap(),
+                &contract.contract_digest,
+                None,
+            )
             .await
             .unwrap();
         Self {
@@ -276,7 +293,7 @@ impl Fixture {
             workspace_id: "workspace".into(),
             cycle_id: cycle.into(),
             attempt_id: "attempt".into(),
-            contract_name: self.contract.contract.name.clone(),
+            resource: ContractResourceId::try_from(&self.contract.contract).unwrap(),
             contract_digest: self.contract.contract_digest.clone(),
             executable_digest: record.executable_digest.clone(),
             analysis_manifest_digest: format!("sha256:{}", "a".repeat(64)),
@@ -332,7 +349,7 @@ async fn immutable_versions_restart_and_real_runtime_read_the_active_checked_pro
     let input = strict_json::deserialize(br#"{"attributes":{"_random":0.5}}"#).unwrap();
     let decision = runtime
         .decide(
-            "store.parity",
+            &ContractResourceId::try_from(&fixture.contract.contract).unwrap(),
             &fixture.contract.contract_digest,
             &input,
             None,
@@ -640,7 +657,7 @@ async fn manual_activation_fences_candidate_active_token_and_contract_currentnes
             .unwrap();
     }
     let mut command = CandidateActivationCommand {
-        contract_name: "store.parity".into(),
+        resource: ContractResourceId::try_from(&fixture.contract.contract).unwrap(),
         contract_digest: fixture.contract.contract_digest.clone(),
         executable_digest: candidate.executable_digest.clone(),
         expected_candidate_state_version: 0,
@@ -664,7 +681,11 @@ async fn manual_activation_fences_candidate_active_token_and_contract_currentnes
     ));
     fixture
         .contracts
-        .set_current("store.parity", &fixture.contract.contract_digest, None)
+        .set_current(
+            &ContractResourceId::try_from(&fixture.contract.contract).unwrap(),
+            &fixture.contract.contract_digest,
+            None,
+        )
         .await
         .unwrap();
     let result = fixture

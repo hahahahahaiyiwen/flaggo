@@ -44,7 +44,7 @@ freshness, or analysis.
 The implemented HTTP surface is:
 
 ```text
-POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 GET  /health/live
 GET  /health/ready
 ```
@@ -160,5 +160,5 @@ includes both live HTTP comparisons. .NET is not a normal build or test prerequi
 - [Runtime client and Decision Service](../../docs/design/architecture/RUNTIME.md)
 - [Decision authority](../../docs/design/architecture/AUTHORITY.md)
 - [Runtime evaluation model](../../docs/design/contracts/RUNTIME_EVALUATION.md)
-- [Runtime API v3](../../contracts/openapi/flaggo-runtime-v3.yaml)
+- [Runtime API v4](../../contracts/openapi/flaggo-runtime-v4.yaml)
 - [Internal service observability](../../docs/design/architecture/OBSERVABILITY.md)

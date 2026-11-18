@@ -70,6 +70,7 @@ export async function deployContracts({
 
   const client = createContractClient({
     baseUrl: serviceUrls.contractServiceUrl,
+    authority: manifest.authority,
     ...(fetch === undefined ? {} : { fetch }),
   });
   const contracts = [];
@@ -94,7 +95,7 @@ export async function deployContracts({
     { contractDigest: deployment.contractDigest },
   ]));
   const runtimeConfig = parseFlaggoRuntimeConfiguration({
-    format: "flaggo.runtime-config/v1",
+    format: "flaggo.runtime-config/v2",
     authority: manifest.authority,
     services: serviceUrls,
     bindings,

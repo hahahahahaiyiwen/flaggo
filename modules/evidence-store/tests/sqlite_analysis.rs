@@ -56,6 +56,11 @@ async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
                 transport_compression: OtlpTransportCompression::Identity,
                 otlp_profile_version: DEFAULT_OTLP_PROFILE_VERSION.parse().expect("profile"),
                 payload: br#"{"resourceLogs":[]}"#.to_vec(),
+                authorization: flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new(
+                    "trusted-test".into(),
+                    vec![],
+                )
+                .unwrap(),
             })
             .await
             .expect("ingestion while analysis reads");

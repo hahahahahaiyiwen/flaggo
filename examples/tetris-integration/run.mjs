@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 import { createDecisionClient } from "../../packages/sdk-typescript/dist/runtime/index.js";
+import { resourceScopePath } from "../../packages/sdk-typescript/dist/configuration/index.js";
 
 import {
   createHostLifecycle,
@@ -294,6 +295,7 @@ async function runIntegration(lifecycle) {
   }
 
   const restSlow = await postDecisionRest({
+    authority: hosts.authority,
     fetch: hosts.fetch,
     decisionUrl: hosts.decisionUrl,
     contractName: deployed.contract.name,
@@ -302,6 +304,7 @@ async function runIntegration(lifecycle) {
     signal: lifecycle.signal,
   });
   const restFast = await postDecisionRest({
+    authority: hosts.authority,
     fetch: hosts.fetch,
     decisionUrl: hosts.decisionUrl,
     contractName: deployed.contract.name,
@@ -328,6 +331,7 @@ async function runIntegration(lifecycle) {
   await hosts.decision.stop();
   await assert.rejects(() =>
     postDecisionRest({
+      authority: hosts.authority,
       fetch: hosts.fetch,
       decisionUrl: hosts.decisionUrl,
       contractName: deployed.contract.name,
@@ -401,6 +405,7 @@ async function runIntegration(lifecycle) {
     ),
   );
   const restartedDecision = await postDecisionRest({
+    authority: restartedHosts.authority,
     fetch: restartedHosts.fetch,
     decisionUrl: restartedHosts.decisionUrl,
     contractName: deployed.contract.name,
@@ -508,6 +513,7 @@ async function runAsyncAnalysisActivationCheck({
   let decisionAfterActivation;
   while (Date.now() < deadline) {
     const decision = await postDecisionRest({
+      authority: hosts.authority,
       fetch: hosts.fetch,
       decisionUrl: hosts.decisionUrl,
       contractName,
@@ -575,6 +581,7 @@ async function runAsyncAnalysisActivationCheck({
       { active_play_ms_5s: 5_000, pieces_locked_5s: 0 },
     ]) {
       const retained = await postDecisionRest({
+        authority: hosts.authority,
         fetch: hosts.fetch,
         decisionUrl: hosts.decisionUrl,
         contractName,
@@ -914,7 +921,7 @@ async function waitForEvidenceMaterialization({
 }
 
 async function assertLiveOtlpTransportConformance({ hosts, initial }) {
-  const protobufRequest = Buffer.from([0x0a, 0x00]);
+  const protobufRequest = Buffer.alloc(0);
   const compressions = [
     {
       contentEncoding: "identity",
@@ -1088,6 +1095,7 @@ async function readRawOtlpInboxHealth(hosts) {
 }
 
 async function postDecisionRest({
+  authority,
   fetch,
   decisionUrl,
   contractName,
@@ -1095,7 +1103,7 @@ async function postDecisionRest({
   attributes,
   signal,
 }) {
-  const url = `${decisionUrl}/v3/decision-contracts/${
+  const url = `${decisionUrl}${resourceScopePath(authority)}/decision-contracts/${
     encodeURIComponent(contractName)
   }/versions/${encodeURIComponent(contractDigest)}/decisions`;
   const request = { attributes };
@@ -1116,7 +1124,7 @@ async function postDecisionRest({
 }
 
 async function readActiveExecutable({ hosts, contractName, contractDigest }) {
-  const response = await hosts.fetch(`${hosts.contractUrl}/v3/decision-contracts/${
+  const response = await hosts.fetch(`${hosts.contractUrl}${resourceScopePath(hosts.authority)}/decision-contracts/${
     encodeURIComponent(contractName)
   }/versions/${encodeURIComponent(contractDigest)}/executables`);
   const catalog = await response.json();

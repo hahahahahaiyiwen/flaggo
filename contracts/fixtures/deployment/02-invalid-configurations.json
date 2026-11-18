@@ -11,7 +11,7 @@
   "expected": {},
   "rejectedSamples": [
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
       "body": {
         "format": "flaggo.deploy/v1",
         "contracts": [
@@ -20,7 +20,7 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
       "body": {
         "format": "flaggo.deploy/v2",
         "authority": {
@@ -34,7 +34,7 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
       "body": {
         "format": "flaggo.deploy/v2",
         "authority": {
@@ -48,7 +48,7 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
       "body": {
         "format": "flaggo.deploy/v2",
         "authority": {
@@ -62,7 +62,7 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
       "body": {
         "format": "flaggo.deploy/v2",
         "authority": {
@@ -76,7 +76,7 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
       "body": {
         "format": "flaggo.deploy/v2",
         "authority": {
@@ -91,7 +91,7 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
       "body": {
         "format": "flaggo.deploy/v2",
         "authority": {
@@ -105,9 +105,9 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/RuntimeConfiguration",
       "body": {
-        "format": "flaggo.runtime-config/v2",
+        "format": "flaggo.runtime-config/v1",
         "authority": {
           "tenant": "local",
           "application": "tetris",
@@ -126,9 +126,9 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/RuntimeConfiguration",
       "body": {
-        "format": "flaggo.runtime-config/v1",
+        "format": "flaggo.runtime-config/v2",
         "authority": {
           "tenant": "local",
           "application": "tetris",
@@ -147,9 +147,9 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/RuntimeConfiguration",
       "body": {
-        "format": "flaggo.runtime-config/v1",
+        "format": "flaggo.runtime-config/v2",
         "authority": {
           "tenant": "local",
           "application": "tetris",
@@ -168,9 +168,9 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/RuntimeConfiguration",
       "body": {
-        "format": "flaggo.runtime-config/v1",
+        "format": "flaggo.runtime-config/v2",
         "authority": {
           "tenant": "local",
           "application": "tetris",
@@ -185,9 +185,9 @@
       }
     },
     {
-      "schemaRef": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+      "schemaRef": "deployment-models-v3.schema.json#/$defs/RuntimeConfiguration",
       "body": {
-        "format": "flaggo.runtime-config/v1",
+        "format": "flaggo.runtime-config/v2",
         "authority": {
           "tenant": "local",
           "application": "tetris",
