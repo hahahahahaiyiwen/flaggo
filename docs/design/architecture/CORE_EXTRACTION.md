@@ -331,9 +331,25 @@ revision; the graph contains neither SQLx/SQLite nor runnable apps.
 Its retained lock SHA-256 is
 `514dc77d4e8ffc2f85c9c0839f9dbef4d474c71a13a76b4e9c279402e7e13ef3`.
 The generated manifest, lockfile and `result.json` are retained in the session's
-`files/pinned-consumer-remote-3a49467` evidence directory. Subsequent changes to
-this qualification record are documentation-only. No PR, merge, issue closure
-or cloud deployment was performed.
+`files/pinned-consumer-remote-3a49467` evidence directory. The subsequent
+`ab3a1c19735cc5827e7ffe6129a3ec2dae014749` publication record is documentation-only.
+At that publication milestone no PR, merge, issue closure or cloud deployment
+had been performed.
+
+### Pull request review
+
+[PR #95](https://github.com/hahahahahaiyiwen/flaggo/pull/95) includes the approved
+#93 architecture gate and this implementation. Review reproduced and corrected
+a local admission race: marking a cycle as superseding must hold the same
+cross-process authority gate as cycle closure and ownership release. The
+blocked-SQL/caller-cancellation regression now proves supersession cannot
+acknowledge before admission finishes, and that admission retries fail after
+supersession acknowledges. The regression failed before the fix and passes
+after it; local workspace tests and focused strict Clippy also pass.
+
+The earlier immutable consumer records above retain their exact historical
+meaning. Follow-up remote consumer pins and Linux CI outcomes are recorded on
+the pull request; they must not be inferred from the earlier qualification.
 
 ### Earlier slice checks
 

@@ -664,6 +664,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
         replacement_digest: Option<&str>,
     ) -> Result<(), AnalysisError> {
         let _io_guard = mutex_lock(&self.io_gate)?;
+        let _authority_guard = authority_gate(&self.root)?;
         self.require_active_cycle(cycle_id)?;
         let mut cycle = self.read_cycle(cycle_id)?;
         cycle.status = CycleStatus::Superseding;

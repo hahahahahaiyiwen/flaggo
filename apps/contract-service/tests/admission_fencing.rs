@@ -89,18 +89,36 @@ async fn cancelled_request_retains_ownership_exclusion_through_sql_commit() {
     let blocker = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let digest = prepared.contract.contract_digest.clone();
     let submission = prepared.submission.clone();
-    let request = tokio::spawn(async move { service.submit(&resource, &digest, submission).await });
+    let submitting_service = service.clone();
+    let submitting_resource = resource.clone();
+    let request = tokio::spawn(async move {
+        submitting_service
+            .submit(&submitting_resource, &digest, submission)
+            .await
+    });
     tokio::time::timeout(Duration::from_secs(5), fence.acquired.notified())
         .await
         .unwrap();
     assert!(prepared.lease.release().await.is_err());
+    assert!(
+        prepared
+            .lease
+            .mark_superseding(&prepared.submission.provenance.cycle_id, None)
+            .await
+            .is_err()
+    );
     request.abort();
     assert!(request.await.unwrap_err().is_cancelled());
     assert!(prepared.lease.release().await.is_err());
     blocker.commit().await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if prepared.lease.release().await.is_ok() {
+            if prepared
+                .lease
+                .mark_superseding(&prepared.submission.provenance.cycle_id, None)
+                .await
+                .is_ok()
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -113,6 +131,20 @@ async fn cancelled_request_retains_ownership_exclusion_through_sql_commit() {
         .await
         .unwrap();
     assert_eq!(admitted, 1);
+    assert_eq!(
+        service
+            .submit(
+                &resource,
+                &prepared.contract.contract_digest,
+                prepared.submission
+            )
+            .await
+            .unwrap_err()
+            .problem()
+            .status,
+        409
+    );
+    prepared.lease.release().await.unwrap();
     authority.close().await;
     pool.close().await;
 }
