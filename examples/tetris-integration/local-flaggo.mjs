@@ -1,5 +1,6 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { parseFlaggoDeploymentManifest, resourceScopePath } from "@flaggo/sdk/configuration";
 
 import {
   parseMaterializationHealth,
@@ -19,6 +20,10 @@ export async function startLocalFlaggoHosts({
   if (analysisMode !== "copilot" && analysisMode !== "deterministic") {
     throw new TypeError("analysisMode must be 'copilot' or 'deterministic'.");
   }
+  const { authority } = parseFlaggoDeploymentManifest(JSON.parse(
+    await readFile(resolve(exampleDirectory, "flaggo.deploy.json"), "utf8"),
+  ));
+  const scopePath = resourceScopePath(authority);
   await mkdir(runDirectory, { recursive: true });
   const paths = {
     database: resolve(runDirectory, "flaggo.db"),
@@ -48,6 +53,7 @@ export async function startLocalFlaggoHosts({
       repositoryRoot,
       {
         FLAGGO_CONTRACT_DATABASE_PATH: paths.database,
+        FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.asyncAnalysisWorkspace,
         FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:0",
         FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS: "250",
       },
@@ -103,7 +109,7 @@ export async function startLocalFlaggoHosts({
       repositoryRoot,
       {
         FLAGGO_CONTRACT_CATALOG_URL:
-          `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
+          `${hosts.contractUrl}${scopePath}/decision-contract-catalog/current`,
         FLAGGO_DATABASE_URL: databaseUrl,
         FLAGGO_MATERIALIZER_CATALOG_INTERVAL_SECONDS: "1",
         FLAGGO_MATERIALIZER_POLL_INTERVAL_MS: "25",
@@ -152,12 +158,15 @@ export async function startLocalFlaggoHosts({
       repositoryRoot,
       {
         FLAGGO_ANALYSIS_COPILOT_HOME: paths.copilotHome,
+        FLAGGO_ANALYSIS_TENANT: authority.tenant,
+        FLAGGO_ANALYSIS_APPLICATION: authority.application,
+        FLAGGO_ANALYSIS_ENVIRONMENT: authority.environment,
         ...inferenceEnvironment,
         FLAGGO_ANALYSIS_POLL_INTERVAL_MS: "1000",
         FLAGGO_ANALYSIS_RUN_TIMEOUT_SECONDS: deterministic ? "120" : "600",
         FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.asyncAnalysisWorkspace,
         FLAGGO_CONTRACT_CATALOG_URL:
-          `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
+          `${hosts.contractUrl}${scopePath}/decision-contract-catalog/current`,
         FLAGGO_CONTRACT_SERVICE_URL: hosts.contractUrl,
         FLAGGO_DATABASE_URL: databaseUrl,
       },
@@ -176,6 +185,7 @@ export async function startLocalFlaggoHosts({
 
   return {
     ...hosts,
+    authority,
     databaseUrl,
     fetch: fetchWithAbort,
     otelIngestion,

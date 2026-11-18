@@ -10,6 +10,7 @@ rust-version.workspace = true
 async-trait = "0.1.89"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 flaggo-evidence-store = { version = "0.1.0", path = "../../modules/evidence-store" }
+flaggo-evidence-materialization = { version = "0.1.0", path = "../../modules/evidence-materialization" }
 flaggo-otlp-codec = { version = "0.1.0", path = "../../modules/otlp-codec" }
 flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../../modules/raw-otlp-inbox" }
 flaggo-service-observability.workspace = true
@@ -25,6 +26,7 @@ tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+flaggo-contract = { version = "0.1.0", path = "../../modules/contract" }
 axum.workspace = true
 tempfile = "3.27.0"
 

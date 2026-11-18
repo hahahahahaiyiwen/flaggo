@@ -33,7 +33,7 @@ const contractDigest =
 const executableDigest =
   "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const runtimeConfig = {
-  format: "flaggo.runtime-config/v1",
+  format: "flaggo.runtime-config/v2",
   authority: {
     tenant: "local",
     application: "tetris",
@@ -140,7 +140,7 @@ test("Flaggo provider maps twelve adaptive attributes and reserves exposure corr
   });
   assert.match(
     String(request.input),
-    /\/v3\/decision-contracts\/tetris\.dropInterval\/versions\//u,
+    /\/v4\/tenants\/local\/applications\/tetris\/environments\/test\/decision-contracts\/tetris\.dropInterval\/versions\//u,
   );
   const body = JSON.parse(String(request.init.body));
   assert.deepEqual(

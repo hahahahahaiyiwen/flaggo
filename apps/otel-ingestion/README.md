@@ -29,20 +29,26 @@ materialization progress.
 
 ## Boundaries
 
-Accepted export requests are opaque durable work items after transport and
-message-shape validation. One request may contain several OTel Resources and
-declared authority scopes. OTel Ingestion does not:
+The reusable `flaggo-otlp-http` router accepts an injected inbox and independent
+security policy without depending on SQLite. The local binary explicitly uses
+`TrustedLocal`. Each Resource must declare unique, valid `flaggo.tenant`,
+`flaggo.application` and `flaggo.environment` string attributes. Every declared
+scope must be authorized before the complete payload and
+`flaggo.otlp.authorization/v1` envelope are appended atomically. One forbidden
+or missing scope rejects the entire batch without writes. OTel Ingestion does not:
 
-- extract or validate application-declared authority;
 - derive a signal `SourceKey` or `MaterializationRoute`;
 - split one request by Resource or signal item;
 - decide whether telemetry is relevant to a current contract;
 - materialize or correlate evidence; or
 - delete data because another app has processed it.
 
-Evidence Materializer owns decomposition, declared authority extraction, route
-admission, and Evidence Store projection. Authentication and authorization for
-telemetry writes remain deferred.
+Evidence Materializer rechecks the persisted authorization envelope before
+decomposition, route admission and Evidence Store projection. Private identity
+provider integration remains outside the local composition. Public readiness
+omits inbox inventory; the local binary explicitly opts into detailed health.
+Inbox schema 1 requires the [explicit migration](../../docs/design/architecture/CORE_EXTRACTION.md#implemented-breaking-wire-cutover);
+legacy bytes remain unverified rather than being relabelled authenticated.
 
 ## Interfaces
 

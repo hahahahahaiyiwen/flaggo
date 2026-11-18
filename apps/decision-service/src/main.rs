@@ -76,11 +76,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
             "Decision Service started",
         );
         let (stop, requested) = tokio::sync::oneshot::channel::<()>();
-        let server = axum::serve(listener, router(contracts.clone(), executables.clone()))
-            .with_graceful_shutdown(async {
-                let _ = requested.await;
-            })
-            .into_future();
+        let server = axum::serve(
+            listener,
+            router(
+                contracts.clone(),
+                executables.clone(),
+                Arc::new(flaggo_service_hosting::TrustedLocal),
+            ),
+        )
+        .with_graceful_shutdown(async {
+            let _ = requested.await;
+        })
+        .into_future();
         tokio::pin!(server);
         tokio::select! {
             result = &mut server => {

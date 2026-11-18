@@ -2,11 +2,11 @@
   "name": "validate-decision-contract-valid",
   "scenario": 44,
   "invariant": "Validation computes the exact contract digest without mutating accepted state.",
-  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
-  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
+  "requestSchema": "management-models-v4.schema.json#/$defs/DecisionContract",
+  "responseSchema": "management-models-v4.schema.json#/$defs/DecisionContractValidationResult",
   "request": {
     "method": "POST",
-    "path": "/v3/decision-contracts/tetris.dropInterval/validate",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/validate",
     "headers": {
       "Content-Type": "application/json"
     },

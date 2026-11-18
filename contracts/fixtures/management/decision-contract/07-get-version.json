@@ -2,10 +2,10 @@
   "name": "get-decision-contract-version",
   "scenario": 51,
   "invariant": "An immutable historical version is addressable by its digest within the named contract resource.",
-  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersion",
+  "responseSchema": "management-models-v4.schema.json#/$defs/DecisionContractVersion",
   "request": {
     "method": "GET",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:479512f4d12aa08f2a8f3ff2bca91daa4c9e4ffe032a098af1e2d5405676d17f",
     "headers": {
     }
   },

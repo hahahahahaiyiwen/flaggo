@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline conformance gate for the v3 management and runtime contracts."""
+"""Offline conformance gate for the v4 management and runtime contracts."""
 from __future__ import annotations
 
 import base64
@@ -11,6 +11,7 @@ import re
 import sys
 import zlib
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 
 import rfc8785
@@ -25,7 +26,7 @@ OPENAPI_DIR = CONTRACTS / "openapi"
 FIXTURES_DIR = CONTRACTS / "fixtures"
 OTEL_DIR = CONTRACTS / "otel"
 MANIFEST = CONTRACTS / "conformance" / "fixture-manifest-v1.json"
-OTLP_PROFILE = OTEL_DIR / "flaggo-otlp-http-profile-v1.json"
+OTLP_PROFILE = OTEL_DIR / "flaggo-otlp-http-profile-v2.json"
 SERVICE_OBSERVABILITY_PROFILE = (
     OTEL_DIR / "flaggo-service-observability-profile-v1.json"
 )
@@ -37,25 +38,27 @@ STRICT_JSON_VECTORS = CONTRACTS / "conformance" / "strict-json-vectors-v1.json"
 
 SCHEMA_ID_PREFIX = "https://flaggo.dev/contracts/schemas/"
 SCHEMA_FILES = [
-    "runtime-models-v3.schema.json",
-    "management-models-v3.schema.json",
-    "deployment-models-v2.schema.json",
-    "problem-details-v3.schema.json",
+    "runtime-models-v4.schema.json",
+    "management-models-v4.schema.json",
+    "deployment-models-v3.schema.json",
+    "problem-details-v4.schema.json",
     "telemetry-events-v1.schema.json",
-    "otlp-http-profile-v1.schema.json",
+    "otlp-http-profile-v2.schema.json",
     "service-observability-profile-v1.schema.json",
+    "evidence-value-v1.schema.json",
+    "evidence-query-result-v1.schema.json",
 ]
 OPENAPI_FILES = [
-    "flaggo-runtime-v3.yaml",
-    "flaggo-management-v3.yaml",
+    "flaggo-runtime-v4.yaml",
+    "flaggo-management-v4.yaml",
 ]
 FIXTURE_REQUIRED_KEYS = {"name", "invariant", "request", "expected"}
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 RUNTIME_PATH_PATTERN = re.compile(
-    r"^/v3/decision-contracts/[^/]+/versions/(?P<digest>sha256:[0-9a-f]{64})/decisions$"
+    r"^/v4/tenants/[^/]+/applications/[^/]+/environments/[^/]+/decision-contracts/[^/]+/versions/(?P<digest>sha256:[0-9a-f]{64})/decisions$"
 )
 EXACT_VERSION_PATH_PATTERN = re.compile(
-    r"^/v3/decision-contracts/[^/]+/versions/(?P<digest>sha256:[0-9a-f]{64})$"
+    r"^/v4/tenants/[^/]+/applications/[^/]+/environments/[^/]+/decision-contracts/[^/]+/versions/(?P<digest>sha256:[0-9a-f]{64})$"
 )
 
 
@@ -197,7 +200,7 @@ def validate_otlp_profile(
     context = f"otlp-profile:{OTLP_PROFILE.name}"
     validate_body(
         profile,
-        "otlp-http-profile-v1.schema.json",
+        "otlp-http-profile-v2.schema.json",
         registry,
         rep,
         context,
@@ -801,6 +804,10 @@ def validate_otlp_fixture(
     if fixture.get("otlpProfile") != profile.get("profile"):
         rep.fail(f"{context}: unknown OTLP profile")
         return
+    rep.check(
+        fixture.get("otlpProfileVersion") == profile.get("version"),
+        f"{context}: fixture must select the current explicit OTLP profile revision",
+    )
 
     signal_name = fixture.get("otlpSignal")
     signal = next(
@@ -1624,13 +1631,64 @@ def validate_v3_identities(fixtures: list[dict], rep: Report) -> None:
             and isinstance(response_body, dict)
         ):
             expected_location = (
-                f"/v3/decision-contracts/{response_body.get('name')}"
-                f"/versions/{response_body.get('contractDigest')}"
+                request["path"]
+                + f"/versions/{response_body.get('contractDigest')}"
             )
             rep.check(
                 location == expected_location,
                 f"{context}: Location does not identify the created version",
             )
+
+
+def validate_evidence_corpora(registry: Registry, rep: Report) -> set[Path]:
+    scalar_path = FIXTURES_DIR / "evidence-value-v1.json"
+    result_path = FIXTURES_DIR / "evidence-query-result-v1.json"
+    query_path = FIXTURES_DIR / "evidence-query-sqlite-v1.json"
+    scalar = load_json(scalar_path)
+    validator = validator_for_ref("evidence-value-v1.schema.json", registry)
+    for cell in scalar["valid"]:
+        rep.check(validator.is_valid(cell), f"valid canonical cell rejected: {cell}")
+        if cell["kind"] == "json":
+            json.loads(cell["value"], parse_float=Decimal)
+    for cell in scalar["invalid"]:
+        rep.check(not validator.is_valid(cell), f"invalid canonical cell accepted: {cell}")
+    for cell in scalar["invalidJsonText"]:
+        try:
+            json.loads(cell["value"], parse_float=Decimal)
+        except ValueError:
+            rep.check(True, "")
+        else:
+            rep.fail(f"invalid lexical JSON cell accepted: {cell}")
+    result = load_json(result_path)
+    rep.check(
+        validator_for_ref("evidence-query-result-v1.schema.json", registry).is_valid(result),
+        "saved canonical evidence result violates its versioned schema",
+    )
+    rep.check(
+        result["rowBytes"] == sum(
+            len(json.dumps(row, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+            for row in result["rows"]
+        ),
+        "saved evidence row-byte accounting differs from the profile",
+    )
+    query = load_json(query_path)
+    rep.check(query["profile"] == result["profile"], "query and result profiles disagree")
+    required = {
+        "source-time-filter", "ordered-projection", "grouped-count", "json-extraction",
+        "named-cte", "empty-with-types", "int64-extremes", "numeric-looking-text",
+        "finite-non-finite", "null-missing-json", "division-overflow-collation", "duplicate-aliases",
+    }
+    rep.check(
+        {case["name"] for case in query["cases"]} == required and len(query["cases"]) == len(required),
+        "query capability corpus must cover every required semantic category exactly once",
+    )
+    for case in query["cases"]:
+        if case["expect"] == "invalidQuery":
+            continue
+        for row in case["expect"].get("rows", []):
+            for cell in row.values():
+                rep.check(validator.is_valid(cell), f"query corpus {case['name']} has an invalid canonical cell")
+    return {path.resolve() for path in (scalar_path, result_path, query_path)}
 
 
 def main() -> int:
@@ -1652,6 +1710,7 @@ def main() -> int:
             rep.fail(f"parse error: {path}: {exc}")
 
     registry = build_registry(rep)
+    capability_paths = validate_evidence_corpora(registry, rep)
     validate_telemetry_schema(rep)
     validate_canonicalization_vectors(rep)
     validate_strict_json_vectors(rep)
@@ -1693,6 +1752,8 @@ def main() -> int:
         return 1
 
     cases = manifest.get("cases", [])
+    declared_capabilities = {(CONTRACTS / name).resolve() for name in manifest.get("capabilityCorpora", [])}
+    rep.check(declared_capabilities == capability_paths, "manifest capability corpora do not match validated evidence corpora")
     rep.check(bool(cases), "manifest has no cases")
     rep.check(
         manifest.get("totalCases") == len(cases),
@@ -1730,7 +1791,7 @@ def main() -> int:
         covered.update(int(scenario) for scenario in case.get("scenarios", []))
 
     on_disk = {path.resolve() for path in FIXTURES_DIR.rglob("*.json")}
-    for path in sorted(on_disk - indexed_paths):
+    for path in sorted(on_disk - indexed_paths - capability_paths):
         rep.fail(
             "fixture on disk not indexed in manifest: "
             f"{path.relative_to(CONTRACTS)}"
@@ -1753,7 +1814,7 @@ def main() -> int:
     )
 
     loaded_fixtures: list[dict] = []
-    for path in sorted(on_disk):
+    for path in sorted(on_disk - capability_paths):
         fixture = validate_fixture(
             path,
             registry,
@@ -1784,6 +1845,7 @@ def main() -> int:
             "otel_profiles": 2,
             "fixtures": len(on_disk),
             "manifest_cases": len(cases),
+            "capability_corpora": len(capability_paths),
             "scenarios_covered": len(covered & required),
         },
     )

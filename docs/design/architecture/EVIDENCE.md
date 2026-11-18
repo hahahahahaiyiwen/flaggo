@@ -53,9 +53,11 @@ route telemetry under configured service or instrumentation namespaces. It does
 not need to understand decision contracts, evidence sources, or dynamic
 contract selectors.
 
-The receiver validates and durably enqueues complete OTLP export requests
-without extracting authority or routing metadata. One request may contain
-several Resources and authority scopes. The Evidence Materializer owns
+The receiver independently authenticates the producer, validates every
+Resource's declared scope and authorizes the whole batch before durably
+appending unchanged OTLP bytes with a trusted producer/scope envelope. One
+missing or forbidden scope rejects the entire request without writes.
+The Evidence Materializer rechecks that envelope and owns
 decomposition, typed decoding, route construction, relevance selection,
 deduplication, and the query-ready Evidence Store projection. Async analysis
 owns semantic interpretation and correlation.
@@ -214,7 +216,7 @@ always recognizes built-in Flaggo protocol observations and separately applies
 active materialization routes to ordinary application telemetry.
 
 Contract Service exposes every current authority-bound contract at
-`/v3/decision-contract-catalog/current`. The complete deployed contract,
+`/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contract-catalog/current`. The complete deployed contract,
 including `AuthorityScope`, is covered by `contractDigest`. The materializer
 compiles that catalog into:
 

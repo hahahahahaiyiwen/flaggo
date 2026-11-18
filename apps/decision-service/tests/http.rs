@@ -59,7 +59,10 @@ async fn real_stores_return_rule_and_default_without_selecting_current_or_writin
     assert!(
         fixture
             .contracts
-            .get_current("http.parity", None)
+            .get_current(
+                &flaggo_contract::ContractResourceId::try_from(&fixture.accepted.contract).unwrap(),
+                None
+            )
             .await
             .unwrap()
             .is_none()
@@ -274,7 +277,7 @@ async fn actual_dotnet_http_and_sqlite_producer_interoperability() {
     .await;
     let deployed = client
         .put(format!(
-            "{}/v3/decision-contracts/http.parity",
+            "{}/v4/tenants/t/applications/a/environments/e/decision-contracts/http.parity",
             contract.base
         ))
         .header("content-type", "application/json")
@@ -313,7 +316,7 @@ async fn actual_dotnet_http_and_sqlite_producer_interoperability() {
             (
                 "escaped-literal",
                 "POST",
-                fixture.path().replace("/v3/", "/v%33/"),
+                fixture.path().replace("/v4/", "/v%34/"),
                 "application/json",
                 r#"{"attributes":{"x":1,"_random":0.5}}"#,
             ),
@@ -425,7 +428,7 @@ async fn actual_dotnet_http_and_sqlite_producer_interoperability() {
                 "POST",
                 fixture
                     .path()
-                    .replace("/v3/decision-contracts/", "/V3/Decision-Contracts/")
+                    .replace("/v4/tenants/", "/V4/Tenants/")
                     .replace("/versions/", "/Versions/")
                     .replace("/decisions", "/Decisions"),
                 "application/json",

@@ -13,6 +13,29 @@ use flaggo_service_observability::ServiceObservability;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if let [command, name] = arguments.as_slice()
+        && command == "--bind-legacy-workspace"
+    {
+        let scope = flaggo_contract::ResourceScope::new(
+            std::env::var("FLAGGO_ANALYSIS_TENANT")?,
+            std::env::var("FLAGGO_ANALYSIS_APPLICATION")?,
+            std::env::var("FLAGGO_ANALYSIS_ENVIRONMENT")?,
+        )?;
+        let resource = flaggo_contract::ContractResourceId::new(scope, name.clone())?;
+        let root = std::env::var("FLAGGO_ANALYSIS_WORKSPACE_ROOT")
+            .unwrap_or_else(|_| "./flaggo-analysis-workspaces".into());
+        flaggo_analysis_workspace::LocalWorkspaceProvider::new(root)?
+            .bind_legacy_resource(&resource)?;
+        println!("Legacy workspace bound to the explicit resource; sealed history is unchanged.");
+        return Ok(());
+    }
+    if !arguments.is_empty() {
+        return Err(io::Error::other(
+            "Usage: flaggo-async-analysis [--bind-legacy-workspace <contractName>]",
+        )
+        .into());
+    }
     let telemetry = ServiceObservability::initialize(
         SERVICE_NAME,
         INSTRUMENTATION_SCOPE,

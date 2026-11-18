@@ -177,7 +177,7 @@ received result, a queued result, and the applied interval/executable, with
 evaluation source, latency, and explicit cached/fallback errors. It also
 shows the full active executable plus retained active, Candidate, and inactive
 executable history as a status/digest table. History comes from
-`GET /v3/decision-contracts/{name}/versions/{digest}/executables/history`,
+`GET /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{name}/versions/{digest}/executables/history`,
 ordered by creation time and digest descending. The existing `/executables`
 catalog still supplies active authority and pending Candidates. Both endpoints
 include `nextCursor: null` on a final page, rather than omitting the required

@@ -2,11 +2,11 @@
   "name": "validate-decision-contract-invalid",
   "scenario": 45,
   "invariant": "A structurally valid contract with a default outside its result schema is reported invalid without mutation.",
-  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
-  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
+  "requestSchema": "management-models-v4.schema.json#/$defs/DecisionContract",
+  "responseSchema": "management-models-v4.schema.json#/$defs/DecisionContractValidationResult",
   "request": {
     "method": "POST",
-    "path": "/v3/decision-contracts/tetris.dropInterval/validate",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/validate",
     "headers": {
       "Content-Type": "application/json"
     },

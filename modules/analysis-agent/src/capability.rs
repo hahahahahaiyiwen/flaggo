@@ -73,7 +73,16 @@ pub trait AnalysisTools: Send + Sync {
 
     async fn run_sql(&self, sql: &str, row_limit: Option<u32>) -> Result<Value, AnalysisError>;
 
-    async fn code_interpreter(&self, input: PythonInput<'_>) -> Result<Value, AnalysisError>;
+    async fn code_interpreter(&self, input: PythonInput<'_>) -> Result<Value, AnalysisError> {
+        self.execute_python(&uuid::Uuid::new_v4().to_string(), input)
+            .await
+    }
+
+    async fn execute_python(
+        &self,
+        execution_id: &str,
+        input: PythonInput<'_>,
+    ) -> Result<Value, AnalysisError>;
 
     async fn propose_executable(&self, rules: Value) -> Result<CandidateRecord, AnalysisError>;
 

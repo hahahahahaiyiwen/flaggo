@@ -663,13 +663,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "flaggo-analysis-application"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "flaggo-analysis-agent",
+ "flaggo-analysis-domain",
+ "flaggo-analysis-execution",
+ "flaggo-analysis-workspace",
+ "flaggo-contract",
+ "flaggo-evidence-store",
+ "flaggo-service-observability",
+ "opentelemetry",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "flaggo-analysis-domain"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "flaggo-contract",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "flaggo-analysis-execution"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "flaggo-analysis-agent",
+ "flaggo-analysis-domain",
+ "flaggo-analysis-workspace",
+ "flaggo-evidence-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -679,11 +720,14 @@ dependencies = [
  "async-trait",
  "chrono",
  "flaggo-analysis-domain",
+ "flaggo-contract",
+ "flaggo-executable-store",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -695,8 +739,11 @@ dependencies = [
  "axum",
  "chrono",
  "flaggo-analysis-agent",
+ "flaggo-analysis-application",
  "flaggo-analysis-domain",
+ "flaggo-analysis-execution",
  "flaggo-analysis-workspace",
+ "flaggo-contract",
  "flaggo-evidence-store",
  "flaggo-service-observability",
  "opentelemetry",
@@ -726,13 +773,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "flaggo-contract-service"
+name = "flaggo-contract-application"
 version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
  "flaggo-contract",
  "flaggo-contract-store",
+ "flaggo-executable-store",
+ "flaggo-expression",
+ "flaggo-service-hosting",
+ "flaggo-service-observability",
+ "opentelemetry",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "url",
+]
+
+[[package]]
+name = "flaggo-contract-service"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "flaggo-analysis-workspace",
+ "flaggo-contract",
+ "flaggo-contract-application",
+ "flaggo-contract-store",
+ "flaggo-core-conformance",
  "flaggo-decision",
  "flaggo-executable-store",
  "flaggo-expression",
@@ -773,6 +847,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "flaggo-core-conformance"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "flaggo-analysis-domain",
+ "flaggo-analysis-workspace",
+ "flaggo-contract",
+ "flaggo-contract-application",
+ "flaggo-contract-store",
+ "flaggo-decision",
+ "flaggo-evidence-store",
+ "flaggo-executable-store",
+ "flaggo-expression",
+ "flaggo-raw-otlp-inbox",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "flaggo-decision"
 version = "0.1.0"
 dependencies = [
@@ -784,14 +882,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "flaggo-decision-service"
+name = "flaggo-decision-http"
 version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
  "flaggo-contract",
- "flaggo-contract-store",
  "flaggo-decision",
+ "flaggo-expression",
+ "flaggo-service-hosting",
+ "flaggo-service-observability",
+ "opentelemetry",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
+]
+
+[[package]]
+name = "flaggo-decision-service"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "flaggo-contract",
+ "flaggo-contract-store",
+ "flaggo-core-conformance",
+ "flaggo-decision",
+ "flaggo-decision-http",
  "flaggo-executable-store",
  "flaggo-expression",
  "flaggo-service-hosting",
@@ -811,12 +931,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "flaggo-evidence-materialization"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "flaggo-contract",
+ "flaggo-evidence-store",
+ "flaggo-otlp-codec",
+ "flaggo-raw-otlp-inbox",
+ "opentelemetry-proto",
+ "prost",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "flaggo-evidence-materializer"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "flaggo-contract",
+ "flaggo-evidence-materialization",
  "flaggo-evidence-store",
  "flaggo-otlp-codec",
  "flaggo-raw-otlp-inbox",
@@ -856,6 +998,7 @@ dependencies = [
 name = "flaggo-executable-store"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "flaggo-contract",
@@ -891,11 +1034,40 @@ dependencies = [
 name = "flaggo-otel-ingestion"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "flaggo-otlp-http",
+ "flaggo-raw-otlp-inbox",
+ "flaggo-service-hosting",
+ "flaggo-service-observability",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "flaggo-otlp-codec"
+version = "0.1.0"
+dependencies = [
+ "flaggo-contract",
+ "flaggo-raw-otlp-inbox",
+ "opentelemetry-proto",
+ "prost",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "flaggo-otlp-http"
+version = "0.1.0"
+dependencies = [
  "async-compression",
  "async-trait",
  "axum",
+ "base64 0.22.1",
+ "flaggo-contract",
  "flaggo-otlp-codec",
  "flaggo-raw-otlp-inbox",
+ "flaggo-service-hosting",
  "flaggo-service-observability",
  "flate2",
  "futures-util",
@@ -914,22 +1086,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "flaggo-otlp-codec"
-version = "0.1.0"
-dependencies = [
- "flaggo-raw-otlp-inbox",
- "opentelemetry-proto",
- "prost",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "flaggo-raw-otlp-inbox"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "flaggo-contract",
+ "serde",
+ "serde_json",
  "sha2",
  "sqlx",
  "tempfile",
@@ -941,6 +1105,7 @@ dependencies = [
 name = "flaggo-service-hosting"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "flaggo-contract",
  "flaggo-service-observability",
@@ -983,6 +1148,7 @@ dependencies = [
  "flaggo-analysis-domain",
  "flaggo-analysis-workspace",
  "flaggo-async-analysis",
+ "flaggo-evidence-store",
  "flaggo-service-observability",
  "serde_json",
  "tempfile",

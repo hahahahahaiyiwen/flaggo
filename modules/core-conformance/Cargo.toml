@@ -1,0 +1,35 @@
+[package]
+name = "flaggo-core-conformance"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
+flaggo-analysis-domain = { path = "../analysis-domain" }
+flaggo-analysis-workspace = { path = "../analysis-workspace", default-features = false }
+flaggo-contract = { path = "../contract" }
+flaggo-decision = { path = "../decision" }
+flaggo-expression = { path = "../expression" }
+flaggo-contract-application = { path = "../contract-application" }
+flaggo-contract-store = { path = "../contract-store", default-features = false }
+flaggo-executable-store = { path = "../executable-store", default-features = false }
+flaggo-evidence-store = { path = "../evidence-store", default-features = false }
+flaggo-raw-otlp-inbox = { path = "../raw-otlp-inbox", default-features = false }
+sha2 = "0.10.9"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+flaggo-analysis-workspace = { path = "../analysis-workspace", features = ["local"] }
+flaggo-evidence-store = { path = "../evidence-store", features = ["sqlite"] }
+flaggo-raw-otlp-inbox = { path = "../raw-otlp-inbox", features = ["sqlite"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

@@ -33,7 +33,7 @@ contract definitions listed in `flaggo.deploy.json`. Deployment injects the
 manifest authority into each complete contract before the Contract Service
 computes its immutable digest. After deployment, the command starts Evidence
 Materializer with the deployed catalog, binds the returned authority-bound
-digest into a generated `flaggo.runtime-config/v1` document, and gives that one
+digest into a generated `flaggo.runtime-config/v2` document, and gives that one
 configuration to the decision client and all three telemetry providers before
 starting the game. The manifest authority is
 `local / tetris / integration`. All services and the temporary database are

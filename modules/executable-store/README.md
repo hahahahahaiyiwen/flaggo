@@ -1,10 +1,23 @@
 # Executable persistence and lifecycle
 
 `flaggo-executable-store` implements the SQLite executable-store API.
-Explicit initialization owns component schema **v5**,
-transactionally migrates **v4** admissions, and preserves contract-store v3 and
-other components. Failed migration rolls back its DDL, copied admissions and
-component version. Initialization never resets executable state.
+With default features disabled it exposes portable lifecycle DTOs/errors and
+the `ContractAuthority` semantic port without SQLx or SQLite. The default
+`sqlite` feature adds `SqliteExecutableStore` and `SqliteContractAuthority`.
+The latter constructs both logical stores over one pool and commits
+accepted-ready publication and current/ownership-checked admission atomically. It is the
+local management app's adapter; raw store writes remain lower-level test and
+migration facilities, not a substitute for application admission.
+Explicit initialization owns component schema **v6**. Existing executable-v4/v5
+and contract-v3 state requires the explicit Contract Service scoped migration;
+both logical stores migrate in one transaction. Failure rolls back both stores,
+including copied admissions and schema metadata. Initialization never resets
+executable state.
+
+Local admission requires an injected `AdmissionFence`; without one it fails
+closed. The workspace-backed guard excludes ownership/cycle transitions through
+commit, including caller cancellation. Current submitter ownership is separate
+from the original sealed Candidate provenance.
 
 The store implements immutable candidate writes, per-workspace/cycle admission
 idempotency, lifecycle reads, candidate/all-state keyset history, health and
@@ -19,17 +32,18 @@ Lifecycle writes use immediate transactions:
   requires no active executable. Repeat activation is idempotent.
 - Manual candidate activation fences candidate state/version, current contract
   and active digest/version, then activates and supersedes admitted backlog.
-- Automatic discovery chooses one candidate per contract name, preferring the
+- Automatic discovery chooses one candidate per full contract resource, preferring the
   current contract version, then newest admission and reference tie-breaks.
   Resolution preserves `Activated`, `Rejected`, `Superseded`, `Yielded` and
   `AlreadyResolved` outcomes. Active lifecycle versions detect ABA changes.
   Rejection does not require the active token to remain unchanged.
 
-Superseding is scoped to admitted candidates for that contract name, not every
+Superseding is scoped to admitted candidates for that full resource, not every
 unadmitted candidate. Manual activation uses the maximum active/candidate version
 for its next token; automatic resolution preserves the reference's separate
 version rule. Failed transitions roll back deactivation and leave work pending.
 Cancellation is explicit; transactional writes check it before commit.
+Lifecycle tokens fail at integer exhaustion instead of wrapping or being reused.
 
 Stored reads preserve integrity versus native JSON/timestamp/argument/database
 faults. Executable and provenance JSON use strict token validation. Checked DTOs
@@ -56,6 +70,7 @@ bytes. Read outputs are not normalized to hide those fields. Both producer
 databases are read, reinitialized, transitioned and migrated by both runtimes,
 with exact persisted-state snapshots and failed-migration rollback checks.
 
-The differential gate uses an [explicit historical oracle](../../tools/core-parity/README.md).
+The differential gate uses an [explicit historical oracle](../../tools/core-parity/README.md);
+it is retained historical evidence, not scoped v4 qualification.
 Rust HTTP, emitted OTel and unchanged-client full-loop tests verify service
 composition separately. Existing persisted state is retained after cutover.

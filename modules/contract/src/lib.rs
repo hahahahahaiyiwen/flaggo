@@ -1,12 +1,14 @@
 pub mod digests;
 mod json_value;
 pub mod models;
+mod resource;
 pub mod strict_json;
 pub mod validation;
 pub mod value_schema;
 
 pub use json_value::{JsonNumber, JsonValue};
 pub use models::*;
+pub use resource::{ContractResourceId, ResourceScope};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContractError {

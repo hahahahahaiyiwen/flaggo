@@ -20,6 +20,18 @@ use tracing::Instrument as _;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--migrate-v4-to-v5"] {
+        SqliteEvidenceStore::migrate_v4_to_v5(&std::env::var("FLAGGO_DATABASE_URL")?).await?;
+        println!("Evidence ownership schema migrated; observations and checkpoints are unchanged.");
+        return Ok(());
+    }
+    if !arguments.is_empty() {
+        return Err(std::io::Error::other(
+            "Usage: flaggo-evidence-materializer [--migrate-v4-to-v5]",
+        )
+        .into());
+    }
     let telemetry = ServiceObservability::initialize(
         SERVICE_NAME,
         INSTRUMENTATION_SCOPE,
@@ -50,7 +62,7 @@ async fn run(observability: MaterializerObservability) -> Result<(), Box<dyn Err
     let store = SqliteEvidenceStore::connect(&config.database_url).await?;
     let inbox_for_shutdown = inbox.clone();
     let store_for_shutdown = store.clone();
-    let materializer = EvidenceMaterializer::new(inbox, store.clone(), config.read_limit);
+    let materializer = EvidenceMaterializer::new(inbox, store.clone(), config.read_limit).await?;
     let (mut catalog, mut catalog_etag) = match store.load_catalog().await? {
         Some(stored) => (
             CompiledContractCatalog::compile(stored.payload)?,
@@ -202,6 +214,7 @@ async fn run(observability: MaterializerObservability) -> Result<(), Box<dyn Err
                             );
                         }
                     }
+                    Err(error @ flaggo_evidence_materializer::MaterializerError::Store(flaggo_evidence_store::EvidenceStoreError::ProjectionConflict)) => return Err(error.into()),
                     Err(error) => {
                         observability.record_failure(started.elapsed(), "dependency");
                         span.record("flaggo.operation.outcome", "failure");

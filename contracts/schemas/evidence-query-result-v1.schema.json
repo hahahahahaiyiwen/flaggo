@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flaggo.dev/contracts/schemas/evidence-query-result-v1.schema.json",
+  "title": "Saved evidence query result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["resultFormat", "valueFormat", "profile", "queryId", "contractDigest", "scope", "limits", "readConsistency", "queryStartedAt", "queryCompletedAt", "normalizedSql", "columns", "rows", "projectedObservationIds", "provenance", "rowBytes", "truncated"],
+  "properties": {
+    "resultFormat": { "const": "flaggo.evidence.query-result/v1" },
+    "valueFormat": { "const": "flaggo.evidence.value/v1" },
+    "profile": { "type": "string", "minLength": 1 },
+    "queryId": { "type": "string", "format": "uuid" },
+    "contractDigest": { "$ref": "#/$defs/digest" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "contractDigest", "sources"],
+      "properties": {
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tenant", "application", "environment"],
+          "properties": {
+            "tenant": { "$ref": "#/$defs/identifier" },
+            "application": { "$ref": "#/$defs/identifier" },
+            "environment": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "contractDigest": { "$ref": "#/$defs/digest" },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signal", "instrumentationScope", "signalName", "metricKind", "metricUnit", "parentSpanName"],
+            "properties": {
+              "signal": { "enum": ["log", "metric", "span", "span-event"] },
+              "instrumentationScope": { "type": "string", "minLength": 1 },
+              "signalName": { "type": "string", "minLength": 1 },
+              "metricKind": { "type": ["string", "null"] },
+              "metricUnit": { "type": ["string", "null"] },
+              "parentSpanName": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxRows", "maxRowBytes", "timeoutNanoseconds"],
+      "properties": {
+        "maxRows": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "maxRowBytes": { "type": "integer", "minimum": 1 },
+        "timeoutNanoseconds": { "type": "string", "pattern": "^[1-9][0-9]*(?![\\s\\S])" }
+      }
+    },
+    "readConsistency": { "const": "live" },
+    "queryStartedAt": { "type": "string", "format": "date-time" },
+    "queryCompletedAt": { "type": "string", "format": "date-time" },
+    "normalizedSql": { "type": "string", "minLength": 1 },
+    "columns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "providerType", "kind", "nullable"],
+        "properties": {
+          "name": { "type": "string" },
+          "providerType": { "type": ["string", "null"] },
+          "kind": { "enum": ["null", "int64", "float64", "text", "boolean", "json", "variant"] },
+          "nullable": { "type": ["boolean", "null"] }
+        }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": { "$ref": "https://flaggo.dev/schemas/evidence-value-v1.schema.json" }
+      }
+    },
+    "projectedObservationIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/digest" }
+    },
+    "provenance": { "const": "projected-ids-only" },
+    "rowBytes": { "type": "integer", "minimum": 0 },
+    "truncated": { "type": "boolean" }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "maxLength": 128, "pattern": "^[A-Za-z][A-Za-z0-9._-]*(?![\\s\\S])" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])" }
+  }
+}

@@ -72,7 +72,7 @@ pub struct AnalysisCandidateAdmission {
     pub workspace_id: String,
     pub cycle_id: String,
     pub attempt_id: String,
-    pub contract_name: String,
+    pub resource: flaggo_contract::ContractResourceId,
     pub contract_digest: String,
     pub executable_digest: String,
     pub analysis_manifest_digest: String,
@@ -81,11 +81,11 @@ pub struct AnalysisCandidateAdmission {
 }
 
 impl AnalysisCandidateAdmission {
-    pub(crate) fn identity_matches(&self, other: &Self) -> bool {
+    pub fn identity_matches(&self, other: &Self) -> bool {
         self.workspace_id == other.workspace_id
             && self.cycle_id == other.cycle_id
             && self.attempt_id == other.attempt_id
-            && self.contract_name == other.contract_name
+            && self.resource == other.resource
             && self.contract_digest == other.contract_digest
             && self.executable_digest == other.executable_digest
             && self.analysis_manifest_digest == other.analysis_manifest_digest
@@ -130,7 +130,7 @@ pub struct ExecutableLifecycleToken {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CandidateActivationCommand {
-    pub contract_name: String,
+    pub resource: flaggo_contract::ContractResourceId,
     pub contract_digest: String,
     pub executable_digest: String,
     pub expected_candidate_state_version: i64,
@@ -160,7 +160,7 @@ pub struct AnalysisCandidateActivationSnapshot {
 pub struct AnalysisCandidateActivationPage {
     pub candidates: Vec<AnalysisCandidateActivationSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_contract_name: Option<String>,
+    pub next_resource_key: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]

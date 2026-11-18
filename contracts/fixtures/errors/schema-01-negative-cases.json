@@ -5,7 +5,7 @@
   "schemaNegative": true,
   "request": {
     "method": "POST",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
     "headers": {
       "Content-Type": "application/json"
     }
@@ -18,7 +18,7 @@
   "rejectedSamples": [
     {
       "why": "the complete RuntimeInput must include SDK-generated _random",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
       "body": {
         "attributes": {
           "user_id": "user-123"
@@ -27,7 +27,7 @@
     },
     {
       "why": "_random must be less than one",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
       "body": {
         "attributes": {
           "_random": 1
@@ -36,7 +36,7 @@
     },
     {
       "why": "_random must not be negative",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
       "body": {
         "attributes": {
           "_random": -0.01
@@ -45,7 +45,7 @@
     },
     {
       "why": "the v3 wire profile defines no internal attribute other than _random",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
       "body": {
         "attributes": {
           "_random": 0.42,
@@ -55,7 +55,7 @@
     },
     {
       "why": "current exposure requires a non-empty exposure identity",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
       "body": {
         "attributes": {
           "_random": 0.42
@@ -67,7 +67,7 @@
     },
     {
       "why": "runtime request correlation is header-only",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
       "body": {
         "attributes": {
           "_random": 0.42
@@ -77,7 +77,7 @@
     },
     {
       "why": "a runtime decision must identify its executable",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeDecision",
       "body": {
         "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "result": 700,
@@ -88,7 +88,7 @@
     },
     {
       "why": "rule evaluation provenance requires the matching rule name",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeDecision",
       "body": {
         "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "executableDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -100,7 +100,7 @@
     },
     {
       "why": "default evaluation provenance cannot claim a rule",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeDecision",
       "body": {
         "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "executableDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -113,7 +113,7 @@
     },
     {
       "why": "a deployed DecisionContract must declare the authority covered by its digest",
-      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContract",
+      "schemaRef": "management-models-v4.schema.json#/$defs/DecisionContract",
       "body": {
         "name": "example.decision",
         "expression_syntax": "flaggo.cel/v1",
@@ -128,7 +128,7 @@
     },
     {
       "why": "user-declared attribute names cannot use the reserved internal prefix",
-      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContract",
+      "schemaRef": "management-models-v4.schema.json#/$defs/DecisionContract",
       "body": {
         "authority": {
           "tenant": "local",
@@ -155,7 +155,7 @@
     },
     {
       "why": "an authored rule cannot contain both a natural-language condition and a deterministic expression",
-      "schemaRef": "management-models-v3.schema.json#/$defs/AuthoredWhen",
+      "schemaRef": "management-models-v4.schema.json#/$defs/AuthoredWhen",
       "body": {
         "condition": "The user needs recovery time.",
         "expression": "attributes.recovery_failures > 0"
@@ -163,12 +163,12 @@
     },
     {
       "why": "runtime timestamp uses an offset instead of the required UTC Z suffix",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/Rfc3339",
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/Rfc3339",
       "body": "2026-07-30T14:30:00-04:00"
     },
     {
       "why": "the retired auto-approval policy name is invalid; the initial learning policy supports only auto-activation",
-      "schemaRef": "management-models-v3.schema.json#/$defs/LearningPolicy",
+      "schemaRef": "management-models-v4.schema.json#/$defs/LearningPolicy",
       "body": {
         "mode": "auto-approval",
         "evaluate": {
@@ -178,7 +178,7 @@
     },
     {
       "why": "every evidence declaration requires exactly one OpenTelemetry source",
-      "schemaRef": "management-models-v3.schema.json#/$defs/Evidence",
+      "schemaRef": "management-models-v4.schema.json#/$defs/Evidence",
       "body": {
         "name": "processing_latency",
         "attribute": "processingLatencyMs",
@@ -187,7 +187,7 @@
     },
     {
       "why": "the retired evidence binding is not a source",
-      "schemaRef": "management-models-v3.schema.json#/$defs/Evidence",
+      "schemaRef": "management-models-v4.schema.json#/$defs/Evidence",
       "body": {
         "name": "processing_latency",
         "attribute": "processingLatencyMs",
@@ -203,7 +203,7 @@
     },
     {
       "why": "source variants cannot mix fields from different OpenTelemetry signal kinds",
-      "schemaRef": "management-models-v3.schema.json#/$defs/EvidenceSource",
+      "schemaRef": "management-models-v4.schema.json#/$defs/EvidenceSource",
       "body": {
         "kind": "log",
         "scope": "adaptive-worker.app",
@@ -215,7 +215,7 @@
     },
     {
       "why": "a valid contract validation result requires the computed contract digest",
-      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
+      "schemaRef": "management-models-v4.schema.json#/$defs/DecisionContractValidationResult",
       "body": {
         "status": "valid",
         "issues": []
@@ -223,7 +223,7 @@
     },
     {
       "why": "an invalid contract validation result requires a non-empty error issue",
-      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
+      "schemaRef": "management-models-v4.schema.json#/$defs/DecisionContractValidationResult",
       "body": {
         "status": "invalid",
         "issues": [
@@ -238,7 +238,7 @@
     },
     {
       "why": "a valid contract validation result cannot contain an error issue",
-      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
+      "schemaRef": "management-models-v4.schema.json#/$defs/DecisionContractValidationResult",
       "body": {
         "status": "valid",
         "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -254,7 +254,7 @@
     },
     {
       "why": "a generated DecisionExecutable cannot contain a natural-language condition",
-      "schemaRef": "management-models-v3.schema.json#/$defs/DecisionExecutable",
+      "schemaRef": "management-models-v4.schema.json#/$defs/DecisionExecutable",
       "body": {
         "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "kind": "rules",
@@ -278,21 +278,21 @@
       "fixture": "runtime/decisions/01-rule-result.json",
       "path": "/evaluation/source",
       "value": "default",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeDecision"
     },
     {
       "why": "default provenance cannot gain a rule field",
       "fixture": "runtime/decisions/02-default-result.json",
       "path": "/evaluation/rule",
       "value": "unexpected-rule",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeDecision"
     },
     {
       "why": "executable digests use the canonical sha256 form",
       "fixture": "runtime/decisions/01-rule-result.json",
       "path": "/executableDigest",
       "value": "not-a-digest",
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeDecision"
     }
   ],
   "acceptedFixtureMutations": [
@@ -308,7 +308,7 @@
           3
         ]
       },
-      "schemaRef": "runtime-models-v3.schema.json#/$defs/RuntimeDecision"
+      "schemaRef": "runtime-models-v4.schema.json#/$defs/RuntimeDecision"
     }
   ],
   "rejectedJsonDocuments": [

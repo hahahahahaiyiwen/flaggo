@@ -199,6 +199,12 @@ mod tests {
             cycle_id: "cycle".to_owned(),
             attempt_id: "attempt".to_owned(),
             contract: AnalysisContractIdentity {
+                scope: flaggo_analysis_domain::AnalysisAuthority::new(
+                    "local".into(),
+                    "test".into(),
+                    "test".into(),
+                )
+                .unwrap(),
                 name: "checkout.delay".to_owned(),
                 digest: "sha256:\"digest\"".to_owned(),
             },

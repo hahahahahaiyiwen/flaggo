@@ -23,9 +23,9 @@ implementations use these artifacts as the shared wire authority.
 
 ## Deployment and runtime configuration
 
-[`deployment-models-v2.schema.json`](schemas/deployment-models-v2.schema.json)
+[`deployment-models-v3.schema.json`](schemas/deployment-models-v3.schema.json)
 defines the authored `flaggo.deploy/v2` manifest and generated
-`flaggo.runtime-config/v1` application configuration.
+`flaggo.runtime-config/v2` application configuration.
 
 One deployment manifest declares:
 
@@ -50,24 +50,25 @@ three endpoints before sending the first contract mutation.
 Changing manifest authority creates a different scoped deployment and a
 different `contractDigest`, even when the authored decision logic is identical.
 One digest therefore resolves to exactly one authority and one immutable
-DecisionContract. The declared authority is a Phase 4 routing boundary, not
-authenticated security authority.
+DecisionContract. Declared authority is resource identity, never a credential;
+an independently injected policy authenticates and authorizes access to it.
 
 The current management contract is
-[`flaggo-management-v3.yaml`](openapi/flaggo-management-v3.yaml). A decision
-name identifies a versioned `DecisionContract` resource, while
+[`flaggo-management-v4.yaml`](openapi/flaggo-management-v4.yaml). A decision
+name within an explicit tenant/application/environment identifies a versioned
+`DecisionContract` resource, while
 `contractDigest` identifies one immutable accepted version. The API exposes
 dry-run validation, idempotent create-or-update by name, current-version lookup,
-cursor-paginated historical-version lookup, and a cross-authority current
-contract catalog for Evidence Materializer. The catalog ETag is change
+cursor-paginated historical-version lookup, and a scope-bound current
+contract catalog for Evidence Materializer. The scope-bound catalog ETag is change
 detection metadata only; it is not persisted in evidence identity, provenance,
 or checkpoints. A newly created version is returned only after its generated
 default executable is active. The API has no bundle, numeric server revision,
 compatibility classification, or manual bundle-approval resource.
 Unauthenticated liveness and readiness probes use the shared health models from
-`runtime-models-v3.schema.json`.
+`runtime-models-v4.schema.json`.
 
-[`management-models-v3.schema.json`](schemas/management-models-v3.schema.json)
+[`management-models-v4.schema.json`](schemas/management-models-v4.schema.json)
 contains the strict `DecisionContract`, `DecisionExecutable`, validation-result,
 immutable-version, and version-list shapes. Description-only changes remain
 non-semantic and resolve to the existing digest instead of creating a new
@@ -76,18 +77,18 @@ the deferred design work recorded in
 [`CONTRACTS.md`](../docs/design/contracts/CONTRACTS.md).
 
 Errors use the RFC 9457 members from
-[`problem-details-v3.schema.json`](schemas/problem-details-v3.schema.json)
+[`problem-details-v4.schema.json`](schemas/problem-details-v4.schema.json)
 and may include problem-type extension members. Flaggo defines no shared custom
 body fields: problem identity is the `type` URI, while request correlation and
 retry timing remain HTTP headers.
 
 The runtime contract is
-[`flaggo-runtime-v3.yaml`](openapi/flaggo-runtime-v3.yaml). Its main operation
+[`flaggo-runtime-v4.yaml`](openapi/flaggo-runtime-v4.yaml). Its main operation
 posts a complete `RuntimeInput` to the exact immutable contract-version
 resource:
 
 ```http
-POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
 The route never resolves the named resource's current version. Every successful
@@ -116,7 +117,7 @@ The SDK must leave its instrumentation-scope `schemaUrl` unset until that URL
 is published and retrievable. Publishing the file and then enabling SDK
 emission are deployment work, not part of this contract-only change.
 
-[`flaggo-otlp-http-profile-v1.json`](otel/flaggo-otlp-http-profile-v1.json)
+[`flaggo-otlp-http-profile-v2.json`](otel/flaggo-otlp-http-profile-v2.json)
 selects the Phase 4 OTLP/HTTP surface: logs, metrics, and traces; Protobuf and
 Protobuf JSON encodings; identity and gzip compression; the 64 MiB decompressed
 request limit; full-request OTLP success after durable inbox enqueue; standard
@@ -158,9 +159,9 @@ python contracts\conformance\validate.py
 Validation checks registered schemas, OpenAPI structure and local references,
 fixture-manifest coverage, positive request/response bodies, negative schema
 cases, semantic value contracts, Flaggo event semantics, the OTLP/HTTP profile,
-the service-observability profile, the v3 DecisionContract management surface,
-and the v3 runtime evaluation surface. The Tetris consumer and host harness use
-the v3 management and runtime APIs; the deleted v2 bundle schema is no longer
+the service-observability profile, the v4 DecisionContract management surface,
+and the v4 runtime evaluation surface. The Tetris consumer and host harness use
+the v4 management and runtime APIs; the deleted v2 bundle schema is no longer
 part of their validation path. It does not start network services or access
 remote schema registries.
 

@@ -827,7 +827,7 @@ mod tests {
         let specification = crate::provider::tests::test_spec();
         let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
         let lease = provider
-            .claim(&specification.contract.name, "native-files")
+            .claim(&specification.contract.resource().unwrap(), "native-files")
             .await
             .unwrap();
         let PrepareCycleResult::Ready(preparation) = lease

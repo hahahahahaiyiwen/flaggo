@@ -435,8 +435,12 @@ impl AnalysisTools for ProfileTools {
     async fn run_sql(&self, sql: &str, limit: Option<u32>) -> Result<Value, AnalysisError> {
         self.inner.run_sql(sql, limit).await
     }
-    async fn code_interpreter(&self, input: PythonInput<'_>) -> Result<Value, AnalysisError> {
-        self.inner.code_interpreter(input).await
+    async fn execute_python(
+        &self,
+        execution_id: &str,
+        input: PythonInput<'_>,
+    ) -> Result<Value, AnalysisError> {
+        self.inner.execute_python(execution_id, input).await
     }
     async fn propose_executable(&self, rules: Value) -> Result<CandidateRecord, AnalysisError> {
         if self.profile == AgentProfile::Proposer || self.state != WorkflowState::DraftReady {
@@ -539,7 +543,7 @@ mod tests {
     use chrono::Utc;
     use flaggo_analysis_domain::{AnalysisProfile, AttemptContext};
     use flaggo_analysis_workspace::{
-        LocalWorkspaceProvider, PrepareCycleResult, WorkspaceProvider,
+        LocalWorkspaceProvider, PrepareCycleResult, WorkspaceLease, WorkspaceProvider,
     };
     use std::sync::Mutex;
 
@@ -594,12 +598,12 @@ mod tests {
         }
     }
 
-    async fn setup() -> (tempfile::TempDir, AgentSessionSpec) {
+    async fn setup() -> (tempfile::TempDir, Arc<dyn WorkspaceLease>, AgentSessionSpec) {
         let root = tempfile::tempdir().unwrap();
         let provider = LocalWorkspaceProvider::new(root.path()).unwrap();
         let mut spec = crate::provider::tests::test_spec();
         let lease = provider
-            .claim(&spec.contract.name, "attempt")
+            .claim(&spec.contract.resource().unwrap(), "attempt")
             .await
             .unwrap();
         let PrepareCycleResult::Ready(preparation) = lease
@@ -621,7 +625,7 @@ mod tests {
             .filesystem(&preparation.cycle.cycle_id, "attempt")
             .await
             .unwrap();
-        (root, spec)
+        (root, lease, spec)
     }
 
     async fn draft(spec: &AgentSessionSpec, attempt: &str, revision: u32) -> WorkflowMetadata {
@@ -677,7 +681,7 @@ mod tests {
 
     #[tokio::test]
     async fn routes_initial_work_to_proposer_and_enforces_submission_and_catalog_permissions() {
-        let (_root, spec) = setup().await;
+        let (_root, _lease, spec) = setup().await;
         let metadata = draft(&spec, "attempt", 0).await;
         let (result, inner) = execute(
             spec,
@@ -708,7 +712,7 @@ mod tests {
 
     #[tokio::test]
     async fn reviewer_request_change_and_revised_draft_preserve_version_and_bound_revisions() {
-        let (_root, mut spec) = setup().await;
+        let (_root, _lease, mut spec) = setup().await;
         let initial = draft(&spec, "previous", 0).await;
         spec.handoff = Some(handoff(&initial));
         let mut change = initial.clone();
@@ -738,7 +742,7 @@ mod tests {
                 .contains("\"profile\":\"reviewer\"")
         );
 
-        let (_root, mut spec) = setup().await;
+        let (_root, _lease, mut spec) = setup().await;
         let mut change = draft(&spec, "previous", 0).await;
         change.outcome = WorkflowState::RequestChange;
         change.review_path = Some("attempts/previous/review.json".to_owned());
@@ -762,7 +766,7 @@ mod tests {
             .is_ok()
         );
 
-        let (_root, mut spec) = setup().await;
+        let (_root, _lease, mut spec) = setup().await;
         let mut exhausted = draft(&spec, "previous", 1).await;
         spec.handoff = Some(handoff(&exhausted));
         exhausted.outcome = WorkflowState::RequestChange;
@@ -789,7 +793,7 @@ mod tests {
     #[tokio::test]
     async fn general_profile_is_state_driven_and_reviewer_can_reject_or_checkpoint() {
         for general in [false, true] {
-            let (_root, mut spec) = setup().await;
+            let (_root, _lease, mut spec) = setup().await;
             let metadata = draft(&spec, "previous", 0).await;
             spec.handoff = Some(handoff(&metadata));
             spec.filesystem
@@ -811,7 +815,7 @@ mod tests {
             assert!(matches!(result, Ok(AgentRunOutcome::NoCandidate { .. })));
             assert!(provider.observed.lock().unwrap()[0].0);
         }
-        let (_root, mut spec) = setup().await;
+        let (_root, _lease, mut spec) = setup().await;
         spec.handoff = Some(handoff(&draft(&spec, "previous", 0).await));
         assert!(
             execute(
@@ -826,7 +830,7 @@ mod tests {
             .0
             .is_ok()
         );
-        let (_root, mut spec) = setup().await;
+        let (_root, _lease, mut spec) = setup().await;
         spec.handoff = Some(handoff(&draft(&spec, "previous", 0).await));
         assert!(matches!(
             execute(
@@ -845,7 +849,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_corrupt_metadata_or_changed_draft_before_creating_session() {
         for corruption in ["metadata", "draft", "evidence"] {
-            let (_root, mut spec) = setup().await;
+            let (_root, _lease, mut spec) = setup().await;
             let mut metadata = draft(&spec, "previous", 0).await;
             if corruption == "draft" {
                 metadata.proposal_digest = "changed".to_owned();
@@ -882,7 +886,7 @@ mod tests {
             (false, true, "reviewer"),
             (true, false, "general"),
         ] {
-            let (_root, mut spec) = setup().await;
+            let (_root, _lease, mut spec) = setup().await;
             let identity = spec.context.clone();
             if reviewing {
                 spec.handoff = Some(handoff(&draft(&spec, "previous", 0).await));

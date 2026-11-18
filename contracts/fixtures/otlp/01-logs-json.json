@@ -27,6 +27,24 @@
                 "value": {
                   "stringValue": "test"
                 }
+              },
+              {
+                "key": "flaggo.tenant",
+                "value": {
+                  "stringValue": "local"
+                }
+              },
+              {
+                "key": "flaggo.application",
+                "value": {
+                  "stringValue": "tetris"
+                }
+              },
+              {
+                "key": "flaggo.environment",
+                "value": {
+                  "stringValue": "test"
+                }
               }
             ]
           },
@@ -105,5 +123,6 @@
       "Content-Type": "application/json"
     },
     "body": {}
-  }
+  },
+  "otlpProfileVersion": "2.0.0"
 }

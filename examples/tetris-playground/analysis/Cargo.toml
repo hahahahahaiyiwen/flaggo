@@ -15,6 +15,7 @@ async-trait = "0.1.89"
 chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
 flaggo-analysis-agent = { version = "0.1.0", path = "../../../modules/analysis-agent" }
 flaggo-analysis-domain = { version = "0.1.0", path = "../../../modules/analysis-domain" }
+flaggo-evidence-store = { version = "0.1.0", path = "../../../modules/evidence-store", default-features = false }
 flaggo-analysis-workspace = { version = "0.1.0", path = "../../../modules/analysis-workspace" }
 flaggo-async-analysis = { version = "0.1.0", path = "../../../apps/async-analysis" }
 flaggo-service-observability.workspace = true

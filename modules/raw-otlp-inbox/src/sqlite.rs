@@ -23,7 +23,7 @@ use crate::{
 };
 
 const COMPONENT_NAME: &str = "raw-otlp-inbox";
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const CREATE_SCHEMA_VERSIONS: &str = "
@@ -51,6 +51,7 @@ const CREATE_BATCHES: &str = "
         payload_sha256 BLOB NOT NULL
             CHECK(length(payload_sha256) = 32),
         payload BLOB NOT NULL,
+        authorization_json TEXT NOT NULL,
         CHECK(payload_length = length(payload)),
         CHECK(
             (wire_encoding = 'protobuf' AND media_type = 'application/x-protobuf')
@@ -84,6 +85,60 @@ pub struct SqliteRawOtlpInbox {
 }
 
 impl SqliteRawOtlpInbox {
+    /// Preserve legacy bytes and provenance without fabricating past authorization.
+    pub async fn migrate_v1_to_v2(database_url: &str) -> Result<bool, RawOtlpInboxError> {
+        let options = SqliteConnectOptions::from_str(database_url)
+            .map_err(RawOtlpInboxError::unavailable)?
+            .create_if_missing(false)
+            .synchronous(SqliteSynchronous::Full)
+            .busy_timeout(BUSY_TIMEOUT);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(RawOtlpInboxError::unavailable)?;
+        let result = async {
+            let mut tx = pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(RawOtlpInboxError::unavailable)?;
+            let version: i64 = sqlx::query_scalar(
+                "SELECT version FROM flaggo_schema_versions WHERE component = ?",
+            )
+            .bind(COMPONENT_NAME)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(RawOtlpInboxError::unavailable)?;
+            if version == SCHEMA_VERSION {
+                return Ok(false);
+            }
+            if version != 1 {
+                return Err(RawOtlpInboxError::UnsupportedSchemaVersion {
+                    component: COMPONENT_NAME,
+                    found: version,
+                    expected: SCHEMA_VERSION,
+                });
+            }
+            sqlx::query(
+                "ALTER TABLE raw_otlp_inbox_batches ADD COLUMN authorization_json TEXT NULL",
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(RawOtlpInboxError::unavailable)?;
+            sqlx::query("UPDATE flaggo_schema_versions SET version = ? WHERE component = ?")
+                .bind(SCHEMA_VERSION)
+                .bind(COMPONENT_NAME)
+                .execute(&mut *tx)
+                .await
+                .map_err(RawOtlpInboxError::unavailable)?;
+            tx.commit().await.map_err(RawOtlpInboxError::unavailable)?;
+            Ok(true)
+        }
+        .await;
+        pool.close().await;
+        result
+    }
+
     pub async fn connect(
         database_url: &str,
         limits: RawOtlpInboxLimits,
@@ -335,6 +390,19 @@ impl SqliteRawOtlpInbox {
             return Err(corrupt("payload SHA-256 does not match stored bytes"));
         }
 
+        let authorization_json: Option<String> = row
+            .try_get("authorization_json")
+            .map_err(RawOtlpInboxError::unavailable)?;
+        let authorization = authorization_json
+            .map(|json| {
+                let value: crate::OtlpAuthorizationEnvelope = serde_json::from_str(&json)
+                    .map_err(|_| corrupt("invalid authorization envelope JSON"))?;
+                value
+                    .validate()
+                    .map_err(|_| corrupt("invalid authorization envelope"))?;
+                Ok::<_, RawOtlpInboxError>(value)
+            })
+            .transpose()?;
         Ok(RawOtlpInboxBatch {
             inbox_batch_id: batch_id,
             signal,
@@ -346,6 +414,7 @@ impl SqliteRawOtlpInbox {
             payload_length,
             payload_sha256: PayloadSha256::new(digest_bytes),
             payload,
+            authorization,
         })
     }
 }
@@ -362,7 +431,11 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
             transport_compression,
             otlp_profile_version,
             payload,
+            authorization,
         } = batch;
+        authorization.validate()?;
+        let authorization_json =
+            serde_json::to_string(&authorization).map_err(RawOtlpInboxError::unavailable)?;
         let payload_length =
             u64::try_from(payload.len()).expect("in-memory payload length must fit u64");
         let payload_length_i64 =
@@ -450,9 +523,10 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
                 received_at_unix_ms,
                 payload_length,
                 payload_sha256,
-                payload
+                payload,
+                authorization_json
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(signal.as_str())
         .bind(wire_encoding.as_str())
@@ -463,6 +537,7 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
         .bind(payload_length_i64)
         .bind(digest_bytes.as_slice())
         .bind(payload)
+        .bind(authorization_json)
         .execute(&mut *transaction)
         .await
         .map_err(RawOtlpInboxError::unavailable)?;
@@ -499,7 +574,8 @@ impl RawOtlpInbox for SqliteRawOtlpInbox {
                 received_at_unix_ms,
                 payload_length,
                 payload_sha256,
-                payload
+                payload,
+                authorization_json
              FROM raw_otlp_inbox_batches
              WHERE inbox_batch_id > ?
              ORDER BY inbox_batch_id

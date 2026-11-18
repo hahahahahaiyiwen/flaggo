@@ -100,13 +100,17 @@ impl Fixture {
 
     pub fn path(&self) -> String {
         format!(
-            "/v3/decision-contracts/http.parity/versions/{}/decisions",
+            "/v4/tenants/t/applications/a/environments/e/decision-contracts/http.parity/versions/{}/decisions",
             self.accepted.contract_digest
         )
     }
 
     pub fn router(&self) -> Router {
-        router(self.contracts.clone(), self.executables.clone())
+        router(
+            self.contracts.clone(),
+            self.executables.clone(),
+            Arc::new(flaggo_service_hosting::TrustedLocal),
+        )
     }
 
     pub async fn close(self) {

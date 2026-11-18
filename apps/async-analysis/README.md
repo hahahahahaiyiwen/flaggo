@@ -72,6 +72,8 @@ transition table, artifact metadata and trusted-local review responsibilities.
 `modules/analysis-agent/src/context.rs` owns the assets, binds dynamic cycle
 identity as escaped XML, and prepares the writable templates. The current
 local packaging loads skills from the analysis-agent module source tree.
+Set `FLAGGO_ANALYSIS_SKILL_DIRECTORY` when using packaged assets outside that
+checkout. Startup requires every registered skill's `<skill-name>/SKILL.md`.
 
 The SDK-native `create` and `edit` tools create files and make incremental
 edits through the workspace filesystem adapter, which enforces writable
@@ -311,9 +313,13 @@ protocol is an explicit operator action, not an automatic retry strategy.
 | `FLAGGO_CONTRACT_SERVICE_URL` | `http://127.0.0.1:5000` | Base URL for current-contract reads and Candidate admission |
 | `FLAGGO_CONTRACT_CATALOG_URL` | derived from Contract Service | Optional full current-catalog endpoint URL |
 | `FLAGGO_ANALYSIS_WORKSPACE_ROOT` | `./flaggo-analysis-workspaces` | Durable contract workspaces |
+| `FLAGGO_ANALYSIS_TENANT` | required | Explicit tenant for v4 catalog and contract requests |
+| `FLAGGO_ANALYSIS_APPLICATION` | required | Explicit application for v4 requests |
+| `FLAGGO_ANALYSIS_ENVIRONMENT` | required | Explicit environment for v4 requests |
 | `FLAGGO_ANALYSIS_COPILOT_HOME` | `./flaggo-analysis-copilot` | Isolated local Copilot runtime state |
 | `FLAGGO_ANALYSIS_INFERENCE` | `github` | Explicit `github` or `byok` inference |
 | `FLAGGO_ANALYSIS_MODEL` | Copilot SDK default in GitHub mode | Exact model/deployment; required for BYOK |
+| `FLAGGO_ANALYSIS_SKILL_DIRECTORY` | Checkout analysis skills directory | Packaged skill root; startup requires every registered profile's `SKILL.md` |
 | `GH_TOKEN` / `GITHUB_TOKEN` | logged-in `gh` user | Optional GitHub credential; `GH_TOKEN` takes precedence |
 | `OPENAI_BASE_URL` | none | Full OpenAI-compatible inference base URL; read only in BYOK mode |
 | `FLAGGO_ANALYSIS_BYOK_WIRE_API` | none | Required `responses` or `completions` |

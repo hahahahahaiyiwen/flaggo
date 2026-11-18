@@ -2,21 +2,29 @@ use std::{error::Error, num::NonZeroU16};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use thiserror::Error;
 
 mod analysis;
+#[cfg(feature = "sqlite")]
 mod sqlite;
+#[cfg(feature = "sqlite")]
 mod sqlite_analysis;
+mod value;
 
 pub use analysis::{
-    EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryLimits,
-    EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope, EvidenceRelation,
-    EvidenceRelationColumn, EvidenceSourceSelector,
+    EVIDENCE_RESULT_FORMAT, EVIDENCE_VALUE_FORMAT, EvidenceAnalysisStore, EvidenceColumn,
+    EvidenceQueryCapabilities, EvidenceQueryLimits, EvidenceQueryRequest, EvidenceQueryResult,
+    EvidenceQueryScope, EvidenceRelation, EvidenceRelationColumn, EvidenceSourceSelector,
+    EvidenceValueKind, PYTHON_EVIDENCE_DECODER,
 };
+#[cfg(feature = "sqlite")]
 pub use sqlite::SqliteEvidenceStore;
+#[cfg(feature = "sqlite")]
 pub use sqlite_analysis::{SQLITE_EVIDENCE_QUERY_CAPABILITIES, SqliteEvidenceAnalysisStore};
+pub use value::EvidenceValue;
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AuthorityScope {
     pub tenant: String,
     pub application: String,
@@ -48,7 +56,8 @@ impl AuthorityScope {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum EvidenceSignal {
     Log,
     Metric,
@@ -67,6 +76,7 @@ impl EvidenceSignal {
         }
     }
 
+    #[cfg(feature = "sqlite")]
     pub(crate) fn from_storage(value: &str) -> Option<Self> {
         match value {
             "log" => Some(Self::Log),
@@ -100,6 +110,13 @@ pub struct MaterializerVersions {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ForwardMaterializationKey {
     pub versions: MaterializerVersions,
+}
+
+pub const PROJECTION_CAPABILITY: &str = "flaggo.evidence.projection/v2";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectionClaim {
+    pub epoch: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -177,6 +194,8 @@ pub struct StoredEvidenceObservation {
 
 #[derive(Debug, Error)]
 pub enum EvidenceStoreError {
+    #[error("evidence projection ownership or checkpoint precondition is stale")]
+    ProjectionConflict,
     #[error("unsupported {component} schema version {found}; expected schema version {expected}")]
     UnsupportedSchemaVersion {
         component: &'static str,
@@ -199,7 +218,7 @@ pub enum EvidenceStoreError {
 }
 
 impl EvidenceStoreError {
-    pub(crate) fn unavailable(source: impl Error + Send + Sync + 'static) -> Self {
+    pub fn unavailable(source: impl Error + Send + Sync + 'static) -> Self {
         Self::Unavailable {
             source: Box::new(source),
         }
@@ -208,7 +227,19 @@ impl EvidenceStoreError {
 
 #[async_trait]
 pub trait EvidenceStore: Send + Sync {
-    async fn save_catalog(&self, catalog: StoredContractCatalog) -> Result<(), EvidenceStoreError>;
+    async fn projection_claim(&self) -> Result<Option<ProjectionClaim>, EvidenceStoreError>;
+
+    /// Explicit compare-and-replace of ordered ownership, not a worker-clock lease.
+    async fn replace_projection_claim(
+        &self,
+        expected: Option<ProjectionClaim>,
+    ) -> Result<ProjectionClaim, EvidenceStoreError>;
+
+    async fn save_catalog(
+        &self,
+        claim: ProjectionClaim,
+        catalog: StoredContractCatalog,
+    ) -> Result<(), EvidenceStoreError>;
 
     async fn load_catalog(&self) -> Result<Option<StoredContractCatalog>, EvidenceStoreError>;
 
@@ -216,6 +247,8 @@ pub trait EvidenceStore: Send + Sync {
 
     async fn commit(
         &self,
+        claim: ProjectionClaim,
+        expected_checkpoint: Option<u64>,
         commit: EvidenceMaterializationCommit,
     ) -> Result<EvidenceStoreCommitResult, EvidenceStoreError>;
 

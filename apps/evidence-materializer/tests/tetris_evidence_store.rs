@@ -206,8 +206,9 @@ async fn assert_live_transport_conformance(database_url: &str) {
     assert_eq!(conformance.len(), 6);
     assert!(conformance.iter().all(|batch| {
         batch.media_type == "application/x-protobuf"
-            && batch.payload == [0x0a, 0x00]
-            && batch.payload_length == 2
+            && batch.payload.is_empty()
+            && batch.payload_length == 0
+            && batch.authorization.is_some()
     }));
     assert_eq!(
         transport_matrix(&conformance),

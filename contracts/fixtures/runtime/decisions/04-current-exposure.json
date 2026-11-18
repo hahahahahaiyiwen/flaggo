@@ -2,11 +2,11 @@
   "name": "runtime-current-exposure",
   "scenario": 4,
   "invariant": "The SDK may include the exposure identity for the previous decision actually applied as part of the complete RuntimeInput.",
-  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
-  "responseSchema": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+  "requestSchema": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "runtime-models-v4.schema.json#/$defs/RuntimeDecision",
   "request": {
     "method": "POST",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
     "headers": {
       "Content-Type": "application/json"
     },

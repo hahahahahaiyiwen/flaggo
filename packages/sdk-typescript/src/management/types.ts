@@ -117,7 +117,9 @@ export interface ListContractVersionsQuery {
   readonly cursor?: string;
 }
 
-export type ContractClientConfiguration = TransportConfiguration;
+export type ContractClientConfiguration = TransportConfiguration & {
+  readonly authority: AuthorityScope;
+};
 
 export interface ContractClient {
   validate<TResult extends JsonValue>(

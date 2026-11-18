@@ -4,9 +4,9 @@ use chrono::{DateTime, Utc};
 use flaggo_evidence_store::{
     AuthorityScope, EvidenceAnalysisStore, EvidenceMaterializationCommit, EvidenceObservation,
     EvidenceObservationWrite, EvidenceQueryLimits, EvidenceQueryRequest, EvidenceQueryScope,
-    EvidenceSignal, EvidenceSourceSelector, EvidenceStore, EvidenceStoreError,
-    ForwardMaterializationKey, MaterializerVersions, SourceKey, SqliteEvidenceAnalysisStore,
-    SqliteEvidenceStore,
+    EvidenceSignal, EvidenceSourceSelector, EvidenceStore, EvidenceStoreError, EvidenceValue,
+    ForwardMaterializationKey, MaterializerVersions, SQLITE_EVIDENCE_QUERY_CAPABILITIES, SourceKey,
+    SqliteEvidenceAnalysisStore, SqliteEvidenceStore,
 };
 use flaggo_raw_otlp_inbox::{
     DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression,
@@ -17,6 +17,13 @@ use sqlx::{
     Connection,
     sqlite::{SqliteConnectOptions, SqliteConnection},
 };
+
+async fn claim(writer: &SqliteEvidenceStore) -> flaggo_evidence_store::ProjectionClaim {
+    match writer.projection_claim().await.unwrap() {
+        Some(claim) => claim,
+        None => writer.replace_projection_claim(None).await.unwrap(),
+    }
+}
 
 #[tokio::test]
 async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
@@ -29,7 +36,11 @@ async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
         .await
         .expect("writer");
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .expect("seed");
     let options = SqliteConnectOptions::from_str(&database_url)
@@ -56,11 +67,20 @@ async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
                 transport_compression: OtlpTransportCompression::Identity,
                 otlp_profile_version: DEFAULT_OTLP_PROFILE_VERSION.parse().expect("profile"),
                 payload: br#"{"resourceLogs":[]}"#.to_vec(),
+                authorization: flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new(
+                    "trusted-test".into(),
+                    vec![],
+                )
+                .unwrap(),
             })
             .await
             .expect("ingestion while analysis reads");
         writer
-            .commit(commit(2, observation("second", 100, 2)))
+            .commit(
+                claim(&writer).await,
+                writer.forward_checkpoint().await.unwrap(),
+                commit(2, observation("second", 100, 2)),
+            )
             .await
             .expect("materialization while analysis reads");
     })
@@ -100,7 +120,14 @@ async fn query_timeout_interrupts_sqlite_and_releases_the_connection() {
             candidate_ordinal: u32::try_from(index).expect("ordinal"),
         })
         .collect();
-    writer.commit(seed).await.expect("seed");
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .expect("seed");
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .expect("reader");
@@ -109,6 +136,7 @@ async fn query_timeout_interrupts_sqlite_and_releases_the_connection() {
         .query(
             &scope(),
             EvidenceQueryRequest {
+                profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                 sql: "SELECT count(*) FROM observations a CROSS JOIN observations b \
               CROSS JOIN observations c CROSS JOIN observations d"
                     .to_owned(),
@@ -128,6 +156,7 @@ async fn query_timeout_interrupts_sqlite_and_releases_the_connection() {
             .query(
                 &scope(),
                 EvidenceQueryRequest {
+                    profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                     sql: "SELECT count(*) AS samples FROM observations".to_owned(),
                     limits: limits(),
                 },
@@ -151,13 +180,18 @@ async fn subsequent_live_queries_include_late_materialization_of_old_events() {
         .await
         .expect("writer");
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .expect("first observation");
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .expect("analysis reader");
     let query = EvidenceQueryRequest {
+        profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
         sql: "SELECT observation_id, json_extract(payload_json, '$.value') AS value \
               FROM observations ORDER BY observation_sequence"
             .to_owned(),
@@ -170,17 +204,24 @@ async fn subsequent_live_queries_include_late_materialization_of_old_events() {
     assert_eq!(initial.rows.len(), 1);
 
     writer
-        .commit(commit(2, observation("late", 50, 2)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(2, observation("late", 50, 2)),
+        )
         .await
         .expect("late observation");
     let result = reader.query(&scope(), query).await.expect("bounded query");
 
     assert_eq!(2, result.rows.len());
     assert_eq!(
-        Some(&serde_json::Value::from(1)),
+        Some(&EvidenceValue::Int64 { value: 1 }),
         result.rows[0].get("value")
     );
-    assert_eq!(result.rows[1].get("value"), Some(&serde_json::json!(2)));
+    assert_eq!(
+        result.rows[1].get("value"),
+        Some(&EvidenceValue::Int64 { value: 2 })
+    );
     assert!(
         result
             .observation_ids
@@ -196,6 +237,61 @@ async fn subsequent_live_queries_include_late_materialization_of_old_events() {
 }
 
 #[tokio::test]
+async fn dropping_a_query_interrupts_backend_work_before_connection_reuse() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_url = sqlite_url(&directory.path().join("evidence.db"));
+    let writer = SqliteEvidenceStore::connect(&database_url).await.unwrap();
+    let mut seed = commit(1, observation("first", 100, 1));
+    seed.observations = (0..100)
+        .map(|index| EvidenceObservationWrite {
+            observation: observation(&format!("row-{index}"), 100, index),
+            candidate_ordinal: u32::try_from(index).unwrap(),
+        })
+        .collect();
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .unwrap();
+    let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
+        .await
+        .unwrap();
+    let request = EvidenceQueryRequest {
+        profile: reader.query_capabilities().profile.to_owned(),
+        sql: "SELECT count(*) FROM observations a CROSS JOIN observations b CROSS JOIN observations c \
+              CROSS JOIN observations d CROSS JOIN observations e CROSS JOIN observations f".to_owned(),
+        limits: EvidenceQueryLimits { timeout: Duration::from_secs(30), ..limits() },
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), reader.query(&scope(), request))
+            .await
+            .is_err()
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        for _ in 0..3 {
+            reader
+                .query(
+                    &scope(),
+                    EvidenceQueryRequest {
+                        profile: reader.query_capabilities().profile.to_owned(),
+                        sql: "SELECT count(*) FROM observations".to_owned(),
+                        limits: limits(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        reader.close().await;
+    })
+    .await
+    .expect("abandoned backend work must stop, not wait for its original deadline");
+    writer.close().await;
+}
+
+#[tokio::test]
 async fn supports_bounded_aggregate_analysis_with_named_ctes() {
     let directory = tempfile::tempdir().expect("temporary evidence directory");
     let database_url = sqlite_url(&directory.path().join("evidence.db"));
@@ -203,11 +299,19 @@ async fn supports_bounded_aggregate_analysis_with_named_ctes() {
         .await
         .expect("writer");
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .expect("first observation");
     writer
-        .commit(commit(2, observation("second", 100, 3)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(2, observation("second", 100, 3)),
+        )
         .await
         .expect("second observation");
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
@@ -221,12 +325,13 @@ async fn supports_bounded_aggregate_analysis_with_named_ctes() {
     assert_eq!(capabilities.relations[0].columns.len(), 16);
     assert_eq!(
         serde_json::to_value(capabilities.relations[0].columns[0]).unwrap(),
-        serde_json::json!({"name": "observation_sequence", "type": "INTEGER"})
+        serde_json::json!({"name": "observation_sequence", "providerType": "INTEGER", "kind":"int64", "nullable":null})
     );
     let result = reader
         .query(
             &scope(),
             EvidenceQueryRequest {
+                profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                 sql: "WITH values_by_source AS (\
                           SELECT signal_name, json_extract(payload_json, '$.value') AS value \
                           FROM observations\
@@ -241,8 +346,16 @@ async fn supports_bounded_aggregate_analysis_with_named_ctes() {
         .expect("aggregate query");
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0].get("samples"), Some(&serde_json::json!(2)));
-    assert_eq!(result.rows[0].get("average"), Some(&serde_json::json!(2.0)));
+    assert_eq!(
+        result.rows[0].get("samples"),
+        Some(&EvidenceValue::Int64 { value: 2 })
+    );
+    assert_eq!(
+        result.rows[0].get("average"),
+        Some(&EvidenceValue::Float64 {
+            bits: 2.0_f64.to_bits()
+        })
+    );
     reader.close().await;
     writer.close().await;
 }
@@ -259,12 +372,20 @@ async fn distinguishes_complete_empty_and_truncated_results_with_one_row_lookahe
             candidate_ordinal: u32::try_from(index).unwrap(),
         })
         .collect();
-    writer.commit(seed).await.unwrap();
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .unwrap();
     for (max_rows, saved, truncated) in [(100, 100, true), (125, 125, false), (200, 125, false)] {
         let result = reader.query(&scope(), EvidenceQueryRequest {
+            profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
             sql: "SELECT observation_sequence FROM observations ORDER BY observation_sequence".to_owned(),
             limits: EvidenceQueryLimits { max_rows: NonZeroU32::new(max_rows).unwrap(), max_bytes: 65536, ..limits() },
         }).await.unwrap();
@@ -275,6 +396,7 @@ async fn distinguishes_complete_empty_and_truncated_results_with_one_row_lookahe
         .query(
             &scope(),
             EvidenceQueryRequest {
+                profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                 sql: "SELECT observation_sequence FROM observations WHERE observation_sequence < 0"
                     .to_owned(),
                 limits: limits(),
@@ -286,12 +408,13 @@ async fn distinguishes_complete_empty_and_truncated_results_with_one_row_lookahe
     assert!(!empty.truncated);
     assert_eq!(
         serde_json::to_value(&empty.columns).unwrap(),
-        serde_json::json!([{"name": "observation_sequence", "type": "INTEGER"}])
+        serde_json::json!([{"name": "observation_sequence", "providerType": "INTEGER", "kind":"int64", "nullable":null}])
     );
     let bytes = reader
         .query(
             &scope(),
             EvidenceQueryRequest {
+                profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                 sql: "SELECT observation_sequence FROM observations".to_owned(),
                 limits: EvidenceQueryLimits {
                     max_bytes: 1,
@@ -311,7 +434,11 @@ async fn prepares_aliases_and_declared_types_even_for_empty_results() {
     let database_url = sqlite_url(&directory.path().join("evidence.db"));
     let writer = SqliteEvidenceStore::connect(&database_url).await.unwrap();
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
@@ -325,6 +452,7 @@ async fn prepares_aliases_and_declared_types_even_for_empty_results() {
             .query(
                 &scope(),
                 EvidenceQueryRequest {
+                    profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                     sql: format!("{projection}{suffix}"),
                     limits: limits(),
                 },
@@ -334,11 +462,11 @@ async fn prepares_aliases_and_declared_types_even_for_empty_results() {
         assert_eq!(
             serde_json::to_value(&result.columns).unwrap(),
             serde_json::json!([
-                {"name": "sequence", "type": "INTEGER"},
-                {"name": "name", "type": "TEXT"},
-                {"name": "value", "type": null},
-                {"name": "next", "type": null},
-                {"name": "cast_value", "type": null}
+                {"name": "sequence", "providerType": "INTEGER", "kind":"int64", "nullable":null},
+                {"name": "name", "providerType": "TEXT", "kind":"text", "nullable":null},
+                {"name": "value", "providerType": null, "kind":"variant", "nullable":null},
+                {"name": "next", "providerType": null, "kind":"variant", "nullable":null},
+                {"name": "cast_value", "providerType": null, "kind":"variant", "nullable":null}
             ])
         );
     }
@@ -352,6 +480,7 @@ async fn prepares_aliases_and_declared_types_even_for_empty_results() {
         assert!(
             matches!(
                 reader.query(&scope(), EvidenceQueryRequest {
+                    profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                     sql: sql.to_owned(),
                     limits: limits(),
                 }).await,
@@ -427,7 +556,14 @@ async fn live_queries_preserve_authority_exact_or_null_contract_and_source_filte
             candidate_ordinal: u32::try_from(index).unwrap(),
         })
         .collect();
-    writer.commit(seed).await.unwrap();
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .unwrap();
@@ -435,6 +571,7 @@ async fn live_queries_preserve_authority_exact_or_null_contract_and_source_filte
         .query(
             &scope(),
             EvidenceQueryRequest {
+                profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                 sql: "SELECT observation_id FROM observations ORDER BY observation_sequence"
                     .to_owned(),
                 limits: limits(),
@@ -468,6 +605,7 @@ async fn live_queries_preserve_authority_exact_or_null_contract_and_source_filte
             .query(
                 scope,
                 EvidenceQueryRequest {
+                    profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                     sql: "SELECT observation_id FROM observations".to_owned(),
                     limits: limits(),
                 },
@@ -486,6 +624,7 @@ async fn live_queries_preserve_authority_exact_or_null_contract_and_source_filte
         .query(
             &combined,
             EvidenceQueryRequest {
+                profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                 sql: "SELECT observation_id FROM observations".to_owned(),
                 limits: limits(),
             },
@@ -523,6 +662,7 @@ async fn rejects_mutation_physical_tables_and_unapproved_functions() {
                     .query(
                         &scope(),
                         EvidenceQueryRequest {
+                            profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                             sql: sql.to_owned(),
                             limits: limits(),
                         },
@@ -534,6 +674,70 @@ async fn rejects_mutation_physical_tables_and_unapproved_functions() {
         );
     }
 
+    reader.close().await;
+    writer.close().await;
+}
+
+#[tokio::test]
+async fn negotiated_cells_preserve_precision_variant_columns_and_unsigned_timestamps() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_url = sqlite_url(&directory.path().join("evidence.db"));
+    let writer = SqliteEvidenceStore::connect(&database_url).await.unwrap();
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("wide", u64::MAX, 1)),
+        )
+        .await
+        .unwrap();
+    let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
+        .await
+        .unwrap();
+    let mut request = EvidenceQueryRequest {
+        profile: "unsupported/v1".to_owned(),
+        sql: "SELECT 9223372036854775807 AS largest, -9223372036854775808 AS smallest, \
+              1.0 AS real_value, '1' AS text_value, NULL AS missing, 1e999 AS infinity, \
+              observed_at_unix_nano FROM observations"
+            .to_owned(),
+        limits: limits(),
+    };
+    assert!(matches!(reader.query(&scope(), request.clone()).await,
+        Err(EvidenceStoreError::InvalidQuery(message)) if message.contains("unsupported evidence query profile")));
+    request.profile = reader.query_capabilities().profile.to_owned();
+    let result = reader.query(&scope(), request).await.unwrap();
+    let row = &result.rows[0];
+    assert_eq!(row["largest"], EvidenceValue::Int64 { value: i64::MAX });
+    assert_eq!(row["smallest"], EvidenceValue::Int64 { value: i64::MIN });
+    assert_eq!(
+        row["real_value"],
+        EvidenceValue::Float64 {
+            bits: 1.0_f64.to_bits()
+        }
+    );
+    assert_eq!(
+        row["infinity"],
+        EvidenceValue::Float64 {
+            bits: f64::INFINITY.to_bits()
+        }
+    );
+    assert_eq!(
+        row["text_value"],
+        EvidenceValue::Text {
+            value: "1".to_owned()
+        }
+    );
+    assert_eq!(row["missing"], EvidenceValue::Null {});
+    assert_eq!(
+        row["observed_at_unix_nano"],
+        EvidenceValue::Text {
+            value: u64::MAX.to_string()
+        }
+    );
+    assert!(
+        result.observation_ids.is_empty(),
+        "aggregates and unprojected IDs are not lineage"
+    );
     reader.close().await;
     writer.close().await;
 }

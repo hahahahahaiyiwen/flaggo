@@ -6,26 +6,26 @@
 /**
  * Stable user-owned identity of a named DecisionContract resource.
  *
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "DecisionName".
  */
 export type DecisionName = string;
 /**
  * Project digest form: sha256:<lowercase-hex>.
  *
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "Sha256Digest".
  */
 export type Sha256Digest = string;
 /**
  * RFC 3339 UTC timestamp using the Z suffix.
  *
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "Rfc3339".
  */
 export type Rfc3339 = string;
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "JsonValue".
  *
  * This interface was referenced by `RuntimeAttributes`'s JSON-Schema definition
@@ -41,7 +41,7 @@ export type JsonValue =
       [k: string]: JsonValue;
     };
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "EvaluationProvenance".
  */
 export type EvaluationProvenance = RuleEvaluation | DefaultEvaluation;
@@ -49,13 +49,13 @@ export type EvaluationProvenance = RuleEvaluation | DefaultEvaluation;
 /**
  * Strict wire models for stateless DecisionContract evaluation and service health. The SDK constructs the complete RuntimeInput, including internal attributes and optional current exposure.
  */
-export interface FlaggoRuntimeAPIModelsV3 {
+export interface FlaggoRuntimeAPIModelsV4 {
   [k: string]: unknown;
 }
 /**
- * Complete SDK-constructed attribute map. The v3 wire profile reserves underscore-prefixed names and defines only _random. Semantic validation rejects user attributes not declared by the contract.
+ * Complete SDK-constructed attribute map. The v4 wire profile reserves underscore-prefixed names and defines only _random. Semantic validation rejects user attributes not declared by the contract.
  *
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "RuntimeAttributes".
  */
 export interface RuntimeAttributes {
@@ -66,7 +66,7 @@ export interface RuntimeAttributes {
   [k: string]: JsonValue | number;
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "CurrentExposure".
  */
 export interface CurrentExposure {
@@ -76,7 +76,7 @@ export interface CurrentExposure {
   exposureId: string;
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "RuntimeInput".
  */
 export interface RuntimeInput {
@@ -84,7 +84,7 @@ export interface RuntimeInput {
   currentExposure?: CurrentExposure;
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "RuleEvaluation".
  */
 export interface RuleEvaluation {
@@ -92,14 +92,14 @@ export interface RuleEvaluation {
   rule: string;
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "DefaultEvaluation".
  */
 export interface DefaultEvaluation {
   source: "default";
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "RuntimeDecision".
  */
 export interface RuntimeDecision {
@@ -120,7 +120,7 @@ export interface RuntimeDecision {
   evaluation: EvaluationProvenance;
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "LivenessResult".
  */
 export interface LivenessResult {
@@ -130,7 +130,7 @@ export interface LivenessResult {
   observedAt: Rfc3339;
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "ReadinessCheck".
  */
 export interface ReadinessCheck {
@@ -139,7 +139,7 @@ export interface ReadinessCheck {
   required: boolean;
 }
 /**
- * This interface was referenced by `FlaggoRuntimeAPIModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoRuntimeAPIModelsV4`'s JSON-Schema
  * via the `definition` "ReadinessResult".
  */
 export interface ReadinessResult {

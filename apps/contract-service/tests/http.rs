@@ -4,15 +4,30 @@ use axum::{
     body::{Body, to_bytes},
     http::{HeaderMap, Request, StatusCode},
 };
-use flaggo_contract::DecisionContract;
-use flaggo_contract_service::{router, worker::ActivationWorker};
+use flaggo_contract::{ContractResourceId, DecisionContract, ResourceScope};
+use flaggo_contract_service::{ContractLifecycle, worker::ActivationWorker};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use support::{Fixture, Server, contract, submission};
 use tower::ServiceExt as _;
 
 const NAME: &str = "tetris.dropInterval";
-const BASE: &str = "/v3/decision-contracts/tetris.dropInterval";
+const BASE: &str = "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval";
+
+fn resource(name: &str) -> ContractResourceId {
+    ContractResourceId::new(
+        ResourceScope::new("local".into(), "tetris".into(), "integration".into()).unwrap(),
+        name.into(),
+    )
+    .unwrap()
+}
+
+fn router(lifecycle: ContractLifecycle) -> axum::Router {
+    flaggo_contract_service::router(
+        lifecycle,
+        std::sync::Arc::new(flaggo_service_hosting::TrustedLocal),
+    )
+}
 
 async fn request(
     fixture: &Fixture,
@@ -91,7 +106,9 @@ async fn validation_deployment_readiness_catalog_and_paging() {
     for path in [
         BASE.to_string(),
         version_path(&version),
-        format!("/V3/DECISION-CONTRACTS/{NAME}/"),
+        format!(
+            "/V4/TENANTS/local/APPLICATIONS/tetris/ENVIRONMENTS/integration/DECISION-CONTRACTS/{NAME}/"
+        ),
     ] {
         let (status, _, body) = request(&fixture, "GET", &path, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -100,18 +117,22 @@ async fn validation_deployment_readiness_catalog_and_paging() {
     let (_, _, catalog) = request(
         &fixture,
         "GET",
-        "/v3/decision-contract-catalog/current",
+        "/v4/tenants/local/applications/tetris/environments/integration/decision-contract-catalog/current",
         None,
     )
     .await;
     assert_eq!(catalog["contracts"].as_array().unwrap().len(), 1);
     assert_eq!(catalog["contracts"][0]["contract"], version["contract"]);
-    let (_, etag) = fixture.lifecycle.catalog().await.unwrap();
+    let (_, etag) = fixture
+        .lifecycle
+        .catalog(&resource(NAME).scope)
+        .await
+        .unwrap();
     for header in [etag.clone(), format!("\"other\", {etag}"), "*".into()] {
         let response = router(fixture.lifecycle.clone())
             .oneshot(
                 Request::builder()
-                    .uri("/v3/decision-contract-catalog/current")
+                    .uri("/v4/tenants/local/applications/tetris/environments/integration/decision-contract-catalog/current")
                     .header("if-none-match", header)
                     .body(Body::empty())
                     .unwrap(),
@@ -302,7 +323,6 @@ async fn default_authority_is_ready_when_authored_rules_are_absent_or_opaque() {
         }
         let version = fixture.deploy(&document).await;
         let active = fixture
-            .lifecycle
             .executables
             .get_active(version["contractDigest"].as_str().unwrap(), None)
             .await
@@ -313,7 +333,7 @@ async fn default_authority_is_ready_when_authored_rules_are_absent_or_opaque() {
         assert!(
             fixture
                 .lifecycle
-                .get(document["name"].as_str().unwrap(), None)
+                .get(&resource(document["name"].as_str().unwrap()), None)
                 .await
                 .unwrap()
                 .is_some()
@@ -356,7 +376,7 @@ async fn typed_projections_preserve_raw_numbers_and_leading_source_discriminator
     for path in [
         BASE.to_string(),
         version_path(&version),
-        "/v3/decision-contract-catalog/current".into(),
+        "/v4/tenants/local/applications/tetris/environments/integration/decision-contract-catalog/current".into(),
         format!("{}/executables", version_path(&version)),
         format!("{}/executables/history", version_path(&version)),
     ] {
@@ -402,7 +422,7 @@ async fn native_faults_provenance_validation_and_dependency_failures() {
     authority["authority"]["tenant"] = "other".into();
     assert_eq!(
         request(&fixture, "PUT", BASE, Some(authority)).await.2["type"],
-        "https://flaggo.dev/problems/contract-name-authority-conflict"
+        "https://flaggo.dev/problems/contract-resource-mismatch"
     );
     for text in [
         " ".into(),
@@ -472,7 +492,7 @@ async fn native_faults_provenance_validation_and_dependency_failures() {
             .unwrap();
         assert_eq!(response.status(), status, "{body}");
     }
-    fixture.lifecycle.contracts.close().await;
+    fixture.contracts.close().await;
     let response = request(&fixture, "GET", BASE, None).await;
     assert_eq!(response.0, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(response.1["retry-after"], "1");
@@ -483,15 +503,23 @@ async fn native_faults_provenance_validation_and_dependency_failures() {
 async fn concurrent_deployments_preserve_readiness_and_acceptance_time() {
     let fixture = Fixture::new().await;
     let contract: DecisionContract = serde_json::from_value(contract()).unwrap();
+    let resource = resource(NAME);
     let (left, right) = tokio::join!(
-        fixture.lifecycle.deploy(NAME, &contract),
-        fixture.lifecycle.deploy(NAME, &contract)
+        fixture.lifecycle.deploy(&resource, &contract),
+        fixture.lifecycle.deploy(&resource, &contract)
     );
     let left = left.unwrap();
     let right = right.unwrap();
     assert_ne!(left.1, right.1);
     assert_eq!(left.0, right.0);
-    assert!(fixture.lifecycle.get(NAME, None).await.unwrap().is_some());
+    assert!(
+        fixture
+            .lifecycle
+            .get(&resource, None)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM decision_executables WHERE lifecycle_state = 'active'",
     )
@@ -566,7 +594,7 @@ async fn worker_rejects_corruption_without_rewriting_and_continues_other_contrac
             &fixture,
             "POST",
             &format!(
-                "/v3/decision-contracts/tetris.other/versions/{}/candidates",
+                "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.other/versions/{}/candidates",
                 second["contractDigest"].as_str().unwrap()
             ),
             Some(submission("valid", "true", 400)),
@@ -587,7 +615,6 @@ async fn worker_rejects_corruption_without_rewriting_and_continues_other_contrac
         assert_eq!(state, "inactive", "{mutation}");
         assert_eq!(
             fixture
-                .lifecycle
                 .executables
                 .get_active(version["contractDigest"].as_str().unwrap(), None)
                 .await
@@ -598,7 +625,6 @@ async fn worker_rejects_corruption_without_rewriting_and_continues_other_contrac
         );
         assert_eq!(
             fixture
-                .lifecycle
                 .executables
                 .get_active(second["contractDigest"].as_str().unwrap(), None)
                 .await
@@ -639,7 +665,6 @@ async fn worker_rejects_absent_policy_and_uses_atomic_currentness_fences() {
         .unwrap();
     assert_eq!(
         fixture
-            .lifecycle
             .executables
             .get(admitted["executableDigest"].as_str().unwrap(), None)
             .await
@@ -666,7 +691,6 @@ async fn worker_rejects_absent_policy_and_uses_atomic_currentness_fences() {
         .unwrap();
     assert_ne!(
         fixture
-            .lifecycle
             .executables
             .get_active(version["contractDigest"].as_str().unwrap(), None)
             .await
@@ -846,7 +870,7 @@ async fn real_otlp_contains_bounded_contract_metrics_nested_spans_and_lifecycle_
     let corrupt_candidate = fixture
         .lifecycle
         .submit(
-            "tetris.corrupt",
+            &resource("tetris.corrupt"),
             corrupt_version["contractDigest"].as_str().unwrap(),
             serde_json::from_value(submission("corrupt-export", "true", 300)).unwrap(),
         )
@@ -894,9 +918,20 @@ async fn real_otlp_contains_bounded_contract_metrics_nested_spans_and_lifecycle_
         400
     );
     let path = version_path(&version);
+    let workspace_provider = flaggo_analysis_workspace::LocalWorkspaceProvider::new(
+        fixture.directory.path().join("workspaces"),
+    )
+    .unwrap();
+    let prepared = flaggo_core_conformance::admission::prepare_candidate(
+        &workspace_provider,
+        &version,
+        "export-owner",
+        submission("export", "true", 300)["rules"].clone(),
+    )
+    .await;
     let response = client
         .post(format!("{}{path}/candidates", server.base))
-        .json(&submission("export", "true", 300))
+        .json(&prepared.submission)
         .send()
         .await
         .unwrap();
@@ -912,7 +947,7 @@ async fn real_otlp_contains_bounded_contract_metrics_nested_spans_and_lifecycle_
     assert_eq!(invalid.status(), 422);
     for path in [
         BASE.to_string(),
-        "/v3/decision-contract-catalog/current".into(),
+        "/v4/tenants/local/applications/tetris/environments/integration/decision-contract-catalog/current".into(),
         format!("{BASE}/versions"),
         format!("{path}/executables/history"),
     ] {
@@ -1151,7 +1186,7 @@ async fn real_otlp_contains_bounded_contract_metrics_nested_spans_and_lifecycle_
 }
 
 #[tokio::test]
-#[ignore = "Requires built Release .NET Contract and Decision Service reference hosts"]
+#[ignore = "Historical v3 parity only; rerun from its recorded legacy revision, not as scoped v4 conformance"]
 async fn actual_dotnet_management_and_cross_producer_activation() {
     for producer in ["dotnet", "rust"] {
         let fixture = Fixture::new().await;
@@ -1277,7 +1312,6 @@ async fn actual_dotnet_management_and_cross_producer_activation() {
             cases.push(("POST", format!("{path}/candidates"), Some(body), 400));
         }
         let active = fixture
-            .lifecycle
             .executables
             .get_active(version["contractDigest"].as_str().unwrap(), None)
             .await
@@ -1362,16 +1396,18 @@ async fn actual_dotnet_management_and_cross_producer_activation() {
         .unwrap();
         if producer == "dotnet" {
             let stored = fixture
-                .lifecycle
                 .executables
                 .get(digest, None)
                 .await
                 .unwrap()
                 .unwrap();
             let accepted = fixture
-                .lifecycle
                 .contracts
-                .get(NAME, version["contractDigest"].as_str().unwrap(), None)
+                .get(
+                    &resource(NAME),
+                    version["contractDigest"].as_str().unwrap(),
+                    None,
+                )
                 .await
                 .unwrap()
                 .unwrap();
@@ -1461,12 +1497,12 @@ async fn actual_dotnet_management_and_cross_producer_activation() {
         )
         .unwrap();
         let runtime = flaggo_decision::DecisionRuntime::new(
-            fixture.lifecycle.contracts.clone(),
-            fixture.lifecycle.executables.clone(),
+            fixture.contracts.clone(),
+            fixture.executables.clone(),
         );
         let rust_result = runtime
             .decide(
-                NAME,
+                &resource(NAME),
                 version["contractDigest"].as_str().unwrap(),
                 &input,
                 None,

@@ -15,6 +15,7 @@ import {
 } from "../internal/guards.js";
 import { utf8Length } from "../internal/serialization.js";
 import { createTransport } from "../internal/transport.js";
+import { resourceScopePath } from "../internal/resource.js";
 import {
   assertInputSchema,
   assertResponseSchema,
@@ -46,6 +47,7 @@ function validateConfiguration<TCatalog extends DecisionCatalog>(
   configuration: DecisionClientConfiguration<TCatalog>,
 ): {
   readonly baseUrl: string;
+  readonly scopePath: string;
   readonly bindings: Readonly<Record<string, DecisionBinding>>;
 } {
   const raw = record(configuration);
@@ -74,6 +76,7 @@ function validateConfiguration<TCatalog extends DecisionCatalog>(
   >(configuration.runtimeConfig);
   return {
     baseUrl: runtimeConfig.services.decisionServiceUrl,
+    scopePath: resourceScopePath(runtimeConfig.authority),
     bindings: runtimeConfig.bindings,
   };
 }
@@ -197,7 +200,7 @@ export function createDecisionClient<TCatalog extends DecisionCatalog>(
       const encodedDigest = encodeURIComponent(binding.contractDigest);
       const response = await transport.request({
         method: "POST",
-        path: `/v3/decision-contracts/${encodedName}/versions/${encodedDigest}/decisions`,
+        path: `${validated.scopePath}/decision-contracts/${encodedName}/versions/${encodedDigest}/decisions`,
         body: input,
         options,
         successStatuses: [200],

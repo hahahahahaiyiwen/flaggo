@@ -2,7 +2,7 @@
   "name": "health-readiness-ready",
   "scenario": 38,
   "invariant": "200 ready requires every check up.",
-  "responseSchema": "runtime-models-v3.schema.json#/$defs/ReadinessResult",
+  "responseSchema": "runtime-models-v4.schema.json#/$defs/ReadinessResult",
   "request": {
     "method": "GET",
     "path": "/health/ready",

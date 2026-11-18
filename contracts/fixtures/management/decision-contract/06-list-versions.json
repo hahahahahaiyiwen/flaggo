@@ -2,10 +2,10 @@
   "name": "list-decision-contract-versions",
   "scenario": 50,
   "invariant": "Version history is cursor-paginated and ordered newest-first without implying runtime latest resolution.",
-  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersionList",
+  "responseSchema": "management-models-v4.schema.json#/$defs/DecisionContractVersionList",
   "request": {
     "method": "GET",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions",
     "headers": {
     }
   },

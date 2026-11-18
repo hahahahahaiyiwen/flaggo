@@ -1,9 +1,9 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, Weak},
     time::Duration,
 };
 
@@ -13,23 +13,31 @@ use flaggo_analysis_domain::{
     AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
     CandidateRecord, CycleLimits, CycleOutcome, WorkflowHandoff,
 };
+use flaggo_contract::{CandidateOwnership, ContractResourceId};
+use flaggo_executable_store::{
+    AdmissionFence, AdmissionGuard, AnalysisCandidateAdmission, AuthorityResult,
+    ExecutableStoreError,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use crate::{
-    CyclePreparation, PrepareCycleResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileInfo,
-    WorkspaceFileSystem, WorkspaceLease, WorkspaceProvider, sha256_digest, workspace_id,
+    CyclePreparation, ExecutionReceipt, ExecutionRequest, ExecutionReservation, ExecutionState,
+    HandoffPublication, PrepareCycleResult, WorkspaceArtifact, WorkspaceEntry, WorkspaceEntryKind,
+    WorkspaceFileInfo, WorkspaceFileSystem, WorkspaceLease, WorkspaceProvider, sha256_digest,
+    workspace_id,
 };
 
 const WORKSPACE_SCHEMA_VERSION: u32 = 1;
 const VIRTUAL_ROOT: &str = "workspace";
+type LocalClaims = Arc<Mutex<HashMap<String, Weak<LocalWorkspaceLease>>>>;
 
 #[derive(Clone)]
 pub struct LocalWorkspaceProvider {
     root: PathBuf,
-    process_claims: Arc<Mutex<HashSet<String>>>,
+    process_claims: LocalClaims,
 }
 
 impl LocalWorkspaceProvider {
@@ -39,8 +47,133 @@ impl LocalWorkspaceProvider {
         let root = fs::canonicalize(root).map_err(workspace_error)?;
         Ok(Self {
             root,
-            process_claims: Arc::new(Mutex::new(HashSet::new())),
+            process_claims: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// Explicitly bind a legacy name-only directory without rewriting sealed history.
+    pub fn bind_legacy_resource(
+        &self,
+        resource: &ContractResourceId,
+    ) -> Result<bool, AnalysisError> {
+        resource.resource_key().map_err(workspace_error)?;
+        let legacy_id = sha256_digest(resource.name.as_bytes());
+        let root = self.root.join(legacy_id.trim_start_matches("sha256:"));
+        let manifest: WorkspaceManifest = read_json(&root.join("workspace.json"))?;
+        if manifest.workspace_id != legacy_id || manifest.contract_name != resource.name {
+            return Err(AnalysisError::workspace(
+                "legacy workspace identity does not match",
+            ));
+        }
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join("claim.lock"))
+            .map_err(workspace_error)?;
+        lock.try_lock().map_err(|error| {
+            AnalysisError::workspace(format!("legacy workspace must be idle: {error}"))
+        })?;
+        for entry in fs::read_dir(root.join("cycles")).map_err(workspace_error)? {
+            let entry = entry.map_err(workspace_error)?;
+            if entry.file_type().map_err(workspace_error)?.is_symlink() {
+                return Err(AnalysisError::workspace(
+                    "legacy cycle cannot be a symbolic link",
+                ));
+            }
+            if entry.file_type().map_err(workspace_error)?.is_dir() {
+                let contract: AnalysisContract = read_json(&entry.path().join("contract.json"))?;
+                if contract.resource()? != *resource {
+                    return Err(AnalysisError::workspace(
+                        "legacy history contains a different resource scope",
+                    ));
+                }
+            }
+        }
+        let binding = ResourceBinding {
+            resource: resource.clone(),
+            workspace_id: legacy_id,
+        };
+        let path = root.join("resource.json");
+        if path.exists() && read_json::<ResourceBinding>(&path)? != binding {
+            return Err(AnalysisError::workspace(
+                "legacy workspace is already bound to another resource",
+            ));
+        }
+        let alias = self.binding_path(resource);
+        if alias.exists() {
+            if read_json::<ResourceBinding>(&alias)? != binding {
+                return Err(AnalysisError::workspace(
+                    "resource binding conflicts with existing history",
+                ));
+            }
+            return Ok(false);
+        }
+        let scoped_root = self
+            .root
+            .join(workspace_id(resource).trim_start_matches("sha256:"));
+        if scoped_root.exists() {
+            return Err(AnalysisError::workspace(
+                "scoped workspace already exists; histories cannot be silently merged",
+            ));
+        }
+        write_json_atomic(&path, &binding)?;
+        fs::create_dir_all(self.root.join("resource-bindings")).map_err(workspace_error)?;
+        write_json_atomic(&alias, &binding)?;
+        Ok(true)
+    }
+
+    fn binding_path(&self, resource: &ContractResourceId) -> PathBuf {
+        self.root.join("resource-bindings").join(format!(
+            "{}.json",
+            workspace_id(resource).trim_start_matches("sha256:")
+        ))
+    }
+
+    fn resolve_resource(&self, resource: &ContractResourceId) -> Result<String, AnalysisError> {
+        let legacy_id = sha256_digest(resource.name.as_bytes());
+        let alias = self.binding_path(resource);
+        if alias.exists() {
+            let binding: ResourceBinding = read_json(&alias)?;
+            if binding.resource != *resource || binding.workspace_id != legacy_id {
+                return Err(AnalysisError::workspace("invalid scoped workspace binding"));
+            }
+            return Ok(legacy_id);
+        }
+        let legacy_root = self.root.join(legacy_id.trim_start_matches("sha256:"));
+        if legacy_root.join("workspace.json").exists() {
+            let binding_path = legacy_root.join("resource.json");
+            if !binding_path.exists()
+                || read_json::<ResourceBinding>(&binding_path)?.resource == *resource
+            {
+                return Err(AnalysisError::workspace(
+                    "legacy workspace requires explicit resource binding before use",
+                ));
+            }
+        }
+        Ok(workspace_id(resource))
+    }
+
+    /// Resolve a live local claim for trusted-local execution, never a remote lease.
+    pub fn analysis_directory(
+        &self,
+        workspace: &Arc<dyn WorkspaceLease>,
+        cycle_id: &str,
+    ) -> Result<PathBuf, AnalysisError> {
+        let lease = mutex_lock(&self.process_claims)?
+            .get(workspace.workspace_id())
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| {
+                AnalysisError::workspace("execution requires a live local workspace claim")
+            })?;
+        let claimed: Arc<dyn WorkspaceLease> = lease.clone();
+        if !Arc::ptr_eq(&claimed, workspace) {
+            return Err(AnalysisError::workspace(
+                "execution workspace does not belong to this local provider",
+            ));
+        }
+        lease.require_active_cycle(cycle_id)?;
+        lease.require_writable(cycle_id)?;
+        Ok(lease.cycle_path(cycle_id).join("analysis"))
     }
 }
 
@@ -48,35 +181,43 @@ impl LocalWorkspaceProvider {
 impl WorkspaceProvider for LocalWorkspaceProvider {
     async fn claim(
         &self,
-        contract_name: &str,
+        resource: &ContractResourceId,
         attempt_id: &str,
     ) -> Result<Arc<dyn WorkspaceLease>, AnalysisError> {
-        validate_contract_name(contract_name)?;
+        resource.resource_key().map_err(workspace_error)?;
         validate_segment(attempt_id, "attempt ID")?;
 
-        let id = workspace_id(contract_name);
+        let id = self.resolve_resource(resource)?;
         {
             let mut claims = mutex_lock(&self.process_claims)?;
-            if !claims.insert(id.clone()) {
+            if claims.contains_key(&id) {
                 return Err(AnalysisError::WorkspaceBusy(id.clone()));
             }
+            claims.insert(id.clone(), Weak::new());
         }
 
-        let result = self.open_claim(contract_name, attempt_id, &id);
-        if result.is_err() {
-            mutex_lock(&self.process_claims)?.remove(&id);
+        match self.open_claim(resource, attempt_id, &id) {
+            Ok(lease) => {
+                let lease = Arc::new(lease);
+                mutex_lock(&self.process_claims)?.insert(id, Arc::downgrade(&lease));
+                Ok(lease)
+            }
+            Err(error) => {
+                mutex_lock(&self.process_claims)?.remove(&id);
+                Err(error)
+            }
         }
-        result.map(|lease| Arc::new(lease) as Arc<dyn WorkspaceLease>)
     }
 }
 
 impl LocalWorkspaceProvider {
     fn open_claim(
         &self,
-        contract_name: &str,
+        resource: &ContractResourceId,
         attempt_id: &str,
         id: &str,
     ) -> Result<LocalWorkspaceLease, AnalysisError> {
+        let contract_name = &resource.name;
         let directory_name = id.strip_prefix("sha256:").ok_or_else(|| {
             AnalysisError::workspace("workspace ID did not use the sha256 scheme")
         })?;
@@ -96,8 +237,25 @@ impl LocalWorkspaceProvider {
                 std::fs::TryLockError::WouldBlock => {
                     Err(AnalysisError::WorkspaceBusy(id.to_owned()))
                 }
+
                 std::fs::TryLockError::Error(error) => Err(workspace_error(error)),
             };
+        }
+        let _authority_guard = authority_gate(&root)?;
+
+        let binding = ResourceBinding {
+            resource: resource.clone(),
+            workspace_id: id.into(),
+        };
+        let binding_path = root.join("resource.json");
+        if binding_path.exists() {
+            if read_json::<ResourceBinding>(&binding_path)? != binding {
+                return Err(AnalysisError::workspace(
+                    "workspace resource binding does not match",
+                ));
+            }
+        } else {
+            write_json_atomic(&binding_path, &binding)?;
         }
 
         let manifest_path = root.join("workspace.json");
@@ -105,7 +263,7 @@ impl LocalWorkspaceProvider {
             let manifest: WorkspaceManifest = read_json(&manifest_path)?;
             if manifest.schema_version != WORKSPACE_SCHEMA_VERSION
                 || manifest.workspace_id != id
-                || manifest.contract_name != contract_name
+                || manifest.contract_name != *contract_name
             {
                 return Err(AnalysisError::workspace(
                     "workspace manifest does not match the requested contract",
@@ -123,47 +281,79 @@ impl LocalWorkspaceProvider {
             )?;
         }
 
+        let epoch = if root.join("claim.json").exists() {
+            let previous: ClaimRecord = read_json(&root.join("claim.json"))?;
+            if previous.schema_version != WORKSPACE_SCHEMA_VERSION {
+                return Err(AnalysisError::workspace(
+                    "unsupported claim record revision",
+                ));
+            }
+            previous
+                .epoch
+                .checked_add(1)
+                .ok_or_else(|| AnalysisError::workspace("workspace fencing epoch exhausted"))?
+        } else {
+            1
+        };
         write_json_atomic(
             &root.join("claim.json"),
             &ClaimRecord {
                 schema_version: WORKSPACE_SCHEMA_VERSION,
+                epoch,
                 attempt_id: attempt_id.to_owned(),
                 claimed_at: Utc::now(),
+                active: true,
+                cycle_id: None,
             },
         )?;
 
         Ok(LocalWorkspaceLease {
+            resource: resource.clone(),
+            epoch,
+            attempt_id: attempt_id.into(),
             root,
             workspace_id: id.to_owned(),
             contract_name: contract_name.to_owned(),
             process_claims: Arc::clone(&self.process_claims),
-            _lock_file: lock_file,
-            state: Arc::new(Mutex::new(LeaseState::default())),
+            lock_file: Mutex::new(Some(lock_file)),
+            state: Arc::new(Mutex::new(LeaseState {
+                valid: true,
+                ..Default::default()
+            })),
             io_gate: Arc::new(Mutex::new(())),
         })
     }
 }
 
 pub struct LocalWorkspaceLease {
+    resource: ContractResourceId,
+    epoch: u64,
+    attempt_id: String,
     root: PathBuf,
     workspace_id: String,
     contract_name: String,
-    process_claims: Arc<Mutex<HashSet<String>>>,
-    _lock_file: File,
+    process_claims: LocalClaims,
+    lock_file: Mutex<Option<File>>,
     state: Arc<Mutex<LeaseState>>,
     io_gate: Arc<Mutex<()>>,
 }
 
 impl Drop for LocalWorkspaceLease {
     fn drop(&mut self) {
-        if let Ok(mut claims) = self.process_claims.lock() {
-            claims.remove(&self.workspace_id);
+        if let Err(error) = self.release_claim() {
+            tracing::error!(%error, "Local workspace claim release failed");
+            // A dropped lease must revoke in-process capabilities even when an
+            // in-flight admission prevents acknowledging durable release.
+            if let Err(error) = self.invalidate_local_claim() {
+                tracing::error!(%error, "Local workspace capability revocation failed");
+            }
         }
     }
 }
 
 #[derive(Default)]
 struct LeaseState {
+    valid: bool,
     active_cycle_id: Option<String>,
     writable: bool,
     sealed: bool,
@@ -171,18 +361,29 @@ struct LeaseState {
 
 #[async_trait]
 impl WorkspaceLease for LocalWorkspaceLease {
+    fn resource(&self) -> &ContractResourceId {
+        &self.resource
+    }
+
+    fn claim_token(&self) -> crate::WorkspaceClaim {
+        crate::WorkspaceClaim {
+            resource: self.resource.clone(),
+            workspace_id: self.workspace_id.clone(),
+            attempt_id: self.attempt_id.clone(),
+            epoch: self.epoch,
+        }
+    }
+
+    async fn release(&self) -> Result<(), AnalysisError> {
+        self.release_claim()
+    }
+
     fn workspace_id(&self) -> &str {
         &self.workspace_id
     }
 
     fn contract_name(&self) -> &str {
         &self.contract_name
-    }
-
-    fn analysis_directory(&self, cycle_id: &str) -> Result<PathBuf, AnalysisError> {
-        self.require_active_cycle(cycle_id)?;
-        self.require_writable(cycle_id)?;
-        Ok(self.cycle_path(cycle_id).join("analysis"))
     }
 
     async fn prepare_cycle(
@@ -193,13 +394,15 @@ impl WorkspaceLease for LocalWorkspaceLease {
         now: DateTime<Utc>,
     ) -> Result<PrepareCycleResult, AnalysisError> {
         validate_segment(attempt_id, "attempt ID")?;
-        if contract.name != self.contract_name {
+        if contract.resource()? != self.resource {
             return Err(AnalysisError::workspace(
                 "contract name does not match the claimed workspace",
             ));
         }
 
         let _io_guard = mutex_lock(&self.io_gate)?;
+        let _authority_guard = authority_gate(&self.root)?;
+        validate_claim(&self.root, &self.state, self.epoch)?;
         let pointer_path = self.root.join("current-cycle.json");
         let mut pointer = if pointer_path.exists() {
             read_json::<CurrentCycle>(&pointer_path)?
@@ -228,10 +431,10 @@ impl WorkspaceLease for LocalWorkspaceLease {
                             .join("proposal.pending.json")
                             .exists();
                     self.set_active_state(&cycle_id, !sealed, sealed)?;
-                    return Ok(PrepareCycleResult::Ready(CyclePreparation {
-                        cycle: cycle.as_analysis_cycle(true),
+                    return Ok(PrepareCycleResult::Ready(Box::new(CyclePreparation {
+                        cycle: cycle.as_analysis_cycle(&self.resource.scope, true),
                         eligible_at: schedule.next_eligible_at,
-                    }));
+                    })));
                 }
 
                 self.finish_superseded_cycle(
@@ -285,10 +488,10 @@ impl WorkspaceLease for LocalWorkspaceLease {
         }
         self.set_active_state(&cycle_id, true, false)?;
 
-        Ok(PrepareCycleResult::Ready(CyclePreparation {
-            cycle: cycle.as_analysis_cycle(false),
+        Ok(PrepareCycleResult::Ready(Box::new(CyclePreparation {
+            cycle: cycle.as_analysis_cycle(&self.resource.scope, false),
             eligible_at: schedule.next_eligible_at,
-        }))
+        })))
     }
 
     async fn filesystem(
@@ -300,6 +503,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
         validate_segment(attempt_id, "attempt ID")?;
         self.require_active_cycle(cycle_id)?;
         Ok(Arc::new(LocalWorkspaceFileSystem {
+            epoch: self.epoch,
             root: self.cycle_path(cycle_id),
             workspace_root: self.root.clone(),
             cycle_id: cycle_id.to_owned(),
@@ -413,6 +617,8 @@ impl WorkspaceLease for LocalWorkspaceLease {
         &self,
         cycle_id: &str,
     ) -> Result<Option<CandidateRecord>, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        validate_claim(&self.root, &self.state, self.epoch)?;
         validate_segment(cycle_id, "cycle ID")?;
         let path = self.cycle_path(cycle_id).join("candidate.json");
         if path.exists() {
@@ -431,7 +637,11 @@ impl WorkspaceLease for LocalWorkspaceLease {
         self.require_active_cycle(cycle_id)?;
         let proposal: CandidateProposal =
             read_json(&self.cycle_path(cycle_id).join("proposal.json"))?;
-        if proposal.analysis_manifest_digest != candidate.analysis_manifest_digest {
+        let cycle = self.read_cycle(cycle_id)?;
+        if candidate.contract_name != self.resource.name
+            || candidate.contract_digest != cycle.contract_digest
+            || proposal.analysis_manifest_digest != candidate.analysis_manifest_digest
+        {
             return Err(AnalysisError::workspace(
                 "Candidate response does not match the sealed analysis manifest",
             ));
@@ -454,6 +664,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
         replacement_digest: Option<&str>,
     ) -> Result<(), AnalysisError> {
         let _io_guard = mutex_lock(&self.io_gate)?;
+        let _authority_guard = authority_gate(&self.root)?;
         self.require_active_cycle(cycle_id)?;
         let mut cycle = self.read_cycle(cycle_id)?;
         cycle.status = CycleStatus::Superseding;
@@ -462,16 +673,147 @@ impl WorkspaceLease for LocalWorkspaceLease {
         Ok(())
     }
 
-    async fn record_handoff(
+    async fn put_artifact(
         &self,
         cycle_id: &str,
         attempt_id: &str,
-        summary: &str,
-        metadata: Option<Value>,
-    ) -> Result<(), AnalysisError> {
+        bytes: &[u8],
+    ) -> Result<WorkspaceArtifact, AnalysisError> {
         validate_segment(attempt_id, "attempt ID")?;
         let _io_guard = mutex_lock(&self.io_gate)?;
         self.require_active_cycle(cycle_id)?;
+        self.require_writable(cycle_id)?;
+        let artifact = WorkspaceArtifact {
+            resource: self.resource.clone(),
+            workspace_id: self.workspace_id.clone(),
+            cycle_id: cycle_id.into(),
+            attempt_id: attempt_id.into(),
+            digest: sha256_digest(bytes),
+            byte_length: u64::try_from(bytes.len()).map_err(workspace_error)?,
+        };
+        let path = self.artifact_path(&artifact)?;
+        ensure_parent_has_no_symlinks(&self.root, &path)?;
+        if path.exists() {
+            self.read_artifact_bytes(&artifact)?;
+        } else {
+            write_bytes_atomic(&path, bytes)?;
+        }
+        Ok(artifact)
+    }
+
+    async fn read_artifact(&self, artifact: &WorkspaceArtifact) -> Result<Vec<u8>, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        self.read_artifact_bytes(artifact)
+    }
+
+    async fn reserve_execution(
+        &self,
+        request: &ExecutionRequest,
+    ) -> Result<ExecutionReservation, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        let cycle_id = &request.source.cycle_id;
+        self.require_active_cycle(cycle_id)?;
+        self.require_writable(cycle_id)?;
+        self.read_artifact_bytes(&request.source)?;
+        validate_segment(&request.execution_id, "execution ID")?;
+        if request.profile.is_empty() || request.timeout_ms == 0 || request.output_limit_bytes == 0
+        {
+            return Err(AnalysisError::InvalidState(
+                "execution requires a profile and positive bounds".into(),
+            ));
+        }
+        let path = self.execution_path(cycle_id, &request.execution_id)?;
+        if path.exists() {
+            let existing: ExecutionReceipt = read_json(&path)?;
+            if existing.request != *request {
+                return Err(AnalysisError::InvalidState(
+                    "execution idempotency key conflicts with its recorded request".into(),
+                ));
+            }
+            return Ok(ExecutionReservation::Existing(existing));
+        }
+        let receipt = ExecutionReceipt {
+            request: request.clone(),
+            epoch: self.epoch,
+            state: ExecutionState::Pending,
+        };
+        write_json_atomic(&path, &receipt)?;
+        Ok(ExecutionReservation::Granted(receipt))
+    }
+
+    async fn execution_receipt(
+        &self,
+        cycle_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<ExecutionReceipt>, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        self.require_active_cycle(cycle_id)?;
+        let path = self.execution_path(cycle_id, execution_id)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let receipt: ExecutionReceipt = read_json(&path)?;
+        if receipt.request.execution_id != execution_id
+            || receipt.request.source.cycle_id != cycle_id
+        {
+            return Err(AnalysisError::InvalidState(
+                "execution receipt identity mismatch".into(),
+            ));
+        }
+        self.read_artifact_bytes(&receipt.request.source)?;
+        if let ExecutionState::Completed { result } = &receipt.state {
+            self.read_artifact_bytes(result)?;
+        }
+        Ok(Some(receipt))
+    }
+
+    async fn complete_execution(
+        &self,
+        cycle_id: &str,
+        execution_id: &str,
+        result: &WorkspaceArtifact,
+    ) -> Result<ExecutionReceipt, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        self.require_active_cycle(cycle_id)?;
+        self.require_writable(cycle_id)?;
+        self.read_artifact_bytes(result)?;
+        let path = self.execution_path(cycle_id, execution_id)?;
+        let mut receipt: ExecutionReceipt = read_json(&path)?;
+        if receipt.epoch != self.epoch
+            || receipt.request.execution_id != execution_id
+            || receipt.request.source.cycle_id != cycle_id
+            || result.cycle_id != cycle_id
+            || result.attempt_id != receipt.request.source.attempt_id
+        {
+            return Err(AnalysisError::InvalidState(
+                "execution result has a stale fence or mismatched identity".into(),
+            ));
+        }
+        let completed = ExecutionState::Completed {
+            result: result.clone(),
+        };
+        if receipt.state != ExecutionState::Pending && receipt.state != completed {
+            return Err(AnalysisError::InvalidState(
+                "execution result conflicts with its committed receipt".into(),
+            ));
+        }
+        receipt.state = completed;
+        write_json_atomic(&path, &receipt)?;
+        Ok(receipt)
+    }
+
+    async fn commit_handoff(
+        &self,
+        artifact: &WorkspaceArtifact,
+        expected_previous: Option<&str>,
+    ) -> Result<(), AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        let publication: HandoffPublication =
+            serde_json::from_slice(&self.read_artifact_bytes(artifact)?)
+                .map_err(workspace_error)?;
+        let HandoffPublication { summary, metadata } = publication;
+        let cycle_id = &artifact.cycle_id;
+        let attempt_id = &artifact.attempt_id;
         self.require_writable(cycle_id)?;
         if summary.trim().is_empty()
             || metadata.as_ref().is_some_and(|value| !value.is_object())
@@ -496,6 +838,8 @@ impl WorkspaceLease for LocalWorkspaceLease {
                 || existing.metadata != metadata
                 || existing.cycle_id.as_deref() != Some(cycle_id)
                 || existing.contract_digest.as_deref() != Some(cycle.contract_digest.as_str())
+                || existing.artifact.as_ref() != Some(artifact)
+                || existing.previous_handoff.as_deref() != expected_previous
                 || (cycle.latest_handoff.as_deref() != Some(attempt_id)
                     && cycle.latest_handoff != existing.previous_handoff)
             {
@@ -504,6 +848,11 @@ impl WorkspaceLease for LocalWorkspaceLease {
                 ));
             }
         } else {
+            if cycle.latest_handoff.as_deref() != expected_previous {
+                return Err(AnalysisError::InvalidState(
+                    "workflow publication revision conflict".into(),
+                ));
+            }
             write_json_atomic(
                 &path,
                 &HandoffRecord {
@@ -515,6 +864,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
                     cycle_id: Some(cycle_id.to_owned()),
                     contract_digest: Some(cycle.contract_digest.clone()),
                     previous_handoff: cycle.latest_handoff.clone(),
+                    artifact: Some(artifact.clone()),
                 },
             )?;
         }
@@ -560,6 +910,19 @@ impl WorkspaceLease for LocalWorkspaceLease {
             return Err(AnalysisError::InvalidState(
                 "latest handoff does not match its bound cycle and attempt".to_owned(),
             ));
+        }
+        if let Some(artifact) = &record.artifact {
+            let publication: HandoffPublication =
+                serde_json::from_slice(&self.read_artifact_bytes(artifact)?)
+                    .map_err(workspace_error)?;
+            if artifact.attempt_id != attempt_id
+                || publication.summary != record.summary
+                || publication.metadata != record.metadata
+            {
+                return Err(AnalysisError::InvalidState(
+                    "committed handoff differs from its immutable artifact".into(),
+                ));
+            }
         }
         let metadata = record.metadata.filter(Value::is_object).ok_or_else(|| {
             AnalysisError::InvalidState("latest workflow handoff has no object metadata".to_owned())
@@ -649,6 +1012,8 @@ impl WorkspaceLease for LocalWorkspaceLease {
         elapsed: Duration,
     ) -> Result<(), AnalysisError> {
         let _io_guard = mutex_lock(&self.io_gate)?;
+        validate_claim(&self.root, &self.state, self.epoch)?;
+        validate_segment(cycle_id, "cycle ID")?;
         let path = self.cycle_path(cycle_id).join("budget.json");
         let mut budget: CycleBudget = read_json(&path)?;
         let reservation = budget.reservation.take().ok_or_else(|| {
@@ -704,11 +1069,12 @@ impl WorkspaceLease for LocalWorkspaceLease {
         completed_at: DateTime<Utc>,
     ) -> Result<(), AnalysisError> {
         let _io_guard = mutex_lock(&self.io_gate)?;
+        let _authority_guard = authority_gate(&self.root)?;
         self.require_active_cycle(cycle_id)?;
         let outcome_path = self.cycle_path(cycle_id).join("outcome.json");
         let stored_contract: AnalysisContract =
             read_json(&self.cycle_path(cycle_id).join("contract.json"))?;
-        if stored_contract.name != contract.name
+        if stored_contract.resource()? != contract.resource()?
             || stored_contract.contract_digest != contract.contract_digest
         {
             return Err(AnalysisError::workspace(
@@ -748,6 +1114,89 @@ impl WorkspaceLease for LocalWorkspaceLease {
 }
 
 impl LocalWorkspaceLease {
+    fn execution_path(&self, cycle_id: &str, execution_id: &str) -> Result<PathBuf, AnalysisError> {
+        validate_segment(cycle_id, "cycle ID")?;
+        validate_segment(execution_id, "execution ID")?;
+        Ok(self
+            .cycle_path(cycle_id)
+            .join("execution-receipts")
+            .join(format!("{execution_id}.json")))
+    }
+
+    fn artifact_path(&self, artifact: &WorkspaceArtifact) -> Result<PathBuf, AnalysisError> {
+        self.require_active_cycle(&artifact.cycle_id)?;
+        validate_segment(&artifact.attempt_id, "artifact attempt ID")?;
+        let digest = artifact
+            .digest
+            .strip_prefix("sha256:")
+            .filter(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            .ok_or_else(|| AnalysisError::workspace("invalid artifact digest"))?;
+        if artifact.resource != self.resource || artifact.workspace_id != self.workspace_id {
+            return Err(AnalysisError::workspace(
+                "artifact belongs to a different resource or workspace",
+            ));
+        }
+        Ok(self
+            .cycle_path(&artifact.cycle_id)
+            .join("artifacts")
+            .join(&artifact.attempt_id)
+            .join(digest))
+    }
+
+    fn read_artifact_bytes(&self, artifact: &WorkspaceArtifact) -> Result<Vec<u8>, AnalysisError> {
+        let path = self.artifact_path(artifact)?;
+        ensure_parent_has_no_symlinks(&self.root, &path)?;
+        ensure_regular_file(&path)?;
+        let bytes = fs::read(path).map_err(workspace_error)?;
+        if u64::try_from(bytes.len()).map_err(workspace_error)? != artifact.byte_length
+            || sha256_digest(&bytes) != artifact.digest
+        {
+            return Err(AnalysisError::workspace(
+                "immutable artifact integrity mismatch",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    fn release_claim(&self) -> Result<(), AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
+        if !mutex_lock(&self.state)?.valid {
+            return Ok(());
+        }
+        let _authority_guard = authority_gate(&self.root)?;
+        let mut claim: ClaimRecord = read_json(&self.root.join("claim.json"))?;
+        if claim.epoch != self.epoch {
+            return Err(AnalysisError::workspace("workspace fencing epoch is stale"));
+        }
+        claim.active = false;
+        claim.cycle_id = None;
+        write_json_atomic(&self.root.join("claim.json"), &claim)?;
+        self.invalidate_local_claim()
+    }
+
+    fn invalidate_local_claim(&self) -> Result<(), AnalysisError> {
+        {
+            let mut state = mutex_lock(&self.state)?;
+            state.valid = false;
+            state.writable = false;
+            state.active_cycle_id = None;
+        }
+        mutex_lock(&self.lock_file)?.take();
+        let mut claims = mutex_lock(&self.process_claims)?;
+        if claims
+            .get(&self.workspace_id)
+            .is_some_and(|claim| std::ptr::eq(claim.as_ptr(), self))
+        {
+            claims.remove(&self.workspace_id);
+        }
+        Ok(())
+    }
+
     fn cycle_path(&self, cycle_id: &str) -> PathBuf {
         self.root.join("cycles").join(cycle_id)
     }
@@ -816,6 +1265,9 @@ impl LocalWorkspaceLease {
         writable: bool,
         sealed: bool,
     ) -> Result<(), AnalysisError> {
+        let mut claim: ClaimRecord = read_json(&self.root.join("claim.json"))?;
+        claim.cycle_id = Some(cycle_id.to_owned());
+        write_json_atomic(&self.root.join("claim.json"), &claim)?;
         let mut state = mutex_lock(&self.state)?;
         state.active_cycle_id = Some(cycle_id.to_owned());
         state.writable = writable;
@@ -824,6 +1276,9 @@ impl LocalWorkspaceLease {
     }
 
     fn clear_active_state(&self) -> Result<(), AnalysisError> {
+        let mut claim: ClaimRecord = read_json(&self.root.join("claim.json"))?;
+        claim.cycle_id = None;
+        write_json_atomic(&self.root.join("claim.json"), &claim)?;
         let mut state = mutex_lock(&self.state)?;
         state.active_cycle_id = None;
         state.writable = false;
@@ -832,6 +1287,7 @@ impl LocalWorkspaceLease {
     }
 
     fn require_active_cycle(&self, cycle_id: &str) -> Result<(), AnalysisError> {
+        validate_claim(&self.root, &self.state, self.epoch)?;
         validate_segment(cycle_id, "cycle ID")?;
         let state = mutex_lock(&self.state)?;
         if state.active_cycle_id.as_deref() != Some(cycle_id) {
@@ -938,6 +1394,7 @@ impl LocalWorkspaceLease {
 }
 
 struct LocalWorkspaceFileSystem {
+    epoch: u64,
     root: PathBuf,
     workspace_root: PathBuf,
     cycle_id: String,
@@ -948,6 +1405,7 @@ struct LocalWorkspaceFileSystem {
 #[async_trait]
 impl WorkspaceFileSystem for LocalWorkspaceFileSystem {
     async fn read_text(&self, path: &str) -> Result<String, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
         let resolved = self.resolve(path, false)?;
         ensure_regular_file(&resolved)?;
         fs::read_to_string(resolved).map_err(workspace_error)
@@ -980,6 +1438,7 @@ impl WorkspaceFileSystem for LocalWorkspaceFileSystem {
     }
 
     async fn exists(&self, path: &str) -> Result<bool, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
         let resolved = self.resolve(path, false)?;
         match fs::symlink_metadata(resolved) {
             Ok(metadata) => {
@@ -997,6 +1456,7 @@ impl WorkspaceFileSystem for LocalWorkspaceFileSystem {
     }
 
     async fn metadata(&self, path: &str) -> Result<WorkspaceFileInfo, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
         let resolved = self.resolve(path, false)?;
         let metadata = fs::symlink_metadata(resolved).map_err(workspace_error)?;
         if metadata.file_type().is_symlink() {
@@ -1028,6 +1488,7 @@ impl WorkspaceFileSystem for LocalWorkspaceFileSystem {
     }
 
     async fn read_directory(&self, path: &str) -> Result<Vec<WorkspaceEntry>, AnalysisError> {
+        let _io_guard = mutex_lock(&self.io_gate)?;
         let resolved = self.resolve(path, false)?;
         let mut entries = Vec::new();
         for entry in fs::read_dir(resolved).map_err(workspace_error)? {
@@ -1109,6 +1570,7 @@ impl LocalWorkspaceFileSystem {
     }
 
     fn resolve(&self, path: &str, writing: bool) -> Result<PathBuf, AnalysisError> {
+        validate_claim(&self.workspace_root, &self.state, self.epoch)?;
         if path.contains('\\') {
             return Err(AnalysisError::workspace(
                 "virtual workspace paths must use POSIX separators",
@@ -1331,13 +1793,6 @@ fn digest_file(path: &Path) -> Result<String, AnalysisError> {
         .map_err(workspace_error)
 }
 
-fn validate_contract_name(value: &str) -> Result<(), AnalysisError> {
-    if value.trim().is_empty() || value.chars().any(char::is_control) {
-        return Err(AnalysisError::workspace("contract name is invalid"));
-    }
-    Ok(())
-}
-
 fn validate_segment(value: &str, label: &str) -> Result<(), AnalysisError> {
     if value.is_empty()
         || !value
@@ -1368,12 +1823,134 @@ struct WorkspaceManifest {
     created_at: DateTime<Utc>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResourceBinding {
+    resource: ContractResourceId,
+    workspace_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ClaimRecord {
     schema_version: u32,
+    #[serde(default)]
+    epoch: u64,
     attempt_id: String,
     claimed_at: DateTime<Utc>,
+    #[serde(default)]
+    active: bool,
+    #[serde(default)]
+    cycle_id: Option<String>,
+}
+
+struct LocalAdmissionGuard {
+    _file: File,
+}
+
+impl AdmissionGuard for LocalAdmissionGuard {}
+
+fn authority_gate(root: &Path) -> Result<File, AnalysisError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("authority.lock"))
+        .map_err(workspace_error)?;
+    file.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => {
+            AnalysisError::WorkspaceBusy("workspace authority mutation in progress".into())
+        }
+        std::fs::TryLockError::Error(error) => workspace_error(error),
+    })?;
+    Ok(file)
+}
+
+impl AdmissionFence for LocalWorkspaceProvider {
+    fn acquire(
+        &self,
+        admission: &AnalysisCandidateAdmission,
+        ownership: &CandidateOwnership,
+    ) -> AuthorityResult<Box<dyn AdmissionGuard>> {
+        let verified = (|| -> Result<Option<File>, AnalysisError> {
+            admission.resource.resource_key().map_err(workspace_error)?;
+            validate_segment(&admission.cycle_id, "cycle ID")?;
+            validate_segment(&ownership.attempt_id, "attempt ID")?;
+            let id = self.resolve_resource(&admission.resource)?;
+            if id != admission.workspace_id {
+                return Ok(None);
+            }
+            let root = self.root.join(id.trim_start_matches("sha256:"));
+            if !root.join("claim.json").exists() {
+                return Ok(None);
+            }
+            let gate = authority_gate(&root)?;
+            let claim: ClaimRecord = read_json(&root.join("claim.json"))?;
+            if claim.schema_version != WORKSPACE_SCHEMA_VERSION
+                || !claim.active
+                || claim.epoch == 0
+                || claim.epoch.to_string() != ownership.epoch
+                || claim.attempt_id != ownership.attempt_id
+                || claim.cycle_id.as_deref() != Some(&admission.cycle_id)
+            {
+                return Ok(None);
+            }
+            // A crashed process cannot authorize delayed requests with its
+            // durable record. The lifetime lock must still have a live owner.
+            let live = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(root.join("claim.lock"))
+                .map_err(workspace_error)?;
+            match live.try_lock() {
+                Ok(()) => return Ok(None),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error)) => return Err(workspace_error(error)),
+            }
+            let binding: ResourceBinding = read_json(&root.join("resource.json"))?;
+            let pointer: CurrentCycle = read_json(&root.join("current-cycle.json"))?;
+            let cycle_root = root.join("cycles").join(&admission.cycle_id);
+            let cycle: StoredCycle = read_json(&cycle_root.join("cycle.json"))?;
+            let contract: AnalysisContract = read_json(&cycle_root.join("contract.json"))?;
+            if binding.resource != admission.resource
+                || binding.workspace_id != admission.workspace_id
+                || pointer.cycle_id.as_deref() != Some(&admission.cycle_id)
+                || cycle.status != CycleStatus::Active
+                || cycle.workspace_id != admission.workspace_id
+                || cycle.cycle_id != admission.cycle_id
+                || cycle.contract_digest != admission.contract_digest
+                || contract.resource()? != admission.resource
+                || contract.contract_digest != admission.contract_digest
+                || cycle_root.join("outcome.json").exists()
+            {
+                return Ok(None);
+            }
+            let proposal: CandidateProposal = read_json(&cycle_root.join("proposal.pending.json"))?;
+            if proposal.attempt_id != admission.attempt_id
+                || proposal.analysis_manifest_digest != admission.analysis_manifest_digest
+            {
+                return Ok(None);
+            }
+            Ok(Some(gate))
+        })()
+        .map_err(|error| ExecutableStoreError::Dependency(Box::new(error)))?;
+        let file = verified.ok_or(ExecutableStoreError::OwnershipConflict)?;
+        Ok(Box::new(LocalAdmissionGuard { _file: file }))
+    }
+}
+
+fn validate_claim(root: &Path, state: &Mutex<LeaseState>, epoch: u64) -> Result<(), AnalysisError> {
+    if !mutex_lock(state)?.valid {
+        return Err(AnalysisError::workspace(
+            "workspace claim has been released",
+        ));
+    }
+    let record: ClaimRecord = read_json(&root.join("claim.json"))?;
+    if record.schema_version != WORKSPACE_SCHEMA_VERSION || record.epoch != epoch {
+        return Err(AnalysisError::workspace("workspace fencing epoch is stale"));
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1441,8 +2018,13 @@ struct StoredCycle {
 }
 
 impl StoredCycle {
-    fn as_analysis_cycle(&self, resumed: bool) -> AnalysisCycle {
+    fn as_analysis_cycle(
+        &self,
+        scope: &flaggo_analysis_domain::AnalysisAuthority,
+        resumed: bool,
+    ) -> AnalysisCycle {
         AnalysisCycle {
+            scope: scope.clone(),
             workspace_id: self.workspace_id.clone(),
             cycle_id: self.cycle_id.clone(),
             contract_name: self.contract_name.clone(),
@@ -1494,6 +2076,8 @@ struct HandoffRecord {
     contract_digest: Option<String>,
     #[serde(default)]
     previous_handoff: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact: Option<WorkspaceArtifact>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1575,11 +2159,289 @@ mod tests {
 
     fn ready(result: PrepareCycleResult) -> CyclePreparation {
         match result {
-            PrepareCycleResult::Ready(preparation) => preparation,
+            PrepareCycleResult::Ready(preparation) => *preparation,
             PrepareCycleResult::NotEligible { eligible_at } => {
                 panic!("expected ready cycle, next eligible at {eligible_at}")
             }
         }
+    }
+
+    #[tokio::test]
+    async fn scoped_workspaces_are_independent_and_released_capabilities_are_fenced() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let now = Utc::now();
+        let contract = contract('a', now - Duration::hours(2));
+        let resource = contract.resource().unwrap();
+        let lease = provider.claim(&resource, "first").await.unwrap();
+        let cycle = ready(
+            lease
+                .prepare_cycle(&contract, &profile(), "first", now)
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        let filesystem = lease.filesystem(&cycle.cycle_id, "first").await.unwrap();
+        filesystem
+            .write_text("/workspace/analysis/value.txt", "original")
+            .await
+            .unwrap();
+        let first = lease.claim_token();
+
+        let mut other_resource = resource.clone();
+        other_resource.scope.tenant = "another".into();
+        let independent = provider
+            .claim(&other_resource, "independent")
+            .await
+            .unwrap();
+        assert_ne!(lease.workspace_id(), independent.workspace_id());
+        assert!(
+            independent
+                .prepare_cycle(&contract, &profile(), "independent", now)
+                .await
+                .is_err()
+        );
+        drop(independent);
+
+        lease.release().await.unwrap();
+        let replacement = provider.claim(&resource, "replacement").await.unwrap();
+        assert!(replacement.claim_token().epoch > first.epoch);
+        let resumed = ready(
+            replacement
+                .prepare_cycle(&contract, &profile(), "replacement", now)
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        assert_eq!(resumed.cycle_id, cycle.cycle_id);
+        assert!(
+            filesystem
+                .read_text("/workspace/analysis/value.txt")
+                .await
+                .is_err()
+        );
+        assert!(
+            filesystem
+                .write_text("/workspace/analysis/value.txt", "stale")
+                .await
+                .is_err()
+        );
+        assert!(
+            lease
+                .prepare_cycle(&contract, &profile(), "first", now)
+                .await
+                .is_err()
+        );
+        assert!(
+            lease
+                .record_handoff(&cycle.cycle_id, "first", "stale", None, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            lease
+                .append_audit(&cycle.cycle_id, "stale", json!({}))
+                .await
+                .is_err()
+        );
+        assert!(
+            lease
+                .reserve_attempt(
+                    &cycle.cycle_id,
+                    "first",
+                    &CycleLimits::default(),
+                    std::time::Duration::from_secs(1)
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            lease
+                .complete_cycle(
+                    &contract,
+                    &cycle.cycle_id,
+                    &CycleOutcome::NoChange {
+                        reason: "stale".into()
+                    },
+                    now
+                )
+                .await
+                .is_err()
+        );
+        drop(lease);
+        assert!(
+            provider.claim(&resource, "third").await.is_err(),
+            "dropping a stale lease must not remove its replacement"
+        );
+        let current = replacement
+            .filesystem(&cycle.cycle_id, "replacement")
+            .await
+            .unwrap();
+        assert_eq!(
+            current
+                .read_text("/workspace/analysis/value.txt")
+                .await
+                .unwrap(),
+            "original"
+        );
+        replacement.release().await.unwrap();
+        assert!(
+            current
+                .write_text("/workspace/analysis/value.txt", "released")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_legacy_binding_preserves_workspace_identity_and_sealed_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let now = Utc::now();
+        let contract = contract('a', now - Duration::hours(2));
+        let resource = contract.resource().unwrap();
+        let legacy_id = sha256_digest(resource.name.as_bytes());
+        let lease = provider
+            .open_claim(&resource, "legacy", &legacy_id)
+            .unwrap();
+        let cycle = ready(
+            lease
+                .prepare_cycle(&contract, &profile(), "legacy", now)
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        lease
+            .filesystem(&cycle.cycle_id, "legacy")
+            .await
+            .unwrap()
+            .write_text(
+                "/workspace/analysis/provenance.txt",
+                "historical source stays historical",
+            )
+            .await
+            .unwrap();
+        let digest = lease.seal_analysis_manifest(&cycle.cycle_id).await.unwrap();
+        let root = lease.root.clone();
+        let manifest_path = root
+            .join("cycles")
+            .join(&cycle.cycle_id)
+            .join("analysis-manifest.json");
+        let sealed = fs::read(&manifest_path).unwrap();
+        drop(lease);
+        fs::remove_file(root.join("resource.json")).unwrap();
+        write_json_atomic(
+            &root.join("claim.json"),
+            &json!({
+                "schemaVersion": 1, "attemptId": "legacy", "claimedAt": now,
+            }),
+        )
+        .unwrap();
+        assert!(provider.claim(&resource, "before-migration").await.is_err());
+        let mut wrong = resource.clone();
+        wrong.scope.tenant = "wrong".into();
+        assert!(provider.bind_legacy_resource(&wrong).is_err());
+        assert!(provider.bind_legacy_resource(&resource).unwrap());
+        assert!(!provider.bind_legacy_resource(&resource).unwrap());
+        let migrated = provider.claim(&resource, "recovered").await.unwrap();
+        assert_eq!(migrated.workspace_id(), legacy_id);
+        let resumed = ready(
+            migrated
+                .prepare_cycle(&contract, &profile(), "recovered", now)
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        assert!(resumed.resumed);
+        assert_eq!(resumed.scope, resource.scope);
+        assert_eq!(
+            migrated
+                .seal_analysis_manifest(&cycle.cycle_id)
+                .await
+                .unwrap(),
+            digest
+        );
+        assert_eq!(fs::read(manifest_path).unwrap(), sealed);
+    }
+
+    #[tokio::test]
+    async fn exhausted_fencing_epoch_is_never_reused() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let resource = contract('a', Utc::now()).resource().unwrap();
+        let lease = provider.claim(&resource, "first").await.unwrap();
+        let claim_path = directory
+            .path()
+            .join(lease.workspace_id().trim_start_matches("sha256:"))
+            .join("claim.json");
+        lease.release().await.unwrap();
+        let mut record: ClaimRecord = read_json(&claim_path).unwrap();
+        record.epoch = u64::MAX;
+        write_json_atomic(&claim_path, &record).unwrap();
+        assert!(provider.claim(&resource, "overflow").await.is_err());
+        assert_eq!(
+            read_json::<ClaimRecord>(&claim_path).unwrap().epoch,
+            u64::MAX
+        );
+    }
+
+    #[tokio::test]
+    async fn local_execution_projection_requires_the_exact_live_writable_claim() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path().join("first")).unwrap();
+        let other_provider = LocalWorkspaceProvider::new(directory.path().join("other")).unwrap();
+        let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let contract = contract('a', accepted_at);
+        let lease = provider
+            .claim(&contract.resource().unwrap(), "attempt-1")
+            .await
+            .unwrap();
+        assert!(provider.analysis_directory(&lease, "unprepared").is_err());
+        let cycle = ready(
+            lease
+                .prepare_cycle(
+                    &contract,
+                    &profile(),
+                    "attempt-1",
+                    accepted_at + Duration::hours(2),
+                )
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        assert!(
+            provider
+                .analysis_directory(&lease, &cycle.cycle_id)
+                .unwrap()
+                .is_dir()
+        );
+        assert!(provider.analysis_directory(&lease, "wrong-cycle").is_err());
+
+        let other_lease = other_provider
+            .claim(&contract.resource().unwrap(), "attempt-1")
+            .await
+            .unwrap();
+        assert_eq!(lease.workspace_id(), other_lease.workspace_id());
+        assert!(
+            provider
+                .analysis_directory(&other_lease, &cycle.cycle_id)
+                .is_err(),
+            "matching identity alone cannot select another local lease"
+        );
+        lease.seal_analysis_manifest(&cycle.cycle_id).await.unwrap();
+        assert!(
+            provider
+                .analysis_directory(&lease, &cycle.cycle_id)
+                .is_err()
+        );
+        drop(lease);
+        assert!(
+            provider
+                .claim(&contract.resource().unwrap(), "attempt-2")
+                .await
+                .is_ok(),
+            "the execution projection must not retain ownership after lease drop"
+        );
     }
 
     #[tokio::test]
@@ -1588,7 +2450,10 @@ mod tests {
         let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
         let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
         let contract = contract('a', accepted_at);
-        let lease = provider.claim(&contract.name, "attempt-1").await.unwrap();
+        let lease = provider
+            .claim(&contract.resource().unwrap(), "attempt-1")
+            .await
+            .unwrap();
         let cycle = ready(
             lease
                 .prepare_cycle(
@@ -1608,6 +2473,7 @@ mod tests {
                 "attempt-1",
                 "draft",
                 Some(metadata.clone()),
+                None,
             )
             .await
             .unwrap();
@@ -1617,6 +2483,7 @@ mod tests {
                 "attempt-1",
                 "draft",
                 Some(metadata.clone()),
+                None,
             )
             .await
             .unwrap();
@@ -1626,18 +2493,25 @@ mod tests {
                     &cycle.cycle_id,
                     "attempt-1",
                     "changed",
-                    Some(metadata.clone())
+                    Some(metadata.clone()),
+                    None,
                 )
                 .await,
             Err(AnalysisError::InvalidState(_))
         ));
         lease
-            .record_handoff(&cycle.cycle_id, "attempt-2", "checkpoint", None)
+            .record_handoff(
+                &cycle.cycle_id,
+                "attempt-2",
+                "checkpoint",
+                None,
+                Some("attempt-1"),
+            )
             .await
             .unwrap();
         let root = directory
             .path()
-            .join(workspace_id(&contract.name).trim_start_matches("sha256:"))
+            .join(workspace_id(&contract.resource().unwrap()).trim_start_matches("sha256:"))
             .join("cycles")
             .join(&cycle.cycle_id);
         let orphan = HandoffRecord {
@@ -1649,10 +2523,14 @@ mod tests {
             cycle_id: Some(cycle.cycle_id.clone()),
             contract_digest: Some(contract.contract_digest.clone()),
             previous_handoff: Some("attempt-1".to_owned()),
+            artifact: None,
         };
         write_json_atomic(&root.join("handoffs").join("attempt-orphan.json"), &orphan).unwrap();
         drop(lease);
-        let lease = provider.claim(&contract.name, "attempt-3").await.unwrap();
+        let lease = provider
+            .claim(&contract.resource().unwrap(), "attempt-3")
+            .await
+            .unwrap();
         let mut changed_profile = profile();
         changed_profile.skill_names.reverse();
         let resumed = ready(
@@ -1697,7 +2575,10 @@ mod tests {
         let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
         let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
         let contract = contract('a', accepted_at);
-        let lease = provider.claim(&contract.name, "attempt-1").await.unwrap();
+        let lease = provider
+            .claim(&contract.resource().unwrap(), "attempt-1")
+            .await
+            .unwrap();
         let cycle = ready(
             lease
                 .prepare_cycle(
@@ -1735,7 +2616,10 @@ mod tests {
             seconds(6)
         );
         drop(lease); // A crash leaves the second reservation fully charged.
-        let lease = provider.claim(&contract.name, "attempt-3").await.unwrap();
+        let lease = provider
+            .claim(&contract.resource().unwrap(), "attempt-3")
+            .await
+            .unwrap();
         lease
             .prepare_cycle(
                 &contract,
@@ -1794,7 +2678,10 @@ mod tests {
         let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
         let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
         let contract = contract('a', accepted_at);
-        let lease = provider.claim(&contract.name, "attempt-1").await.unwrap();
+        let lease = provider
+            .claim(&contract.resource().unwrap(), "attempt-1")
+            .await
+            .unwrap();
         let cycle = ready(
             lease
                 .prepare_cycle(
@@ -1863,7 +2750,10 @@ mod tests {
             .expect("valid timestamp");
         let contract = contract('a', accepted_at);
         let lease = provider
-            .claim(&contract.name, "00000000-0000-0000-0000-000000000000")
+            .claim(
+                &contract.resource().unwrap(),
+                "00000000-0000-0000-0000-000000000000",
+            )
             .await
             .expect("deep workspace claim");
 
@@ -1891,7 +2781,7 @@ mod tests {
         let contract = contract('a', accepted_at);
 
         let lease = provider
-            .claim(&contract.name, "attempt-1")
+            .claim(&contract.resource().unwrap(), "attempt-1")
             .await
             .expect("first claim");
         let preparation = ready(
@@ -1940,7 +2830,7 @@ mod tests {
         drop(lease);
 
         let resumed_lease = provider
-            .claim(&contract.name, "attempt-2")
+            .claim(&contract.resource().unwrap(), "attempt-2")
             .await
             .expect("recovery claim");
         let resumed = ready(
@@ -1985,7 +2875,7 @@ mod tests {
         let now = accepted_at + Duration::hours(2);
         let contract = contract('a', accepted_at);
         let lease = provider
-            .claim(&contract.name, "attempt-1")
+            .claim(&contract.resource().unwrap(), "attempt-1")
             .await
             .expect("first claim");
         let preparation = ready(
@@ -2005,7 +2895,7 @@ mod tests {
 
         let workspace_root = directory
             .path()
-            .join(workspace_id(&contract.name).trim_start_matches("sha256:"));
+            .join(workspace_id(&contract.resource().unwrap()).trim_start_matches("sha256:"));
         let cycle_root = workspace_root
             .join("cycles")
             .join(&preparation.cycle.cycle_id);
@@ -2017,7 +2907,7 @@ mod tests {
         files.sort_by(|left, right| left.path.cmp(&right.path));
         let manifest = AnalysisManifest {
             schema_version: WORKSPACE_SCHEMA_VERSION,
-            workspace_id: workspace_id(&contract.name),
+            workspace_id: workspace_id(&contract.resource().unwrap()),
             cycle_id: preparation.cycle.cycle_id.clone(),
             analysis_profile: stored_cycle.analysis_profile,
             files,
@@ -2037,7 +2927,7 @@ mod tests {
         drop(lease);
 
         let resumed_lease = provider
-            .claim(&contract.name, "attempt-2")
+            .claim(&contract.resource().unwrap(), "attempt-2")
             .await
             .expect("recovery claim");
         let resumed = ready(
@@ -2077,25 +2967,25 @@ mod tests {
             LocalWorkspaceProvider::new(directory.path()).expect("second provider");
 
         let first = first_provider
-            .claim("checkout.delay", "attempt-1")
+            .claim(&contract('a', Utc::now()).resource().unwrap(), "attempt-1")
             .await
             .expect("first claim");
         assert!(
             first_provider
-                .claim("checkout.delay", "attempt-2")
+                .claim(&contract('a', Utc::now()).resource().unwrap(), "attempt-2")
                 .await
                 .is_err()
         );
         assert!(
             second_provider
-                .claim("checkout.delay", "attempt-3")
+                .claim(&contract('a', Utc::now()).resource().unwrap(), "attempt-3")
                 .await
                 .is_err()
         );
 
         drop(first);
         second_provider
-            .claim("checkout.delay", "attempt-4")
+            .claim(&contract('a', Utc::now()).resource().unwrap(), "attempt-4")
             .await
             .expect("claim after release");
     }
@@ -2112,7 +3002,7 @@ mod tests {
         let old_contract = contract('a', accepted_at);
         let new_contract = contract('c', accepted_at);
         let lease = provider
-            .claim(&old_contract.name, "attempt-1")
+            .claim(&old_contract.resource().unwrap(), "attempt-1")
             .await
             .expect("claim");
 
@@ -2176,7 +3066,7 @@ mod tests {
         let completed_at = now + Duration::minutes(10);
         let contract = contract('a', accepted_at);
         let lease = provider
-            .claim(&contract.name, "attempt-1")
+            .claim(&contract.resource().unwrap(), "attempt-1")
             .await
             .expect("claim");
         let first = ready(
@@ -2267,7 +3157,7 @@ mod tests {
             let completed_at = now + Duration::minutes(10);
             let contract = contract('a', accepted_at);
             let lease = provider
-                .claim(&contract.name, "attempt-1")
+                .claim(&contract.resource().unwrap(), "attempt-1")
                 .await
                 .expect("claim");
             let preparation = ready(
@@ -2283,7 +3173,7 @@ mod tests {
 
             let workspace_root = directory
                 .path()
-                .join(workspace_id(&contract.name).trim_start_matches("sha256:"));
+                .join(workspace_id(&contract.resource().unwrap()).trim_start_matches("sha256:"));
             let cycle_root = workspace_root
                 .join("cycles")
                 .join(&preparation.cycle.cycle_id);
@@ -2321,7 +3211,7 @@ mod tests {
             drop(lease);
 
             let resumed_lease = provider
-                .claim(&contract.name, "attempt-2")
+                .claim(&contract.resource().unwrap(), "attempt-2")
                 .await
                 .expect("recovery claim");
             match resumed_lease

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { expect, test } from "@playwright/test";
 import { createDecisionClient } from "@flaggo/sdk/runtime";
+import { resourceScopePath } from "@flaggo/sdk/configuration";
 import { parseListeningUrl } from "../../tetris-integration/host-process.mjs";
 import { parseLokiResponse, parseTempoResponse } from "../dist/backend.js";
 import { readAttemptFailureRecords, startPlaygroundFixture } from "./playground-fixture.mjs";
@@ -184,12 +185,13 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   })));
   const manifest = JSON.parse(await readFile(resolve(exampleDirectory, "flaggo.deploy.json"), "utf8"));
   const runtimeConfig = {
-    format: "flaggo.runtime-config/v1",
+    format: "flaggo.runtime-config/v2",
     authority: manifest.authority,
     services: urls,
     bindings: { "tetris.dropInterval": { contractDigest: active.contractDigest } },
   };
   const client = createDecisionClient({ runtimeConfig, random: () => 0.25 });
+  const scopePath = resourceScopePath(runtimeConfig.authority);
   const decisions = [];
   for (const pressure of [0.1, 0.3]) {
     const attributes = {
@@ -202,7 +204,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     };
     const sdk = (await client.decide("tetris.dropInterval", { attributes })).value;
     const restResponse = await page.request.post(
-      `${urls.decisionServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/decisions`,
+      `${urls.decisionServiceUrl}${scopePath}/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/decisions`,
       { data: { attributes: { ...attributes, _random: 0.25 } } },
     );
     expect(restResponse.ok()).toBe(true);
@@ -219,7 +221,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
     decisions.push({ attributes, sdk, rest });
   }
   const conflict = await page.request.post(
-    `${urls.contractServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables/${baseline.executableDigest}/activate`,
+    `${urls.contractServiceUrl}${scopePath}/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables/${baseline.executableDigest}/activate`,
     { data: {
       expectedActiveExecutableDigest: baseline.executableDigest,
       expectedActiveStateVersion: 0,
@@ -228,7 +230,7 @@ test("learns adaptive gravity and improves matched held-out gameplay", async ({
   );
   expect(conflict.status()).toBe(409);
   const catalog = await page.request.get(
-    `${urls.contractServiceUrl}/v3/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables`,
+    `${urls.contractServiceUrl}${scopePath}/decision-contracts/tetris.dropInterval/versions/${active.contractDigest}/executables`,
   );
   expect(catalog.ok()).toBe(true);
   expect((await catalog.json()).activeExecutable.executableDigest).toBe(learned.executableDigest);
@@ -485,11 +487,18 @@ async function verifyReviewedPythonArtifacts(runDirectory, provenance, contractD
   const execution = await readJson(resolve(analysis, "executions", executions[0], "result.json"));
   expect(execution.report.execution.status).toBe("succeeded");
   expect(execution.report.runtime.version).toMatch(/^3\./u);
-  expect(execution.submission.contractDigest).toBe(contractDigest);
-  expect(execution.submission.cycleId).toBe(provenance.cycleId);
-  expect(execution.submission.attemptId).toBe(initial.attemptId);
-  const codeDigest = digest(await readFile(resolve(analysis, execution.report.submittedCodePath)));
-  expect(execution.submission.codeDigest).toBe(codeDigest);
+  const cycleContract = await readJson(resolve(cycle, "contract.json"));
+  expect(cycleContract.contractDigest).toBe(contractDigest);
+  expect(execution.submission.source.resource).toEqual({
+    scope: cycleContract.authority, name: cycleContract.name,
+  });
+  expect(execution.submission.source.workspaceId).toBe(provenance.workspaceId);
+  expect(execution.submission.source.cycleId).toBe(provenance.cycleId);
+  expect(execution.submission.source.attemptId).toBe(initial.attemptId);
+  const code = await readFile(resolve(analysis, execution.report.submittedCodePath));
+  const codeDigest = digest(code);
+  expect(execution.submission.source.digest).toBe(codeDigest);
+  expect(execution.submission.source.byteLength).toBe(code.length);
   const evidence = await readJson(resolve(analysis, initial.metadata.evidencePaths[0]));
   expect(evidence.signalCounts["flaggo.decision.received"]).toBeGreaterThan(0);
   expect(evidence.rows.length).toBe(Object.values(evidence.signalCounts).reduce((a, b) => a + b, 0));

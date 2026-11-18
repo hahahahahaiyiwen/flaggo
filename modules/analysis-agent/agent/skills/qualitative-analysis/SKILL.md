@@ -69,6 +69,15 @@ Use `code_interpreter` for Python inspection or modeling when SQL is
 insufficient. Choose the smallest analysis that answers the question while
 retaining source, population and time boundaries.
 
+Saved query results declare their result/value formats and selected dialect
+profile. Cells are tagged values, not raw JSON numbers. Use the decoder described
+by the evidence tools when analyzing them in `code_interpreter`; preserve int64
+precision, binary64 bits and exact JSON numbers. Do not infer a column's type
+from the first row or reinterpret an
+unversioned legacy file. Projected observation IDs are not full aggregate
+lineage. Inspect `describe` capabilities before constructing SQL; a different
+provider's profile does not promise identical SQL syntax or arithmetic.
+
 Evidence is live and may include late-materialized events. Choose explicit
 time windows and a suitable lag for the question; an older cutoff reduces
 late-arrival risk but does not guarantee completeness. Record those choices

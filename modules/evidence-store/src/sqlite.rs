@@ -13,12 +13,12 @@ use sqlx::{
 use crate::{
     AuthorityScope, EvidenceDiagnostic, EvidenceMaterializationCommit, EvidenceObservation,
     EvidenceSignal, EvidenceStore, EvidenceStoreCommitResult, EvidenceStoreError,
-    EvidenceStoreHealth, ForwardMaterializationKey, MaterializerVersions, SourceKey,
-    StoredContractCatalog, StoredEvidenceObservation,
+    EvidenceStoreHealth, ForwardMaterializationKey, MaterializerVersions, ProjectionClaim,
+    SourceKey, StoredContractCatalog, StoredEvidenceObservation,
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const CREATE_SCHEMA_VERSIONS: &str = "
@@ -52,6 +52,13 @@ const CREATE_CHECKPOINTS: &str = "
             routing_version
         )
     )
+";
+const CREATE_PROJECTION_CLAIM: &str = "
+    CREATE TABLE evidence_projection_claim (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        epoch INTEGER NOT NULL CHECK(epoch >= 0)
+    );
+    INSERT INTO evidence_projection_claim(singleton, epoch) VALUES (1, 0)
 ";
 const CREATE_OBSERVATIONS: &str = "
     CREATE TABLE IF NOT EXISTS evidence_observations (
@@ -194,6 +201,60 @@ impl SqliteEvidenceStore {
         self.pool.close().await;
     }
 
+    pub async fn migrate_v4_to_v5(database_url: &str) -> Result<bool, EvidenceStoreError> {
+        let options = SqliteConnectOptions::from_str(database_url)
+            .map_err(EvidenceStoreError::unavailable)?
+            .create_if_missing(false)
+            .synchronous(SqliteSynchronous::Full)
+            .busy_timeout(BUSY_TIMEOUT);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+        let result = async {
+            let mut transaction = pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+            let found: i64 = sqlx::query_scalar(
+                "SELECT version FROM flaggo_schema_versions WHERE component = ?",
+            )
+            .bind(COMPONENT_NAME)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+            if found == SCHEMA_VERSION {
+                return Ok(false);
+            }
+            if found != 4 {
+                return Err(EvidenceStoreError::UnsupportedSchemaVersion {
+                    component: COMPONENT_NAME,
+                    found,
+                    expected: SCHEMA_VERSION,
+                });
+            }
+            sqlx::raw_sql(CREATE_PROJECTION_CLAIM)
+                .execute(&mut *transaction)
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+            sqlx::query("UPDATE flaggo_schema_versions SET version = ? WHERE component = ?")
+                .bind(SCHEMA_VERSION)
+                .bind(COMPONENT_NAME)
+                .execute(&mut *transaction)
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+            transaction
+                .commit()
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+            Ok(true)
+        }
+        .await;
+        pool.close().await;
+        result
+    }
+
     async fn initialize(&self) -> Result<(), EvidenceStoreError> {
         let mut transaction = self
             .pool
@@ -204,7 +265,7 @@ impl SqliteEvidenceStore {
             .execute(&mut *transaction)
             .await
             .map_err(EvidenceStoreError::unavailable)?;
-        sqlx::query(
+        let inserted = sqlx::query(
             "INSERT INTO flaggo_schema_versions(component, version)
              VALUES (?, ?)
              ON CONFLICT(component) DO NOTHING",
@@ -213,7 +274,9 @@ impl SqliteEvidenceStore {
         .bind(SCHEMA_VERSION)
         .execute(&mut *transaction)
         .await
-        .map_err(EvidenceStoreError::unavailable)?;
+        .map_err(EvidenceStoreError::unavailable)?
+        .rows_affected()
+            == 1;
         let found_version: i64 =
             sqlx::query_scalar("SELECT version FROM flaggo_schema_versions WHERE component = ?")
                 .bind(COMPONENT_NAME)
@@ -232,6 +295,24 @@ impl SqliteEvidenceStore {
             });
         }
 
+        if inserted {
+            sqlx::raw_sql(CREATE_PROJECTION_CLAIM)
+                .execute(&mut *transaction)
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+        } else {
+            let epoch: i64 = sqlx::query_scalar(
+                "SELECT epoch FROM evidence_projection_claim WHERE singleton = 1",
+            )
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+            if epoch < 0 {
+                return Err(EvidenceStoreError::CorruptData(
+                    "negative projection epoch".into(),
+                ));
+            }
+        }
         for statement in [
             CREATE_CATALOG_STATE,
             CREATE_CHECKPOINTS,
@@ -408,8 +489,78 @@ impl SqliteEvidenceStore {
 
 #[async_trait]
 impl EvidenceStore for SqliteEvidenceStore {
-    async fn save_catalog(&self, catalog: StoredContractCatalog) -> Result<(), EvidenceStoreError> {
+    async fn projection_claim(&self) -> Result<Option<ProjectionClaim>, EvidenceStoreError> {
+        let epoch: i64 =
+            sqlx::query_scalar("SELECT epoch FROM evidence_projection_claim WHERE singleton = 1")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(EvidenceStoreError::unavailable)?;
+        if epoch == 0 {
+            return Ok(None);
+        }
+        Ok(Some(ProjectionClaim {
+            epoch: positive_u64("projection epoch", epoch)?,
+        }))
+    }
+
+    async fn replace_projection_claim(
+        &self,
+        expected: Option<ProjectionClaim>,
+    ) -> Result<ProjectionClaim, EvidenceStoreError> {
+        let epoch = expected
+            .map(|claim| i64::try_from(claim.epoch))
+            .transpose()
+            .map_err(|_| {
+                EvidenceStoreError::InvalidWrite("projection epoch exceeds supported range".into())
+            })?
+            .unwrap_or(0);
+        if expected.is_some() && epoch == 0 {
+            return Err(EvidenceStoreError::InvalidWrite(
+                "projection epoch must be positive".into(),
+            ));
+        }
+        let next = epoch
+            .checked_add(1)
+            .ok_or_else(|| EvidenceStoreError::InvalidWrite("projection epoch exhausted".into()))?;
+        let mut transaction = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+        let changed = sqlx::query(
+            "UPDATE evidence_projection_claim SET epoch = ? WHERE singleton = 1 AND epoch = ?",
+        )
+        .bind(next)
+        .bind(epoch)
+        .execute(&mut *transaction)
+        .await
+        .map_err(EvidenceStoreError::unavailable)?
+        .rows_affected();
+        if changed != 1 {
+            return Err(EvidenceStoreError::ProjectionConflict);
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+        Ok(ProjectionClaim {
+            epoch: u64::try_from(next)
+                .map_err(|_| EvidenceStoreError::CorruptData("negative projection epoch".into()))?,
+        })
+    }
+
+    async fn save_catalog(
+        &self,
+        claim: ProjectionClaim,
+        catalog: StoredContractCatalog,
+    ) -> Result<(), EvidenceStoreError> {
         validate_catalog(&catalog)?;
+        let mut transaction = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+        validate_projection_claim(&mut transaction, claim).await?;
         sqlx::query(
             "INSERT INTO evidence_contract_catalog(
                 singleton,
@@ -426,10 +577,13 @@ impl EvidenceStore for SqliteEvidenceStore {
         .bind(&catalog.etag)
         .bind(&catalog.payload)
         .bind(catalog.fetched_at.timestamp_millis())
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await
         .map_err(EvidenceStoreError::unavailable)?;
-        Ok(())
+        transaction
+            .commit()
+            .await
+            .map_err(EvidenceStoreError::unavailable)
     }
 
     async fn load_catalog(&self) -> Result<Option<StoredContractCatalog>, EvidenceStoreError> {
@@ -476,6 +630,8 @@ impl EvidenceStore for SqliteEvidenceStore {
 
     async fn commit(
         &self,
+        claim: ProjectionClaim,
+        expected_checkpoint: Option<u64>,
         commit: EvidenceMaterializationCommit,
     ) -> Result<EvidenceStoreCommitResult, EvidenceStoreError> {
         validate_commit(&commit)?;
@@ -484,10 +640,9 @@ impl EvidenceStore for SqliteEvidenceStore {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(EvidenceStoreError::unavailable)?;
-        if Self::stored_checkpoint(&mut transaction)
-            .await?
-            .is_some_and(|value| value >= commit.inbox_batch_id)
-        {
+        validate_projection_claim(&mut transaction, claim).await?;
+        let checkpoint = Self::stored_checkpoint(&mut transaction).await?;
+        if checkpoint.is_some_and(|value| value >= commit.inbox_batch_id) {
             transaction
                 .rollback()
                 .await
@@ -496,6 +651,9 @@ impl EvidenceStore for SqliteEvidenceStore {
                 already_checkpointed: true,
                 ..EvidenceStoreCommitResult::default()
             });
+        }
+        if checkpoint != expected_checkpoint {
+            return Err(EvidenceStoreError::ProjectionConflict);
         }
 
         let created_at_unix_ms = Utc::now().timestamp_millis();
@@ -823,6 +981,22 @@ fn validate_commit(commit: &EvidenceMaterializationCommit) -> Result<(), Evidenc
                 "diagnostic batch must equal the committed batch".to_owned(),
             ));
         }
+    }
+    Ok(())
+}
+
+async fn validate_projection_claim(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    claim: ProjectionClaim,
+) -> Result<(), EvidenceStoreError> {
+    let epoch = i64::try_from(claim.epoch).map_err(|_| EvidenceStoreError::ProjectionConflict)?;
+    let current: i64 =
+        sqlx::query_scalar("SELECT epoch FROM evidence_projection_claim WHERE singleton = 1")
+            .fetch_one(&mut **transaction)
+            .await
+            .map_err(EvidenceStoreError::unavailable)?;
+    if epoch <= 0 || current != epoch {
+        return Err(EvidenceStoreError::ProjectionConflict);
     }
     Ok(())
 }

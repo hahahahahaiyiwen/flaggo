@@ -23,10 +23,11 @@ impl TetrisPlaygroundAgentSession {
             r#"import json
 from collections import Counter
 from pathlib import Path
+from flaggo_evidence import load_rows
 # The saved script retains Windows extended-length path support.
 root = Path(__file__).parents[2]
 paths = json.loads({paths:?})
-rows = [row for path in paths for row in json.loads((root / path).read_text(encoding="utf-8"))["rows"]]
+rows = [row for path in paths for row in load_rows(root / path)]
 unique = {{}}
 for row in rows:
     key = row["observation_sequence"]

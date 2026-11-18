@@ -78,7 +78,12 @@ function expectParameters(
   references: string[],
 ): void {
   expect(operationValue.parameters?.map((parameter) => parameter.$ref)).toEqual(
-    references,
+    [
+      "#/components/parameters/TenantPath",
+      "#/components/parameters/ApplicationPath",
+      "#/components/parameters/EnvironmentPath",
+      ...references,
+    ],
   );
 }
 
@@ -98,15 +103,15 @@ function expectRequired(schema: JsonSchema, required: string[]): void {
 }
 
 describe("OpenAPI shared-contract alignment", () => {
-  const runtime = yamlDocument("flaggo-runtime-v3.yaml");
-  const management = yamlDocument("flaggo-management-v3.yaml");
-  const runtimeModels = jsonSchema("runtime-models-v3.schema.json");
-  const managementModels = jsonSchema("management-models-v3.schema.json");
-  const problemDetails = jsonSchema("problem-details-v3.schema.json");
+  const runtime = yamlDocument("flaggo-runtime-v4.yaml");
+  const management = yamlDocument("flaggo-management-v4.yaml");
+  const runtimeModels = jsonSchema("runtime-models-v4.schema.json");
+  const managementModels = jsonSchema("management-models-v4.schema.json");
+  const problemDetails = jsonSchema("problem-details-v4.schema.json");
 
   it("exposes only runtime decisions and health from the runtime API", () => {
     expect(Object.keys(runtime.paths)).toEqual([
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions",
       "/health/live",
       "/health/ready",
     ]);
@@ -115,22 +120,22 @@ describe("OpenAPI shared-contract alignment", () => {
   it("exposes named DecisionContracts with immutable digest versions", () => {
     expect(management.openapi).toBe("3.1.0");
     expect(Object.keys(management.paths)).toEqual([
-      "/v3/decision-contract-catalog/current",
-      "/v3/decision-contracts/{contractName}",
-      "/v3/decision-contracts/{contractName}/validate",
-      "/v3/decision-contracts/{contractName}/versions",
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables",
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/history",
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contract-catalog/current",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/validate",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/history",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate",
       "/health/live",
       "/health/ready",
     ]);
 
     const catalog = operation(
       management,
-      "/v3/decision-contract-catalog/current",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contract-catalog/current",
       "get",
     );
     expect(catalog.operationId).toBe("getCurrentContractCatalog");
@@ -146,7 +151,7 @@ describe("OpenAPI shared-contract alignment", () => {
 
     const validate = operation(
       management,
-      "/v3/decision-contracts/{contractName}/validate",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/validate",
       "post",
     );
     expect(validate.operationId).toBe("validateDecisionContract");
@@ -161,12 +166,12 @@ describe("OpenAPI shared-contract alignment", () => {
     expectResponseSchema(
       validate,
       "200",
-      "../schemas/management-models-v3.schema.json#/$defs/DecisionContractValidationResult",
+      "../schemas/management-models-v4.schema.json#/$defs/DecisionContractValidationResult",
     );
 
     const deployContract = operation(
       management,
-      "/v3/decision-contracts/{contractName}",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}",
       "put",
     );
     expect(deployContract.operationId).toBe("deployDecisionContract");
@@ -187,7 +192,7 @@ describe("OpenAPI shared-contract alignment", () => {
 
     const getCurrent = operation(
       management,
-      "/v3/decision-contracts/{contractName}",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}",
       "get",
     );
     expect(getCurrent.operationId).toBe("getCurrentDecisionContract");
@@ -202,7 +207,7 @@ describe("OpenAPI shared-contract alignment", () => {
 
     const listVersions = operation(
       management,
-      "/v3/decision-contracts/{contractName}/versions",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions",
       "get",
     );
     expect(listVersions.operationId).toBe("listDecisionContractVersions");
@@ -219,7 +224,7 @@ describe("OpenAPI shared-contract alignment", () => {
 
     const getVersion = operation(
       management,
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}",
       "get",
     );
     expect(getVersion.operationId).toBe("getDecisionContractVersion");
@@ -235,7 +240,7 @@ describe("OpenAPI shared-contract alignment", () => {
 
     const submitCandidate = operation(
       management,
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/candidates",
       "post",
     );
     expect(submitCandidate.operationId).toBe("submitAnalysisCandidate");
@@ -262,7 +267,7 @@ describe("OpenAPI shared-contract alignment", () => {
 
     const listExecutables = operation(
       management,
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables",
       "get",
     );
     expect(listExecutables.operationId).toBe("listDecisionExecutables");
@@ -280,12 +285,12 @@ describe("OpenAPI shared-contract alignment", () => {
 
     const activateExecutable = operation(
       management,
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate",
       "post",
     );
     const history = operation(
       management,
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/executables/history",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/history",
       "get",
     );
     expect(history.operationId).toBe("listDecisionExecutableHistory");
@@ -329,15 +334,16 @@ describe("OpenAPI shared-contract alignment", () => {
         "application/json"
       ]?.schema?.$ref,
     ).toBe(
-      "../schemas/management-models-v3.schema.json#/$defs/DecisionContract",
+      "../schemas/management-models-v4.schema.json#/$defs/DecisionContract",
     );
     for (const status of ["409", "415", "422", "503"]) {
       expect(deployContract.responses[status]?.$ref).toBe(
         "#/components/responses/Problem",
       );
     }
-    expect(deployContract.responses["401"]).toBeUndefined();
-    expect(deployContract.responses["403"]).toBeUndefined();
+    expect(deployContract.responses["401"]).toBeDefined();
+    expect(deployContract.responses["403"]).toBeDefined();
+    expect(deployContract.responses["404"]).toBeDefined();
 
     expectRequired(managementModels.$defs!.DecisionContract!, [
       "authority",
@@ -366,6 +372,11 @@ describe("OpenAPI shared-contract alignment", () => {
     expectRequired(managementModels.$defs!.AnalysisCandidateSubmission!, [
       "rules",
       "provenance",
+      "ownership",
+    ]);
+    expectRequired(managementModels.$defs!.CandidateOwnership!, [
+      "attemptId",
+      "epoch",
     ]);
     expectRequired(managementModels.$defs!.AnalysisCandidateProvenance!, [
       "workspaceId",
@@ -422,7 +433,7 @@ describe("OpenAPI shared-contract alignment", () => {
     expectResponseSchema(
       live,
       "200",
-      "../schemas/runtime-models-v3.schema.json#/$defs/LivenessResult",
+      "../schemas/runtime-models-v4.schema.json#/$defs/LivenessResult",
     );
 
     const ready = operation(management, "/health/ready", "get");
@@ -430,12 +441,12 @@ describe("OpenAPI shared-contract alignment", () => {
     expectResponseSchema(
       ready,
       "200",
-      "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult",
+      "../schemas/runtime-models-v4.schema.json#/$defs/ReadinessResult",
     );
     expectResponseSchema(
       ready,
       "503",
-      "../schemas/runtime-models-v3.schema.json#/$defs/ReadinessResult",
+      "../schemas/runtime-models-v4.schema.json#/$defs/ReadinessResult",
     );
     for (const status of ["200", "503"]) {
       expect(ready.responses[status]?.headers).toMatchObject({
@@ -450,7 +461,7 @@ describe("OpenAPI shared-contract alignment", () => {
     expect(runtime.openapi).toBe("3.1.0");
     const createDecision = operation(
       runtime,
-      "/v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions",
+      "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions",
       "post",
     );
 
@@ -465,12 +476,12 @@ describe("OpenAPI shared-contract alignment", () => {
     expect(
       createDecision.requestBody?.content?.["application/json"]?.schema?.$ref,
     ).toBe(
-      "../schemas/runtime-models-v3.schema.json#/$defs/RuntimeInput",
+      "../schemas/runtime-models-v4.schema.json#/$defs/RuntimeInput",
     );
     expectResponseSchema(
       createDecision,
       "200",
-      "../schemas/runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+      "../schemas/runtime-models-v4.schema.json#/$defs/RuntimeDecision",
     );
     expect(createDecision.responses["200"]?.headers).toMatchObject({
       "X-Flaggo-Correlation-Id": {

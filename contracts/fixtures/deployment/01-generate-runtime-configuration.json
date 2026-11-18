@@ -3,8 +3,8 @@
   "invariant": "One v2 deployment authority and deployed contract set produce one strict immutable runtime configuration.",
   "scenarios": [],
   "sdkLocal": true,
-  "requestSchema": "deployment-models-v2.schema.json#/$defs/DeploymentManifest",
-  "responseSchema": "deployment-models-v2.schema.json#/$defs/RuntimeConfiguration",
+  "requestSchema": "deployment-models-v3.schema.json#/$defs/DeploymentManifest",
+  "responseSchema": "deployment-models-v3.schema.json#/$defs/RuntimeConfiguration",
   "request": {
     "method": "GENERATE",
     "path": "flaggo://deployment",
@@ -22,7 +22,7 @@
   },
   "expected": {
     "body": {
-      "format": "flaggo.runtime-config/v1",
+      "format": "flaggo.runtime-config/v2",
       "authority": {
         "tenant": "local",
         "application": "tetris",

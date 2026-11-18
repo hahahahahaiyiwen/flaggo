@@ -3,11 +3,11 @@
   "scenario": 5,
   "retryOf": "runtime-rule-result",
   "invariant": "A retry reuses the same complete RuntimeInput but independently resolves and applies the replacement executable active at the later request.",
-  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
-  "responseSchema": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+  "requestSchema": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "runtime-models-v4.schema.json#/$defs/RuntimeDecision",
   "request": {
     "method": "POST",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
     "headers": {
       "Content-Type": "application/json"
     },

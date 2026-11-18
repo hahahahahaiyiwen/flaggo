@@ -2,7 +2,8 @@ use crate::{Cancellation, DecisionError};
 use flaggo_contract::digests::is_sha256_digest;
 use flaggo_contract::validation::{is_decision_name, validate_runtime_input};
 use flaggo_contract::{
-    ContractError, DecisionContract, DecisionExecutable, RuntimeDecision, RuntimeInput,
+    ContractError, ContractResourceId, DecisionContract, DecisionExecutable, RuntimeDecision,
+    RuntimeInput,
 };
 use flaggo_expression::{
     CheckedDecisionExecutable, CompiledDecisionExecutable, ExecutableCompiler,
@@ -43,7 +44,7 @@ pub enum StoreReadError {
 pub trait ContractVersionReader: Send + Sync {
     fn get_contract(
         &self,
-        contract_name: &str,
+        resource: &ContractResourceId,
         contract_digest: &str,
         cancellation: Cancellation,
     ) -> impl Future<Output = Result<Option<Arc<ContractVersion>>, StoreReadError>> + Send;
@@ -55,6 +56,14 @@ pub trait ActiveExecutableReader: Send + Sync {
         contract_digest: &str,
         cancellation: Cancellation,
     ) -> impl Future<Output = Result<Option<Arc<ActiveExecutable>>, StoreReadError>> + Send;
+}
+
+/// Probe required storage capabilities without scanning stored artifacts.
+pub trait ReadinessProbe: Send + Sync {
+    fn is_available(
+        &self,
+        cancellation: Cancellation,
+    ) -> impl Future<Output = Result<bool, StoreReadError>> + Send;
 }
 
 type Materialized = Result<Arc<CompiledDecisionExecutable>, Arc<ExecutableMaterializationError>>;
@@ -86,12 +95,13 @@ impl<C: ContractVersionReader, E: ActiveExecutableReader> DecisionRuntime<C, E> 
 
     pub async fn decide(
         &self,
-        contract_name: &str,
+        resource: &ContractResourceId,
         contract_digest: &str,
         input: &RuntimeInput,
         cancellation: Cancellation,
     ) -> Result<RuntimeDecision, DecisionError> {
-        if !is_decision_name(contract_name) {
+        let contract_name = &resource.name;
+        if !is_decision_name(contract_name) || resource.resource_key().is_err() {
             return Err(DecisionError::InvalidIdentity(
                 "contractName is not a valid decision name.",
             ));
@@ -103,7 +113,7 @@ impl<C: ContractVersionReader, E: ActiveExecutableReader> DecisionRuntime<C, E> 
         }
         let version = self
             .contracts
-            .get_contract(contract_name, contract_digest, cancellation.clone())
+            .get_contract(resource, contract_digest, cancellation.clone())
             .await
             .map_err(|error| {
                 store_error(
@@ -112,9 +122,17 @@ impl<C: ContractVersionReader, E: ActiveExecutableReader> DecisionRuntime<C, E> 
                 )
             })?
             .ok_or_else(|| DecisionError::ContractNotFound {
-                contract_name: contract_name.into(),
+                contract_name: contract_name.clone(),
                 contract_digest: contract_digest.into(),
             })?;
+        if !matches!(ContractResourceId::try_from(&version.contract), Ok(actual) if actual == *resource)
+            || version.contract_digest != contract_digest
+        {
+            return Err(DecisionError::Integrity {
+                message: "The stored contract does not match the requested resource identity.",
+                source: None,
+            });
+        }
         let mut issues = Vec::new();
         validate_runtime_input(&version.contract, input, &mut issues)?;
         if !issues.is_empty() {

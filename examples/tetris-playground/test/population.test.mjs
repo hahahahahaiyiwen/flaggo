@@ -66,7 +66,7 @@ function sdkHarness(context, options = {}, selectInterval = (attributes) =>
       return createFlaggoDropIntervalProvider({
         ...configuration,
         runtimeConfig: {
-          format: "flaggo.runtime-config/v1",
+          format: "flaggo.runtime-config/v2",
           authority: { tenant: "local", application: "tetris", environment: "test" },
           services: {
             contractServiceUrl: "https://contracts.test",

@@ -2,7 +2,7 @@ mod runtime;
 
 pub use runtime::{
     ActiveExecutable, ActiveExecutableReader, ContractVersion, ContractVersionReader,
-    DecisionRuntime, MAXIMUM_COMPILED_EXECUTABLES, StoreReadError,
+    DecisionRuntime, MAXIMUM_COMPILED_EXECUTABLES, ReadinessProbe, StoreReadError,
 };
 
 use flaggo_contract::{

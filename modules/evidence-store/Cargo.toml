@@ -6,17 +6,21 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["sqlite"]
+sqlite = ["dep:futures-util", "dep:sha2", "dep:sqlparser", "dep:sqlx", "dep:tokio"]
+
 [dependencies]
 async-trait = "0.1.89"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
-futures-util = "0.3.31"
+futures-util = { version = "0.3.31", optional = true }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10.9"
-sqlparser = { version = "0.63.0", features = ["visitor"] }
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sha2 = { version = "0.10.9", optional = true }
+sqlparser = { version = "0.63.0", features = ["visitor"], optional = true }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"], optional = true }
 thiserror = "2.0.18"
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time"], optional = true }
 
 [dev-dependencies]
 flaggo-raw-otlp-inbox = { version = "0.1.0", path = "../raw-otlp-inbox" }

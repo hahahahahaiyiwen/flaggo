@@ -79,7 +79,7 @@ The SDK constructs the complete `RuntimeInput`, adds `_random`, validates the
 serialized JSON, and sends:
 
 ```http
-POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
 All attributes are optional at evaluation time. Rules depending on missing
@@ -96,8 +96,10 @@ configured, the API behaves as a no-op.
 Applications emit potentially relevant outcomes through their normal
 OpenTelemetry logs, metrics, spans, and span events. Each learning evidence
 declaration identifies exactly one application signal source. The receiver
-durably enqueues complete valid export requests without extracting authority or
-routing metadata. The asynchronous materializer derives
+independently authenticates the producer and authorizes every Resource's
+declared scope before durably appending the complete request with its trusted
+authorization envelope. A missing or forbidden scope rejects the whole batch.
+The asynchronous materializer rechecks the envelope and derives
 `AuthorityScope + SourceKey`, checks active route reference counts, and stores
 each shared observation once. Exact contract association, predicates, and
 correlation mappings are evaluated during analysis.
@@ -188,6 +190,7 @@ import {
 
 const contracts = createContractClient({
   baseUrl: "https://contracts.example.com",
+  authority: { tenant: "acme", application: "worker", environment: "production" },
 });
 
 const definition = defineDecisionContract({
@@ -242,9 +245,9 @@ Failures while reading a response stream are reported as
 ## Contract authority
 
 Wire models and standalone validators are generated from the API schemas plus
-`deployment-models-v2.schema.json`. `flaggo.deploy/v2` is the authored source
+`deployment-models-v3.schema.json`. `flaggo.deploy/v2` is the authored source
 for one authority and a contract set. Deployment tooling produces the strict
-`flaggo.runtime-config/v1` value consumed by runtime and OpenTelemetry helpers;
+`flaggo.runtime-config/v2` value consumed by runtime and OpenTelemetry helpers;
 the parser returns a deeply frozen copy. Client orchestration, retries,
 exact-version binding, and semantic identity checks remain hand-written.
 

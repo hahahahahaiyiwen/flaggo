@@ -1,0 +1,28 @@
+[package]
+name = "flaggo-evidence-materialization"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
+flaggo-evidence-store = { path = "../evidence-store", default-features = false }
+flaggo-otlp-codec = { path = "../otlp-codec" }
+flaggo-raw-otlp-inbox = { path = "../raw-otlp-inbox", default-features = false }
+opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace", "with-serde"] }
+prost = "0.14.1"
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10.9"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+flaggo-contract = { path = "../contract" }
+axum.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

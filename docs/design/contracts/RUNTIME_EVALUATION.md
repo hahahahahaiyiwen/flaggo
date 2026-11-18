@@ -4,8 +4,8 @@
 
 This document defines the conceptual model for evaluating one accepted
 `DecisionContract` at runtime. Its wire shape is implemented by
-`contracts/schemas/runtime-models-v3.schema.json` and
-`contracts/openapi/flaggo-runtime-v3.yaml`.
+`contracts/schemas/runtime-models-v4.schema.json` and
+`contracts/openapi/flaggo-runtime-v4.yaml`.
 
 Contract acceptance, executable generation, and activation are
 defined in [Decision contract lifecycle](LIFECYCLE.md). Contract and executable
@@ -74,7 +74,7 @@ another digest or reconstructs an executable from `result.default`.
 The runtime operation and request body are:
 
 ```http
-POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 Content-Type: application/json
 ```
 
@@ -104,7 +104,7 @@ by `contractDigest`; they are not runtime request fields or lookup selectors.
 SDK's current activity context. It is exposure context, not proof that the new
 result will be used, and it does not select the contract or executable.
 
-The initial v3 wire shape carries only `currentExposure.exposureId`. How that
+The v4 wire shape carries only `currentExposure.exposureId`. How that
 identity is allocated and whether a future version needs more correlation
 fields remain open. The runtime server does not retain a session.
 
@@ -255,7 +255,7 @@ executable produced the result. It does not need definition IDs, server
 revisions, bundle digests, compatibility classifications, target-resolution
 chains, strategy types, fabricated confidence, or a generic constraint report.
 
-The initial v3 response exposes the selected rule name for rule evaluations.
+The v4 response exposes the selected rule name for rule evaluations.
 Whether to expose evaluation time or a decision/exposure correlation identity
 in a future version remains open. The stateless runtime does not require those
 fields to evaluate a request.

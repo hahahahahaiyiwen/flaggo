@@ -4,41 +4,41 @@
  */
 
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "Sha256Digest".
  */
 export type Sha256Digest = string;
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionName".
  */
 export type DecisionName = string;
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AuthorityIdentifier".
  */
 export type AuthorityIdentifier = string;
 /**
  * A user-declared attribute name. Names beginning with '_' are reserved for Flaggo internal attributes.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AttributeName".
  */
 export type AttributeName = string;
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "MemberName".
  */
 export type MemberName = string;
 /**
  * An expression in the DecisionContract's expression_syntax.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "Expression".
  */
 export type Expression = string;
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "JsonValue".
  */
 export type JsonValue =
@@ -53,7 +53,7 @@ export type JsonValue =
 /**
  * A JSON Schema 2020-12 document in the bounded flaggo.value-schema/v1 profile.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ValueSchema".
  */
 export type ValueSchema =
@@ -65,51 +65,51 @@ export type ValueSchema =
   | ArrayValueSchema
   | ObjectValueSchema;
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AuthoredWhen".
  */
 export type AuthoredWhen = NaturalLanguageWhen | ExpressionWhen;
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "RuleReturn".
  */
 export type RuleReturn = LiteralReturn | ExpressionReturn;
 /**
  * The one application-owned OpenTelemetry signal selected for this evidence declaration.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "EvidenceSource".
  */
 export type EvidenceSource =
   MetricEvidenceSource | LogEvidenceSource | SpanEvidenceSource | SpanEventEvidenceSource;
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "WarningIssue".
  */
 export type WarningIssue = ValidationIssue & {
   severity?: "warning";
 };
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ErrorIssue".
  */
 export type ErrorIssue = ValidationIssue & {
   severity?: "error";
 };
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionContractValidationResult".
  */
 export type DecisionContractValidationResult = ValidDecisionContract | InvalidDecisionContract;
 
 /**
- * DecisionContract acceptance and status models for the Flaggo Management API v3.
+ * Scoped DecisionContract acceptance and status models for the Flaggo Management API v4. Existing semantic content and digest algorithms are unchanged.
  */
-export interface FlaggoManagementModelsV3 {}
+export interface FlaggoManagementModelsV4 {}
 /**
  * Declared tenant, application, and environment scope bound into an immutable deployed DecisionContract.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AuthorityScope".
  */
 export interface AuthorityScope {
@@ -118,7 +118,7 @@ export interface AuthorityScope {
   environment: AuthorityIdentifier;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "NullValueSchema".
  */
 export interface NullValueSchema {
@@ -126,7 +126,7 @@ export interface NullValueSchema {
   description?: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "BooleanValueSchema".
  */
 export interface BooleanValueSchema {
@@ -134,7 +134,7 @@ export interface BooleanValueSchema {
   description?: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "NumberValueSchema".
  */
 export interface NumberValueSchema {
@@ -147,7 +147,7 @@ export interface NumberValueSchema {
   description?: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "IntegerValueSchema".
  */
 export interface IntegerValueSchema {
@@ -160,7 +160,7 @@ export interface IntegerValueSchema {
   description?: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "StringValueSchema".
  */
 export interface StringValueSchema {
@@ -170,7 +170,7 @@ export interface StringValueSchema {
   description?: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ArrayValueSchema".
  */
 export interface ArrayValueSchema {
@@ -182,7 +182,7 @@ export interface ArrayValueSchema {
   description?: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ObjectValueSchema".
  */
 export interface ObjectValueSchema {
@@ -202,7 +202,7 @@ export interface ObjectValueSchema {
   description?: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "Attribute".
  */
 export interface Attribute {
@@ -210,7 +210,7 @@ export interface Attribute {
   schema: ValueSchema;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "Result".
  */
 export interface Result {
@@ -229,35 +229,35 @@ export interface Result {
       };
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "NaturalLanguageWhen".
  */
 export interface NaturalLanguageWhen {
   condition: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ExpressionWhen".
  */
 export interface ExpressionWhen {
   expression: Expression;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "LiteralReturn".
  */
 export interface LiteralReturn {
   value: JsonValue;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ExpressionReturn".
  */
 export interface ExpressionReturn {
   expression: Expression;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AuthoredRule".
  */
 export interface AuthoredRule {
@@ -267,7 +267,7 @@ export interface AuthoredRule {
   return: RuleReturn;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AuthoredExecutable".
  */
 export interface AuthoredExecutable {
@@ -279,7 +279,7 @@ export interface AuthoredExecutable {
   rules: AuthoredRule[];
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "LearningEvaluationPolicy".
  */
 export interface LearningEvaluationPolicy {
@@ -289,7 +289,7 @@ export interface LearningEvaluationPolicy {
   interval: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "LearningPolicy".
  */
 export interface LearningPolicy {
@@ -300,7 +300,7 @@ export interface LearningPolicy {
   evaluate: LearningEvaluationPolicy;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "EvidenceCorrelationAttribute".
  */
 export interface EvidenceCorrelationAttribute {
@@ -316,14 +316,14 @@ export interface EvidenceCorrelationAttribute {
 /**
  * Maps every correlateBy contract attribute to one exact OpenTelemetry attribute location and key.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "EvidenceCorrelationMap".
  */
 export interface EvidenceCorrelationMap {
   [k: string]: EvidenceCorrelationAttribute;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "MetricEvidenceSource".
  */
 export interface MetricEvidenceSource {
@@ -344,7 +344,7 @@ export interface MetricEvidenceSource {
   correlation: EvidenceCorrelationMap;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "LogEvidenceSource".
  */
 export interface LogEvidenceSource {
@@ -360,7 +360,7 @@ export interface LogEvidenceSource {
   correlation: EvidenceCorrelationMap;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "SpanEvidenceSource".
  */
 export interface SpanEvidenceSource {
@@ -376,7 +376,7 @@ export interface SpanEvidenceSource {
   correlation: EvidenceCorrelationMap;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "SpanEventEvidenceSource".
  */
 export interface SpanEventEvidenceSource {
@@ -396,7 +396,7 @@ export interface SpanEventEvidenceSource {
   correlation: EvidenceCorrelationMap;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "Evidence".
  */
 export interface Evidence {
@@ -415,7 +415,7 @@ export interface Evidence {
   source: EvidenceSource;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "PrimaryObjective".
  */
 export interface PrimaryObjective {
@@ -423,7 +423,7 @@ export interface PrimaryObjective {
   direction: "minimize" | "maximize";
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "Guardrail".
  */
 export interface Guardrail {
@@ -432,7 +432,7 @@ export interface Guardrail {
   expression: Expression;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "LearningObjective".
  */
 export interface LearningObjective {
@@ -443,7 +443,7 @@ export interface LearningObjective {
   guardrails?: Guardrail[];
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "Learning".
  */
 export interface Learning {
@@ -457,7 +457,7 @@ export interface Learning {
   objective: LearningObjective;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionContract".
  */
 export interface DecisionContract {
@@ -475,7 +475,7 @@ export interface DecisionContract {
   learning?: Learning;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ExecutableRule".
  */
 export interface ExecutableRule {
@@ -484,7 +484,7 @@ export interface ExecutableRule {
   return: RuleReturn;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionExecutable".
  */
 export interface DecisionExecutable {
@@ -496,12 +496,12 @@ export interface DecisionExecutable {
   rules: ExecutableRule[];
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AnalysisCandidateProvenance".
  */
 export interface AnalysisCandidateProvenance {
   /**
-   * Stable digest identity of the contract-name workspace.
+   * Stable digest identity of the explicitly scoped workspace.
    */
   workspaceId: string;
   cycleId: string;
@@ -512,7 +512,18 @@ export interface AnalysisCandidateProvenance {
   analysisManifestDigest: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
+ * via the `definition` "CandidateOwnership".
+ */
+export interface CandidateOwnership {
+  attemptId: string;
+  /**
+   * Current workspace ownership epoch as canonical decimal text. It must match authority at admission commit, including retries.
+   */
+  epoch: string;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AnalysisCandidateSubmission".
  */
 export interface AnalysisCandidateSubmission {
@@ -521,9 +532,10 @@ export interface AnalysisCandidateSubmission {
    */
   rules: ExecutableRule[];
   provenance: AnalysisCandidateProvenance;
+  ownership: CandidateOwnership;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AnalysisCandidateResult".
  */
 export interface AnalysisCandidateResult {
@@ -541,7 +553,7 @@ export interface AnalysisCandidateResult {
   created: boolean;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ManagedDecisionExecutable".
  */
 export interface ManagedDecisionExecutable {
@@ -555,7 +567,7 @@ export interface ManagedDecisionExecutable {
   provenance?: JsonValue;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionExecutableCatalog".
  */
 export interface DecisionExecutableCatalog {
@@ -572,7 +584,7 @@ export interface DecisionExecutableCatalog {
   nextCursor: string | null;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionExecutableHistory".
  */
 export interface DecisionExecutableHistory {
@@ -590,7 +602,7 @@ export interface DecisionExecutableHistory {
 /**
  * Optimistic-concurrency fence over both current runtime authority and the selected Candidate.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionExecutableActivationRequest".
  */
 export interface DecisionExecutableActivationRequest {
@@ -599,7 +611,7 @@ export interface DecisionExecutableActivationRequest {
   expectedCandidateStateVersion: number;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionExecutableActivationResult".
  */
 export interface DecisionExecutableActivationResult {
@@ -610,7 +622,7 @@ export interface DecisionExecutableActivationResult {
   supersededCandidateCount: number;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ValidationIssue".
  */
 export interface ValidationIssue {
@@ -623,7 +635,7 @@ export interface ValidationIssue {
   message: string;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "ValidDecisionContract".
  */
 export interface ValidDecisionContract {
@@ -632,7 +644,7 @@ export interface ValidDecisionContract {
   issues: WarningIssue[];
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "InvalidDecisionContract".
  */
 export interface InvalidDecisionContract {
@@ -643,7 +655,7 @@ export interface InvalidDecisionContract {
   issues: ValidationIssue[];
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionContractVersionSummary".
  */
 export interface DecisionContractVersionSummary {
@@ -656,7 +668,7 @@ export interface DecisionContractVersionSummary {
   activeExecutableDigest: Sha256Digest;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionContractVersion".
  */
 export interface DecisionContractVersion {
@@ -688,7 +700,7 @@ export interface DecisionContract1 {
   learning?: Learning;
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "CurrentContractCatalogEntry".
  */
 export interface CurrentContractCatalogEntry {
@@ -713,9 +725,9 @@ export interface DecisionContract2 {
   learning?: Learning;
 }
 /**
- * Cross-authority materializer catalog. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity.
+ * Current-contract catalog within one explicitly authorized resource scope. Transport ETags detect changes but are not evidence, provenance, or checkpoint identity.
  *
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "CurrentContractCatalog".
  */
 export interface CurrentContractCatalog {
@@ -725,7 +737,7 @@ export interface CurrentContractCatalog {
   contracts: CurrentContractCatalogEntry[];
 }
 /**
- * This interface was referenced by `FlaggoManagementModelsV3`'s JSON-Schema
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "DecisionContractVersionList".
  */
 export interface DecisionContractVersionList {

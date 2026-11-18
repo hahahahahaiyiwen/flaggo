@@ -127,8 +127,15 @@ impl AnalysisToolHandler {
                         ));
                     }
                 };
+                let execution_id = flaggo_analysis_workspace::sha256_digest(
+                    serde_json::to_string(&(
+                        invocation.session_id.as_ref(),
+                        &invocation.tool_call_id,
+                    ))?
+                    .as_bytes(),
+                );
                 self.tools
-                    .code_interpreter(input)
+                    .execute_python(execution_id.trim_start_matches("sha256:"), input)
                     .await
                     .map_err(tool_error)?
             }

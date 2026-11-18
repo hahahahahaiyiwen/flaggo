@@ -1,0 +1,46 @@
+{
+  "valid": [
+    { "kind": "null" },
+    { "kind": "int64", "value": "0" },
+    { "kind": "int64", "value": "-1" },
+    { "kind": "int64", "value": "9007199254740993" },
+    { "kind": "int64", "value": "9223372036854775807" },
+    { "kind": "int64", "value": "-9223372036854775808" },
+    { "kind": "float64", "bits": "0000000000000000" },
+    { "kind": "float64", "bits": "8000000000000000" },
+    { "kind": "float64", "bits": "3ff0000000000000" },
+    { "kind": "float64", "bits": "7ff0000000000000" },
+    { "kind": "float64", "bits": "fff0000000000000" },
+    { "kind": "float64", "bits": "7ff8000000000042" },
+    { "kind": "text", "value": "9007199254740993" },
+    { "kind": "boolean", "value": true },
+    { "kind": "json", "value": "{ \"n\": 9007199254740993, \"huge\": 1e400, \"decimal\": 1.2300 }" }
+  ],
+  "invalid": [
+    { "kind": "int64", "value": 1 },
+    { "kind": "int64", "value": "9223372036854775808" },
+    { "kind": "int64", "value": "-9223372036854775809" },
+    { "kind": "int64", "value": "+1" },
+    { "kind": "int64", "value": "01" },
+    { "kind": "int64", "value": "-0" },
+    { "kind": "int64", "value": "1.0" },
+    { "kind": "int64", "value": "1\n" },
+    { "kind": "int64", "value": "1\r" },
+    { "kind": "float64", "bits": "7FF0000000000000" },
+    { "kind": "float64", "bits": "0" },
+    { "kind": "float64", "bits": "3ff0000000000000\n" },
+    { "kind": "float64", "bits": "gff0000000000000" },
+    { "kind": "float64", "value": 1.0 },
+    { "kind": "null", "value": null },
+    { "kind": "boolean", "value": "true" },
+    { "kind": "json", "value": {} },
+    { "kind": "text", "value": "value", "extra": true },
+    { "kind": "unknown", "value": "value" }
+  ],
+  "invalidJsonText": [
+    { "kind": "json", "value": "{unquoted:1}" },
+    { "kind": "json", "value": "{\"number\":01}" },
+    { "kind": "json", "value": "true false" },
+    { "kind": "json", "value": "" }
+  ]
+}

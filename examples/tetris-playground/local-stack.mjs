@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { resolve } from "node:path";
+import { parseFlaggoDeploymentManifest, resourceScopePath } from "@flaggo/sdk/configuration";
 import { analysisInferenceEnvironment } from "../tetris-integration/analysis-inference.mjs";
 
 import {
@@ -156,6 +157,10 @@ export async function startFlaggoServices({
   repositoryRoot,
   runDirectory,
 }) {
+  const { authority } = parseFlaggoDeploymentManifest(JSON.parse(
+    await readFile(resolve(exampleDirectory, "flaggo.deploy.json"), "utf8"),
+  ));
+  const scopePath = resourceScopePath(authority);
   const paths = {
     analysisLog: resolve(runDirectory, "async-analysis.log"),
     analysisWorkspace: resolve(runDirectory, "analysis-workspaces"),
@@ -212,6 +217,7 @@ export async function startFlaggoServices({
       {
         ...telemetryEnvironment,
         FLAGGO_CONTRACT_DATABASE_PATH: paths.database,
+        FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.analysisWorkspace,
         FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:0",
         FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS: "250",
       },
@@ -250,7 +256,7 @@ export async function startFlaggoServices({
       {
         ...telemetryEnvironment,
         FLAGGO_CONTRACT_CATALOG_URL:
-          `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
+          `${hosts.contractUrl}${scopePath}/decision-contract-catalog/current`,
         FLAGGO_DATABASE_URL: databaseUrl,
         FLAGGO_MATERIALIZER_CATALOG_INTERVAL_SECONDS: "1",
         FLAGGO_MATERIALIZER_POLL_INTERVAL_MS: "25",
@@ -279,6 +285,9 @@ export async function startFlaggoServices({
       {
         ...telemetryEnvironment,
         FLAGGO_ANALYSIS_COPILOT_HOME: paths.copilotHome,
+        FLAGGO_ANALYSIS_TENANT: authority.tenant,
+        FLAGGO_ANALYSIS_APPLICATION: authority.application,
+        FLAGGO_ANALYSIS_ENVIRONMENT: authority.environment,
         ...inferenceEnvironment,
         FLAGGO_ANALYSIS_MAX_AGENTS: "1",
         FLAGGO_ANALYSIS_POLL_INTERVAL_MS: "250",
@@ -286,7 +295,7 @@ export async function startFlaggoServices({
         FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.analysisWorkspace,
         FLAGGO_ANALYSIS_YIELD_GRACE_SECONDS: "2",
         FLAGGO_CONTRACT_CATALOG_URL:
-          `${hosts.contractUrl}/v3/decision-contract-catalog/current`,
+          `${hosts.contractUrl}${scopePath}/decision-contract-catalog/current`,
         FLAGGO_CONTRACT_SERVICE_URL: hosts.contractUrl,
         FLAGGO_DATABASE_URL: databaseUrl,
       },

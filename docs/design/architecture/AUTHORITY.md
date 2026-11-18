@@ -30,29 +30,30 @@ authored contract before validation and digest calculation. The resulting
 any authority member creates a different digest even when authored decision
 logic is unchanged.
 
-The first accepted contract claims global ownership of its `contractName` for
-that declared authority. Later versions of the same name must declare the same
-authority; a different authority receives
-`contract-name-authority-conflict`. Management reads and runtime evaluation
-use public resource identity, not credential-derived authority:
+V4 addresses contracts by full tenant/application/environment/name identity.
+Different scopes can independently use the same name. The declared body scope
+must agree with the explicit route; mismatches return `contract-resource-mismatch`.
+Management reads and runtime evaluation never use credential-derived aliases:
 
 ```text
-ExactContract[contractName, contractDigest]
-ManagementCurrent[contractName] = contractDigest
+Resource = tenant/application/environment/contractName
+ExactContract[Resource, contractDigest]
+ManagementCurrent[Resource] = contractDigest
 RuntimeActivation[contractDigest] = executableDigest
 ```
 
-The APIs currently have no authentication boundary. Future authentication must
-authorize an already loaded resource and must not use claims as hidden lookup
-selectors.
+Shared HTTP composition requires an independent authentication/authorization
+policy; local binaries explicitly select `TrustedLocal`. Missing or invalid
+identity is 401, hidden scope is 404, and a forbidden operation is 403.
+Authorization outages fail closed. Claims never select a different resource.
 
 The conceptual authority records are:
 
 ```text
-ContractResource[contractName]
+ContractResource[Resource]
   = declared AuthorityScope
 
-AcceptedContract[contractName, contractDigest]
+AcceptedContract[Resource, contractDigest]
   = immutable DecisionContract
 
 ExecutableArtifact[executableDigest]
@@ -81,7 +82,7 @@ contract version.
 Contract Acceptance validates, canonicalizes, hashes, and durably stores one
 exact `DecisionContract`. Acceptance establishes:
 
-- the name is globally owned by the contract's declared authority;
+- the resource is addressed by tenant/application/environment/name and independently authorized;
 - the named contract version exists under its public name/digest identity;
 - its authority and semantic content are immutable under `contractDigest`;
 - generated executables must conform to that exact content; and

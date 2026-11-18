@@ -12,7 +12,7 @@ identities, canonicalization rules, and semantic invariants belong to
 [Decision contracts and executables](../contracts/CONTRACTS.md). Lifecycle
 transitions belong to
 [Decision contract lifecycle](../contracts/LIFECYCLE.md), and the Management
-API v3 OpenAPI document is the wire-level authority.
+API v4 OpenAPI document is the wire-level authority.
 
 The Contract Service app boundary and its relationship to every other app are
 canonical in
@@ -25,7 +25,7 @@ contract author
   -> source-controlled DecisionContract definition
   -> deployment authority binding
   -> management client or CI
-  -> Management API v3
+  -> Management API v4
   -> Contract Service
        -> Contract Store
        -> executable generator
@@ -78,10 +78,10 @@ Paths are portable forward-slash relative paths contained within the
 manifest's directory. The manifest does not embed contracts and is not an
 atomic multi-contract API payload. Deployment tooling processes each referenced
 contract independently. It injects the manifest authority before validation,
-digest calculation, and the name-keyed `PUT`. Authority is therefore part of
+digest calculation, and the full-scope `PUT`. Authority is therefore part of
 the complete deployed contract and `contractDigest`, while the authored
-definition remains portable. Until authenticated ingress exists, authority is
-declared rather than security-derived.
+definition remains portable. Authority remains declared resource identity,
+never a credential; an independent host policy authorizes it.
 
 ## Client responsibilities
 
@@ -89,7 +89,7 @@ A contract author or CI client:
 
 - maintains an authority-free contract definition as source-controlled input;
 - binds manifest authority into the complete deployed `DecisionContract`;
-- addresses the logical management resource by `contractName`;
+- addresses the logical management resource by tenant/application/environment/name;
 - may use dry-run validation independently when early feedback is useful;
 - submits the complete desired contract rather than an incremental mutation;
 - records each returned `contractDigest` in generated runtime configuration;
@@ -98,7 +98,7 @@ A contract author or CI client:
   runtime selection mechanism.
 
 After all contracts are accepted, deployment tooling generates one immutable
-`flaggo.runtime-config/v1` document containing the manifest authority, Contract
+`flaggo.runtime-config/v2` document containing the manifest authority, Contract
 Service, Decision Service, and OTel Ingestion URLs, and exact
 `{ contractName, contractDigest }` bindings. Decision and telemetry SDK
 composition consume that same artifact; runtime never resolves a moving
@@ -135,13 +135,13 @@ exact-version read establishes the durable outcome.
 The Contract Service exposes:
 
 ```http
-POST /v3/decision-contracts/{contractName}/validate
-PUT  /v3/decision-contracts/{contractName}
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/validate
+PUT  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}
 
-GET  /v3/decision-contracts/{contractName}
-GET  /v3/decision-contracts/{contractName}/versions
-GET  /v3/decision-contracts/{contractName}/versions/{contractDigest}
-GET  /v3/decision-contract-catalog/current
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}
+GET  /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contract-catalog/current
 ```
 
 ### Dry-run validation
@@ -210,8 +210,8 @@ Neither `ManagementCurrent` nor version-list ordering grants runtime
 authority. The Decision Service accepts an exact digest and reads
 `RuntimeActivation` instead.
 
-The cross-authority current-contract catalog returns every complete current
-deployed contract for Evidence Materializer route compilation. Its ETag is
+The scope-bound current-contract catalog returns every complete current
+deployed contract in the authorized scope for Evidence Materializer route compilation. Its ETag is
 opaque conditional-fetch state, not contract or evidence identity.
 
 ## Contract Service responsibilities
@@ -219,7 +219,7 @@ opaque conditional-fetch state, not contract or evidence identity.
 The Contract Service owns:
 
 - route and payload identity validation;
-- global contract-name ownership by declared authority;
+- explicit full-scope contract identity and independent operation authorization;
 - bounded contract syntax and semantic validation;
 - canonicalization and `contractDigest` computation;
 - immutable contract-version persistence;
@@ -387,4 +387,4 @@ executable from another contract digest.
 - [Evidence and learning](EVIDENCE.md)
 - [Decision contracts and executables](../contracts/CONTRACTS.md)
 - [Decision contract lifecycle](../contracts/LIFECYCLE.md)
-- [Management API v3](../../../contracts/openapi/flaggo-management-v3.yaml)
+- [Management API v4](../../../contracts/openapi/flaggo-management-v4.yaml)

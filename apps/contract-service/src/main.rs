@@ -2,8 +2,7 @@ use flaggo_contract_service::{
     ContractLifecycle, INSTRUMENTATION_SCOPE, SERVICE_NAME, router,
     worker::{ActivationWorker, POLL_INTERVAL_VARIABLE, poll_interval, scan_failed},
 };
-use flaggo_contract_store::SqliteContractVersionStore;
-use flaggo_executable_store::SqliteExecutableStore;
+use flaggo_executable_store::SqliteContractAuthority;
 use flaggo_expression::ExpressionCompiler;
 use flaggo_service_observability::{ServiceObservability, reject_own_receiver};
 use std::{
@@ -35,6 +34,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
+    let arguments: Vec<_> = env::args().skip(1).collect();
+    if arguments == ["--migrate-v3-to-v4"] {
+        return migrate().await;
+    }
+    if !arguments.is_empty() {
+        return Err(ConfigurationError(
+            "Usage: flaggo-contract-service [--migrate-v3-to-v4]".into(),
+        )
+        .into());
+    }
     flaggo_service_hosting::reject_legacy_core_configuration(
         "FLAGGO_CONTRACT_DATABASE_PATH",
         "FLAGGO_CONTRACT_LISTEN_ADDRESS",
@@ -63,19 +72,20 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let address = listener.local_addr()?;
     reject_own_receiver(address)?;
     let canonicalizer = Arc::new(ExpressionCompiler::default());
-    let contracts =
-        SqliteContractVersionStore::open(&database, Some(canonicalizer.clone())).await?;
-    let executables = match SqliteExecutableStore::open(&database, Some(canonicalizer)).await {
-        Ok(store) => store,
-        Err(error) => {
-            contracts.close().await;
-            return Err(error.into());
-        }
-    };
+    let workspace_root = env::var_os("FLAGGO_ANALYSIS_WORKSPACE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("flaggo-analysis-workspaces"));
+    let admission_fence = Arc::new(flaggo_analysis_workspace::LocalWorkspaceProvider::new(
+        workspace_root,
+    )?);
+    let authority = Arc::new(
+        SqliteContractAuthority::open(&database, Some(canonicalizer))
+            .await?
+            .with_admission_fence(admission_fence),
+    );
     let result: Result<(), Box<dyn Error>> = async {
-        contracts.initialize(None).await?;
-        executables.initialize(None).await?;
-        let lifecycle = ContractLifecycle::new(contracts.clone(), executables.clone());
+        authority.initialize().await?;
+        let lifecycle = ContractLifecycle::new(authority.clone());
         let mut worker = ActivationWorker::new(lifecycle.clone());
         if let Err(error) = worker.run_once().await { scan_failed(&error); }
         let (worker_stop, worker_stopping) = tokio::sync::watch::channel(false);
@@ -84,7 +94,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             flaggo.operation.outcome = "success", server.address = %format!("http://{address}") }, "Contract Service started");
         let result: Result<(), Box<dyn Error>> = async {
             let (stop, requested) = tokio::sync::oneshot::channel::<()>();
-            let server = axum::serve(listener, router(lifecycle))
+            let server = axum::serve(listener, router(lifecycle, Arc::new(flaggo_service_hosting::TrustedLocal)))
                 .with_graceful_shutdown(async { let _ = requested.await; }).into_future();
             tokio::pin!(server);
             tokio::select! {
@@ -107,11 +117,35 @@ async fn run() -> Result<(), Box<dyn Error>> {
         stopped??;
         Ok(())
     }.await;
-    contracts.close().await;
-    executables.close().await;
+    authority.close().await;
     tracing::event!(target: INSTRUMENTATION_SCOPE, tracing::Level::INFO, { "event.name" = "flaggo.service.stopped",
         flaggo.operation.outcome = if result.is_ok() { "success" } else { "failure" } }, "Contract Service stopped");
     result
+}
+
+async fn migrate() -> Result<(), Box<dyn Error>> {
+    let database = env::var_os("FLAGGO_CONTRACT_DATABASE_PATH")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            ConfigurationError("Explicit migration requires FLAGGO_CONTRACT_DATABASE_PATH.".into())
+        })?;
+    if !database.is_file() {
+        return Err(ConfigurationError(
+            "Migration requires an existing SQLite authority file.".into(),
+        )
+        .into());
+    }
+    let authority =
+        SqliteContractAuthority::open(&database, Some(Arc::new(ExpressionCompiler::default())))
+            .await?;
+    let result = authority.migrate_scoped_resources().await;
+    authority.close().await;
+    let changed = result?;
+    tracing::info!(
+        changed,
+        "Scoped v4 authority migration completed; immutable content and provenance preserved"
+    );
+    Ok(())
 }
 
 async fn shutdown_signal() -> std::io::Result<()> {
@@ -147,6 +181,7 @@ fn failure_category(error: &(dyn Error + 'static)) -> &'static str {
         "timeout"
     } else if error.is::<flaggo_contract_store::ContractStoreError>()
         || error.is::<flaggo_executable_store::ExecutableStoreError>()
+        || error.is::<flaggo_executable_store::AuthorityError>()
         || error.is::<std::io::Error>()
     {
         "dependency"

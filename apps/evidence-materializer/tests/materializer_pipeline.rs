@@ -92,7 +92,9 @@ async fn materialized_numeric_attributes_support_sql_eligibility_without_casts()
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     let committed = materializer.run_once(&catalog).await.unwrap();
     assert_eq!(committed.observations_created, 3);
     assert_eq!(committed.duplicate_observations, 3);
@@ -116,6 +118,7 @@ async fn materialized_numeric_attributes_support_sql_eligibility_without_casts()
         }],
     };
     let result = reader.query(&scope, EvidenceQueryRequest {
+        profile: reader.query_capabilities().profile.to_owned(),
         sql: "SELECT
             json_extract(payload_json, '$.signal.payload.attributes[0].value.value') AS pieces,
             json_extract(payload_json, '$.signal.payload.attributes[1].value.value') AS duration,
@@ -133,17 +136,40 @@ async fn materialized_numeric_attributes_support_sql_eligibility_without_casts()
         },
     }).await.unwrap();
     assert_eq!(result.rows.len(), 3);
+    use flaggo_evidence_store::EvidenceValue;
     for (index, row) in result.rows.iter().enumerate() {
-        assert_eq!(row["pieces"], json!(if index == 0 { 0 } else { 2 }));
+        assert_eq!(
+            row["pieces"],
+            EvidenceValue::Int64 {
+                value: if index == 0 { 0 } else { 2 }
+            }
+        );
         assert_eq!(
             row["duration"],
-            json!(if index == 1 { 0.0 } else { 81.5114 })
+            EvidenceValue::Float64 {
+                bits: (if index == 1 { 0.0_f64 } else { 81.5114_f64 }).to_bits()
+            }
         );
-        assert_eq!(row["text_zero"], json!("0"));
-        assert_eq!(row["maximum"], json!(i64::MAX));
-        assert_eq!(row["minimum"], json!(i64::MIN));
-        assert_eq!(row["no_history"], json!(i64::from(index != 2)));
-        assert_eq!(row["eligible"], json!(i64::from(index == 2)));
+        assert_eq!(
+            row["text_zero"],
+            EvidenceValue::Text {
+                value: "0".to_owned()
+            }
+        );
+        assert_eq!(row["maximum"], EvidenceValue::Int64 { value: i64::MAX });
+        assert_eq!(row["minimum"], EvidenceValue::Int64 { value: i64::MIN });
+        assert_eq!(
+            row["no_history"],
+            EvidenceValue::Int64 {
+                value: i64::from(index != 2)
+            }
+        );
+        assert_eq!(
+            row["eligible"],
+            EvidenceValue::Int64 {
+                value: i64::from(index == 2)
+            }
+        );
     }
     let retained: Vec<_> = fixture
         .inbox
@@ -195,19 +221,19 @@ async fn decodes_original_protobuf_field_names_for_every_signal() {
     fixture
         .append_raw(
             OtlpSignal::Logs,
-            br#"{"resource_logs":[{"scope_logs":[{"log_records":[{"time_unix_nano":"1","body":{"string_value":"hello"}}]}]}]}"#,
+            &scoped_raw(br#"{"resource_logs":[{"scope_logs":[{"log_records":[{"time_unix_nano":"1","body":{"string_value":"hello"}}]}]}]}"#),
         )
         .await;
     fixture
         .append_raw(
             OtlpSignal::Metrics,
-            br#"{"resource_metrics":[{"scope_metrics":[{"metrics":[{"name":"load","gauge":{"data_points":[{"time_unix_nano":"1","as_int":"2"}]}}]}]}]}"#,
+            &scoped_raw(br#"{"resource_metrics":[{"scope_metrics":[{"metrics":[{"name":"load","gauge":{"data_points":[{"time_unix_nano":"1","as_int":"2"}]}}]}]}]}"#),
         )
         .await;
     fixture
         .append_raw(
             OtlpSignal::Traces,
-            br#"{"resource_spans":[{"scope_spans":[{"spans":[{"name":"work","start_time_unix_nano":"1","end_time_unix_nano":"2"}]}]}]}"#,
+            &scoped_raw(br#"{"resource_spans":[{"scope_spans":[{"spans":[{"name":"work","start_time_unix_nano":"1","end_time_unix_nano":"2"}]}]}]}"#),
         )
         .await;
 
@@ -233,7 +259,9 @@ async fn timestamp_less_duplicate_deliveries_create_no_duplicate_provenance() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     materializer
         .activate_catalog(
             &catalog,
@@ -296,7 +324,9 @@ async fn materializes_protocol_and_selected_telemetry_with_conflict_rejection() 
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     materializer
         .activate_catalog(&catalog_one, "\"catalog-one\"".to_owned(), Utc::now())
         .await
@@ -395,7 +425,9 @@ async fn materializes_protocol_and_selected_telemetry_with_conflict_rejection() 
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     assert_eq!(restarted.run_once(&log_only).await.unwrap().batches_read, 0);
     let health = fixture.store.inspect().await.unwrap();
     assert_eq!(health.observation_count, 7);
@@ -414,7 +446,9 @@ async fn rejects_changed_content_for_explicit_log_and_span_identities() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     materializer
         .activate_catalog(&catalog, "\"catalog-identities\"".to_owned(), Utc::now())
         .await
@@ -465,7 +499,9 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
 
     materializer
         .activate_catalog(&catalog, "\"catalog-mixed\"".to_owned(), Utc::now())
@@ -476,7 +512,7 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
         .await;
     let result = materializer.run_once(&catalog).await.unwrap();
 
-    assert_eq!(result.observations_created, 1);
+    assert_eq!(result.observations_created, 0);
     assert_eq!(result.diagnostics_created, 1);
     assert_eq!(
         fixture
@@ -488,7 +524,7 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
             .await
             .unwrap()
             .len(),
-        1
+        0
     );
     assert!(
         fixture
@@ -519,7 +555,9 @@ async fn reports_checkpoint_backlog_and_evidence_freshness() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(1).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
 
     let before = materializer.inspect().await.unwrap();
     assert_eq!(before.checkpoint_batch_id, None);
@@ -562,27 +600,33 @@ async fn materializer_upgrade_continues_after_the_global_checkpoint() {
         .await;
     fixture
         .store
-        .commit(EvidenceMaterializationCommit {
-            key: ForwardMaterializationKey {
-                versions: MaterializerVersions {
-                    materializer: "1".to_owned(),
-                    decoder: "2".to_owned(),
-                    identity: "2".to_owned(),
-                    projection: "1".to_owned(),
-                    routing: "1".to_owned(),
+        .commit(
+            fixture.store.replace_projection_claim(None).await.unwrap(),
+            None,
+            EvidenceMaterializationCommit {
+                key: ForwardMaterializationKey {
+                    versions: MaterializerVersions {
+                        materializer: "1".to_owned(),
+                        decoder: "2".to_owned(),
+                        identity: "2".to_owned(),
+                        projection: "1".to_owned(),
+                        routing: "1".to_owned(),
+                    },
                 },
+                inbox_batch_id: 1,
+                observations: Vec::new(),
+                diagnostics: Vec::new(),
             },
-            inbox_batch_id: 1,
-            observations: Vec::new(),
-            diagnostics: Vec::new(),
-        })
+        )
         .await
         .unwrap();
     let materializer = EvidenceMaterializer::new(
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
 
     let before = materializer.inspect().await.unwrap();
     assert_eq!(before.checkpoint_batch_id, Some(1));
@@ -774,6 +818,7 @@ impl Fixture {
                 OtlpTransportCompression::Identity,
                 OtlpProfileVersion::from_str(DEFAULT_OTLP_PROFILE_VERSION).unwrap(),
                 payload,
+                test_authorization(),
             ))
             .await
             .unwrap();
@@ -787,6 +832,7 @@ impl Fixture {
                 OtlpTransportCompression::Identity,
                 OtlpProfileVersion::from_str(DEFAULT_OTLP_PROFILE_VERSION).unwrap(),
                 payload.to_vec(),
+                test_authorization(),
             ))
             .await
             .unwrap();
@@ -800,6 +846,57 @@ impl Fixture {
 
 struct TestClock {
     current: Mutex<DateTime<Utc>>,
+}
+
+fn test_authorization() -> flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope {
+    flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new(
+        "trusted-test".into(),
+        ["local", "acme"]
+            .into_iter()
+            .map(|tenant| {
+                flaggo_contract::ResourceScope::new(
+                    tenant.into(),
+                    "test-app".into(),
+                    "test-env".into(),
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn scoped_raw(payload: &[u8]) -> Vec<u8> {
+    let mut value: serde_json::Value = serde_json::from_slice(payload).unwrap();
+    value.as_object_mut().unwrap().values_mut().next().unwrap()[0]["resource"] =
+        serde_json::to_value(resource()).unwrap();
+    serde_json::to_vec(&value).unwrap()
+}
+
+#[tokio::test]
+async fn replay_rechecks_authorization_without_trusting_resource_claims() {
+    let fixture = Fixture::new().await;
+    fixture
+        .append_logs(OtlpWireEncoding::ProtobufJson, vec![application_log()])
+        .await;
+    let mut batches = fixture
+        .inbox
+        .read_after(None, NonZeroU16::new(1).unwrap())
+        .await
+        .unwrap();
+    let batch = &mut batches[0];
+    assert_eq!(decode_batch(batch).candidate_count(), 1);
+    batch.authorization = Some(
+        flaggo_raw_otlp_inbox::OtlpAuthorizationEnvelope::new("other-producer".into(), vec![])
+            .unwrap(),
+    );
+    for authorization in [batch.authorization.take(), None] {
+        batch.authorization = authorization;
+        let decoded = decode_batch(batch);
+        assert_eq!(decoded.candidate_count(), 0);
+        assert_eq!(decoded.diagnostics[0].code, "otlp.authorization_failed");
+    }
+    fixture.close().await;
 }
 
 impl TestClock {

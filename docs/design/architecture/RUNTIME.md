@@ -11,7 +11,7 @@ boundaries.
 It does not redefine `RuntimeInput`, `RuntimeDecision`, rule evaluation, or
 fallback semantics. Those belong to
 [Runtime evaluation model](../contracts/RUNTIME_EVALUATION.md), and the Runtime
-API v3 OpenAPI document and schema are the wire-level authority.
+API v4 OpenAPI document and schema are the wire-level authority.
 
 The Decision Service app boundary and its relationship to every other app are
 canonical in
@@ -82,7 +82,7 @@ server decision retroactively.
 The Decision Service exposes:
 
 ```http
-POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
 The route identifies the logical decision and one exact immutable contract
@@ -251,4 +251,4 @@ SDK-local outage fallback remains a separate deferred concern.
 - [Decision authority](AUTHORITY.md)
 - [Evidence and learning](EVIDENCE.md)
 - [Runtime evaluation model](../contracts/RUNTIME_EVALUATION.md)
-- [Runtime API v3](../../../contracts/openapi/flaggo-runtime-v3.yaml)
+- [Runtime API v4](../../../contracts/openapi/flaggo-runtime-v4.yaml)

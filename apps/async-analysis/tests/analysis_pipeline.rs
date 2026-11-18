@@ -31,7 +31,7 @@ use flaggo_async_analysis::{
 use flaggo_evidence_store::{
     EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryLimits,
     EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope, EvidenceStoreError,
-    SQLITE_EVIDENCE_QUERY_CAPABILITIES,
+    EvidenceValue, EvidenceValueKind, SQLITE_EVIDENCE_QUERY_CAPABILITIES,
 };
 use serde_json::{Value, json};
 
@@ -67,6 +67,7 @@ impl ContractService for FakeContractService {
             .expect("current contract lock")
             .iter()
             .map(|contract| AnalysisContractIdentity {
+                scope: contract.authority.clone(),
                 name: contract.name.clone(),
                 digest: contract.contract_digest.clone(),
             })
@@ -79,20 +80,23 @@ impl ContractService for FakeContractService {
 
     async fn get_current_contract(
         &self,
-        contract_name: &str,
+        resource: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError> {
         Ok(self
             .current
             .read()
             .expect("current contract lock")
             .as_ref()
-            .filter(|contract| contract.name == contract_name)
+            .filter(|contract| {
+                contract.name == resource.name && contract.authority == resource.scope
+            })
             .cloned())
     }
 
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        _ownership: &flaggo_contract::CandidateOwnership,
         _rules: Value,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
@@ -129,12 +133,18 @@ impl EvidenceAnalysisStore for FakeEvidenceStore {
     ) -> Result<EvidenceQueryResult, EvidenceStoreError> {
         self.queries.fetch_add(1, Ordering::Relaxed);
         Ok(EvidenceQueryResult {
+            profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
             normalized_sql: "SELECT count(*) AS count FROM observations".to_owned(),
             columns: vec![EvidenceColumn {
                 name: "count".to_owned(),
                 data_type: None,
+                kind: EvidenceValueKind::Variant,
+                nullable: None,
             }],
-            rows: vec![BTreeMap::from([("count".to_owned(), json!(12))])],
+            rows: vec![BTreeMap::from([(
+                "count".to_owned(),
+                EvidenceValue::Int64 { value: 12 },
+            )])],
             observation_ids: Vec::new(),
             result_bytes: 12,
             truncated: false,
@@ -526,9 +536,10 @@ fn coordinator_with_limits(
     cycle_limits: CycleLimits,
 ) -> AnalysisCoordinator {
     let clock: Arc<dyn Clock> = Arc::new(FixedClock(now));
+    let workspaces = LocalWorkspaceProvider::new(workspace_root).expect("workspace provider");
     AnalysisCoordinator::new(
         service.clone(),
-        Arc::new(LocalWorkspaceProvider::new(workspace_root).expect("workspace provider")),
+        Arc::new(workspaces.clone()),
         Arc::new(LocalCapabilityFactory::new(
             service,
             evidence,
@@ -539,6 +550,7 @@ fn coordinator_with_limits(
             },
             Arc::clone(&clock),
             flaggo_async_analysis::python::PythonConfig::default(),
+            workspaces,
         )),
         AgentPool::new(provider, NonZeroUsize::new(1).expect("nonzero")),
         CoordinatorConfig {
@@ -638,7 +650,10 @@ async fn collaborates_across_fresh_coordinators_for_approval_revision_and_reject
         }
         let root = directory
             .path()
-            .join(workspace_id("checkout.delay").trim_start_matches("sha256:"))
+            .join(
+                workspace_id(&contract('a', Utc::now()).resource().unwrap())
+                    .trim_start_matches("sha256:"),
+            )
             .join("cycles")
             .join(cycle_id.unwrap());
         let manifest: Value =
@@ -721,13 +736,14 @@ impl ContractService for LostReplyService {
     }
     async fn get_current_contract(
         &self,
-        name: &str,
+        name: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError> {
         self.inner.get_current_contract(name).await
     }
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        ownership: &flaggo_contract::CandidateOwnership,
         rules: Value,
         manifest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
@@ -742,7 +758,7 @@ impl ContractService for LostReplyService {
         }
         let candidate = self
             .inner
-            .submit_candidate(context, rules.clone(), manifest)
+            .submit_candidate(context, ownership, rules.clone(), manifest)
             .await?;
         *admitted = Some((context.clone(), rules, candidate));
         Err(AnalysisError::Contract(
@@ -769,7 +785,7 @@ impl ContractService for RecoverySupersessionService {
 
     async fn get_current_contract(
         &self,
-        name: &str,
+        name: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError> {
         if self.reads.fetch_add(1, Ordering::SeqCst) == 1 {
             *self.service.current.write().unwrap() = self.replacement.clone();
@@ -780,10 +796,13 @@ impl ContractService for RecoverySupersessionService {
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        ownership: &flaggo_contract::CandidateOwnership,
         rules: Value,
         manifest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
-        self.inner.submit_candidate(context, rules, manifest).await
+        self.inner
+            .submit_candidate(context, ownership, rules, manifest)
+            .await
     }
 }
 
@@ -859,9 +878,10 @@ async fn submission_recovery_finalizes_supersession_before_replacement_is_eligib
                     ..
                 } if id == cycle_id && digest == replacement_digest
             ));
-            let root = directory
-                .path()
-                .join(workspace_id("checkout.delay").trim_start_matches("sha256:"));
+            let root = directory.path().join(
+                workspace_id(&contract('a', Utc::now()).resource().unwrap())
+                    .trim_start_matches("sha256:"),
+            );
             let cycle: Value = serde_json::from_slice(
                 &std::fs::read(root.join("cycles").join(&cycle_id).join("cycle.json")).unwrap(),
             )
@@ -916,7 +936,10 @@ async fn reviewer_and_general_cannot_submit_rules_different_from_the_committed_d
                 assert_eq!(failure_category, "integrity");
                 let cycle_root = directory
                     .path()
-                    .join(workspace_id("checkout.delay").trim_start_matches("sha256:"))
+                    .join(
+                        workspace_id(&contract('a', Utc::now()).resource().unwrap())
+                            .trim_start_matches("sha256:"),
+                    )
                     .join("cycles")
                     .join(cycle_id);
                 assert!(!cycle_root.join("proposal.pending.json").exists());
@@ -971,11 +994,14 @@ async fn cached_submission_retries_succeed_changed_rules_conflict_and_superseded
     let directory = tempfile::tempdir().unwrap();
     let workspaces = LocalWorkspaceProvider::new(directory.path()).unwrap();
     let bound = service
-        .get_current_contract("checkout.delay")
+        .get_current_contract(&contract('a', now).resource().unwrap())
         .await
         .unwrap()
         .unwrap();
-    let lease = workspaces.claim(&bound.name, "author").await.unwrap();
+    let lease = workspaces
+        .claim(&bound.resource().unwrap(), "author")
+        .await
+        .unwrap();
     let PrepareCycleResult::Ready(preparation) = lease
         .prepare_cycle(
             &bound,
@@ -1000,6 +1026,7 @@ async fn cached_submission_retries_succeed_changed_rules_conflict_and_superseded
         },
         Arc::new(FixedClock(now)),
         flaggo_async_analysis::python::PythonConfig::default(),
+        workspaces.clone(),
     );
     use flaggo_analysis_agent::AnalysisCapabilityFactory;
     let tools = factory
@@ -1214,7 +1241,7 @@ async fn checkpoints_workspace_during_graceful_supersession() {
         Some(new_contract.contract_digest.as_str())
     );
 
-    let directory_name = workspace_id("checkout.delay")
+    let directory_name = workspace_id(&contract('a', Utc::now()).resource().unwrap())
         .strip_prefix("sha256:")
         .expect("workspace digest")
         .to_owned();
@@ -1373,6 +1400,7 @@ async fn checkpoints_and_retains_cycle_during_graceful_shutdown() {
         .expect("valid timestamp");
     let now = accepted_at + chrono::Duration::hours(2);
     let contract = contract('a', accepted_at);
+    let resource = contract.resource().unwrap();
     let service = Arc::new(FakeContractService {
         current: RwLock::new(Some(contract)),
         submissions: Mutex::new(Vec::new()),
@@ -1415,7 +1443,7 @@ async fn checkpoints_and_retains_cycle_during_graceful_shutdown() {
     assert_eq!(reason, "agent committed a handoff checkpoint");
 
     let workspace_root = directory.path().join(
-        workspace_id("checkout.delay")
+        workspace_id(&resource)
             .strip_prefix("sha256:")
             .expect("workspace digest"),
     );

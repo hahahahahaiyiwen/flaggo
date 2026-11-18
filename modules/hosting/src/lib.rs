@@ -15,6 +15,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use tracing::{Instrument as _, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
+mod security;
+pub use security::*;
+
 pub const CORRELATION_HEADER: &str = "x-flaggo-correlation-id";
 
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +60,7 @@ pub struct Problem {
     pub title: &'static str,
     pub detail: String,
     pub retry_after_seconds: Option<u32>,
+    pub authentication_challenge: Option<HeaderValue>,
 }
 
 impl Problem {
@@ -72,6 +76,7 @@ impl Problem {
             title,
             detail: detail.into(),
             retry_after_seconds: None,
+            authentication_challenge: None,
         }
     }
 
@@ -97,6 +102,11 @@ impl Problem {
             response
                 .headers_mut()
                 .insert(header::RETRY_AFTER, HeaderValue::from(seconds));
+        }
+        if let Some(challenge) = &self.authentication_challenge {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, challenge.clone());
         }
         response
     }

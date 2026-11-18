@@ -2,11 +2,11 @@
   "name": "runtime-rule-result",
   "scenario": 1,
   "invariant": "Runtime evaluates the executable active for the exact contract digest and identifies the first matching rule without persisting a decision record.",
-  "requestSchema": "runtime-models-v3.schema.json#/$defs/RuntimeInput",
-  "responseSchema": "runtime-models-v3.schema.json#/$defs/RuntimeDecision",
+  "requestSchema": "runtime-models-v4.schema.json#/$defs/RuntimeInput",
+  "responseSchema": "runtime-models-v4.schema.json#/$defs/RuntimeDecision",
   "request": {
     "method": "POST",
-    "path": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/decisions",
     "headers": {
       "Content-Type": "application/json"
     },

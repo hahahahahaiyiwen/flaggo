@@ -59,7 +59,7 @@ function response(
   });
 }
 
-describe("v3 Contract Service client", () => {
+describe("v4 scoped Contract Service client", () => {
   it("validates a complete contract without deploying it", async () => {
     const fetch = vi.fn<FetchLike>(async () => response(200, {
       status: "valid",
@@ -68,6 +68,7 @@ describe("v3 Contract Service client", () => {
     }));
     const client = createContractClient({
       baseUrl: "https://contracts.test/",
+      authority: contract.authority,
       fetch,
     });
 
@@ -84,7 +85,7 @@ describe("v3 Contract Service client", () => {
 
     const [url, init] = fetch.mock.calls[0]!;
     expect(String(url)).toBe(
-      "https://contracts.test/v3/decision-contracts/worker.batchSize/validate",
+      "https://contracts.test/v4/tenants/local/applications/worker/environments/test/decision-contracts/worker.batchSize/validate",
     );
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toEqual(contract);
@@ -96,13 +97,14 @@ describe("v3 Contract Service client", () => {
 
   it("deploys a ready version and exposes response metadata", async () => {
     const location =
-      `/v3/decision-contracts/${contract.name}/versions/${contractDigest}`;
+      `/v4/tenants/local/applications/worker/environments/test/decision-contracts/${contract.name}/versions/${contractDigest}`;
     const fetch = vi.fn<FetchLike>(async () => response(201, version, {
       Location: location,
       "X-Flaggo-Correlation-Id": "deployment-1",
     }));
     const client = createContractClient({
       baseUrl: "https://contracts.test",
+      authority: contract.authority,
       fetch,
     });
 
@@ -133,6 +135,7 @@ describe("v3 Contract Service client", () => {
       }));
     const client = createContractClient({
       baseUrl: "https://contracts.test",
+      authority: contract.authority,
       fetch,
     });
 
@@ -172,6 +175,7 @@ describe("v3 Contract Service client", () => {
     ));
     const client = createContractClient({
       baseUrl: "https://contracts.test",
+      authority: contract.authority,
       fetch,
     });
 
@@ -190,6 +194,7 @@ describe("v3 Contract Service client", () => {
     const fetch = vi.fn<FetchLike>();
     const client = createContractClient({
       baseUrl: "https://contracts.test",
+      authority: contract.authority,
       fetch,
     });
 
@@ -209,6 +214,7 @@ describe("v3 Contract Service client", () => {
     }));
     const client = createContractClient({
       baseUrl: "https://contracts.test",
+      authority: contract.authority,
       fetch,
     });
 
@@ -228,10 +234,34 @@ describe("v3 Contract Service client", () => {
     }));
     const client = createContractClient({
       baseUrl: "https://contracts.test",
+      authority: contract.authority,
       fetch,
     });
 
     await expect(client.getCurrent(contract.name))
       .rejects.toBeInstanceOf(InvalidServerResponseError);
+  });
+
+  it("requires explicit scope and rejects route/body or response scope disagreement", async () => {
+    const fetch = vi.fn<FetchLike>();
+    expect(() => createContractClient({ baseUrl: "https://contracts.test", fetch } as never))
+      .toThrow(InvalidFlaggoInputError);
+    const client = createContractClient({
+      baseUrl: "https://contracts.test",
+      authority: contract.authority,
+      fetch,
+    });
+    for (const component of ["tenant", "application", "environment"] as const) {
+      const authority = { ...contract.authority, [component]: "foreign" };
+      await expect(client.deploy({ ...contract, authority }))
+        .rejects.toBeInstanceOf(InvalidFlaggoInputError);
+      expect(fetch).not.toHaveBeenCalled();
+      fetch.mockResolvedValueOnce(response(200, {
+        ...version, contract: { ...contract, authority },
+      }));
+      await expect(client.getCurrent(contract.name))
+        .rejects.toBeInstanceOf(InvalidServerResponseError);
+      fetch.mockClear();
+    }
   });
 });

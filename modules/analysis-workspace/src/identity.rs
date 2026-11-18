@@ -13,8 +13,17 @@ pub fn sha256_digest(bytes: &[u8]) -> String {
 }
 
 #[must_use]
-pub fn workspace_id(contract_name: &str) -> String {
-    sha256_digest(contract_name.as_bytes())
+pub fn workspace_id(resource: &flaggo_contract::ContractResourceId) -> String {
+    sha256_digest(
+        format!(
+            "flaggo.workspace/v2\n{}/{}/{}/{}",
+            resource.scope.tenant,
+            resource.scope.application,
+            resource.scope.environment,
+            resource.name,
+        )
+        .as_bytes(),
+    )
 }
 
 #[cfg(test)]
@@ -22,10 +31,14 @@ mod tests {
     use super::workspace_id;
 
     #[test]
-    fn workspace_identity_is_stable_and_name_only() {
-        assert_eq!(
-            workspace_id("checkout.delay"),
-            "sha256:8f74b99894daf4f5601abb968848f63a55c1800789daaaa228a859c6d162877b"
-        );
+    fn workspace_identity_separates_full_resource_scopes() {
+        let scope =
+            flaggo_contract::ResourceScope::new("local".into(), "checkout".into(), "test".into())
+                .unwrap();
+        let first =
+            flaggo_contract::ContractResourceId::new(scope, "checkout.delay".into()).unwrap();
+        let mut second = first.clone();
+        second.scope.environment = "production".into();
+        assert_ne!(workspace_id(&first), workspace_id(&second));
     }
 }

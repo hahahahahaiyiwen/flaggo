@@ -3,13 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalysisAuthority {
-    pub tenant: String,
-    pub application: String,
-    pub environment: String,
-}
+pub use flaggo_contract::{ContractResourceId, ResourceScope as AnalysisAuthority};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +38,11 @@ pub struct AnalysisProfile {
 }
 
 impl AnalysisContract {
+    pub fn resource(&self) -> Result<ContractResourceId, crate::AnalysisError> {
+        ContractResourceId::new(self.authority.clone(), self.name.clone())
+            .map_err(|error| crate::AnalysisError::InvalidState(error.to_string()))
+    }
+
     pub fn eligible_after(&self, anchor: DateTime<Utc>) -> Result<DateTime<Utc>, ScheduleError> {
         ScheduleInterval::parse(&self.evaluation_interval)?.add_to(anchor)
     }
@@ -61,6 +60,7 @@ pub enum CatalogUpdate {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisCycle {
+    pub scope: AnalysisAuthority,
     pub workspace_id: String,
     pub cycle_id: String,
     pub contract_name: String,
@@ -82,8 +82,16 @@ pub struct AttemptContext {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisContractIdentity {
+    pub scope: AnalysisAuthority,
     pub name: String,
     pub digest: String,
+}
+
+impl AnalysisContractIdentity {
+    pub fn resource(&self) -> Result<ContractResourceId, crate::AnalysisError> {
+        ContractResourceId::new(self.scope.clone(), self.name.clone())
+            .map_err(|error| crate::AnalysisError::InvalidState(error.to_string()))
+    }
 }
 
 impl AttemptContext {
@@ -94,6 +102,7 @@ impl AttemptContext {
             cycle_id: cycle.cycle_id.clone(),
             attempt_id,
             contract: AnalysisContractIdentity {
+                scope: cycle.scope.clone(),
                 name: cycle.contract_name.clone(),
                 digest: cycle.contract_digest.clone(),
             },

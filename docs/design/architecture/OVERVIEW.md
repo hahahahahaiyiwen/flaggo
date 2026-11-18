@@ -7,7 +7,7 @@ definition-bundle, target-resolution, generic State Store, synchronous
 evidence-input, durable-decision-record, and explicit exposure-confirmation
 model.
 
-The v3 OpenAPI documents and JSON Schemas under `contracts/` are authoritative
+The v4 OpenAPI documents and JSON Schemas under `contracts/` are authoritative
 for wire behavior. The documents under `docs/design/contracts/` define the
 contract, executable, lifecycle, and runtime semantics used by this
 architecture.
@@ -127,7 +127,7 @@ the latest generated artifact; runtime still reads only the activation index.
 The Decision Service owns one stateless runtime operation:
 
 ```http
-POST /v3/decision-contracts/{contractName}/versions/{contractDigest}/decisions
+POST /v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/decisions
 ```
 
 For each request it authenticates tenant/application/environment scope, verifies the

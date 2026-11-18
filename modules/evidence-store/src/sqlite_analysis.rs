@@ -2,12 +2,15 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ops::ControlFlow,
     str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use serde_json::Value;
 use sqlparser::{
     ast::{Expr, ObjectName, Statement, Visit, Visitor},
     dialect::SQLiteDialect,
@@ -20,13 +23,14 @@ use sqlx::{
 };
 
 use crate::{
-    EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryRequest,
-    EvidenceQueryResult, EvidenceQueryScope, EvidenceRelation, EvidenceRelationColumn,
-    EvidenceSourceSelector, EvidenceStoreError,
+    EVIDENCE_RESULT_FORMAT, EVIDENCE_VALUE_FORMAT, EvidenceAnalysisStore, EvidenceColumn,
+    EvidenceQueryCapabilities, EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope,
+    EvidenceRelation, EvidenceRelationColumn, EvidenceSourceSelector, EvidenceStoreError,
+    EvidenceValue, EvidenceValueKind,
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const RELATIONS: &[EvidenceRelation] = &[EvidenceRelation {
     name: "observations",
     columns: &[
@@ -40,7 +44,7 @@ const RELATIONS: &[EvidenceRelation] = &[EvidenceRelation {
         relation_column("metric_kind", "TEXT"),
         relation_column("metric_unit", "TEXT"),
         relation_column("parent_span_name", "TEXT"),
-        relation_column("observed_at_unix_nano", "INTEGER"),
+        relation_column("observed_at_unix_nano", "TEXT"),
         relation_column("observed_time_source", "TEXT"),
         relation_column("protocol_kind", "TEXT"),
         relation_column("decision_id", "TEXT"),
@@ -53,6 +57,12 @@ const fn relation_column(name: &'static str, data_type: &'static str) -> Evidenc
     EvidenceRelationColumn {
         name,
         data_type: Some(data_type),
+        kind: if matches!(data_type.as_bytes(), b"INTEGER") {
+            EvidenceValueKind::Int64
+        } else {
+            EvidenceValueKind::Text
+        },
+        nullable: None,
     }
 }
 const SAFE_FUNCTIONS: &[&str] = &[
@@ -63,6 +73,7 @@ const SAFE_FUNCTIONS: &[&str] = &[
     "json_extract",
     "json_type",
     "lower",
+    "length",
     "max",
     "min",
     "nullif",
@@ -74,6 +85,9 @@ const SAFE_FUNCTIONS: &[&str] = &[
 pub const SQLITE_EVIDENCE_QUERY_CAPABILITIES: EvidenceQueryCapabilities =
     EvidenceQueryCapabilities {
         dialect: "sqlite",
+        profile: "flaggo.evidence.sqlite/v1",
+        result_format: EVIDENCE_RESULT_FORMAT,
+        value_format: EVIDENCE_VALUE_FORMAT,
         statements: &["SELECT", "WITH (non-recursive)"],
         relations: RELATIONS,
         features: &[
@@ -86,11 +100,28 @@ pub const SQLITE_EVIDENCE_QUERY_CAPABILITIES: EvidenceQueryCapabilities =
             "ordering",
         ],
         functions: SAFE_FUNCTIONS,
+        semantics: &[
+            "Live committed reads; no cycle snapshot or complete aggregate lineage.",
+            "projectedObservationIds contains digest-shaped text values explicitly projected as observation_id; it is not proof of identity, existence or input lineage.",
+            "SQLite arithmetic, overflow, NULL, collation and JSON extraction semantics; no cross-dialect SQL promise.",
+            "observed_at_unix_nano is unsigned decimal TEXT to preserve the entire OTLP u64 range; order numerically by length then text, or explicitly cast only after bounding to int64.",
+            "SQLite boolean expressions return int64; payload_json and JSON objects/arrays extracted by SQLite remain text, never guessed JSON cells.",
+            "Binary results are rejected. SQLite may turn NaN into NULL; exact original OTLP double bits remain available in payload_json.",
+            "maxRowBytes bounds the sum of serialized tagged row object bytes; artifact metadata is separately reported in resultBytes.",
+        ],
     };
 
 #[derive(Clone)]
 pub struct SqliteEvidenceAnalysisStore {
     pool: SqlitePool,
+}
+
+struct QueryCancellation(Arc<AtomicBool>);
+
+impl Drop for QueryCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 impl SqliteEvidenceAnalysisStore {
@@ -154,6 +185,12 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
         request: EvidenceQueryRequest,
     ) -> Result<EvidenceQueryResult, EvidenceStoreError> {
         validate_scope(scope)?;
+        if request.profile != SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile {
+            return Err(EvidenceStoreError::InvalidQuery(format!(
+                "unsupported evidence query profile '{}'; supported profile is '{}'",
+                request.profile, SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile
+            )));
+        }
         if request.limits.max_bytes == 0 {
             return Err(EvidenceStoreError::InvalidQuery(
                 "max_bytes must be greater than zero".to_owned(),
@@ -172,7 +209,7 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                        metric_kind,
                        metric_unit,
                        parent_span_name,
-                       CAST(observed_at_unix_nano AS INTEGER) AS observed_at_unix_nano,
+                       observed_at_unix_nano,
                        observed_time_source,
                        protocol_kind,
                        decision_id,
@@ -212,6 +249,8 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
         let query = builder.build();
         let started = Instant::now();
         let timeout = request.limits.timeout;
+        let cancellation = QueryCancellation(Arc::new(AtomicBool::new(false)));
+        let cancelled = cancellation.0.clone();
         let future = async {
             let mut connection = self
                 .pool
@@ -222,7 +261,9 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                 .lock_handle()
                 .await
                 .map_err(EvidenceStoreError::unavailable)?
-                .set_progress_handler(1_000, move || started.elapsed() < timeout);
+                .set_progress_handler(1_000, move || {
+                    !cancelled.load(Ordering::Relaxed) && started.elapsed() < timeout
+                });
             // Unlike describe(), prepare() neither steps rows nor infers expression types.
             let statement = (&mut *connection)
                 .prepare(AssertSqlSafe(metadata_sql).into_sql_str())
@@ -239,6 +280,13 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                 }
                 columns.push(EvidenceColumn {
                     name: column.name().to_owned(),
+                    kind: match column.type_info().name() {
+                        "INTEGER" => EvidenceValueKind::Int64,
+                        "REAL" => EvidenceValueKind::Float64,
+                        "TEXT" => EvidenceValueKind::Text,
+                        _ => EvidenceValueKind::Variant,
+                    },
+                    nullable: None,
                     data_type: (!column.type_info().is_null())
                         .then(|| column.type_info().name().to_owned()),
                 });
@@ -264,8 +312,10 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                     break;
                 }
                 let decoded = decode_row(&row)?;
-                if let Some(Value::String(observation_id)) = decoded.get("observation_id") {
-                    observation_ids.insert(observation_id.clone());
+                if let Some(EvidenceValue::Text { value }) = decoded.get("observation_id")
+                    && is_digest(value)
+                {
+                    observation_ids.insert(value.clone());
                 }
                 result_bytes = result_bytes
                     .checked_add(
@@ -280,6 +330,7 @@ impl EvidenceAnalysisStore for SqliteEvidenceAnalysisStore {
                 rows.push(decoded);
             }
             Ok(EvidenceQueryResult {
+                profile: request.profile.clone(),
                 normalized_sql: normalized_sql.clone(),
                 columns,
                 rows,
@@ -300,17 +351,20 @@ fn validate_scope(scope: &EvidenceQueryScope) -> Result<(), EvidenceStoreError> 
             "at least one contract evidence source is required".to_owned(),
         ));
     }
-    if scope.contract_digest.len() != 71
-        || !scope.contract_digest.starts_with("sha256:")
-        || !scope.contract_digest[7..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
+    if !is_digest(&scope.contract_digest) {
         return Err(EvidenceStoreError::InvalidQuery(
             "contract digest must be a lowercase sha256 digest".to_owned(),
         ));
     }
     Ok(())
+}
+
+fn is_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn validate_sql(sql: &str) -> Result<String, EvidenceStoreError> {
@@ -414,28 +468,32 @@ fn push_optional(builder: &mut QueryBuilder<Sqlite>, column: &str, value: Option
     }
 }
 
-fn decode_row(row: &SqliteRow) -> Result<BTreeMap<String, Value>, EvidenceStoreError> {
+fn decode_row(row: &SqliteRow) -> Result<BTreeMap<String, EvidenceValue>, EvidenceStoreError> {
     let mut decoded = BTreeMap::new();
     for (index, column) in row.columns().iter().enumerate() {
         let raw = row
             .try_get_raw(index)
             .map_err(EvidenceStoreError::unavailable)?;
         let value = if raw.is_null() {
-            Value::Null
+            EvidenceValue::Null {}
         } else {
             match raw.type_info().name() {
-                "INTEGER" => Value::from(
-                    row.try_get::<i64, _>(index)
+                "INTEGER" => EvidenceValue::Int64 {
+                    value: row
+                        .try_get::<i64, _>(index)
                         .map_err(EvidenceStoreError::unavailable)?,
-                ),
-                "REAL" => Value::from(
-                    row.try_get::<f64, _>(index)
+                },
+                "REAL" => EvidenceValue::Float64 {
+                    bits: row
+                        .try_get::<f64, _>(index)
+                        .map_err(EvidenceStoreError::unavailable)?
+                        .to_bits(),
+                },
+                "TEXT" => EvidenceValue::Text {
+                    value: row
+                        .try_get::<String, _>(index)
                         .map_err(EvidenceStoreError::unavailable)?,
-                ),
-                "TEXT" => Value::from(
-                    row.try_get::<String, _>(index)
-                        .map_err(EvidenceStoreError::unavailable)?,
-                ),
+                },
                 "BLOB" => {
                     return Err(EvidenceStoreError::InvalidQuery(
                         "binary query results are not supported; select text or numeric values"

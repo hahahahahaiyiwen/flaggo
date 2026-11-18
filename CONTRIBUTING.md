@@ -44,7 +44,9 @@ The full-loop gate uses deterministic analysis without model credentials;
 prepare the [analysis Python environment](examples/README.md#python-environment-for-live-analysis)
 first. Optional migration differential tests require a separate pinned historical
 .NET checkout, never a normal build dependency; see [core parity](tools/core-parity/README.md).
-Existing contract-v3/executable-v5 SQLite state is preserved without reset.
+Existing contract-v3/executable-v4/v5 SQLite state is preserved without reset
+by the explicit scoped migration in the
+[core extraction guide](docs/design/architecture/CORE_EXTRACTION.md#implemented-breaking-wire-cutover).
 Core services now use `FLAGGO_CONTRACT_DATABASE_PATH` /
 `FLAGGO_DECISION_DATABASE_PATH` and their `*_LISTEN_ADDRESS` settings rather
 than .NET connection-string/hosting configuration; see their READMEs.
@@ -110,6 +112,12 @@ publishing temporary coordination packages.
 6. Every module boundary maintains focused documentation and tests.
 
 ### Portability boundaries
+
+For the implemented authority/HTTP extraction, adapter contracts, focused
+checks and deliberately unfinished hosted gates, see
+[Shared-core extraction](docs/design/architecture/CORE_EXTRACTION.md).
+The [separate consumer check](tools/core-consumer/README.md) verifies immutable
+Git consumption without depending on runnable app packages.
 
 Flaggo must remain runnable without a managed cloud dependency. Domain and API
 logic use provider-neutral contracts and standard protocols; provider SDKs

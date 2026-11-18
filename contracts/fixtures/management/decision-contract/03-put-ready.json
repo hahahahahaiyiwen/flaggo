@@ -2,11 +2,11 @@
   "name": "put-decision-contract-ready",
   "scenario": 46,
   "invariant": "PUT creates an immutable version and returns it only after the contract is durable and its default executable is active.",
-  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
-  "responseSchema": "management-models-v3.schema.json#/$defs/DecisionContractVersion",
+  "requestSchema": "management-models-v4.schema.json#/$defs/DecisionContract",
+  "responseSchema": "management-models-v4.schema.json#/$defs/DecisionContractVersion",
   "request": {
     "method": "PUT",
-    "path": "/v3/decision-contracts/tetris.dropInterval",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval",
     "headers": {
       "Content-Type": "application/json"
     },
@@ -33,7 +33,7 @@
     "status": 201,
     "headers": {
       "Content-Type": "application/json",
-      "Location": "/v3/decision-contracts/tetris.dropInterval/versions/sha256:aa59121ed2dfcf519654df1d3f9c60fa141aa4ddb199c207bd9d12b3a515714a",
+      "Location": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval/versions/sha256:aa59121ed2dfcf519654df1d3f9c60fa141aa4ddb199c207bd9d12b3a515714a",
       "X-Flaggo-Correlation-Id": "srv-contract-put-ready"
     },
     "body": {

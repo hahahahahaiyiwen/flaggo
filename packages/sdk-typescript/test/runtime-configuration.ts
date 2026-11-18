@@ -21,7 +21,7 @@ export function runtimeConfiguration<TBindings extends RuntimeBindings>(
   } = {},
 ): FlaggoRuntimeConfiguration<TBindings> {
   return parseFlaggoRuntimeConfiguration<TBindings>({
-    format: "flaggo.runtime-config/v1",
+    format: "flaggo.runtime-config/v2",
     authority: options.authority ?? defaultAuthority,
     services: {
       contractServiceUrl:

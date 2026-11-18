@@ -1,0 +1,1196 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flaggo Management API",
+    "version": "4.0.0",
+    "description": "Breaking scoped v4 API. Resource identity is tenant/application/environment/name; contractDigest still covers unchanged authority and semantic content. Authentication is an independently supplied host capability, never inferred from route or body declarations. Missing or invalid identity returns 401, hidden scope/resource returns 404, and a visible but forbidden operation returns 403. Authority outages fail closed with 503. Trusted local composition explicitly opts out of credential checks. No hosted identity provider or token protocol is selected by this public contract.",
+    "license": {
+      "name": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://contracts.flaggo.dev",
+      "description": "Contract Service"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "decision-contracts",
+      "description": "Named DecisionContract resources and their immutable digest versions"
+    },
+    {
+      "name": "health",
+      "description": "Liveness and readiness"
+    }
+  ],
+  "paths": {
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contract-catalog/current": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "getCurrentContractCatalog",
+        "summary": "Get current contracts in one explicitly authorized scope.",
+        "description": "Returns only current deployed contracts in the route scope. The ETag includes the scope and is transport change detection, not a provenance identity.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/IfNoneMatchHeader"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CurrentContractCatalog"
+          },
+          "304": {
+            "description": "The current contract catalog matches If-None-Match.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ContractCatalogEtag"
+              },
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}": {
+      "put": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "deployDecisionContract",
+        "summary": "Deploy a named DecisionContract.",
+        "description": "Requires body authority and name to match the explicit route. Names are independent across scopes. Atomically publishes the immutable accepted version, bootstrap executable and current pointer. Existing payload bytes, digest semantics and idempotent retry behavior are unchanged.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/DecisionContract"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersion"
+          },
+          "201": {
+            "$ref": "#/components/responses/CreatedDecisionContractVersion"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      },
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "getCurrentDecisionContract",
+        "summary": "Get the current accepted version of a named DecisionContract.",
+        "description": "Returns the version selected by the named management resource's currentContractDigest pointer. This convenience lookup is for management only; runtime requests must carry an exact contractDigest and never resolve current implicitly.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersion"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/validate": {
+      "post": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "validateDecisionContract",
+        "summary": "Dry-run validation for one named DecisionContract.",
+        "description": "Requires body authority and name to match the explicit route, then validates and computes the unchanged content digest without mutation. Semantic validation failures return status invalid.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/DecisionContract"
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result with status valid or invalid.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionContractValidationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "listDecisionContractVersions",
+        "summary": "List immutable versions of a named DecisionContract.",
+        "description": "Returns accepted versions ordered by acceptedAt descending and then contractDigest descending. Pagination uses an opaque stable cursor. Ordering is management history and never authorizes runtime to select an implicit latest digest.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersionList"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "getDecisionContractVersion",
+        "summary": "Get one immutable DecisionContract version.",
+        "description": "Returns the exact digest version only when it belongs to the named DecisionContract.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionContractVersion"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/candidates": {
+      "post": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "submitAnalysisCandidate",
+        "summary": "Admit an analysis Candidate for one exact current contract digest.",
+        "description": "Validates and canonicalizes proposed rules against the immutable contract version. Admission atomically checks current contract and authorized workspace/cycle ownership, including retries. ownership identifies the current submitting attempt and epoch; provenance retains the original sealed attempt and analysisManifestDigest during recovery. The manifest records saved datasets and query times; no cycle-wide evidence cutoff is implied. This operation never activates an executable. The full resource identity and digest come only from the route. An exact retry with current ownership returns the original admission and its current lifecycle without reopening it. Released, replaced or closed-cycle ownership returns 409; unavailable ownership authority fails closed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/AnalysisCandidateSubmission"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AnalysisCandidate"
+          },
+          "201": {
+            "$ref": "#/components/responses/CreatedAnalysisCandidate"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "listDecisionExecutables",
+        "summary": "Get active authority and list inactive Candidates for one contract version.",
+        "description": "Returns the active executable in full plus a stable cursor-paginated page of Candidate executables ordered by createdAt descending and executableDigest descending. This management view does not authorize an implicit runtime digest.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionExecutableCatalog"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/history": {
+      "get": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "listDecisionExecutableHistory",
+        "summary": "List all retained executable lifecycle states for one contract version.",
+        "description": "Returns active, candidate, and inactive executable records, ordered by createdAt descending and executableDigest descending with cursor pagination. This is a live listing, not an immutable snapshot across pages. History does not grant runtime authority or make inactive executables eligible for Candidate activation. Use the executable catalog for current authority.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimitQuery"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursorQuery"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionExecutableHistory"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}/versions/{contractDigest}/executables/{executableDigest}/activate": {
+      "post": {
+        "tags": [
+          "decision-contracts"
+        ],
+        "operationId": "activateDecisionExecutableCandidate",
+        "summary": "Activate one Candidate with optimistic concurrency.",
+        "description": "Atomically checks currentness for the complete scoped resource and expected candidate/active state versions, activates one candidate and supersedes only candidates for that scoped resource. Conflicts return 409 without authority changes.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TenantPath"
+          },
+          {
+            "$ref": "#/components/parameters/ApplicationPath"
+          },
+          {
+            "$ref": "#/components/parameters/EnvironmentPath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractNamePath"
+          },
+          {
+            "$ref": "#/components/parameters/ContractDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/ExecutableDigestPath"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationIdHeader"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/DecisionExecutableActivation"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/DecisionExecutableActivation"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "415": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "description": "Missing or invalid independently authenticated identity.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Challenge supplied by the host authentication adapter."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "../schemas/problem-details-v4.schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": true,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthLive",
+        "summary": "Liveness probe. No external dependency checks.",
+        "responses": {
+          "200": {
+            "description": "Process can serve the handler.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/LivenessResult"
+                }
+              }
+            }
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": false,
+          "mechanism": "host-defined"
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "healthReady",
+        "summary": "Readiness probe over required and optional dependencies.",
+        "description": "200 ready requires every check up. 200 degraded is allowed when only optional checks are impaired. Any required check that is not up returns 503 not-ready.",
+        "responses": {
+          "200": {
+            "description": "Ready or degraded readiness.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not-ready: a required dependency is not up.",
+            "headers": {
+              "X-Flaggo-Correlation-Id": {
+                "$ref": "#/components/headers/CorrelationId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/runtime-models-v4.schema.json#/$defs/ReadinessResult"
+                }
+              }
+            }
+          }
+        },
+        "x-flaggo-authentication": {
+          "capability": "flaggo.security.resource/v1",
+          "required": false,
+          "mechanism": "host-defined"
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ContractNamePath": {
+        "name": "contractName",
+        "in": "path",
+        "required": true,
+        "description": "Stable user-owned identity of the named DecisionContract resource. A request payload name must match this value.",
+        "schema": {
+          "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionName"
+        }
+      },
+      "ContractDigestPath": {
+        "name": "contractDigest",
+        "in": "path",
+        "required": true,
+        "description": "Exact immutable version digest covering the declared authority and semantic DecisionContract content.",
+        "schema": {
+          "$ref": "../schemas/management-models-v4.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "ExecutableDigestPath": {
+        "name": "executableDigest",
+        "in": "path",
+        "required": true,
+        "description": "Exact immutable executable digest.",
+        "schema": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "PageLimitQuery": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum number of resources to return.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      },
+      "PageCursorQuery": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque cursor returned by the previous page.",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "CorrelationIdHeader": {
+        "name": "X-Flaggo-Correlation-Id",
+        "in": "header",
+        "required": false,
+        "description": "Optional client-supplied tracing correlation ID.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "IfNoneMatchHeader": {
+        "name": "If-None-Match",
+        "in": "header",
+        "required": false,
+        "description": "Previously observed quoted opaque contract-catalog ETag.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "TenantPath": {
+        "name": "tenant",
+        "in": "path",
+        "required": true,
+        "description": "Explicit resource identity, not an authentication credential.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        }
+      },
+      "ApplicationPath": {
+        "name": "application",
+        "in": "path",
+        "required": true,
+        "description": "Explicit resource identity, not an authentication credential.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        }
+      },
+      "EnvironmentPath": {
+        "name": "environment",
+        "in": "path",
+        "required": true,
+        "description": "Explicit resource identity, not an authentication credential.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        }
+      }
+    },
+    "headers": {
+      "CorrelationId": {
+        "description": "Server request-correlation identifier returned on every response.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Location": {
+        "description": "URI of the exact immutable DecisionContract version.",
+        "schema": {
+          "type": "string",
+          "format": "uri-reference"
+        }
+      },
+      "ContractCatalogEtag": {
+        "description": "Quoted opaque current-contract catalog revision used only for conditional retrieval.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "requestBodies": {
+      "DecisionContract": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionContract"
+            }
+          }
+        }
+      },
+      "AnalysisCandidateSubmission": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/AnalysisCandidateSubmission"
+            }
+          }
+        }
+      },
+      "DecisionExecutableActivation": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionExecutableActivationRequest"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "DecisionExecutableHistory": {
+        "description": "One page of retained active, candidate, and inactive executable records.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionExecutableHistory"
+            }
+          }
+        }
+      },
+      "DecisionContractVersion": {
+        "description": "One immutable accepted DecisionContract version that is runtime-ready.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionContractVersion"
+            }
+          }
+        }
+      },
+      "CreatedDecisionContractVersion": {
+        "description": "A newly created immutable DecisionContract version that is runtime-ready.",
+        "headers": {
+          "Location": {
+            "$ref": "#/components/headers/Location"
+          },
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionContractVersion"
+            }
+          }
+        }
+      },
+      "DecisionContractVersionList": {
+        "description": "A cursor-paginated page of immutable DecisionContract version summaries.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionContractVersionList"
+            }
+          }
+        }
+      },
+      "CurrentContractCatalog": {
+        "description": "Current deployed contracts within one explicitly authorized resource scope.",
+        "headers": {
+          "ETag": {
+            "$ref": "#/components/headers/ContractCatalogEtag"
+          },
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/CurrentContractCatalog"
+            }
+          }
+        }
+      },
+      "AnalysisCandidate": {
+        "description": "The existing admission for the exact workspace cycle, including its current candidate, active, or inactive lifecycle.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/AnalysisCandidateResult"
+            }
+          }
+        }
+      },
+      "CreatedAnalysisCandidate": {
+        "description": "A newly persisted inactive Candidate with no runtime authority.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/AnalysisCandidateResult"
+            }
+          }
+        }
+      },
+      "DecisionExecutableCatalog": {
+        "description": "Current runtime authority and one page of inactive Candidates for an exact contract version.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionExecutableCatalog"
+            }
+          }
+        }
+      },
+      "DecisionExecutableActivation": {
+        "description": "The newly active executable and the authority it replaced.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "../schemas/management-models-v4.schema.json#/$defs/DecisionExecutableActivationResult"
+            }
+          }
+        }
+      },
+      "Problem": {
+        "description": "RFC 9457 Problem Details error. Programs branch on the problem type URI and HTTP status, never on title or detail.",
+        "headers": {
+          "X-Flaggo-Correlation-Id": {
+            "$ref": "#/components/headers/CorrelationId"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "../schemas/problem-details-v4.schema.json"
+            }
+          }
+        }
+      }
+    }
+  }
+}

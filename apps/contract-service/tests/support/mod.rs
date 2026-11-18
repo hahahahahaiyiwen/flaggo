@@ -1,7 +1,7 @@
 use flaggo_contract::{DecisionContract, strict_json};
 use flaggo_contract_service::ContractLifecycle;
 use flaggo_contract_store::SqliteContractVersionStore;
-use flaggo_executable_store::SqliteExecutableStore;
+use flaggo_executable_store::{SqliteContractAuthority, SqliteExecutableStore};
 use flaggo_expression::ExpressionCompiler;
 use serde_json::{Value, json};
 use std::{path::Path, process::Command, sync::Arc};
@@ -23,13 +23,19 @@ pub fn contract() -> Value {
 
 pub fn submission(cycle: &str, expression: &str, result: i32) -> Value {
     json!({"rules": [{"name": "learned", "when": {"expression": expression}, "return": {"value": result}}],
+        "ownership": {"attemptId": "attempt-1", "epoch": "1"},
         "provenance": {"workspaceId": format!("sha256:{}", "a".repeat(64)), "cycleId": cycle,
             "attemptId": "attempt-1", "analysisManifestDigest": format!("sha256:{}", "b".repeat(64))}})
 }
 
+mod ownership;
+use ownership::FixedOwnership;
+
 pub struct Fixture {
     pub directory: tempfile::TempDir,
     pub lifecycle: ContractLifecycle,
+    pub contracts: SqliteContractVersionStore,
+    pub executables: SqliteExecutableStore,
     pub pool: sqlx::SqlitePool,
 }
 
@@ -38,14 +44,13 @@ impl Fixture {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("http.db");
         let canonicalizer = Arc::new(ExpressionCompiler::default());
-        let contracts = SqliteContractVersionStore::open(&path, Some(canonicalizer.clone()))
-            .await
-            .unwrap();
-        let executables = SqliteExecutableStore::open(&path, Some(canonicalizer))
-            .await
-            .unwrap();
-        contracts.initialize(None).await.unwrap();
-        executables.initialize(None).await.unwrap();
+        let authority = Arc::new(
+            SqliteContractAuthority::open(&path, Some(canonicalizer))
+                .await
+                .unwrap()
+                .with_admission_fence(Arc::new(FixedOwnership)),
+        );
+        authority.initialize().await.unwrap();
         let pool = sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
         )
@@ -53,7 +58,9 @@ impl Fixture {
         .unwrap();
         Self {
             directory,
-            lifecycle: ContractLifecycle::new(contracts, executables),
+            contracts: authority.contracts().clone(),
+            executables: authority.executables().clone(),
+            lifecycle: ContractLifecycle::new(authority),
             pool,
         }
     }
@@ -63,7 +70,10 @@ impl Fixture {
             strict_json::deserialize(&serde_json::to_vec(document).unwrap()).unwrap();
         let version = self
             .lifecycle
-            .deploy(&contract.name, &contract)
+            .deploy(
+                &flaggo_contract::ContractResourceId::try_from(&contract).unwrap(),
+                &contract,
+            )
             .await
             .unwrap()
             .0;
@@ -71,8 +81,8 @@ impl Fixture {
     }
 
     pub async fn close(self) {
-        self.lifecycle.contracts.close().await;
-        self.lifecycle.executables.close().await;
+        self.contracts.close().await;
+        self.executables.close().await;
         self.pool.close().await;
         self.directory.close().unwrap();
     }
@@ -84,6 +94,10 @@ impl Server {
         let mut command = rust_command();
         command
             .env("FLAGGO_CONTRACT_DATABASE_PATH", database)
+            .env(
+                "FLAGGO_ANALYSIS_WORKSPACE_ROOT",
+                database.parent().unwrap().join("workspaces"),
+            )
             .env("FLAGGO_CONTRACT_LISTEN_ADDRESS", address.to_string())
             .env("FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS", poll);
         if let Some(endpoint) = telemetry {

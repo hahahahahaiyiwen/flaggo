@@ -2,11 +2,11 @@
   "name": "put-decision-contract-invalid",
   "scenario": 47,
   "invariant": "PUT rejects a semantically invalid contract and never creates a version or moves the current pointer.",
-  "requestSchema": "management-models-v3.schema.json#/$defs/DecisionContract",
-  "responseSchema": "problem-details-v3.schema.json",
+  "requestSchema": "management-models-v4.schema.json#/$defs/DecisionContract",
+  "responseSchema": "problem-details-v4.schema.json",
   "request": {
     "method": "PUT",
-    "path": "/v3/decision-contracts/tetris.dropInterval",
+    "path": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval",
     "headers": {
       "Content-Type": "application/json"
     },
@@ -39,7 +39,7 @@
       "type": "https://flaggo.dev/problems/invalid-decision-contract",
       "title": "Invalid decision contract",
       "status": 422,
-      "instance": "/v3/decision-contracts/tetris.dropInterval",
+      "instance": "/v4/tenants/local/applications/tetris/environments/integration/decision-contracts/tetris.dropInterval",
       "detail": "The decision contract failed semantic validation."
     }
   }

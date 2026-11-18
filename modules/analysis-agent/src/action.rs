@@ -362,6 +362,12 @@ mod tests {
             cycle_id: "cycle-1".to_owned(),
             attempt_id: "attempt-1".to_owned(),
             contract: AnalysisContractIdentity {
+                scope: flaggo_analysis_domain::AnalysisAuthority::new(
+                    "local".into(),
+                    "test".into(),
+                    "test".into(),
+                )
+                .unwrap(),
                 name: "checkout.delay".to_owned(),
                 digest: format!("sha256:{}", "a".repeat(64)),
             },
