@@ -487,11 +487,18 @@ async function verifyReviewedPythonArtifacts(runDirectory, provenance, contractD
   const execution = await readJson(resolve(analysis, "executions", executions[0], "result.json"));
   expect(execution.report.execution.status).toBe("succeeded");
   expect(execution.report.runtime.version).toMatch(/^3\./u);
-  expect(execution.submission.contractDigest).toBe(contractDigest);
-  expect(execution.submission.cycleId).toBe(provenance.cycleId);
-  expect(execution.submission.attemptId).toBe(initial.attemptId);
-  const codeDigest = digest(await readFile(resolve(analysis, execution.report.submittedCodePath)));
-  expect(execution.submission.codeDigest).toBe(codeDigest);
+  const cycleContract = await readJson(resolve(cycle, "contract.json"));
+  expect(cycleContract.contractDigest).toBe(contractDigest);
+  expect(execution.submission.source.resource).toEqual({
+    scope: cycleContract.authority, name: cycleContract.name,
+  });
+  expect(execution.submission.source.workspaceId).toBe(provenance.workspaceId);
+  expect(execution.submission.source.cycleId).toBe(provenance.cycleId);
+  expect(execution.submission.source.attemptId).toBe(initial.attemptId);
+  const code = await readFile(resolve(analysis, execution.report.submittedCodePath));
+  const codeDigest = digest(code);
+  expect(execution.submission.source.digest).toBe(codeDigest);
+  expect(execution.submission.source.byteLength).toBe(code.length);
   const evidence = await readJson(resolve(analysis, initial.metadata.evidencePaths[0]));
   expect(evidence.signalCounts["flaggo.decision.received"]).toBeGreaterThan(0);
   expect(evidence.rows.length).toBe(Object.values(evidence.signalCounts).reduce((a, b) => a + b, 0));

@@ -303,6 +303,7 @@ mod sqlite {
                 }
             }
             insert_candidate(connection, stored).await?;
+            let created_at = timestamp::format_exact(admission.created_at)?;
             sqlx::query(
                 "INSERT INTO analysis_candidate_admissions(
             resource_key, workspace_id, cycle_id, attempt_id, contract_name, contract_digest, executable_digest,
@@ -316,13 +317,13 @@ mod sqlite {
             .bind(&admission.contract_digest)
             .bind(&admission.executable_digest)
             .bind(&admission.analysis_manifest_digest)
-            .bind(timestamp::format_exact(admission.created_at)?)
+            .bind(&created_at)
             .execute(&mut *connection)
             .await?;
             check(&cancellation)?;
             Ok(AnalysisCandidateStoreResult {
                 executable_digest: admission.executable_digest.clone(),
-                created_at: admission.created_at,
+                created_at: timestamp::parse_exact(&created_at)?,
                 lifecycle_state: ExecutableLifecycleState::Candidate,
                 created: true,
             })

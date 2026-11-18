@@ -347,6 +347,14 @@ acknowledge before admission finishes, and that admission retries fail after
 supersession acknowledges. The regression failed before the fix and passes
 after it; local workspace tests and focused strict Clippy also pass.
 
+Linux CI additionally exposed a nanosecond-clock admission response mismatch.
+New admissions now return the same persisted 100-nanosecond timestamp as
+idempotent retries, without changing the existing storage or wire format. A
+fixed nanosecond input reproduces the failure on every host and verifies the
+correction. Browser closed-loop assertions now verify the scoped execution
+source artifact, its cycle's contract binding, digest and byte length instead
+of the replaced host-local submission shape.
+
 The earlier immutable consumer records above retain their exact historical
 meaning. Follow-up remote consumer pins and Linux CI outcomes are recorded on
 the pull request; they must not be inferred from the earlier qualification.

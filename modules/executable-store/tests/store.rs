@@ -412,7 +412,9 @@ async fn competing_expected_activations_have_exactly_one_winner() {
 #[tokio::test]
 async fn concurrent_cycle_admissions_are_idempotent_and_conflicts_do_not_leak_candidates() {
     let fixture = Fixture::new().await;
-    let first = fixture.candidate(1);
+    let mut first = fixture.candidate(1);
+    first.created_at =
+        chrono::DateTime::parse_from_rfc3339("2026-01-02T03:04:05.123456789+00:00").unwrap();
     let admission = fixture.admission(&first, "cycle");
     let (a, b) = tokio::join!(
         fixture
@@ -422,7 +424,13 @@ async fn concurrent_cycle_admissions_are_idempotent_and_conflicts_do_not_leak_ca
             .store
             .put_analysis_candidate(&first, &admission, None),
     );
-    assert_ne!(a.unwrap().created, b.unwrap().created);
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_ne!(a.created, b.created);
+    assert_eq!(a.created_at, b.created_at);
+    assert_eq!(
+        a.created_at,
+        timestamp::parse_exact("2026-01-02T03:04:05.1234567+00:00").unwrap()
+    );
     let second = fixture.candidate(2);
     let other = fixture.admission(&second, "cycle");
     assert!(matches!(
