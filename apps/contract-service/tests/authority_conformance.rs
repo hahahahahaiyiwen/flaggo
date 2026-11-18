@@ -273,6 +273,13 @@ async fn admission_conforms_across_independent_clients() {
 }
 
 #[tokio::test]
+async fn shared_policy_matches_committed_adapter_outcomes() {
+    let fixture = Fixture::new().await;
+    flaggo_core_conformance::policy::c05_adapter_policy_parity(&fixture).await;
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn activation_conforms_across_independent_clients() {
     let fixture = Fixture::new().await;
     c05_activation(&fixture).await;

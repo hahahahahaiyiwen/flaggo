@@ -60,6 +60,8 @@ def main():
         "scope": "local-git-consumer" if args.repository.startswith("file:") else "remote-git-consumer",
         "result": "passed", "productPackages": sorted(item["name"] for item in products),
         "wire": "v4", "authorityCapability": "flaggo.authority/v3",
+        "authorityPolicy": "flaggo.authority.policy/v1",
+        "policyFixtures": "flaggo.authority-policy-conformance/v1",
         "securityCapability": "flaggo.security.resource/v1",
         "evidenceProfile": "flaggo.evidence.sqlite/v1",
         "projectionCapability": "flaggo.evidence.projection/v2",

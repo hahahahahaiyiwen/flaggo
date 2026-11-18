@@ -32,6 +32,8 @@ impl ReadinessProbe for Source {
 #[tokio::main]
 async fn main() {
     flaggo_core_conformance::canonical::c01_canonical();
+    flaggo_core_conformance::policy::c03_c05_policy();
+    flaggo_core_conformance::policy::persisted_artifact_integrity();
     let contract = flaggo_core_conformance::contract();
     let resource = ContractResourceId::try_from(&contract).unwrap();
     let digest = flaggo_contract::digests::contract_digest(&contract, Some(&flaggo_expression::ExpressionCompiler::default())).unwrap();

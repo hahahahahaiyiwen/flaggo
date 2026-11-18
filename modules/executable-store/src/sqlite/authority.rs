@@ -91,19 +91,15 @@ impl ContractAuthority for SqliteContractAuthority {
         default: &StoredExecutable,
         authored: Option<&StoredExecutable>,
     ) -> AuthorityResult<ReadyPublication> {
-        for executable in std::iter::once(default).chain(authored) {
-            self.executables.validate_stored(executable)?;
-            if executable.executable.contract_digest != version.contract_digest {
-                return Err(argument(
-                    "executable",
-                    "Publication artifacts must bind the accepted contract.",
-                )
-                .into());
-            }
-        }
-        if !default.executable.rules.is_empty() {
-            return Err(argument("default", "A default executable must not contain rules.").into());
-        }
+        policy::validate_publication(
+            version,
+            default,
+            authored,
+            self.executables
+                .canonicalizer
+                .as_deref()
+                .map(|value| value as &dyn ExpressionCanonicalizer),
+        )?;
         let resource = ContractResourceId::try_from(&version.contract)
             .map_err(flaggo_contract_store::ContractStoreError::from)?;
         let digest = &version.contract_digest;
@@ -117,36 +113,28 @@ impl ContractAuthority for SqliteContractAuthority {
             .ok_or_else(|| integrity("Published contract is missing from its transaction."))?;
         let mut active = active_in(&mut tx, digest).await?;
         let mut bootstrap_activations = Vec::new();
-        if active.is_none() {
-            insert_candidate(&mut tx, default).await?;
-            self.executables
-                .activate_in(
-                    &mut tx,
-                    digest,
-                    &default.executable_digest,
-                    Some(None),
-                    None,
-                )
-                .await?;
-            bootstrap_activations.push(default.executable_digest.clone());
-            active = active_in(&mut tx, digest).await?;
-        }
-        if let Some(authored) = authored
-            && active
+        for executable in policy::plan_bootstrap(
+            default,
+            authored,
+            active
                 .as_ref()
-                .is_some_and(|active| active.executable_digest == default.executable_digest)
-        {
-            insert_candidate(&mut tx, authored).await?;
+                .map(|value| value.executable_digest.as_str()),
+        ) {
+            insert_candidate(&mut tx, executable).await?;
             self.executables
                 .activate_in(
                     &mut tx,
                     digest,
-                    &authored.executable_digest,
-                    Some(Some(&default.executable_digest)),
+                    &executable.executable_digest,
+                    Some(
+                        active
+                            .as_ref()
+                            .map(|value| value.executable_digest.as_str()),
+                    ),
                     None,
                 )
                 .await?;
-            bootstrap_activations.push(authored.executable_digest.clone());
+            bootstrap_activations.push(executable.executable_digest.clone());
             active = active_in(&mut tx, digest).await?;
         }
         let active =
@@ -197,14 +185,11 @@ impl ContractAuthority for SqliteContractAuthority {
             )
             .fetch_optional(&mut *tx)
             .await?;
-            if current.as_deref() != Some(&admission.contract_digest) {
-                return Err(ExecutableStoreError::CurrentContractConflict {
-                    contract_name: admission.resource.name.clone(),
-                    expected: admission.contract_digest.clone(),
-                    actual: current,
-                }
-                .into());
-            }
+            policy::require_current(
+                &admission.resource,
+                &admission.contract_digest,
+                current.as_deref(),
+            )?;
             let result = authority
                 .executables
                 .put_analysis_candidate_in(&mut tx, &executable, &admission, None)

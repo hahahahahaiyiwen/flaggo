@@ -1,6 +1,8 @@
 use super::*;
-use AnalysisCandidateResolutionOutcome as Outcome;
-use ExecutableLifecycleState as State;
+use crate::policy::{
+    LifecycleSnapshot, ResolutionPlan, ResolutionSnapshot, activation_conflict, candidate_conflict,
+    next_version,
+};
 
 impl SqliteExecutableStore {
     pub async fn activate(
@@ -57,44 +59,23 @@ impl SqliteExecutableStore {
         .fetch_optional(&mut *connection)
         .await?;
         let selected = selected.ok_or_else(|| ExecutableStoreError::NotFound(digest.into()))?;
-        binding(digest, contract, &selected)?;
         let active = active_identity(connection, contract).await?;
-        if let Some(expected) = expected
-            && active
-                .as_ref()
-                .map(|value| value.executable_digest.as_str())
-                != expected
-        {
-            return Err(activation_conflict(expected, &active));
-        }
-        if let Some(active) = &active
-            && active.executable_digest == digest
-        {
+        let plan = policy::plan_activation(contract, digest, &selected, active.as_ref(), expected)?;
+        if !plan.changed {
             check(&cancellation)?;
-            return Ok(ActivationResult {
-                executable_digest: digest.into(),
-                previous_executable_digest: Some(active.executable_digest.clone()),
-                state_version: active.state_version,
-                changed: false,
-            });
+            return Ok(plan);
         }
-        let version = next_version(active.as_ref().map_or(0, |value| value.state_version))?;
         sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = CASE WHEN state_version < 9223372036854775807 THEN state_version + 1 ELSE NULL END
             WHERE contract_digest = ? AND lifecycle_state = 'active'")
             .bind(contract).execute(&mut *connection).await?;
         let rows = sqlx::query("UPDATE decision_executables SET lifecycle_state = 'active', state_version = ?, activated_at = ?
-            WHERE executable_digest = ?").bind(version).bind(timestamp::format_exact((self.clock)())?)
+            WHERE executable_digest = ?").bind(plan.state_version).bind(timestamp::format_exact((self.clock)())?)
             .bind(digest).execute(&mut *connection).await?.rows_affected();
         if rows != 1 {
             return Err(ExecutableStoreError::NotFound(digest.into()));
         }
         check(&cancellation)?;
-        Ok(ActivationResult {
-            executable_digest: digest.into(),
-            previous_executable_digest: active.map(|value| value.executable_digest),
-            state_version: version,
-            changed: true,
-        })
+        Ok(plan)
     }
 
     pub async fn activate_candidate(
@@ -102,31 +83,8 @@ impl SqliteExecutableStore {
         command: &CandidateActivationCommand,
         cancellation: Cancellation,
     ) -> Result<CandidateActivationResult> {
+        policy::validate_candidate_activation(command)?;
         let resource_key = command.resource.resource_key()?;
-        for (parameter, value) in [
-            ("command.ContractName", &command.resource.name),
-            ("command.ContractDigest", &command.contract_digest),
-            ("command.ExecutableDigest", &command.executable_digest),
-        ] {
-            if value.trim().is_empty() {
-                return Err(argument(
-                    parameter,
-                    "The value cannot be an empty string or composed entirely of whitespace.",
-                ));
-            }
-        }
-        if command.expected_candidate_state_version < 0 {
-            return Err(range(
-                "command",
-                "Expected Candidate state version cannot be negative.",
-            ));
-        }
-        if command.expected_active_executable.state_version < 0 {
-            return Err(range(
-                "command",
-                "Expected active state version cannot be negative.",
-            ));
-        }
         check(&cancellation)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         check(&cancellation)?;
@@ -138,53 +96,35 @@ impl SqliteExecutableStore {
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| ExecutableStoreError::NotFound(command.executable_digest.clone()))?;
-        binding(
-            &command.executable_digest,
-            &command.contract_digest,
-            row.try_get("contract_digest")?,
-        )?;
-        let state = parse_state(row.try_get("lifecycle_state")?)?;
-        let version = row.try_get("state_version")?;
-        if state != State::Candidate || version != command.expected_candidate_state_version {
-            return Err(candidate_conflict(command, state, version));
-        }
+        let candidate = LifecycleSnapshot {
+            state: parse_state(row.try_get("lifecycle_state")?)?,
+            state_version: row.try_get("state_version")?,
+        };
         let current = current_contract(&mut tx, &resource_key).await?;
-        if current.as_deref() != Some(&command.contract_digest) {
-            return Err(ExecutableStoreError::CurrentContractConflict {
-                contract_name: command.resource.name.clone(),
-                expected: command.contract_digest.clone(),
-                actual: current,
-            });
-        }
         let active = active_identity(&mut tx, &command.contract_digest).await?;
-        if active.as_ref() != Some(&command.expected_active_executable) {
-            return Err(activation_conflict(
-                Some(&command.expected_active_executable.executable_digest),
-                &active,
-            ));
-        }
-        let active = active.expect("matching non-null lifecycle token");
-        if !deactivate_expected(&mut tx, &command.contract_digest, &active).await? {
-            return Err(activation_conflict(
-                Some(&command.expected_active_executable.executable_digest),
-                &Some(active),
-            ));
-        }
-        let next = next_version(
-            active
-                .state_version
-                .max(command.expected_candidate_state_version),
+        let plan = policy::plan_candidate_activation(
+            command,
+            row.try_get("contract_digest")?,
+            candidate,
+            current.as_deref(),
+            active.as_ref(),
         )?;
+        if !deactivate_expected(&mut tx, &command.contract_digest, &plan.previous).await? {
+            return Err(activation_conflict(
+                Some(&command.expected_active_executable.executable_digest),
+                Some(&plan.previous),
+            ));
+        }
         if !self
             .activate_expected(
                 &mut tx,
                 &command.executable_digest,
                 command.expected_candidate_state_version,
-                next,
+                plan.state_version,
             )
             .await?
         {
-            return Err(candidate_conflict(command, state, version));
+            return Err(candidate_conflict(command, candidate));
         }
         let superseded =
             supersede_others(&mut tx, &resource_key, &command.executable_digest).await?;
@@ -192,8 +132,8 @@ impl SqliteExecutableStore {
         tx.commit().await?;
         Ok(CandidateActivationResult {
             executable_digest: command.executable_digest.clone(),
-            previous_executable_digest: active.executable_digest,
-            state_version: next,
+            previous_executable_digest: plan.previous.executable_digest,
+            state_version: plan.state_version,
             superseded_candidate_count: superseded,
         })
     }
@@ -275,39 +215,9 @@ impl SqliteExecutableStore {
         command: &AnalysisCandidateResolutionCommand,
         cancellation: Cancellation,
     ) -> Result<AnalysisCandidateResolutionResult> {
-        if command.expected_candidate_state_version < 0 {
-            return Err(range(
-                "command",
-                "Expected Candidate state version cannot be negative.",
-            ));
-        }
-        if command
-            .expected_active_executable
-            .as_ref()
-            .is_some_and(|value| value.state_version < 0)
-        {
-            return Err(range(
-                "command",
-                "Expected active executable state version cannot be negative.",
-            ));
-        }
+        policy::validate_resolution(command)?;
         let admission = &command.admission;
         let resource_key = admission.resource.resource_key()?;
-        if [
-            &admission.workspace_id,
-            &admission.cycle_id,
-            &admission.resource.name,
-            &admission.contract_digest,
-            &admission.executable_digest,
-        ]
-        .iter()
-        .any(|value| value.trim().is_empty())
-        {
-            return Err(argument(
-                "command",
-                "Candidate resolution requires complete admission identity.",
-            ));
-        }
         check(&cancellation)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         check(&cancellation)?;
@@ -319,103 +229,71 @@ impl SqliteExecutableStore {
             .bind(&admission.workspace_id).bind(&admission.cycle_id).bind(&resource_key)
             .bind(&admission.contract_digest).bind(&admission.executable_digest).fetch_optional(&mut *tx).await?
             .ok_or_else(|| integrity(format!("Analysis admission for Candidate '{}' does not exist.", admission.executable_digest)))?;
-        let state = parse_state(row.try_get("lifecycle_state")?)?;
-        let version: i64 = row.try_get("state_version")?;
-        let created_at = timestamp::parse_exact(row.try_get("created_at")?)?;
-        let mut result = AnalysisCandidateResolutionResult {
-            outcome: Outcome::Yielded,
-            executable_digest: admission.executable_digest.clone(),
-            previous_executable_digest: None,
-            state_version: None,
-            superseded_candidate_count: 0,
-        };
-        if state != State::Candidate {
-            result.outcome = Outcome::AlreadyResolved;
-            result.state_version = Some(version);
-        } else if version == command.expected_candidate_state_version
-            && created_at == admission.created_at
-        {
-            let current = current_contract(&mut tx, &resource_key).await?;
-            if current.as_deref() != Some(&admission.contract_digest) {
-                result.outcome = Outcome::Superseded;
-                result.state_version =
-                    Some(next_version(command.expected_candidate_state_version)?);
-                result.superseded_candidate_count =
-                    supersede_stale(&mut tx, &resource_key, current.as_deref()).await?;
-            } else {
-                let newest: Option<String> = sqlx::query_scalar("SELECT candidate.executable_digest
+        let current = current_contract(&mut tx, &resource_key).await?;
+        let newest: Option<String> = sqlx::query_scalar("SELECT candidate.executable_digest
                     FROM analysis_candidate_admissions AS candidate JOIN decision_executables AS executable
                       ON executable.executable_digest = candidate.executable_digest
                     WHERE candidate.resource_key = ? AND candidate.contract_digest = ? AND executable.lifecycle_state = 'candidate'
                     ORDER BY candidate.created_at DESC, candidate.executable_digest DESC,
                              candidate.workspace_id DESC, candidate.cycle_id DESC LIMIT 1")
                     .bind(&resource_key).bind(&admission.contract_digest).fetch_optional(&mut *tx).await?;
-                if newest.as_deref() == Some(&admission.executable_digest) {
-                    if matches!(command.action, AnalysisCandidateResolutionAction::Reject) {
-                        let next = next_version(command.expected_candidate_state_version)?;
-                        let rows = sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = ?
-                            WHERE executable_digest = ? AND lifecycle_state = 'candidate' AND state_version = ?")
-                            .bind(next).bind(&admission.executable_digest).bind(command.expected_candidate_state_version).execute(&mut *tx).await?.rows_affected();
-                        if rows != 1 {
-                            tx.rollback().await?;
-                            return Ok(result);
-                        }
-                        result.outcome = Outcome::Rejected;
-                        result.state_version = Some(next);
-                        result.superseded_candidate_count =
-                            supersede_others(&mut tx, &resource_key, &admission.executable_digest)
-                                .await?;
-                    } else {
-                        let active = active_identity(&mut tx, &admission.contract_digest).await?;
-                        if active == command.expected_active_executable {
-                            if let Some(previous) = &active
-                                && !deactivate_expected(
-                                    &mut tx,
-                                    &admission.contract_digest,
-                                    previous,
-                                )
-                                .await?
-                            {
-                                tx.rollback().await?;
-                                return Ok(result);
-                            }
-                            let next = next_version(
-                                active
-                                    .as_ref()
-                                    .map_or(command.expected_candidate_state_version, |value| {
-                                        value.state_version
-                                    }),
-                            )?;
-                            if !self
-                                .activate_expected(
-                                    &mut tx,
-                                    &admission.executable_digest,
-                                    command.expected_candidate_state_version,
-                                    next,
-                                )
-                                .await?
-                            {
-                                tx.rollback().await?;
-                                return Ok(result);
-                            }
-                            result.outcome = Outcome::Activated;
-                            result.previous_executable_digest =
-                                active.map(|value| value.executable_digest);
-                            result.state_version = Some(next);
-                            result.superseded_candidate_count = supersede_others(
-                                &mut tx,
-                                &resource_key,
-                                &admission.executable_digest,
-                            )
-                            .await?;
-                        }
-                    }
-                }
+        let active = active_identity(&mut tx, &admission.contract_digest).await?;
+        let plan = policy::plan_resolution(
+            command,
+            &ResolutionSnapshot {
+                candidate: LifecycleSnapshot {
+                    state: parse_state(row.try_get("lifecycle_state")?)?,
+                    state_version: row.try_get("state_version")?,
+                },
+                created_at: timestamp::parse_exact(row.try_get("created_at")?)?,
+                current_contract: current.as_deref(),
+                newest_candidate: newest.as_deref(),
+                active: active.as_ref(),
+            },
+        )?;
+        let superseded = match &plan {
+            ResolutionPlan::Yielded | ResolutionPlan::AlreadyResolved { .. } => 0,
+            ResolutionPlan::SupersedeStale { .. } => {
+                supersede_stale(&mut tx, &resource_key, current.as_deref()).await?
             }
-        }
+            ResolutionPlan::Reject { state_version } => {
+                let rows = sqlx::query("UPDATE decision_executables SET lifecycle_state = 'inactive', state_version = ?
+                            WHERE executable_digest = ? AND lifecycle_state = 'candidate' AND state_version = ?")
+                            .bind(state_version).bind(&admission.executable_digest).bind(command.expected_candidate_state_version).execute(&mut *tx).await?.rows_affected();
+                if rows != 1 {
+                    tx.rollback().await?;
+                    return Ok(ResolutionPlan::Yielded.result(&admission.executable_digest, 0));
+                }
+                supersede_others(&mut tx, &resource_key, &admission.executable_digest).await?
+            }
+            ResolutionPlan::Activate {
+                previous,
+                state_version,
+            } => {
+                if let Some(previous) = previous
+                    && !deactivate_expected(&mut tx, &admission.contract_digest, previous).await?
+                {
+                    tx.rollback().await?;
+                    return Ok(ResolutionPlan::Yielded.result(&admission.executable_digest, 0));
+                }
+                if !self
+                    .activate_expected(
+                        &mut tx,
+                        &admission.executable_digest,
+                        command.expected_candidate_state_version,
+                        *state_version,
+                    )
+                    .await?
+                {
+                    tx.rollback().await?;
+                    return Ok(ResolutionPlan::Yielded.result(&admission.executable_digest, 0));
+                }
+                supersede_others(&mut tx, &resource_key, &admission.executable_digest).await?
+            }
+        };
         check(&cancellation)?;
         tx.commit().await?;
-        Ok(result)
+        Ok(plan.result(&admission.executable_digest, superseded))
     }
 
     async fn activate_expected(
@@ -429,40 +307,6 @@ impl SqliteExecutableStore {
             WHERE executable_digest = ? AND lifecycle_state = 'candidate' AND state_version = ?")
             .bind(next).bind(timestamp::format_exact((self.clock)())?).bind(digest).bind(expected)
             .execute(connection).await?.rows_affected() == 1)
-    }
-}
-
-fn binding(digest: &str, expected: &str, actual: &str) -> Result<()> {
-    if expected != actual {
-        return Err(ExecutableStoreError::ContractMismatch {
-            executable_digest: digest.into(),
-            expected_contract_digest: expected.into(),
-            actual_contract_digest: actual.into(),
-        });
-    }
-    Ok(())
-}
-
-fn candidate_conflict(
-    command: &CandidateActivationCommand,
-    state: State,
-    actual: i64,
-) -> ExecutableStoreError {
-    ExecutableStoreError::CandidateConflict {
-        executable_digest: command.executable_digest.clone(),
-        expected: command.expected_candidate_state_version,
-        state,
-        actual,
-    }
-}
-
-fn activation_conflict(
-    expected: Option<&str>,
-    active: &Option<ExecutableLifecycleToken>,
-) -> ExecutableStoreError {
-    ExecutableStoreError::ActivationConflict {
-        expected: expected.map(Into::into),
-        actual: active.as_ref().map(|value| value.executable_digest.clone()),
     }
 }
 
@@ -529,10 +373,4 @@ async fn supersede_others(
             SELECT 1 FROM analysis_candidate_admissions AS candidate
             WHERE candidate.executable_digest = decision_executables.executable_digest AND candidate.resource_key = ?
         )").bind(selected).bind(key).execute(connection).await?.rows_affected())
-}
-
-fn next_version(version: i64) -> Result<i64> {
-    version
-        .checked_add(1)
-        .ok_or_else(|| integrity("Executable lifecycle state version is exhausted."))
 }

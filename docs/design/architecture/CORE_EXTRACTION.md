@@ -1,7 +1,9 @@
 # Shared-core extraction: authority, HTTP and workspace boundaries
 
-Status: **#94 implementation, local qualification and public remote
-pinned-consumer qualification complete**. #94 remains open for review.
+Status: initial #94 extraction merged through #95 at
+`db44dc9ea35c3c50109e2e65ba2a536eab753971`. Downstream adapter integration
+identified a missed public-policy boundary; the acceptance correction below
+requires its own qualification and publication, not #95's earlier approval.
 This is not hosted qualification.
 Based on the approved architecture revision
 `83088e825a0380a2a629b3bdd37cf8ffaaf1ae80`. The accepted design models in
@@ -16,7 +18,7 @@ revisions recorded below.
 | `flaggo-decision-http` | Shared runtime HTTP, telemetry and injected readiness; uses the existing `DecisionRuntime` |
 | `flaggo-otlp-http` | Shared OTLP transport, independent authentication, whole-batch authorization and durable append; no SQLite dependency |
 | `flaggo-contract-store`, without default features | Accepted-version types, errors, timestamp/cursor contracts |
-| `flaggo-executable-store`, without default features | Lifecycle types/errors and `ContractAuthority` semantic capability |
+| `flaggo-executable-store`, without default features | Lifecycle types/errors, `ContractAuthority`, shared `policy` decisions and `artifacts` integrity validation |
 | `SqliteContractAuthority` | Local atomic authority adapter over one shared SQLite pool |
 | Existing runnable apps | Local configuration, adapter initialization, listener and shutdown composition |
 | `flaggo-core-conformance` | Reusable authority outcome scenarios, independent of SQL |
@@ -57,6 +59,32 @@ transactions; the app no longer sequences separate writes or uses a
 process-local current/admission mutex. A failed operation is not a claim that a
 remote commit rolled back: future adapters must preserve explicit dependency
 errors and reconciliation guarantees. No remote retry protocol is certified here.
+
+### Acceptance correction: reusable product policy
+
+At merged #95, `ContractAuthority` was portable but bootstrap/redeploy,
+activation/resolution and persisted-executable validation still lived under the
+SQLite feature. That was a missed #94 acceptance boundary: a second adapter would
+otherwise copy product rules. The additive `flaggo.authority.policy/v1` capability
+now exposes those decisions in `flaggo_executable_store::policy` and artifact
+checks in `flaggo_executable_store::artifacts`, with SQLite calling the same code.
+
+`plan_bootstrap` returns ordered default/authored steps without resetting learned
+authority. `plan_admission`, `plan_activation`, `plan_candidate_activation` and
+`plan_resolution` consume transactionally read state and return decisions rather
+than performing I/O. Resolution retains all five outcomes, active-token ABA
+checks, rejection independence and the existing distinct manual/automatic
+version rules. Adapters keep atomicity, ownership fences, CAS and full rollback.
+The byte-oriented artifact decoder preserves checked DTO parsing and error
+classification without requiring SQLite rows or its timestamp representation.
+See the [exported seams and adapter invariants](../../../modules/executable-store/README.md).
+
+Shared `flaggo.authority-policy-conformance/v1` scenarios exercise those decisions,
+persisted-artifact integrity and policy-versus-committed-adapter parity. The
+standalone consumer additionally executes the database-free corpus. Existing v4
+wire formats, digests, schemas and `flaggo.authority/v3` are unchanged. Historical
+remote consumer pins below do not qualify this correction; its exact local or
+published revision and consumer evidence must be reported separately.
 
 Core crates disable store default features. SQLx and SQLite are absent from
 their normal dependency graph. Local store defaults still enable SQLite for
