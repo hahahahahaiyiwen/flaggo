@@ -54,6 +54,10 @@ async fn main() {
     };
     let _evidence_contract = |store: Arc<dyn flaggo_evidence_store::EvidenceStore>| store;
     let _inbox_contract = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| inbox;
+    let cell = flaggo_evidence_store::EvidenceValue::Int64 { value: i64::MAX };
+    let wire = serde_json::to_string(&cell).unwrap();
+    assert_eq!(wire, r#"{"kind":"int64","value":"9223372036854775807"}"#);
+    assert_eq!(serde_json::from_str::<flaggo_evidence_store::EvidenceValue>(&wire).unwrap(), cell);
     let input = flaggo_contract::strict_json::deserialize(br#"{"attributes":{
         "_random":0.5,"board_pressure":0.2,"current_level":1,
         "recent_placement_time_ms":500,"recovery_failures":0,"session_id":"consumer"

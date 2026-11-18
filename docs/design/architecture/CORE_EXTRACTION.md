@@ -82,6 +82,7 @@ it must not silently reinterpret v3 names.
 | Authority capability | `flaggo.authority/v1`: globally name-keyed atomic ready publication/current admission and existing activation/read contracts |
 | Reusable fixture revision | `flaggo.authority-conformance/v1`, local subsets of C03-C05 |
 | Evidence query | Existing SQLite dialect/type envelope, **not** the approved future portable profile |
+| Canonical evidence cells | `flaggo.evidence.value/v1` scalar schema/codec and shared corpus; not yet integrated into query results or negotiated profiles |
 | Workspace/execution | Path-free lease contract plus explicit local projection; existing local filesystem/lock/Python behavior, **not** a durable remote execution protocol or sandbox |
 | First hosted slice | Not qualified: scoped API/security revision and private distributed adapter still required |
 
@@ -155,7 +156,7 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C07 | V4 and explicit breaking cutover approved above; scoped routes, resource keys, independent authentication/security/error artifacts, SDK and migration are not implemented |
 | C08-C09 | Existing inbox/evidence tests retained, but their outcome suites are not yet extracted; authorized whole-batch envelope and fenced projection protocol remain outstanding |
 | C10 | Durable monotonic worker fences and authoritative stale-write rejection are not implemented |
-| C11 | Versioned capability negotiation, lossless result schema/profile and required query corpus are not implemented |
+| C11 | Tagged scalar cells approved and implemented in [EVIDENCE_VALUES](../contracts/EVIDENCE_VALUES.md), with shared Rust/JavaScript corpus. Containing result/profile negotiation, adapter/consumer integration and required query scenario corpus remain unimplemented |
 | C12 | Host paths removed from the lease contract and exact-claim local projection tested; durable conditional publication/fence/execution receipts and reusable recovery scenarios remain outstanding |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
 | Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
@@ -199,6 +200,12 @@ analysis run lacked its documented Python environment; creating `.venv` and
 installing the existing requirements resolved that prerequisite. A concurrent
 build observed an intermediate feature-manifest/source mismatch during editing;
 the complete rerun against the stable source passed. No live provider was used.
+
+The canonical-cell codec additionally passed its shared Rust corpus and
+JavaScript schema tests (two tests in each runner), including exact int64
+boundaries, non-finite double payload bits and malformed encodings. Evidence
+all-targets Clippy and SDK type-checking passed. This validates the scalar
+contract, not the still-pending query/result/profile integration.
 
 The deterministic Tetris full-loop passed against the extracted runnable apps:
 contract acceptance, SDK decisions, OTLP durable ingestion, evidence

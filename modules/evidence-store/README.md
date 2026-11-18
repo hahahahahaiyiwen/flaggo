@@ -12,6 +12,11 @@ declared types and its established result behavior. The versioned negotiated
 profile, lossless canonical value envelope and complete C11 corpus remain #94
 work; a second provider must not claim compatibility by relabelling its dialect.
 
+`EvidenceValue` now provides the separately versioned
+[canonical scalar codec](../../docs/design/contracts/EVIDENCE_VALUES.md) and
+shared wire corpus. It is not yet used by `EvidenceQueryResult`; adopting it
+requires the explicit result/profile and consumer cutover described there.
+
 ```powershell
 cargo check -p flaggo-evidence-store --no-default-features --locked
 cargo test -p flaggo-evidence-store --locked

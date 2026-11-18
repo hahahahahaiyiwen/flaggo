@@ -9,6 +9,7 @@ mod analysis;
 mod sqlite;
 #[cfg(feature = "sqlite")]
 mod sqlite_analysis;
+mod value;
 
 pub use analysis::{
     EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryLimits,
@@ -19,6 +20,7 @@ pub use analysis::{
 pub use sqlite::SqliteEvidenceStore;
 #[cfg(feature = "sqlite")]
 pub use sqlite_analysis::{SQLITE_EVIDENCE_QUERY_CAPABILITIES, SqliteEvidenceAnalysisStore};
+pub use value::EvidenceValue;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AuthorityScope {
