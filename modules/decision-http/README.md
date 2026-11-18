@@ -1,8 +1,9 @@
 # Shared Decision HTTP application
 
-`flaggo-decision-http` owns v3 routing, input/error handling, telemetry and health
+`flaggo-decision-http` owns scoped v4 routing, input/error handling, telemetry and health
 responses. `router` and `instrumented_router` accept implementations of existing
-`ContractVersionReader` / `ActiveExecutableReader` plus `ReadinessProbe`.
+`ContractVersionReader` / `ActiveExecutableReader` plus `ReadinessProbe` and an
+independently injected `RequestSecurity`.
 The shared `DecisionRuntime` remains the only evaluator orchestrator.
 
 There is no SQLx, SQLite or runnable-app dependency. The local Decision Service

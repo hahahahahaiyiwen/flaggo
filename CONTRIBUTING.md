@@ -44,7 +44,9 @@ The full-loop gate uses deterministic analysis without model credentials;
 prepare the [analysis Python environment](examples/README.md#python-environment-for-live-analysis)
 first. Optional migration differential tests require a separate pinned historical
 .NET checkout, never a normal build dependency; see [core parity](tools/core-parity/README.md).
-Existing contract-v3/executable-v5 SQLite state is preserved without reset.
+Existing contract-v3/executable-v4/v5 SQLite state is preserved without reset
+by the explicit scoped migration in the
+[core extraction guide](docs/design/architecture/CORE_EXTRACTION.md#implemented-breaking-wire-cutover).
 Core services now use `FLAGGO_CONTRACT_DATABASE_PATH` /
 `FLAGGO_DECISION_DATABASE_PATH` and their `*_LISTEN_ADDRESS` settings rather
 than .NET connection-string/hosting configuration; see their READMEs.

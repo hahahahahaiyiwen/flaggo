@@ -1,6 +1,8 @@
 # Shared-core extraction: authority, HTTP and workspace boundaries
 
-Status: **partial implementation of #94**, not closure or hosted qualification.
+Status: **local implementation and qualification complete; remote publication
+and remote pinned-consumer qualification pending**. #94 remains open.
+This is not hosted qualification.
 Based on the approved architecture revision
 `83088e825a0380a2a629b3bdd37cf8ffaaf1ae80`. The accepted design models in
 [PORTABLE_CORE](PORTABLE_CORE.md) are distinguished from the concrete implemented
@@ -281,7 +283,19 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C11 | Explicit result/profile selection, canonical cells, scope/read/limit/artifact metadata and Python/agent consumers integrated. Shared twelve-category SQLite profile corpus runs under two scopes; local deadline/cancellation and reuse checked. Actual second-provider qualification remains later |
 | C12 | Path-free execution provider, immutable conditional publication, durable receipts and reusable recovery scenarios implemented; hosted isolation and cross-host execution qualification remain later |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
-| Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
+| Consumer/publication | Complete 20-crate immutable local consumer verified below with a retained lock; public remote reachability remains unverified pending publication authorization |
+
+## Issue #94 acceptance record
+
+| Criterion | Evidence |
+| --- | --- |
+| Shared application/domain logic and explicit capabilities | Management/runtime/OTLP HTTP, analysis coordinator/tools and evidence materialization are public libraries; local apps compose SQLite, workspace and execution adapters |
+| Local behavior and deliberate compatibility changes | Scoped v4/schema migrations are explicit; complete Rust, SDK/wire and deterministic real-host closed-loop gates pass |
+| Reusable adapter conformance | Canonical/runtime, publication/admission/activation, scoped evidence/query and workflow/execution recovery scenarios exported by `flaggo-core-conformance`; provider fault controls stay in fixtures |
+| Portable workspace/execution with retained local safety | Path-free handles, conditional artifacts, revocable epochs, cancellation-safe admission coordination and durable execution receipts; local trusted execution remains explicit |
+| Separately pinned consumer | `caab95c7623fafbe8c5fcdfb25f2d324085ca80d` builds independently with 20 uniformly pinned public crates and no SQLite/app dependency; remote verification still pending |
+| Contributor guidance | This guide, `CONTRIBUTING.md`, module READMEs and `tools/core-consumer/README.md` document ownership, adapter invariants and focused checks |
+| Revision/API/schema/capability record | Compatibility table above and consumer `result.json` bind the exact implemented revisions; hosted-only qualification is not implied |
 
 ## Observed local verification
 
@@ -289,8 +303,23 @@ The completed local core additionally passes the entire Rust workspace suite and
 strict all-target Clippy, all 76 SDK tests, SDK/example type checks, generated
 artifact checks, eight Python conformance tests and all 1,201 offline checks.
 Ignored historical/live fixtures remain ignored, not reported as passes.
-Final end-to-end rerun and final committed/remote consumer pins are recorded
-separately below when verified.
+The final deterministic real-host Tetris rerun also passes at source
+`caab95c7623fafbe8c5fcdfb25f2d324085ca80d`: 15 retained OTLP batches,
+1,004 evidence observations/provenance rows, zero conflicts/diagnostics,
+reviewed deterministic analysis, fenced admission, activation, SDK/REST parity
+and restart persistence with activation metadata preserved. Its activated
+candidate is
+`sha256:285acca3c2da217ccac773bea23ca041b3a7b9ec6c9d430e5574fb1a57db5877`.
+No model provider or cloud service was used.
+
+The final separate local Git consumer pins the same source revision, with
+**20** uniformly pinned product crates and no SQLx/SQLite or runnable-app
+dependency. It executes the shared C01 corpus, C02 exact-evaluation parity and
+canonical evidence-cell checks, and compiles the three HTTP compositions plus
+analysis/execution/materialization contracts. Its retained `Cargo.lock` SHA-256
+is `ba3c18fc1035ce4f5b01fb39c6cb3990a64decca954e17f760b16c071dcd5ea2`.
+This is **local Git consumption**, not remote publication. The release-review
+cleanup restores baseline line endings without changing logical source content.
 
 The scoped-v4/authorized-ingress slice passes the complete workspace suite
 (330 tests, four explicitly ignored historical/live fixtures), workspace Clippy,
@@ -340,7 +369,8 @@ were subsequently consumed at `22b7d7336c17d03832d7d52f8b47d4c3cddf683f`.
 That separate local Git build passed with **19** uniformly pinned public crates,
 no SQLx/SQLite or app dependency, and lock SHA-256
 `1a932d9e50d43eccf1a4fe1cd5f759c0fe26a05151d65a764505e33b4e28940e`.
-The materialization/projection slice still requires its own final consumer pin.
+The later materialization/admission/canonical/runtime slice is covered by the
+final consumer pin recorded above.
 
 The first standalone run exposed a fixture helper's accidental reliance on
 workspace-unified `serde_json/preserve_order`. The helper now deserializes the

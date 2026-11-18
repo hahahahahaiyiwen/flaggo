@@ -7,13 +7,18 @@ each scenario on fresh storage. The functions panic on conformance violations.
 
 | Entry point | Local coverage |
 | --- | --- |
-| `c03_publication` | Same-version races, stable acceptance, active readiness, redeploy/current ordering, v3 ownership |
+| `canonical::c01_canonical` | Canonical hashes, named collections, literal/rule order, scope identity, numeric boundaries and evaluator results |
+| `runtime::c02_exact_runtime` | Exact version despite management-current changes, scope isolation, authority outage and persisted corruption with cached/fresh readers |
+| `c07_namespace` | Independent full-resource ownership, catalogs and pagination for the same name |
+| `c03_publication` | Same-version races, stable acceptance, active readiness and redeploy/current ordering |
 | `c03_atomic_failure` | Failure after staging exposes no contract/current/active/artifact or name reservation |
 | `c04_admission` | Independent-client idempotency, conflicting retry without orphan, stale retry/new admission rejection |
 | `c05_activation` | Competing fenced activation, acknowledged active read, learned executable survives redeploy |
 | `evidence::c08_durable_acceptance` | Failed append has no receipt/effect, independent reads preserve payload/receipt, raw transport retries remain distinct |
-| `evidence::c09_atomic_projection` | Checkpoint failure leaves no projection, retries reconcile, observation dedup and content-conflict effects |
+| `evidence::c09_atomic_projection` | Epoch/checkpoint preconditions, stale-writer rejection, atomic failure, retries, observation dedup and content-conflict effects |
 | `evidence::c11_negotiated_queries` | Profile selection, full scope/exact-or-null/source filtering, limits, typed results, projected-only IDs, live late arrivals and required profile corpus under two scopes |
+| `admission::c04_c10_fenced_admission` | Released/replaced ownership, original-provenance recovery, idempotency and closed-cycle rejection |
+| `workspace::c10_c12_fenced_publication` | Claim exclusion, immutable artifacts, conditional handoffs, execution receipt recovery and uncertain-execution non-replay |
 
 `apps/contract-service/tests/authority_conformance.rs` supplies the SQLite
 fixture and failure injection. Scenario assertions do not query physical tables.
@@ -34,5 +39,7 @@ deadline/cancellation interruption and connection reuse.
 
 ```powershell
 cargo test -p flaggo-contract-service --test authority_conformance --locked
+cargo test -p flaggo-contract-service --test admission_fencing --locked
+cargo test -p flaggo-decision-service --test runtime_conformance --locked
 cargo test -p flaggo-core-conformance --test sqlite_evidence --locked
 ```

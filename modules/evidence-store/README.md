@@ -6,6 +6,13 @@ live scoped reads. Their public DTOs and errors can be consumed with
 `default-features = false`, without SQLx, the SQLite query parser or local
 execution dependencies. The default `sqlite` feature keeps both local adapters.
 
+`flaggo.evidence.projection/v2` requires a durable ownership epoch and expected
+previous checkpoint. The SQLite adapter checks them inside the projection
+transaction; catalog updates use the same epoch. Schema 5 adds ownership
+metadata through the explicit materializer `--migrate-v4-to-v5` command, without
+rewriting or replaying existing evidence. Ordered claim replacement is not a
+time-expiring distributed lease.
+
 Queries explicitly select `flaggo.evidence.sqlite/v1`. Results use
 `EvidenceValue` [canonical cells and the versioned saved-result envelope](../../docs/design/contracts/EVIDENCE_VALUES.md).
 Provider type strings remain diagnostic metadata, separate from canonical
@@ -28,4 +35,4 @@ python -B -m unittest discover -s modules\evidence-store\python -p test_*.py
 ```
 
 See the [shared-core record](../../docs/design/architecture/CORE_EXTRACTION.md)
-for implemented boundaries versus outstanding worker-fencing protocols.
+for implemented boundaries versus later hosted qualification.

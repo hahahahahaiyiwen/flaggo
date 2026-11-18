@@ -1,19 +1,22 @@
 # Shared contract application
 
-`flaggo-contract-application` owns the existing **v3** management HTTP routes,
+`flaggo-contract-application` owns the scoped **v4** management HTTP routes,
 validation, default/authored compilation, Candidate admission policy, management
 projections, activation worker and observability. It depends on public domain
 types and `ContractAuthority`, not SQLx, SQLite, host paths or runnable apps.
 
 Construct `ContractLifecycle::new(Arc<dyn ContractAuthority>)` and pass it to
-`router` and `worker::ActivationWorker`. One adapter owns the whole authority
-transaction domain. `publish_ready` commits name ownership, immutable acceptance,
+`router` (with an independent `RequestSecurity`) and `worker::ActivationWorker`.
+One adapter owns the whole authority transaction domain.
+`publish_ready` commits full-resource ownership, immutable acceptance,
 bootstrap activation and current selection together; `admit_current` checks
-currentness with immutable admission. A process mutex is not part of correctness.
+currentness and current workspace/cycle ownership with immutable admission.
+A process mutex or preflight-only ownership check is insufficient.
 Validation and compilation happen before these semantic commands, not inside
 provider-specific copies of service rules.
 
-The local app composes `SqliteContractAuthority`. It preserves global v3 name
-ownership, existing digests, acceptance timestamps and v3 retry/error ordering.
-No scoped API, authentication boundary or hosted qualification is implied.
+The local app composes `SqliteContractAuthority` with the local workspace's
+admission fence. V4 deliberately replaces global v3 lookup with full scope.
+Explicit migrations preserve existing digests, timestamps and sealed provenance.
+Local `TrustedLocal` authentication is not hosted identity qualification.
 See the [extraction record](../../docs/design/architecture/CORE_EXTRACTION.md).

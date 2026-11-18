@@ -17,9 +17,15 @@ lease is dropped.
 File locks, atomic local publication, handoff-pointer recovery, proposal
 sealing and existing budget behavior are retained. The local process remains
 trusted and unsandboxed: resolving a local path is not a remote execution
-protocol, isolation mechanism or durable distributed fence. Portable
-revision/fence/artifact receipts and hosted execution are still separate #94
-and later-phase work.
+protocol or isolation mechanism. Portable `flaggo.workspace/v2` claims bind
+full resource identity and monotonic epochs. Immutable artifact handles,
+conditional handoff publication and `flaggo.execution/v1` reservations/receipts
+support recovery without replaying uncertain side effects.
+
+The local provider also implements `AdmissionFence`. Its OS mutation gate
+coordinates claim/cycle transitions with the Contract Service SQLite admission
+commit. Both apps must share `FLAGGO_ANALYSIS_WORKSPACE_ROOT`. This local proof
+does not qualify distributed lease expiry, cross-host storage or hosted execution.
 
 ```powershell
 cargo test -p flaggo-analysis-workspace --locked
