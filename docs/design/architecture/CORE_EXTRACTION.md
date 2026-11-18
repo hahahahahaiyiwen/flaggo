@@ -1,4 +1,4 @@
-# Shared-core extraction: authority and HTTP slice
+# Shared-core extraction: authority, HTTP and workspace boundaries
 
 Status: **partial implementation of #94**, not closure or hosted qualification.
 Based on the approved architecture revision
@@ -16,6 +16,8 @@ Based on the approved architecture revision
 | `SqliteContractAuthority` | Local atomic authority adapter over one shared SQLite pool |
 | Existing runnable apps | Local configuration, adapter initialization, listener and shutdown composition |
 | `flaggo-core-conformance` | Reusable authority outcome scenarios, independent of SQL |
+| `flaggo-analysis-workspace`, without default features | Path-free workflow and virtual filesystem contracts; local adapter remains feature-gated |
+| `flaggo-evidence-store` and `flaggo-raw-otlp-inbox`, without default features | Evidence/query and durable inbox contracts without SQLx or SQLite query-parser dependencies; existing local adapters remain defaults |
 
 `ContractAuthority` v1 describes the **current global-name v3** resource model.
 It is not the future full-scope identity/auth capability. Reads and mutations
@@ -38,6 +40,37 @@ existing runnable apps. `ReadinessProbe` returns capability availability or
 typed failure without scanning artifacts. Active selection remains authoritative
 per request; compiled immutable programs alone are cached.
 
+`WorkspaceLease` no longer requires `PathBuf` or a host-local execution
+directory. The local capability factory receives the local provider separately;
+its execution-path projection accepts only the exact live claim from that
+provider and preserves active/writable/sealed-cycle checks. The provider keeps
+weak references so projection cannot extend ownership. This separates the
+local convenience without pretending that filesystem rename is a portable
+conditional artifact publication protocol.
+
+The evidence and raw-inbox crates likewise separate their contracts from
+optional local adapters; the OTLP codec no longer enables SQLite transitively.
+Their existing semantics, query envelope and local limits are unchanged. This
+is dependency extraction, not new query negotiation, authorized ingestion or
+distributed projection fencing.
+
+## Approved next wire cutover
+
+After reviewing this slice, the user selected
+**"Use v4 for the full-scope API (Recommended)"** and
+**"Replace v3 with an explicit breaking v4 cutover (Recommended)"**.
+The next route is therefore:
+
+```text
+/v4/tenants/{tenant}/applications/{application}/environments/{environment}/decision-contracts/{contractName}
+```
+
+These are decisions for the next implementation, not a claim that v4 endpoints,
+schemas, SDKs or migrations exist. Current runnable apps still serve v3.
+The cutover must preserve unchanged-content digests and historical provenance,
+align wire/SDK/fixtures/local resource keys, and document migration explicitly;
+it must not silently reinterpret v3 names.
+
 ## Compatibility record
 
 | Surface | This slice |
@@ -49,7 +82,7 @@ per request; compiled immutable programs alone are cached.
 | Authority capability | `flaggo.authority/v1`: globally name-keyed atomic ready publication/current admission and existing activation/read contracts |
 | Reusable fixture revision | `flaggo.authority-conformance/v1`, local subsets of C03-C05 |
 | Evidence query | Existing SQLite dialect/type envelope, **not** the approved future portable profile |
-| Workspace/execution | Existing local filesystem/lock/Python behavior, **not** a durable remote execution protocol or sandbox |
+| Workspace/execution | Path-free lease contract plus explicit local projection; existing local filesystem/lock/Python behavior, **not** a durable remote execution protocol or sandbox |
 | First hosted slice | Not qualified: scoped API/security revision and private distributed adapter still required |
 
 Concurrency strengthens persistence without changing PUT retry semantics:
@@ -81,6 +114,8 @@ cargo test -p flaggo-contract-service -p flaggo-decision-service -p flaggo-contr
 cargo check -p flaggo-contract-application -p flaggo-decision-http --locked
 cargo clippy -p flaggo-contract-application -p flaggo-decision-http -p flaggo-core-conformance --all-targets --locked -- -D warnings
 cargo test -p flaggo-async-analysis packaged_skills_override --locked
+cargo test -p flaggo-analysis-workspace -p flaggo-async-analysis -p flaggo-evidence-store -p flaggo-raw-otlp-inbox -p flaggo-otlp-codec --locked
+cargo check -p flaggo-analysis-agent -p flaggo-analysis-workspace -p flaggo-evidence-store -p flaggo-raw-otlp-inbox -p flaggo-otlp-codec --no-default-features --locked
 npm run test:tetris-full-loop
 ```
 
@@ -117,11 +152,11 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C01-C02 | Existing domain/compiler/runtime tests retained; injected-reader HTTP cache/failure test added. Full reusable cross-adapter corpus remains incomplete |
 | C03-C05 | Reusable local publication/failure/admission/activation outcomes added; existing store ABA/rollback coverage retained. Multi-process barrier/failure matrix and actual distributed proof remain outstanding |
 | C06 | Local injected-reader behavior only; multi-host acknowledgement/outage qualification remains phase 3 |
-| C07 | Scoped routes, resource keys, independent authentication/security/error artifacts and SDK cutover not implemented; a concrete reviewed API revision is still required |
+| C07 | V4 and explicit breaking cutover approved above; scoped routes, resource keys, independent authentication/security/error artifacts, SDK and migration are not implemented |
 | C08-C09 | Existing inbox/evidence tests retained, but their outcome suites are not yet extracted; authorized whole-batch envelope and fenced projection protocol remain outstanding |
 | C10 | Durable monotonic worker fences and authoritative stale-write rejection are not implemented |
 | C11 | Versioned capability negotiation, lossless result schema/profile and required query corpus are not implemented |
-| C12 | Local recovery behavior retained, but portable workflow/artifact/execution contracts still expose local filesystem assumptions and need extraction |
+| C12 | Host paths removed from the lease contract and exact-claim local projection tested; durable conditional publication/fence/execution receipts and reusable recovery scenarios remain outstanding |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
 | Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
 
@@ -147,6 +182,15 @@ On the local Windows environment, the focused store/service/shared-HTTP command
 above passed **53 tests**, with **2 historical .NET differential tests ignored**
 (not passes). The packaged-skill test passed separately. Focused all-targets
 Clippy passed, and the shared crates also built without SQLite enabled.
+
+The subsequent workspace/evidence-boundary slice passed **82 tests** across
+workspace recovery, local Python analysis, evidence, inbox and codec packages.
+All-targets Clippy passed for the changed local composition and adapters, and
+contract-only checks passed with local defaults disabled. The initial local
+analysis run lacked its documented Python environment; creating `.venv` and
+installing the existing requirements resolved that prerequisite. A concurrent
+build observed an intermediate feature-manifest/source mismatch during editing;
+the complete rerun against the stable source passed. No live provider was used.
 
 The deterministic Tetris full-loop passed against the extracted runnable apps:
 contract acceptance, SDK decisions, OTLP durable ingestion, evidence

@@ -47,6 +47,7 @@ where
         },
         clock.clone(),
         config.python.clone(),
+        workspace_provider.as_ref().clone(),
     ));
     let coordinator = Arc::new(AnalysisCoordinator::new(
         contract_service,

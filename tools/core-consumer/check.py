@@ -24,7 +24,8 @@ def main():
     crates = [
         "flaggo-contract", "flaggo-expression", "flaggo-decision",
         "flaggo-contract-application", "flaggo-decision-http",
-        "flaggo-executable-store", "flaggo-core-conformance",
+        "flaggo-executable-store", "flaggo-core-conformance", "flaggo-analysis-workspace",
+        "flaggo-evidence-store", "flaggo-raw-otlp-inbox",
     ]
     manifest = '[package]\nname = "flaggo-pinned-consumer"\nversion = "0.1.0"\nedition = "2024"\n\n[workspace]\n\n[dependencies]\n'
     for crate in crates:

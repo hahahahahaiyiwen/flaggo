@@ -5,10 +5,12 @@
 //! agents, or submit Candidates.
 
 mod identity;
+#[cfg(feature = "local")]
 mod local;
 mod provider;
 
 pub use identity::{sha256_digest, workspace_id};
+#[cfg(feature = "local")]
 pub use local::LocalWorkspaceProvider;
 pub use provider::{
     CyclePreparation, PrepareCycleResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileInfo,

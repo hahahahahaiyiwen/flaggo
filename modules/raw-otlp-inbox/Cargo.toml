@@ -6,11 +6,15 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["sqlite"]
+sqlite = ["dep:sha2", "dep:sqlx"]
+
 [dependencies]
 async-trait = "0.1.89"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
-sha2 = "0.10.9"
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sha2 = { version = "0.10.9", optional = true }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"], optional = true }
 thiserror = "2.0.18"
 
 [dev-dependencies]

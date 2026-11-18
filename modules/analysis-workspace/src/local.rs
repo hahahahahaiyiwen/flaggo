@@ -1,9 +1,9 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, Weak},
     time::Duration,
 };
 
@@ -25,11 +25,12 @@ use crate::{
 
 const WORKSPACE_SCHEMA_VERSION: u32 = 1;
 const VIRTUAL_ROOT: &str = "workspace";
+type LocalClaims = Arc<Mutex<HashMap<String, Weak<LocalWorkspaceLease>>>>;
 
 #[derive(Clone)]
 pub struct LocalWorkspaceProvider {
     root: PathBuf,
-    process_claims: Arc<Mutex<HashSet<String>>>,
+    process_claims: LocalClaims,
 }
 
 impl LocalWorkspaceProvider {
@@ -39,8 +40,31 @@ impl LocalWorkspaceProvider {
         let root = fs::canonicalize(root).map_err(workspace_error)?;
         Ok(Self {
             root,
-            process_claims: Arc::new(Mutex::new(HashSet::new())),
+            process_claims: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// Resolve a live local claim for trusted-local execution, never a remote lease.
+    pub fn analysis_directory(
+        &self,
+        workspace: &Arc<dyn WorkspaceLease>,
+        cycle_id: &str,
+    ) -> Result<PathBuf, AnalysisError> {
+        let lease = mutex_lock(&self.process_claims)?
+            .get(workspace.workspace_id())
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| {
+                AnalysisError::workspace("execution requires a live local workspace claim")
+            })?;
+        let claimed: Arc<dyn WorkspaceLease> = lease.clone();
+        if !Arc::ptr_eq(&claimed, workspace) {
+            return Err(AnalysisError::workspace(
+                "execution workspace does not belong to this local provider",
+            ));
+        }
+        lease.require_active_cycle(cycle_id)?;
+        lease.require_writable(cycle_id)?;
+        Ok(lease.cycle_path(cycle_id).join("analysis"))
     }
 }
 
@@ -57,16 +81,23 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
         let id = workspace_id(contract_name);
         {
             let mut claims = mutex_lock(&self.process_claims)?;
-            if !claims.insert(id.clone()) {
+            if claims.contains_key(&id) {
                 return Err(AnalysisError::WorkspaceBusy(id.clone()));
             }
+            claims.insert(id.clone(), Weak::new());
         }
 
-        let result = self.open_claim(contract_name, attempt_id, &id);
-        if result.is_err() {
-            mutex_lock(&self.process_claims)?.remove(&id);
+        match self.open_claim(contract_name, attempt_id, &id) {
+            Ok(lease) => {
+                let lease = Arc::new(lease);
+                mutex_lock(&self.process_claims)?.insert(id, Arc::downgrade(&lease));
+                Ok(lease)
+            }
+            Err(error) => {
+                mutex_lock(&self.process_claims)?.remove(&id);
+                Err(error)
+            }
         }
-        result.map(|lease| Arc::new(lease) as Arc<dyn WorkspaceLease>)
     }
 }
 
@@ -148,7 +179,7 @@ pub struct LocalWorkspaceLease {
     root: PathBuf,
     workspace_id: String,
     contract_name: String,
-    process_claims: Arc<Mutex<HashSet<String>>>,
+    process_claims: LocalClaims,
     _lock_file: File,
     state: Arc<Mutex<LeaseState>>,
     io_gate: Arc<Mutex<()>>,
@@ -177,12 +208,6 @@ impl WorkspaceLease for LocalWorkspaceLease {
 
     fn contract_name(&self) -> &str {
         &self.contract_name
-    }
-
-    fn analysis_directory(&self, cycle_id: &str) -> Result<PathBuf, AnalysisError> {
-        self.require_active_cycle(cycle_id)?;
-        self.require_writable(cycle_id)?;
-        Ok(self.cycle_path(cycle_id).join("analysis"))
     }
 
     async fn prepare_cycle(
@@ -1580,6 +1605,59 @@ mod tests {
                 panic!("expected ready cycle, next eligible at {eligible_at}")
             }
         }
+    }
+
+    #[tokio::test]
+    async fn local_execution_projection_requires_the_exact_live_writable_claim() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path().join("first")).unwrap();
+        let other_provider = LocalWorkspaceProvider::new(directory.path().join("other")).unwrap();
+        let accepted_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let contract = contract('a', accepted_at);
+        let lease = provider.claim(&contract.name, "attempt-1").await.unwrap();
+        assert!(provider.analysis_directory(&lease, "unprepared").is_err());
+        let cycle = ready(
+            lease
+                .prepare_cycle(
+                    &contract,
+                    &profile(),
+                    "attempt-1",
+                    accepted_at + Duration::hours(2),
+                )
+                .await
+                .unwrap(),
+        )
+        .cycle;
+        assert!(
+            provider
+                .analysis_directory(&lease, &cycle.cycle_id)
+                .unwrap()
+                .is_dir()
+        );
+        assert!(provider.analysis_directory(&lease, "wrong-cycle").is_err());
+
+        let other_lease = other_provider
+            .claim(&contract.name, "attempt-1")
+            .await
+            .unwrap();
+        assert_eq!(lease.workspace_id(), other_lease.workspace_id());
+        assert!(
+            provider
+                .analysis_directory(&other_lease, &cycle.cycle_id)
+                .is_err(),
+            "matching identity alone cannot select another local lease"
+        );
+        lease.seal_analysis_manifest(&cycle.cycle_id).await.unwrap();
+        assert!(
+            provider
+                .analysis_directory(&lease, &cycle.cycle_id)
+                .is_err()
+        );
+        drop(lease);
+        assert!(
+            provider.claim(&contract.name, "attempt-2").await.is_ok(),
+            "the execution projection must not retain ownership after lease drop"
+        );
     }
 
     #[tokio::test]

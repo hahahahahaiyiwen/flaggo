@@ -49,6 +49,11 @@ async fn main() {
     let _management = |authority: Arc<dyn flaggo_executable_store::ContractAuthority>| {
         flaggo_contract_application::router(flaggo_contract_application::ContractLifecycle::new(authority))
     };
+    let _workspace_contract = |lease: Arc<dyn flaggo_analysis_workspace::WorkspaceLease>| {
+        lease.workspace_id().to_owned()
+    };
+    let _evidence_contract = |store: Arc<dyn flaggo_evidence_store::EvidenceStore>| store;
+    let _inbox_contract = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| inbox;
     let input = flaggo_contract::strict_json::deserialize(br#"{"attributes":{
         "_random":0.5,"board_pressure":0.2,"current_level":1,
         "recent_placement_time_ms":500,"recovery_failures":0,"session_id":"consumer"

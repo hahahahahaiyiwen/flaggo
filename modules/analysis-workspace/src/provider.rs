@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -67,9 +67,6 @@ pub trait WorkspaceLease: Send + Sync {
     fn workspace_id(&self) -> &str;
 
     fn contract_name(&self) -> &str;
-
-    /// Host working directory for trusted-local execution; not a sandbox.
-    fn analysis_directory(&self, cycle_id: &str) -> Result<PathBuf, AnalysisError>;
 
     async fn prepare_cycle(
         &self,

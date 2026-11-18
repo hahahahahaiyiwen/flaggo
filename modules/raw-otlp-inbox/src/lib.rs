@@ -9,8 +9,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
+#[cfg(feature = "sqlite")]
 mod sqlite;
 
+#[cfg(feature = "sqlite")]
 pub use sqlite::SqliteRawOtlpInbox;
 
 pub const DEFAULT_MAX_RETAINED_PAYLOAD_BYTES: u64 = 1024 * 1024 * 1024;
@@ -34,6 +36,7 @@ impl OtlpSignal {
         }
     }
 
+    #[cfg(feature = "sqlite")]
     pub(crate) fn from_storage(value: &str) -> Option<Self> {
         match value {
             "logs" => Some(Self::Logs),
@@ -67,6 +70,7 @@ impl OtlpWireEncoding {
         }
     }
 
+    #[cfg(feature = "sqlite")]
     pub(crate) fn from_storage(value: &str) -> Option<Self> {
         match value {
             "protobuf" => Some(Self::Protobuf),
@@ -91,6 +95,7 @@ impl OtlpTransportCompression {
         }
     }
 
+    #[cfg(feature = "sqlite")]
     pub(crate) fn from_storage(value: &str) -> Option<Self> {
         match value {
             "identity" => Some(Self::Identity),
@@ -245,6 +250,7 @@ impl RawOtlpInboxLimits {
         self.hard_retention
     }
 
+    #[cfg(feature = "sqlite")]
     pub(crate) fn hard_retention_millis(self) -> i64 {
         i64::try_from(self.hard_retention.as_millis())
             .expect("validated hard retention must fit in i64 milliseconds")
@@ -332,7 +338,7 @@ pub enum RawOtlpInboxError {
 }
 
 impl RawOtlpInboxError {
-    pub(crate) fn unavailable(source: impl Error + Send + Sync + 'static) -> Self {
+    pub fn unavailable(source: impl Error + Send + Sync + 'static) -> Self {
         Self::Unavailable {
             source: Box::new(source),
         }

@@ -18,6 +18,9 @@ it.
 
 The contract uses OTLP and inbox domain types only. It does not expose SQLx,
 SQLite connections, table names, or transactions.
+Consume with `default-features = false` to exclude the SQLite adapter and its
+SQLx dependency entirely. The default `sqlite` feature retains local behavior;
+the OTLP codec depends only on the contract-only form.
 
 `SqliteRawOtlpInbox` is the initial adapter. It owns schema component
 `raw-otlp-inbox` version `1` in the shared `flaggo_schema_versions` table and
@@ -49,6 +52,9 @@ stores payloads in `raw_otlp_inbox_batches`.
 
 Defaults are 1 GiB of retained decompressed payload bytes and 24 hours of hard
 retention. Both are provided through `RawOtlpInboxLimits`.
+These are trusted-local defaults, not approved hosted capacity or retention
+policy. This extraction adds no authenticated-envelope or distributed worker
+fencing guarantee.
 
 Receiver parsing, decompression, size enforcement, and OTLP HTTP responses
 belong to `apps/otel-ingestion`. Resource decomposition, routing, evidence

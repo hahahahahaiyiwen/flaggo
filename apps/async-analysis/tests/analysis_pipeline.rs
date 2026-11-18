@@ -526,9 +526,10 @@ fn coordinator_with_limits(
     cycle_limits: CycleLimits,
 ) -> AnalysisCoordinator {
     let clock: Arc<dyn Clock> = Arc::new(FixedClock(now));
+    let workspaces = LocalWorkspaceProvider::new(workspace_root).expect("workspace provider");
     AnalysisCoordinator::new(
         service.clone(),
-        Arc::new(LocalWorkspaceProvider::new(workspace_root).expect("workspace provider")),
+        Arc::new(workspaces.clone()),
         Arc::new(LocalCapabilityFactory::new(
             service,
             evidence,
@@ -539,6 +540,7 @@ fn coordinator_with_limits(
             },
             Arc::clone(&clock),
             flaggo_async_analysis::python::PythonConfig::default(),
+            workspaces,
         )),
         AgentPool::new(provider, NonZeroUsize::new(1).expect("nonzero")),
         CoordinatorConfig {
@@ -1000,6 +1002,7 @@ async fn cached_submission_retries_succeed_changed_rules_conflict_and_superseded
         },
         Arc::new(FixedClock(now)),
         flaggo_async_analysis::python::PythonConfig::default(),
+        workspaces.clone(),
     );
     use flaggo_analysis_agent::AnalysisCapabilityFactory;
     let tools = factory

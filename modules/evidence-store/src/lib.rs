@@ -5,7 +5,9 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 mod analysis;
+#[cfg(feature = "sqlite")]
 mod sqlite;
+#[cfg(feature = "sqlite")]
 mod sqlite_analysis;
 
 pub use analysis::{
@@ -13,7 +15,9 @@ pub use analysis::{
     EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope, EvidenceRelation,
     EvidenceRelationColumn, EvidenceSourceSelector,
 };
+#[cfg(feature = "sqlite")]
 pub use sqlite::SqliteEvidenceStore;
+#[cfg(feature = "sqlite")]
 pub use sqlite_analysis::{SQLITE_EVIDENCE_QUERY_CAPABILITIES, SqliteEvidenceAnalysisStore};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -67,6 +71,7 @@ impl EvidenceSignal {
         }
     }
 
+    #[cfg(feature = "sqlite")]
     pub(crate) fn from_storage(value: &str) -> Option<Self> {
         match value {
             "log" => Some(Self::Log),
@@ -199,7 +204,7 @@ pub enum EvidenceStoreError {
 }
 
 impl EvidenceStoreError {
-    pub(crate) fn unavailable(source: impl Error + Send + Sync + 'static) -> Self {
+    pub fn unavailable(source: impl Error + Send + Sync + 'static) -> Self {
         Self::Unavailable {
             source: Box::new(source),
         }

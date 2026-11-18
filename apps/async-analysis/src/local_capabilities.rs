@@ -10,7 +10,9 @@ use flaggo_analysis_agent::{
     action::{ActionKind, ActionObservation, ActionOutcome, FailureCategory},
 };
 use flaggo_analysis_domain::{AnalysisContract, AnalysisError, AttemptContext, CandidateRecord};
-use flaggo_analysis_workspace::{WorkspaceFileSystem, WorkspaceLease, sha256_digest};
+use flaggo_analysis_workspace::{
+    LocalWorkspaceProvider, WorkspaceFileSystem, WorkspaceLease, sha256_digest,
+};
 use flaggo_evidence_store::{
     AuthorityScope, EvidenceAnalysisStore, EvidenceQueryLimits, EvidenceQueryRequest,
     EvidenceQueryScope, EvidenceSignal, EvidenceSourceSelector, EvidenceStoreError,
@@ -34,6 +36,7 @@ pub struct LocalCapabilityFactory {
     query_limits: EvidenceQueryLimits,
     clock: Arc<dyn Clock>,
     python: PythonConfig,
+    workspaces: LocalWorkspaceProvider,
 }
 
 impl LocalCapabilityFactory {
@@ -44,6 +47,7 @@ impl LocalCapabilityFactory {
         query_limits: EvidenceQueryLimits,
         clock: Arc<dyn Clock>,
         python: PythonConfig,
+        workspaces: LocalWorkspaceProvider,
     ) -> Self {
         Self {
             contract_service,
@@ -51,6 +55,7 @@ impl LocalCapabilityFactory {
             query_limits,
             clock,
             python,
+            workspaces,
         }
     }
 }
@@ -76,6 +81,7 @@ impl AnalysisCapabilityFactory for LocalCapabilityFactory {
             yield_signal: Arc::new(YieldSignal::default()),
             parent: tracing::Span::current(),
             python: self.python.clone(),
+            workspaces: self.workspaces.clone(),
         }))
     }
 }
@@ -92,6 +98,7 @@ struct LocalAnalysisTools {
     yield_signal: Arc<YieldSignal>,
     parent: tracing::Span,
     python: PythonConfig,
+    workspaces: LocalWorkspaceProvider,
 }
 
 #[async_trait]
@@ -274,7 +281,7 @@ impl AnalysisTools for LocalAnalysisTools {
         let span = action.span();
         let result = async {
             self.ensure_not_yielding()?;
-            let directory = self.workspace.analysis_directory(&self.context.cycle_id)?;
+            let directory = self.workspaces.analysis_directory(&self.workspace, &self.context.cycle_id)?;
             let filesystem = self.workspace.filesystem(&self.context.cycle_id, &self.context.attempt_id).await?;
             let (script_path, source, source_directory) = match input {
                 PythonInput::ScriptPath(script_path) => {
@@ -769,6 +776,8 @@ mod tests {
             behavior: QueryBehavior::Success,
         });
         let clock: Arc<dyn Clock> = Arc::new(FixedClock(now));
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let workspaces = LocalWorkspaceProvider::new(directory.path()).expect("workspace provider");
         let factory = LocalCapabilityFactory::new(
             service.clone(),
             evidence.clone(),
@@ -779,9 +788,8 @@ mod tests {
             },
             clock,
             PythonConfig::default(),
+            workspaces.clone(),
         );
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let workspaces = LocalWorkspaceProvider::new(directory.path()).expect("workspace provider");
         let lease = workspaces
             .claim(&contract.name, "attempt-1")
             .await
@@ -976,6 +984,8 @@ mod tests {
             requests: Mutex::new(Vec::new()),
             behavior: QueryBehavior::Success,
         });
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let workspaces = LocalWorkspaceProvider::new(directory.path()).expect("workspace provider");
         let factory = LocalCapabilityFactory::new(
             service,
             evidence,
@@ -986,9 +996,8 @@ mod tests {
             },
             Arc::new(FixedClock(now)),
             PythonConfig::default(),
+            workspaces.clone(),
         );
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let workspaces = LocalWorkspaceProvider::new(directory.path()).expect("workspace provider");
         let lease = workspaces
             .claim(&contract.name, "attempt-1")
             .await
@@ -1054,6 +1063,8 @@ mod tests {
         let accepted_at = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).single().unwrap();
         let now = accepted_at + chrono::Duration::hours(2);
         let contract = contract(accepted_at);
+        let directory = tempfile::tempdir_in(".").unwrap();
+        let workspaces = LocalWorkspaceProvider::new(directory.path()).unwrap();
         let factory = LocalCapabilityFactory::new(
             Arc::new(FakeContractService {
                 current: contract.clone(),
@@ -1071,9 +1082,8 @@ mod tests {
             },
             Arc::new(FixedClock(now)),
             python,
+            workspaces.clone(),
         );
-        let directory = tempfile::tempdir_in(".").unwrap();
-        let workspaces = LocalWorkspaceProvider::new(directory.path()).unwrap();
         let lease = workspaces.claim(&contract.name, "attempt-1").await.unwrap();
         let cycle = ready(
             lease
@@ -1445,6 +1455,8 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
         let accepted_at = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).single().unwrap();
         let now = accepted_at + chrono::Duration::hours(2);
         let contract = contract(accepted_at);
+        let workspace_root = directory.path().join("workspaces");
+        let workspaces = LocalWorkspaceProvider::new(&workspace_root).unwrap();
         let factory = LocalCapabilityFactory::new(
             Arc::new(FakeContractService {
                 current: contract.clone(),
@@ -1459,9 +1471,8 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
             },
             Arc::new(FixedClock(now)),
             PythonConfig::default(),
+            workspaces.clone(),
         );
-        let workspace_root = directory.path().join("workspaces");
-        let workspaces = LocalWorkspaceProvider::new(&workspace_root).unwrap();
         let lease = workspaces.claim(&contract.name, "attempt-1").await.unwrap();
         let cycle = ready(
             lease
