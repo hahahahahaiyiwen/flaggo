@@ -9,6 +9,9 @@ transactionally writes Evidence Store projections. Producing versions are
 recorded as provenance without replaying completed inbox batches after an
 upgrade.
 
+The shared implementation lives in `flaggo-evidence-materialization` without
+SQLite dependencies. This app supplies local adapters and process lifecycle.
+
 The canonical cross-app lifecycle is documented in
 [Application boundaries and lifecycle](../../docs/design/architecture/APP_BOUNDARIES.md).
 
@@ -75,8 +78,22 @@ only with its complete projection.
 | Contract Service catalog API | Optional read | Refresh current application-telemetry routes with ETag validation |
 
 The Raw OTLP Inbox and Evidence Store currently share one SQLite database URL,
-but they retain separate schemas and owners. Exactly one Evidence Materializer
-may be active per database.
+but they retain separate schemas and owners. Starting a materializer explicitly
+compares and replaces the durable projection claim. Only the current epoch may
+commit projections or catalog updates. Each new projection checks its expected
+previous checkpoint in the same transaction. An older worker fails closed and
+exits when it observes a fence conflict.
+
+This is ordered ownership replacement, not a time-expiring distributed lease.
+No worker-clock assumption, hosted lease duration or automatic failover policy
+is introduced. Schema 5 adds ownership metadata without rewriting observations,
+catalog bytes or checkpoints. With writers stopped, migrate an existing schema-4
+database explicitly:
+
+```powershell
+$env:FLAGGO_DATABASE_URL = "<existing SQLite URL>"
+cargo run -p flaggo-evidence-materializer -- --migrate-v4-to-v5
+```
 
 ## Execution model
 

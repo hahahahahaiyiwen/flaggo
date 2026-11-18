@@ -21,6 +21,7 @@ revisions recorded below.
 | `flaggo-analysis-workspace`, without default features | Path-free workflow and virtual filesystem contracts; local adapter remains feature-gated |
 | `flaggo-analysis-application` | Shared coordinator, scoped Contract Service client, evidence/tools and observability with injected execution; no app or SQLite dependency |
 | `flaggo-analysis-execution`, without default features | Path-free execution/reconciliation capability; default local adapter owns Python processes and host paths |
+| `flaggo-evidence-materialization` | Shared decode, routing, identity and forward projection over inbox/store ports; no SQLite dependency |
 | `flaggo-evidence-store` and `flaggo-raw-otlp-inbox`, without default features | Evidence/query and durable inbox contracts without SQLx or SQLite query-parser dependencies; existing local adapters remain defaults |
 
 `ContractAuthority` v2 uses an explicit validated
@@ -80,7 +81,12 @@ explicit versioned profile selection, canonical cells, saved scope/read/limit
 metadata and Python/deterministic consumers. Ingestion now commits the unchanged
 payload with `flaggo.otlp.authorization/v1` producer/scope metadata only after
 every Resource has been authorized. Replay rechecks that envelope. Distributed
-projection fencing remains outstanding.
+projection fencing uses `flaggo.evidence.projection/v2`: durable monotonic claim
+replacement and expected-checkpoint comparison are checked in the same
+transaction as every projection. Catalog updates check the same claim.
+Starting a local materializer explicitly replaces ownership; a stale worker
+fails closed rather than reacquiring on each poll. This is ordered replacement,
+not hosted time-expiring lease or failover qualification.
 
 ## Implemented breaking wire cutover
 
@@ -108,8 +114,11 @@ $env:FLAGGO_CONTRACT_DATABASE_PATH = "<existing local database file>"
 cargo run -p flaggo-contract-service -- --migrate-v3-to-v4
 $env:FLAGGO_DATABASE_URL = "<SQLite URL for that same file>"
 cargo run -p flaggo-otel-ingestion -- --migrate-v1-to-v2
+cargo run -p flaggo-evidence-materializer -- --migrate-v4-to-v5
 ```
 
+The evidence migration adds schema-5 ownership metadata while preserving exact
+observations and existing checkpoints. It does not replay prior batches.
 The first operation atomically migrates contract schema 3 and executable schema
 4/5 to 4/6, deriving scope from existing accepted content. It preserves exact
 artifact/provenance bytes, digests, timestamps and lifecycle state; any invalid
@@ -146,11 +155,12 @@ abandoned. New workspaces use the `flaggo.workspace/v2` full-resource hash domai
 | Product revision | The Git commit containing this record; consumer runs additionally record their exact immutable source SHA in `result.json` |
 | Public HTTP and SDK | Management/runtime **v4**, explicit full scope; deployment schema v3 retains manifest v2 and requires runtime configuration v2 |
 | Expression/canonical identity | `flaggo.cel/v1`; unchanged contract/executable digest algorithms and fixtures |
-| SQLite schemas | Contract **4**, executable **6**, evidence **4**, raw inbox **2**; explicit authority/inbox migrations, no reset |
+| SQLite schemas | Contract **4**, executable **6**, evidence **5**, raw inbox **2**; explicit authority/inbox/evidence migrations, no reset |
 | Authority capability | `flaggo.authority/v2`: full-scope atomic ready publication/current admission, scoped catalog/pagination and activation/read contracts |
 | Security capability | `flaggo.security.resource/v1`, independently injected policy; `flaggo.otlp.authorization/v1` retained producer/scope envelope |
 | OTLP profile | `flaggo.otlp-http` **2.0.0**; standard OTLP payloads/endpoints, whole-batch authorization, explicitly local numeric defaults |
-| Reusable fixture revision | `flaggo.authority-conformance/v2` (namespace and C03-C05) and `flaggo.evidence-conformance/v2` (local C08/C09/C11 outcomes) |
+| Reusable fixture revision | `flaggo.authority-conformance/v2` (C07 namespace and C03-C05) and `flaggo.evidence-conformance/v3` (local C08/C09/C11 plus projection fencing outcomes) |
+| Projection capability | `flaggo.evidence.projection/v2`, explicit ordered claim replacement, atomic epoch/checkpoint preconditions; materializer revision 3 |
 | Evidence query | Explicit `flaggo.evidence.sqlite/v1` selection and `flaggo.evidence.query-result/v1` saved artifacts; provider SQL semantics are labelled, not arbitrary-SQL portable |
 | Canonical evidence cells | `flaggo.evidence.value/v1` integrated into typed rows, Python/agent guidance and deterministic consumers |
 | Workspace/execution | `flaggo.workspace/v2`, `flaggo.execution/v1`, `flaggo.workspace-conformance/v1`; local fenced publication, durable execution reconciliation and explicit trusted-local Python profile |
@@ -232,8 +242,8 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C03-C05 | Reusable local publication/failure/admission/activation outcomes added; existing store ABA/rollback coverage retained. Multi-process barrier/failure matrix and actual distributed proof remain outstanding |
 | C06 | Local injected-reader behavior only; multi-host acknowledgement/outage qualification remains phase 3 |
 | C07 | Scoped v4 keys/routes/SDK/artifacts, injected authentication and local migration implemented; namespace, security denial/no-write and migration preservation/rollback tests pass. Private identity adapter qualification remains later |
-| C08-C09 | Reusable durable append, atomic projection/checkpoint, retry/dedup/conflict outcomes and authorized whole-batch envelope implemented; replay rejects missing/mismatched authorization. Distributed fenced projection protocol remains outstanding |
-| C10 | Local workspace epochs, release/reacquisition and stale workspace/publication/execution rejection implemented; authority-verified admission and distributed projection fencing remain to be completed |
+| C08-C09 | Reusable durable append, fenced atomic projection/checkpoint, retry/dedup/conflict outcomes and authorized whole-batch envelope implemented; replay rejects missing/mismatched authorization. Actual distributed qualification remains later |
+| C10 | Local workspace and projection epochs, release/replacement and stale workspace/publication/execution/checkpoint rejection implemented; authority-verified candidate admission remains to be completed. Expiry/skew qualification remains later |
 | C11 | Explicit result/profile selection, canonical cells, scope/read/limit/artifact metadata and Python/agent consumers integrated. Shared twelve-category SQLite profile corpus runs under two scopes; local deadline/cancellation and reuse checked. Actual second-provider qualification remains later |
 | C12 | Path-free execution provider, immutable conditional publication, durable receipts and reusable recovery scenarios implemented; hosted isolation and cross-host execution qualification remain later |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
@@ -285,7 +295,11 @@ that immutable local Git revision, all three HTTP compositions compiled, and
 the graph contained no SQLx/SQLite. Its retained lock SHA-256 is
 `e06f3a8696c459c078fc185627c18baf64c54f928160d335d3f401aef3697f19`.
 This is not remote publication. The newly extracted analysis/execution libraries
-still require their own final committed consumer qualification.
+were subsequently consumed at `22b7d7336c17d03832d7d52f8b47d4c3cddf683f`.
+That separate local Git build passed with **19** uniformly pinned public crates,
+no SQLx/SQLite or app dependency, and lock SHA-256
+`1a932d9e50d43eccf1a4fe1cd5f759c0fe26a05151d65a764505e33b4e28940e`.
+The materialization/projection slice still requires its own final consumer pin.
 
 The first standalone run exposed a fixture helper's accidental reliance on
 workspace-unified `serde_json/preserve_order`. The helper now deserializes the

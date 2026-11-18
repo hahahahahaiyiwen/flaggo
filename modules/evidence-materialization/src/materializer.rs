@@ -3,7 +3,7 @@ use std::num::{NonZeroU16, NonZeroU64};
 use chrono::{DateTime, Utc};
 use flaggo_evidence_store::{
     EvidenceStore, EvidenceStoreCommitResult, EvidenceStoreError, EvidenceStoreHealth,
-    MaterializerVersions, StoredContractCatalog,
+    MaterializerVersions, ProjectionClaim, StoredContractCatalog,
 };
 use flaggo_raw_otlp_inbox::{InboxBatchId, RawOtlpInbox, RawOtlpInboxError};
 use thiserror::Error;
@@ -18,6 +18,7 @@ pub struct EvidenceMaterializer<I, S> {
     store: S,
     read_limit: NonZeroU16,
     versions: MaterializerVersions,
+    claim: ProjectionClaim,
 }
 
 impl<I, S> EvidenceMaterializer<I, S>
@@ -25,11 +26,18 @@ where
     I: RawOtlpInbox,
     S: EvidenceStore,
 {
-    pub fn new(inbox: I, store: S, read_limit: NonZeroU16) -> Self {
-        Self {
+    pub async fn new(
+        inbox: I,
+        store: S,
+        read_limit: NonZeroU16,
+    ) -> Result<Self, MaterializerError> {
+        let expected = store.projection_claim().await?;
+        let claim = store.replace_projection_claim(expected).await?;
+        Ok(Self {
             inbox,
             store,
             read_limit,
+            claim,
             versions: MaterializerVersions {
                 materializer: MATERIALIZER_VERSION.to_owned(),
                 decoder: DECODER_VERSION.to_owned(),
@@ -37,7 +45,7 @@ where
                 projection: PROJECTION_VERSION.to_owned(),
                 routing: ROUTING_VERSION.to_owned(),
             },
-        }
+        })
     }
 
     pub async fn activate_catalog(
@@ -47,11 +55,14 @@ where
         fetched_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), MaterializerError> {
         self.store
-            .save_catalog(StoredContractCatalog {
-                etag,
-                payload: next.payload().to_vec(),
-                fetched_at,
-            })
+            .save_catalog(
+                self.claim,
+                StoredContractCatalog {
+                    etag,
+                    payload: next.payload().to_vec(),
+                    fetched_at,
+                },
+            )
             .await?;
         Ok(())
     }
@@ -60,7 +71,7 @@ where
         &self,
         catalog: &CompiledContractCatalog,
     ) -> Result<MaterializerRunResult, MaterializerError> {
-        let checkpoint = self.store.forward_checkpoint().await?;
+        let mut checkpoint = self.store.forward_checkpoint().await?;
         let after = checkpoint.and_then(NonZeroU64::new).map(InboxBatchId::new);
         let batches = self.inbox.read_after(after, self.read_limit).await?;
         let mut result = MaterializerRunResult {
@@ -69,7 +80,9 @@ where
         };
         for batch in batches {
             let commit = project_batch(&batch, catalog, &self.versions);
-            result.add_commit(self.store.commit(commit).await?);
+            let batch_id = commit.inbox_batch_id;
+            result.add_commit(self.store.commit(self.claim, checkpoint, commit).await?);
+            checkpoint = Some(batch_id);
         }
         Ok(result)
     }

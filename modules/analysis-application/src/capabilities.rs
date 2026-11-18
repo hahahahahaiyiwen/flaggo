@@ -536,6 +536,9 @@ fn evidence_error(error: impl std::fmt::Display) -> AnalysisError {
 
 fn evidence_query_failure(error: &EvidenceStoreError) -> (ActionOutcome, FailureCategory) {
     match error {
+        EvidenceStoreError::ProjectionConflict => {
+            (ActionOutcome::Failed, FailureCategory::Conflict)
+        }
         EvidenceStoreError::QueryLimit("time") => {
             (ActionOutcome::Timeout, FailureCategory::Timeout)
         }
@@ -1651,41 +1654,45 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
             routing: "1".to_owned(),
         };
         writer
-            .commit(EvidenceMaterializationCommit {
-                key: ForwardMaterializationKey {
-                    versions: versions.clone(),
-                },
-                inbox_batch_id: 1,
-                observations: vec![EvidenceObservationWrite {
-                    candidate_ordinal: 0,
-                    observation: EvidenceObservation {
-                        observation_id: sha256_digest(b"late-observation"),
-                        logical_source_id: sha256_digest(b"late-source"),
-                        content_digest: sha256_digest(b"{}"),
-                        authority: AuthorityScope {
-                            tenant: "local".to_owned(),
-                            application: "checkout".to_owned(),
-                            environment: "test".to_owned(),
-                        },
-                        source: SourceKey {
-                            signal: EvidenceSignal::Metric,
-                            instrumentation_scope: "checkout".to_owned(),
-                            signal_name: "request.duration".to_owned(),
-                            metric_kind: Some("histogram".to_owned()),
-                            metric_unit: Some("ms".to_owned()),
-                            parent_span_name: None,
-                        },
-                        observed_at_unix_nano: 1,
-                        observed_time_source: "timeUnixNano".to_owned(),
-                        protocol_kind: None,
-                        decision_id: None,
-                        contract_digest: Some(contract.contract_digest.clone()),
-                        payload_json: b"{}".to_vec(),
-                        versions,
+            .commit(
+                writer.replace_projection_claim(None).await.unwrap(),
+                None,
+                EvidenceMaterializationCommit {
+                    key: ForwardMaterializationKey {
+                        versions: versions.clone(),
                     },
-                }],
-                diagnostics: vec![],
-            })
+                    inbox_batch_id: 1,
+                    observations: vec![EvidenceObservationWrite {
+                        candidate_ordinal: 0,
+                        observation: EvidenceObservation {
+                            observation_id: sha256_digest(b"late-observation"),
+                            logical_source_id: sha256_digest(b"late-source"),
+                            content_digest: sha256_digest(b"{}"),
+                            authority: AuthorityScope {
+                                tenant: "local".to_owned(),
+                                application: "checkout".to_owned(),
+                                environment: "test".to_owned(),
+                            },
+                            source: SourceKey {
+                                signal: EvidenceSignal::Metric,
+                                instrumentation_scope: "checkout".to_owned(),
+                                signal_name: "request.duration".to_owned(),
+                                metric_kind: Some("histogram".to_owned()),
+                                metric_unit: Some("ms".to_owned()),
+                                parent_span_name: None,
+                            },
+                            observed_at_unix_nano: 1,
+                            observed_time_source: "timeUnixNano".to_owned(),
+                            protocol_kind: None,
+                            decision_id: None,
+                            contract_digest: Some(contract.contract_digest.clone()),
+                            payload_json: b"{}".to_vec(),
+                            versions,
+                        },
+                    }],
+                    diagnostics: vec![],
+                },
+            )
             .await
             .unwrap();
         let tools = factory

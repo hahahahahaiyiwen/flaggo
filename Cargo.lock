@@ -925,6 +925,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "flaggo-evidence-materialization"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "flaggo-contract",
+ "flaggo-evidence-store",
+ "flaggo-otlp-codec",
+ "flaggo-raw-otlp-inbox",
+ "opentelemetry-proto",
+ "prost",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "flaggo-evidence-materializer"
 version = "0.1.0"
 dependencies = [
@@ -932,6 +952,7 @@ dependencies = [
  "axum",
  "chrono",
  "flaggo-contract",
+ "flaggo-evidence-materialization",
  "flaggo-evidence-store",
  "flaggo-otlp-codec",
  "flaggo-raw-otlp-inbox",

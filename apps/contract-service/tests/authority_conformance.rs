@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use flaggo_core_conformance::{
-    AuthorityFixture, c01_namespace, c03_atomic_failure, c03_publication, c04_admission,
-    c05_activation,
+    AuthorityFixture, c03_atomic_failure, c03_publication, c04_admission, c05_activation,
+    c07_namespace,
 };
 use flaggo_executable_store::{ContractAuthority, SqliteContractAuthority};
 use flaggo_expression::ExpressionCompiler;
@@ -74,7 +74,7 @@ impl AuthorityFixture for Fixture {
 #[tokio::test]
 async fn full_namespace_and_scoped_admission_paging_conform() {
     let fixture = Fixture::new().await;
-    c01_namespace(&fixture).await;
+    c07_namespace(&fixture).await;
     fixture.close().await;
 }
 

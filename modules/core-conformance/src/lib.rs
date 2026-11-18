@@ -52,7 +52,7 @@ fn candidate(cycle: &str, value: u32) -> AnalysisCandidateSubmission {
     })).unwrap()).unwrap()
 }
 
-pub async fn c01_namespace(fixture: &impl AuthorityFixture) {
+pub async fn c07_namespace(fixture: &impl AuthorityFixture) {
     let first = ContractLifecycle::new(fixture.client());
     let second = ContractLifecycle::new(fixture.independent_client());
     let mut identities = std::collections::BTreeSet::new();

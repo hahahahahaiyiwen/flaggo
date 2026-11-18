@@ -18,6 +18,13 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteConnection},
 };
 
+async fn claim(writer: &SqliteEvidenceStore) -> flaggo_evidence_store::ProjectionClaim {
+    match writer.projection_claim().await.unwrap() {
+        Some(claim) => claim,
+        None => writer.replace_projection_claim(None).await.unwrap(),
+    }
+}
+
 #[tokio::test]
 async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
     let directory = tempfile::tempdir().expect("temporary shared database");
@@ -29,7 +36,11 @@ async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
         .await
         .expect("writer");
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .expect("seed");
     let options = SqliteConnectOptions::from_str(&database_url)
@@ -65,7 +76,11 @@ async fn ingestion_and_materialization_commit_during_an_analysis_snapshot() {
             .await
             .expect("ingestion while analysis reads");
         writer
-            .commit(commit(2, observation("second", 100, 2)))
+            .commit(
+                claim(&writer).await,
+                writer.forward_checkpoint().await.unwrap(),
+                commit(2, observation("second", 100, 2)),
+            )
             .await
             .expect("materialization while analysis reads");
     })
@@ -105,7 +120,14 @@ async fn query_timeout_interrupts_sqlite_and_releases_the_connection() {
             candidate_ordinal: u32::try_from(index).expect("ordinal"),
         })
         .collect();
-    writer.commit(seed).await.expect("seed");
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .expect("seed");
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .expect("reader");
@@ -158,7 +180,11 @@ async fn subsequent_live_queries_include_late_materialization_of_old_events() {
         .await
         .expect("writer");
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .expect("first observation");
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
@@ -178,7 +204,11 @@ async fn subsequent_live_queries_include_late_materialization_of_old_events() {
     assert_eq!(initial.rows.len(), 1);
 
     writer
-        .commit(commit(2, observation("late", 50, 2)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(2, observation("late", 50, 2)),
+        )
         .await
         .expect("late observation");
     let result = reader.query(&scope(), query).await.expect("bounded query");
@@ -218,7 +248,14 @@ async fn dropping_a_query_interrupts_backend_work_before_connection_reuse() {
             candidate_ordinal: u32::try_from(index).unwrap(),
         })
         .collect();
-    writer.commit(seed).await.unwrap();
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .unwrap();
@@ -262,11 +299,19 @@ async fn supports_bounded_aggregate_analysis_with_named_ctes() {
         .await
         .expect("writer");
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .expect("first observation");
     writer
-        .commit(commit(2, observation("second", 100, 3)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(2, observation("second", 100, 3)),
+        )
         .await
         .expect("second observation");
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
@@ -327,7 +372,14 @@ async fn distinguishes_complete_empty_and_truncated_results_with_one_row_lookahe
             candidate_ordinal: u32::try_from(index).unwrap(),
         })
         .collect();
-    writer.commit(seed).await.unwrap();
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .unwrap();
@@ -382,7 +434,11 @@ async fn prepares_aliases_and_declared_types_even_for_empty_results() {
     let database_url = sqlite_url(&directory.path().join("evidence.db"));
     let writer = SqliteEvidenceStore::connect(&database_url).await.unwrap();
     writer
-        .commit(commit(1, observation("first", 100, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("first", 100, 1)),
+        )
         .await
         .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
@@ -500,7 +556,14 @@ async fn live_queries_preserve_authority_exact_or_null_contract_and_source_filte
             candidate_ordinal: u32::try_from(index).unwrap(),
         })
         .collect();
-    writer.commit(seed).await.unwrap();
+    writer
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            seed,
+        )
+        .await
+        .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)
         .await
         .unwrap();
@@ -621,7 +684,11 @@ async fn negotiated_cells_preserve_precision_variant_columns_and_unsigned_timest
     let database_url = sqlite_url(&directory.path().join("evidence.db"));
     let writer = SqliteEvidenceStore::connect(&database_url).await.unwrap();
     writer
-        .commit(commit(1, observation("wide", u64::MAX, 1)))
+        .commit(
+            claim(&writer).await,
+            writer.forward_checkpoint().await.unwrap(),
+            commit(1, observation("wide", u64::MAX, 1)),
+        )
         .await
         .unwrap();
     let reader = SqliteEvidenceAnalysisStore::connect(&database_url)

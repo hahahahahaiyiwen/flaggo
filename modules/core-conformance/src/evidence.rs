@@ -13,7 +13,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FIXTURE_REVISION: &str = "flaggo.evidence-conformance/v2";
+pub const FIXTURE_REVISION: &str = "flaggo.evidence-conformance/v3";
 
 #[async_trait]
 pub trait InboxFixture {
@@ -170,20 +170,27 @@ pub fn commit(batch: u64, observations: Vec<EvidenceObservation>) -> EvidenceMat
 
 pub async fn c09_atomic_projection(fixture: &impl EvidenceFixture) {
     let writer = fixture.writer();
+    let claim = writer.replace_projection_claim(None).await.unwrap();
     let original = observation("first", br#"{"value":1}"#);
     let first = commit(1, vec![original.clone()]);
     assert_eq!(
         writer
-            .commit(first.clone())
+            .commit(claim, None, first.clone())
             .await
             .unwrap()
             .observations_created,
         1
     );
-    assert!(writer.commit(first).await.unwrap().already_checkpointed);
+    assert!(
+        writer
+            .commit(claim, None, first)
+            .await
+            .unwrap()
+            .already_checkpointed
+    );
     fixture.fail_projection_commit(true).await;
     let second = commit(2, vec![observation("second", br#"{"value":2}"#)]);
-    assert!(writer.commit(second.clone()).await.is_err());
+    assert!(writer.commit(claim, Some(1), second.clone()).await.is_err());
     let fresh = fixture.fresh_writer().await;
     assert_eq!(fresh.forward_checkpoint().await.unwrap(), Some(1));
     assert_eq!(
@@ -192,21 +199,77 @@ pub async fn c09_atomic_projection(fixture: &impl EvidenceFixture) {
         "failed checkpoint cannot leak projections"
     );
     fixture.fail_projection_commit(false).await;
-    assert_eq!(writer.commit(second).await.unwrap().observations_created, 1);
+    assert_eq!(
+        writer
+            .commit(claim, Some(1), second)
+            .await
+            .unwrap()
+            .observations_created,
+        1
+    );
     let duplicate = writer
-        .commit(commit(3, vec![original.clone()]))
+        .commit(claim, Some(2), commit(3, vec![original.clone()]))
         .await
         .unwrap();
     assert_eq!(duplicate.observations_created, 0);
     assert_eq!(duplicate.duplicate_observations, 1);
     let mut conflicting = observation("conflicting", br#"{"value":9}"#);
     conflicting.logical_source_id = original.logical_source_id;
-    let conflict = writer.commit(commit(4, vec![conflicting])).await.unwrap();
+    let conflict = writer
+        .commit(claim, Some(3), commit(4, vec![conflicting]))
+        .await
+        .unwrap();
     assert_eq!(conflict.observations_created, 0);
     assert_eq!(conflict.conflicts_created, 1);
     assert_eq!(conflict.diagnostics_created, 1);
     assert_eq!(fresh.forward_checkpoint().await.unwrap(), Some(4));
     assert_eq!(fresh.inspect().await.unwrap().observation_count, 2);
+    let (a, b) = tokio::join!(
+        writer.replace_projection_claim(Some(claim)),
+        fresh.replace_projection_claim(Some(claim)),
+    );
+    assert_ne!(
+        a.is_ok(),
+        b.is_ok(),
+        "one conditional ownership replacement wins"
+    );
+    let replacement = a.or(b).unwrap();
+    assert!(replacement.epoch > claim.epoch);
+    let pending = commit(5, vec![observation("replacement", br#"{"value":5}"#)]);
+    assert!(matches!(
+        writer.commit(claim, Some(4), pending.clone()).await,
+        Err(EvidenceStoreError::ProjectionConflict)
+    ));
+    assert!(matches!(
+        writer.commit(replacement, None, pending.clone()).await,
+        Err(EvidenceStoreError::ProjectionConflict)
+    ));
+    assert_eq!(fresh.forward_checkpoint().await.unwrap(), Some(4));
+    assert_eq!(fresh.inspect().await.unwrap().observation_count, 2);
+    let catalog = flaggo_evidence_store::StoredContractCatalog {
+        etag: "replacement".into(),
+        payload: br#"{"contracts":[]}"#.to_vec(),
+        fetched_at: chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis())
+            .unwrap(),
+    };
+    fresh
+        .save_catalog(replacement, catalog.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        writer.save_catalog(claim, catalog.clone()).await,
+        Err(EvidenceStoreError::ProjectionConflict)
+    ));
+    assert_eq!(fresh.load_catalog().await.unwrap(), Some(catalog));
+    assert_eq!(
+        fresh
+            .commit(replacement, Some(4), pending)
+            .await
+            .unwrap()
+            .observations_created,
+        1
+    );
+    assert_eq!(writer.forward_checkpoint().await.unwrap(), Some(5));
 }
 
 fn request(reader: &dyn EvidenceAnalysisStore, sql: &str) -> EvidenceQueryRequest {
@@ -223,6 +286,7 @@ fn request(reader: &dyn EvidenceAnalysisStore, sql: &str) -> EvidenceQueryReques
 
 pub async fn c11_negotiated_queries(fixture: &impl EvidenceFixture) {
     let writer = fixture.writer();
+    let claim = writer.replace_projection_claim(None).await.unwrap();
     let mut unbound = observation("unbound", br#"{"value":3,"numeric":"3"}"#);
     unbound.contract_digest = None;
     unbound.observed_at_unix_nano = 200;
@@ -240,20 +304,24 @@ pub async fn c11_negotiated_queries(fixture: &impl EvidenceFixture) {
     let mut foreign_contract = observation("foreign-contract", b"{}");
     foreign_contract.contract_digest = Some(digest(b"other-contract"));
     writer
-        .commit(commit(
-            1,
-            vec![
-                observation(
-                    "exact",
-                    br#"{"value":1,"numeric":"1","bits":"7ff8000000000042"}"#,
-                ),
-                unbound,
-                foreign_scope,
-                foreign_unbound,
-                foreign_source,
-                foreign_contract,
-            ],
-        ))
+        .commit(
+            claim,
+            None,
+            commit(
+                1,
+                vec![
+                    observation(
+                        "exact",
+                        br#"{"value":1,"numeric":"1","bits":"7ff8000000000042"}"#,
+                    ),
+                    unbound,
+                    foreign_scope,
+                    foreign_unbound,
+                    foreign_source,
+                    foreign_contract,
+                ],
+            ),
+        )
         .await
         .unwrap();
     let reader = fixture.reader();
@@ -404,7 +472,10 @@ pub async fn c11_negotiated_queries(fixture: &impl EvidenceFixture) {
     }
     let mut late = observation("late", b"{}");
     late.observed_at_unix_nano = 1;
-    writer.commit(commit(2, vec![late])).await.unwrap();
+    writer
+        .commit(claim, Some(1), commit(2, vec![late]))
+        .await
+        .unwrap();
     let refreshed = reader.query(&scope(), query).await.unwrap();
     assert_eq!(
         refreshed.rows.len(),

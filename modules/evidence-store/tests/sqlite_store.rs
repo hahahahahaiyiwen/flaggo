@@ -16,19 +16,23 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
     let store = SqliteEvidenceStore::connect(&database_url)
         .await
         .expect("SQLite evidence store");
+    let claim = store.replace_projection_claim(None).await.unwrap();
     store
-        .save_catalog(StoredContractCatalog {
-            etag: "\"catalog:opaque\"".to_owned(),
-            payload: br#"{"contracts":[]}"#.to_vec(),
-            fetched_at: fixed_time(),
-        })
+        .save_catalog(
+            claim,
+            StoredContractCatalog {
+                etag: "\"catalog:opaque\"".to_owned(),
+                payload: br#"{"contracts":[]}"#.to_vec(),
+                fetched_at: fixed_time(),
+            },
+        )
         .await
         .expect("save catalog");
     let key = key();
     let first = observation("first", "logical", br#"{"value":1}"#);
 
     let created = store
-        .commit(commit(1, &key, first.clone()))
+        .commit(claim, None, commit(1, &key, first.clone()))
         .await
         .expect("first commit");
     assert_eq!(created.observations_created, 1);
@@ -39,13 +43,13 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
     );
 
     let already_checkpointed = store
-        .commit(commit(1, &key, first.clone()))
+        .commit(claim, None, commit(1, &key, first.clone()))
         .await
         .expect("idempotent checkpoint");
     assert!(already_checkpointed.already_checkpointed);
 
     let duplicate = store
-        .commit(commit(2, &key, first))
+        .commit(claim, Some(1), commit(2, &key, first))
         .await
         .expect("duplicate observation");
     assert_eq!(duplicate.observations_created, 0);
@@ -53,11 +57,11 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
     assert_eq!(duplicate.provenance_created, 0);
 
     let conflict = store
-        .commit(commit(
-            3,
-            &key,
-            observation("second", "logical", br#"{"value":2}"#),
-        ))
+        .commit(
+            claim,
+            Some(2),
+            commit(3, &key, observation("second", "logical", br#"{"value":2}"#)),
+        )
         .await
         .expect("conflicting observation");
     assert_eq!(conflict.observations_created, 0);
@@ -70,7 +74,7 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
     let mut routing_changed = observation("first", "logical", br#"{"value":1}"#);
     routing_changed.versions.routing = "2".to_owned();
     let rerouted = store
-        .commit(commit(4, &routing_key, routing_changed))
+        .commit(claim, Some(3), commit(4, &routing_key, routing_changed))
         .await
         .expect("routing-only version change");
     assert_eq!(rerouted.duplicate_observations, 1);
@@ -81,7 +85,7 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
     let mut reprojected = observation("third", "logical", br#"{"value":1}"#);
     reprojected.versions.projection = "3".to_owned();
     let new_projection = store
-        .commit(commit(5, &projection_key, reprojected))
+        .commit(claim, Some(4), commit(5, &projection_key, reprojected))
         .await
         .expect("new projection version");
     assert_eq!(new_projection.observations_created, 0);
@@ -94,7 +98,11 @@ async fn commits_forward_progress_with_idempotency_and_conflict_rejection() {
     let mut changed_projection = observation("fourth", "logical", br#"{"value":2}"#);
     changed_projection.versions.projection = "4".to_owned();
     let projection_conflict = store
-        .commit(commit(6, &changed_projection_key, changed_projection))
+        .commit(
+            claim,
+            Some(5),
+            commit(6, &changed_projection_key, changed_projection),
+        )
         .await
         .expect("changed projection content");
     assert_eq!(projection_conflict.observations_created, 0);
@@ -154,6 +162,7 @@ async fn waits_for_a_competing_writer_before_starting_a_commit() {
     let mut blocker = SqliteConnection::connect(&database_url)
         .await
         .expect("blocking SQLite connection");
+    let claim = store.replace_projection_claim(None).await.unwrap();
     sqlx::query("BEGIN IMMEDIATE")
         .execute(&mut blocker)
         .await
@@ -170,11 +179,15 @@ async fn waits_for_a_competing_writer_before_starting_a_commit() {
     let pending_store = store.clone();
     let pending = tokio::spawn(async move {
         pending_store
-            .commit(commit(
-                1,
-                &key(),
-                observation("first", "logical", br#"{"value":1}"#),
-            ))
+            .commit(
+                claim,
+                None,
+                commit(
+                    1,
+                    &key(),
+                    observation("first", "logical", br#"{"value":1}"#),
+                ),
+            )
             .await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -221,9 +234,69 @@ async fn rejects_version_two_schema_without_migration() {
         Err(EvidenceStoreError::UnsupportedSchemaVersion {
             component: "evidence-store",
             found: 2,
-            expected: 4
+            expected: 5
         })
     ));
+}
+
+#[tokio::test]
+async fn explicit_fence_migration_preserves_evidence_and_never_reuses_exhausted_epochs() {
+    let directory = tempfile::tempdir().unwrap();
+    let url = sqlite_url(&directory.path().join("migration.db"));
+    let store = SqliteEvidenceStore::connect(&url).await.unwrap();
+    let claim = store.replace_projection_claim(None).await.unwrap();
+    store
+        .commit(
+            claim,
+            None,
+            commit(
+                1,
+                &key(),
+                observation("original", "logical", br#"{"value":1}"#),
+            ),
+        )
+        .await
+        .unwrap();
+    let before = store
+        .list_observations(&authority(), NonZeroU16::new(10).unwrap())
+        .await
+        .unwrap();
+    store.close().await;
+    let mut connection = SqliteConnection::connect(&url).await.unwrap();
+    sqlx::raw_sql("DROP TABLE evidence_projection_claim; UPDATE flaggo_schema_versions SET version=4 WHERE component='evidence-store';")
+        .execute(&mut connection).await.unwrap();
+    assert!(matches!(
+        SqliteEvidenceStore::connect(&url).await,
+        Err(EvidenceStoreError::UnsupportedSchemaVersion {
+            found: 4,
+            expected: 5,
+            ..
+        })
+    ));
+    assert!(SqliteEvidenceStore::migrate_v4_to_v5(&url).await.unwrap());
+    assert!(!SqliteEvidenceStore::migrate_v4_to_v5(&url).await.unwrap());
+    let store = SqliteEvidenceStore::connect(&url).await.unwrap();
+    assert_eq!(store.forward_checkpoint().await.unwrap(), Some(1));
+    assert_eq!(
+        store
+            .list_observations(&authority(), NonZeroU16::new(10).unwrap())
+            .await
+            .unwrap(),
+        before
+    );
+    assert!(store.projection_claim().await.unwrap().is_none());
+    sqlx::query("UPDATE evidence_projection_claim SET epoch=9223372036854775807 WHERE singleton=1")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let exhausted = store.projection_claim().await.unwrap();
+    assert!(matches!(
+        store.replace_projection_claim(exhausted).await,
+        Err(EvidenceStoreError::InvalidWrite(_))
+    ));
+    assert_eq!(store.projection_claim().await.unwrap(), exhausted);
+    connection.close().await.unwrap();
+    store.close().await;
 }
 
 fn commit(

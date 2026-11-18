@@ -112,6 +112,13 @@ pub struct ForwardMaterializationKey {
     pub versions: MaterializerVersions,
 }
 
+pub const PROJECTION_CAPABILITY: &str = "flaggo.evidence.projection/v2";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectionClaim {
+    pub epoch: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoredContractCatalog {
     pub etag: String,
@@ -187,6 +194,8 @@ pub struct StoredEvidenceObservation {
 
 #[derive(Debug, Error)]
 pub enum EvidenceStoreError {
+    #[error("evidence projection ownership or checkpoint precondition is stale")]
+    ProjectionConflict,
     #[error("unsupported {component} schema version {found}; expected schema version {expected}")]
     UnsupportedSchemaVersion {
         component: &'static str,
@@ -218,7 +227,19 @@ impl EvidenceStoreError {
 
 #[async_trait]
 pub trait EvidenceStore: Send + Sync {
-    async fn save_catalog(&self, catalog: StoredContractCatalog) -> Result<(), EvidenceStoreError>;
+    async fn projection_claim(&self) -> Result<Option<ProjectionClaim>, EvidenceStoreError>;
+
+    /// Explicit compare-and-replace of ordered ownership, not a worker-clock lease.
+    async fn replace_projection_claim(
+        &self,
+        expected: Option<ProjectionClaim>,
+    ) -> Result<ProjectionClaim, EvidenceStoreError>;
+
+    async fn save_catalog(
+        &self,
+        claim: ProjectionClaim,
+        catalog: StoredContractCatalog,
+    ) -> Result<(), EvidenceStoreError>;
 
     async fn load_catalog(&self) -> Result<Option<StoredContractCatalog>, EvidenceStoreError>;
 
@@ -226,6 +247,8 @@ pub trait EvidenceStore: Send + Sync {
 
     async fn commit(
         &self,
+        claim: ProjectionClaim,
+        expected_checkpoint: Option<u64>,
         commit: EvidenceMaterializationCommit,
     ) -> Result<EvidenceStoreCommitResult, EvidenceStoreError>;
 

@@ -29,6 +29,7 @@ def main():
         "flaggo-service-hosting",
         "flaggo-otlp-http",
         "flaggo-analysis-application", "flaggo-analysis-execution",
+        "flaggo-evidence-materialization",
     ]
     manifest = '[package]\nname = "flaggo-pinned-consumer"\nversion = "0.1.0"\nedition = "2024"\n\n[workspace]\n\n[dependencies]\n'
     for crate in crates:
@@ -61,6 +62,7 @@ def main():
         "wire": "v4", "authorityCapability": "flaggo.authority/v2",
         "securityCapability": "flaggo.security.resource/v1",
         "evidenceProfile": "flaggo.evidence.sqlite/v1",
+        "projectionCapability": "flaggo.evidence.projection/v2",
         "conformanceFixtures": "flaggo.authority-conformance/v2",
         "workspaceCapability": "flaggo.workspace/v2",
         "executionCapability": "flaggo.execution/v1",

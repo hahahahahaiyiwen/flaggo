@@ -92,7 +92,9 @@ async fn materialized_numeric_attributes_support_sql_eligibility_without_casts()
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     let committed = materializer.run_once(&catalog).await.unwrap();
     assert_eq!(committed.observations_created, 3);
     assert_eq!(committed.duplicate_observations, 3);
@@ -257,7 +259,9 @@ async fn timestamp_less_duplicate_deliveries_create_no_duplicate_provenance() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     materializer
         .activate_catalog(
             &catalog,
@@ -320,7 +324,9 @@ async fn materializes_protocol_and_selected_telemetry_with_conflict_rejection() 
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     materializer
         .activate_catalog(&catalog_one, "\"catalog-one\"".to_owned(), Utc::now())
         .await
@@ -419,7 +425,9 @@ async fn materializes_protocol_and_selected_telemetry_with_conflict_rejection() 
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     assert_eq!(restarted.run_once(&log_only).await.unwrap().batches_read, 0);
     let health = fixture.store.inspect().await.unwrap();
     assert_eq!(health.observation_count, 7);
@@ -438,7 +446,9 @@ async fn rejects_changed_content_for_explicit_log_and_span_identities() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
     materializer
         .activate_catalog(&catalog, "\"catalog-identities\"".to_owned(), Utc::now())
         .await
@@ -489,7 +499,9 @@ async fn isolates_mixed_authorities_and_rejects_legacy_scope_fallbacks() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
 
     materializer
         .activate_catalog(&catalog, "\"catalog-mixed\"".to_owned(), Utc::now())
@@ -543,7 +555,9 @@ async fn reports_checkpoint_backlog_and_evidence_freshness() {
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(1).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
 
     let before = materializer.inspect().await.unwrap();
     assert_eq!(before.checkpoint_batch_id, None);
@@ -586,27 +600,33 @@ async fn materializer_upgrade_continues_after_the_global_checkpoint() {
         .await;
     fixture
         .store
-        .commit(EvidenceMaterializationCommit {
-            key: ForwardMaterializationKey {
-                versions: MaterializerVersions {
-                    materializer: "1".to_owned(),
-                    decoder: "2".to_owned(),
-                    identity: "2".to_owned(),
-                    projection: "1".to_owned(),
-                    routing: "1".to_owned(),
+        .commit(
+            fixture.store.replace_projection_claim(None).await.unwrap(),
+            None,
+            EvidenceMaterializationCommit {
+                key: ForwardMaterializationKey {
+                    versions: MaterializerVersions {
+                        materializer: "1".to_owned(),
+                        decoder: "2".to_owned(),
+                        identity: "2".to_owned(),
+                        projection: "1".to_owned(),
+                        routing: "1".to_owned(),
+                    },
                 },
+                inbox_batch_id: 1,
+                observations: Vec::new(),
+                diagnostics: Vec::new(),
             },
-            inbox_batch_id: 1,
-            observations: Vec::new(),
-            diagnostics: Vec::new(),
-        })
+        )
         .await
         .unwrap();
     let materializer = EvidenceMaterializer::new(
         fixture.inbox.clone(),
         fixture.store.clone(),
         NonZeroU16::new(10).unwrap(),
-    );
+    )
+    .await
+    .unwrap();
 
     let before = materializer.inspect().await.unwrap();
     assert_eq!(before.checkpoint_batch_id, Some(1));

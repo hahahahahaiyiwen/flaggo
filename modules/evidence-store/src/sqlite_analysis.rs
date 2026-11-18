@@ -30,7 +30,7 @@ use crate::{
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const RELATIONS: &[EvidenceRelation] = &[EvidenceRelation {
     name: "observations",
     columns: &[

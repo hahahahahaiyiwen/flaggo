@@ -9,6 +9,7 @@ decision
 contract-store
 executable-store
 evidence-store
+evidence-materialization
 raw-otlp-inbox
 hosting
 service-observability
@@ -58,6 +59,9 @@ not depend on an app composition root or on the legacy
 - Analysis Execution defines the path-free execution provider; its `local`
   feature supplies trusted local Python execution, not a hosted sandbox.
 - Core Conformance provides authority, evidence and workflow outcome scenarios.
+- Evidence Materialization owns decoding, routing, observation identity and
+  fenced forward projection over injected inbox/store ports; the local worker
+  supplies SQLite adapters and process lifecycle.
 
 The former Audit, Policy, Reasoning, Registry, Evidence, and State modules were
 removed by #49. Do not reintroduce forwarding projects, namespace aliases,
