@@ -13,7 +13,11 @@ use flaggo_analysis_domain::{
     AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
     CandidateRecord, CycleLimits, CycleOutcome, WorkflowHandoff,
 };
-use flaggo_contract::ContractResourceId;
+use flaggo_contract::{CandidateOwnership, ContractResourceId};
+use flaggo_executable_store::{
+    AdmissionFence, AdmissionGuard, AnalysisCandidateAdmission, AuthorityResult,
+    ExecutableStoreError,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tempfile::NamedTempFile;
@@ -237,6 +241,7 @@ impl LocalWorkspaceProvider {
                 std::fs::TryLockError::Error(error) => Err(workspace_error(error)),
             };
         }
+        let _authority_guard = authority_gate(&root)?;
 
         let binding = ResourceBinding {
             resource: resource.clone(),
@@ -297,6 +302,8 @@ impl LocalWorkspaceProvider {
                 epoch,
                 attempt_id: attempt_id.to_owned(),
                 claimed_at: Utc::now(),
+                active: true,
+                cycle_id: None,
             },
         )?;
 
@@ -335,6 +342,11 @@ impl Drop for LocalWorkspaceLease {
     fn drop(&mut self) {
         if let Err(error) = self.release_claim() {
             tracing::error!(%error, "Local workspace claim release failed");
+            // A dropped lease must revoke in-process capabilities even when an
+            // in-flight admission prevents acknowledging durable release.
+            if let Err(error) = self.invalidate_local_claim() {
+                tracing::error!(%error, "Local workspace capability revocation failed");
+            }
         }
     }
 }
@@ -389,6 +401,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
         }
 
         let _io_guard = mutex_lock(&self.io_gate)?;
+        let _authority_guard = authority_gate(&self.root)?;
         validate_claim(&self.root, &self.state, self.epoch)?;
         let pointer_path = self.root.join("current-cycle.json");
         let mut pointer = if pointer_path.exists() {
@@ -1055,6 +1068,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
         completed_at: DateTime<Utc>,
     ) -> Result<(), AnalysisError> {
         let _io_guard = mutex_lock(&self.io_gate)?;
+        let _authority_guard = authority_gate(&self.root)?;
         self.require_active_cycle(cycle_id)?;
         let outcome_path = self.cycle_path(cycle_id).join("outcome.json");
         let stored_contract: AnalysisContract =
@@ -1150,6 +1164,21 @@ impl LocalWorkspaceLease {
 
     fn release_claim(&self) -> Result<(), AnalysisError> {
         let _io_guard = mutex_lock(&self.io_gate)?;
+        if !mutex_lock(&self.state)?.valid {
+            return Ok(());
+        }
+        let _authority_guard = authority_gate(&self.root)?;
+        let mut claim: ClaimRecord = read_json(&self.root.join("claim.json"))?;
+        if claim.epoch != self.epoch {
+            return Err(AnalysisError::workspace("workspace fencing epoch is stale"));
+        }
+        claim.active = false;
+        claim.cycle_id = None;
+        write_json_atomic(&self.root.join("claim.json"), &claim)?;
+        self.invalidate_local_claim()
+    }
+
+    fn invalidate_local_claim(&self) -> Result<(), AnalysisError> {
         {
             let mut state = mutex_lock(&self.state)?;
             state.valid = false;
@@ -1235,6 +1264,9 @@ impl LocalWorkspaceLease {
         writable: bool,
         sealed: bool,
     ) -> Result<(), AnalysisError> {
+        let mut claim: ClaimRecord = read_json(&self.root.join("claim.json"))?;
+        claim.cycle_id = Some(cycle_id.to_owned());
+        write_json_atomic(&self.root.join("claim.json"), &claim)?;
         let mut state = mutex_lock(&self.state)?;
         state.active_cycle_id = Some(cycle_id.to_owned());
         state.writable = writable;
@@ -1243,6 +1275,9 @@ impl LocalWorkspaceLease {
     }
 
     fn clear_active_state(&self) -> Result<(), AnalysisError> {
+        let mut claim: ClaimRecord = read_json(&self.root.join("claim.json"))?;
+        claim.cycle_id = None;
+        write_json_atomic(&self.root.join("claim.json"), &claim)?;
         let mut state = mutex_lock(&self.state)?;
         state.active_cycle_id = None;
         state.writable = false;
@@ -1802,6 +1837,106 @@ struct ClaimRecord {
     epoch: u64,
     attempt_id: String,
     claimed_at: DateTime<Utc>,
+    #[serde(default)]
+    active: bool,
+    #[serde(default)]
+    cycle_id: Option<String>,
+}
+
+struct LocalAdmissionGuard {
+    _file: File,
+}
+
+impl AdmissionGuard for LocalAdmissionGuard {}
+
+fn authority_gate(root: &Path) -> Result<File, AnalysisError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("authority.lock"))
+        .map_err(workspace_error)?;
+    file.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => {
+            AnalysisError::WorkspaceBusy("workspace authority mutation in progress".into())
+        }
+        std::fs::TryLockError::Error(error) => workspace_error(error),
+    })?;
+    Ok(file)
+}
+
+impl AdmissionFence for LocalWorkspaceProvider {
+    fn acquire(
+        &self,
+        admission: &AnalysisCandidateAdmission,
+        ownership: &CandidateOwnership,
+    ) -> AuthorityResult<Box<dyn AdmissionGuard>> {
+        let verified = (|| -> Result<Option<File>, AnalysisError> {
+            admission.resource.resource_key().map_err(workspace_error)?;
+            validate_segment(&admission.cycle_id, "cycle ID")?;
+            validate_segment(&ownership.attempt_id, "attempt ID")?;
+            let id = self.resolve_resource(&admission.resource)?;
+            if id != admission.workspace_id {
+                return Ok(None);
+            }
+            let root = self.root.join(id.trim_start_matches("sha256:"));
+            if !root.join("claim.json").exists() {
+                return Ok(None);
+            }
+            let gate = authority_gate(&root)?;
+            let claim: ClaimRecord = read_json(&root.join("claim.json"))?;
+            if claim.schema_version != WORKSPACE_SCHEMA_VERSION
+                || !claim.active
+                || claim.epoch == 0
+                || claim.epoch.to_string() != ownership.epoch
+                || claim.attempt_id != ownership.attempt_id
+                || claim.cycle_id.as_deref() != Some(&admission.cycle_id)
+            {
+                return Ok(None);
+            }
+            // A crashed process cannot authorize delayed requests with its
+            // durable record. The lifetime lock must still have a live owner.
+            let live = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(root.join("claim.lock"))
+                .map_err(workspace_error)?;
+            match live.try_lock() {
+                Ok(()) => return Ok(None),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error)) => return Err(workspace_error(error)),
+            }
+            let binding: ResourceBinding = read_json(&root.join("resource.json"))?;
+            let pointer: CurrentCycle = read_json(&root.join("current-cycle.json"))?;
+            let cycle_root = root.join("cycles").join(&admission.cycle_id);
+            let cycle: StoredCycle = read_json(&cycle_root.join("cycle.json"))?;
+            let contract: AnalysisContract = read_json(&cycle_root.join("contract.json"))?;
+            if binding.resource != admission.resource
+                || binding.workspace_id != admission.workspace_id
+                || pointer.cycle_id.as_deref() != Some(&admission.cycle_id)
+                || cycle.status != CycleStatus::Active
+                || cycle.workspace_id != admission.workspace_id
+                || cycle.cycle_id != admission.cycle_id
+                || cycle.contract_digest != admission.contract_digest
+                || contract.resource()? != admission.resource
+                || contract.contract_digest != admission.contract_digest
+                || cycle_root.join("outcome.json").exists()
+            {
+                return Ok(None);
+            }
+            let proposal: CandidateProposal = read_json(&cycle_root.join("proposal.pending.json"))?;
+            if proposal.attempt_id != admission.attempt_id
+                || proposal.analysis_manifest_digest != admission.analysis_manifest_digest
+            {
+                return Ok(None);
+            }
+            Ok(Some(gate))
+        })()
+        .map_err(|error| ExecutableStoreError::Dependency(Box::new(error)))?;
+        let file = verified.ok_or(ExecutableStoreError::OwnershipConflict)?;
+        Ok(Box::new(LocalAdmissionGuard { _file: file }))
+    }
 }
 
 fn validate_claim(root: &Path, state: &Mutex<LeaseState>, epoch: u64) -> Result<(), AnalysisError> {

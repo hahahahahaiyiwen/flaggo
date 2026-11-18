@@ -1,7 +1,7 @@
-//! Semantic authority contract v2 for explicitly scoped v4 resources.
+//! Semantic authority contract v3 for explicitly scoped v4 resources.
 //! Mutations commit their preconditions and complete outcomes atomically.
 use async_trait::async_trait;
-use flaggo_contract::{ContractResourceId, ResourceScope};
+use flaggo_contract::{CandidateOwnership, ContractResourceId, ResourceScope};
 use flaggo_contract_store::{AcceptedContractVersion, ContractStoreError, ContractVersionPage};
 
 use crate::*;
@@ -15,6 +15,19 @@ pub enum AuthorityError {
 }
 
 pub type AuthorityResult<T> = Result<T, AuthorityError>;
+
+/// Holding this guard excludes ownership replacement, release and cycle closure
+/// until the admission transaction commits or rolls back. A preflight check
+/// without that exclusion does not implement this contract.
+pub trait AdmissionGuard: Send + Sync {}
+
+pub trait AdmissionFence: Send + Sync {
+    fn acquire(
+        &self,
+        admission: &AnalysisCandidateAdmission,
+        ownership: &CandidateOwnership,
+    ) -> AuthorityResult<Box<dyn AdmissionGuard>>;
+}
 
 pub struct ReadyPublication {
     pub accepted: AcceptedContractVersion,
@@ -40,6 +53,7 @@ pub trait ContractAuthority: Send + Sync {
         &self,
         executable: &StoredExecutable,
         admission: &AnalysisCandidateAdmission,
+        ownership: &CandidateOwnership,
     ) -> AuthorityResult<AnalysisCandidateStoreResult>;
 
     async fn get_contract(

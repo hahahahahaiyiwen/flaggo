@@ -24,7 +24,7 @@ revisions recorded below.
 | `flaggo-evidence-materialization` | Shared decode, routing, identity and forward projection over inbox/store ports; no SQLite dependency |
 | `flaggo-evidence-store` and `flaggo-raw-otlp-inbox`, without default features | Evidence/query and durable inbox contracts without SQLx or SQLite query-parser dependencies; existing local adapters remain defaults |
 
-`ContractAuthority` v2 uses an explicit validated
+`ContractAuthority` v3 uses an explicit validated
 tenant/application/environment/name resource identity. Reads and mutations
 must share one authority domain. `publish_ready` commits resource ownership,
 immutable contract and bootstrap artifacts, activation and management current
@@ -32,6 +32,23 @@ together. `admit_current` checks currentness and retries inside the same
 transaction as artifact/provenance insertion. Candidate/active state-token
 activation and automatic resolution retain their existing semantic outcomes.
 Integer exhaustion fails rather than wrapping lifecycle tokens.
+
+Candidate submissions carry `ownership: { attemptId, epoch }` separately from
+sealed provenance. The epoch is canonical decimal text, not a JSON number.
+Recovery uses the new owner's claim while retaining the original proposal's
+attempt and manifest. Admission validates current ownership and the authorized
+active cycle even for an already admitted candidate.
+
+Local Contract Service injects the workspace provider as `AdmissionFence`.
+An OS-backed mutation gate excludes claim replacement, acknowledged release
+and cycle closure through the SQLite admission commit. The provider verifies
+resource binding, live lifetime lock, epoch, current cycle, contract digest and
+sealed proposal identity. Request cancellation does not drop the gate while
+SQLx finishes a queued commit. A missing fence fails closed; standalone adapters
+must supply equivalent coordination, not a preflight-only check. Both local
+processes must use the same `FLAGGO_ANALYSIS_WORKSPACE_ROOT` (default
+`flaggo-analysis-workspaces`). This is local coordination, not distributed
+lease expiry or cross-host filesystem qualification.
 
 SQLite shares the existing persistence and integrity routines inside those
 transactions; the app no longer sequences separate writes or uses a
@@ -80,7 +97,7 @@ Their local defaults remain unchanged. The subsequent query slice integrates
 explicit versioned profile selection, canonical cells, saved scope/read/limit
 metadata and Python/deterministic consumers. Ingestion now commits the unchanged
 payload with `flaggo.otlp.authorization/v1` producer/scope metadata only after
-every Resource has been authorized. Replay rechecks that envelope. Distributed
+every Resource has been authorized. Replay rechecks that envelope. Portable
 projection fencing uses `flaggo.evidence.projection/v2`: durable monotonic claim
 replacement and expected-checkpoint comparison are checked in the same
 transaction as every projection. Catalog updates check the same claim.
@@ -156,10 +173,10 @@ abandoned. New workspaces use the `flaggo.workspace/v2` full-resource hash domai
 | Public HTTP and SDK | Management/runtime **v4**, explicit full scope; deployment schema v3 retains manifest v2 and requires runtime configuration v2 |
 | Expression/canonical identity | `flaggo.cel/v1`; unchanged contract/executable digest algorithms and fixtures |
 | SQLite schemas | Contract **4**, executable **6**, evidence **5**, raw inbox **2**; explicit authority/inbox/evidence migrations, no reset |
-| Authority capability | `flaggo.authority/v2`: full-scope atomic ready publication/current admission, scoped catalog/pagination and activation/read contracts |
+| Authority capability | `flaggo.authority/v3`: full-scope atomic ready publication/fenced current admission, scoped catalog/pagination and activation/read contracts |
 | Security capability | `flaggo.security.resource/v1`, independently injected policy; `flaggo.otlp.authorization/v1` retained producer/scope envelope |
 | OTLP profile | `flaggo.otlp-http` **2.0.0**; standard OTLP payloads/endpoints, whole-batch authorization, explicitly local numeric defaults |
-| Reusable fixture revision | `flaggo.authority-conformance/v2` (C07 namespace and C03-C05) and `flaggo.evidence-conformance/v3` (local C08/C09/C11 plus projection fencing outcomes) |
+| Reusable fixture revision | `flaggo.authority-conformance/v3` (C07 namespace and C03-C05), `flaggo.admission-conformance/v1` (C04/C10 ownership/recovery), `flaggo.evidence-conformance/v3` (local C08/C09/C11 plus projection fencing outcomes) |
 | Projection capability | `flaggo.evidence.projection/v2`, explicit ordered claim replacement, atomic epoch/checkpoint preconditions; materializer revision 3 |
 | Evidence query | Explicit `flaggo.evidence.sqlite/v1` selection and `flaggo.evidence.query-result/v1` saved artifacts; provider SQL semantics are labelled, not arbitrary-SQL portable |
 | Canonical evidence cells | `flaggo.evidence.value/v1` integrated into typed rows, Python/agent guidance and deterministic consumers |
@@ -187,6 +204,13 @@ Implement `AuthorityFixture` with clean storage, independently constructed
 clients and publication-failure injection. Run every advertised scenario and
 record unsupported capabilities separately. The SQLite fixture demonstrates
 one implementation, not a requirement for physical tables or SQL.
+
+Run `admission::c04_c10_fenced_admission` with independent authority clients
+and a workflow provider coordinated with admission authority. It checks
+released/replaced ownership, recovery without provenance relabelling, exact
+retry reconciliation and closed-cycle rejection. The local adapter additionally
+tests cancellation while SQLite is blocked: ownership release cannot succeed
+until the in-flight admission finishes.
 
 Implement `WorkspaceFixture` with independently constructed providers over
 shared clean storage. Run `c10_c12_fenced_publication` for claim exclusion,
@@ -243,7 +267,7 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C06 | Local injected-reader behavior only; multi-host acknowledgement/outage qualification remains phase 3 |
 | C07 | Scoped v4 keys/routes/SDK/artifacts, injected authentication and local migration implemented; namespace, security denial/no-write and migration preservation/rollback tests pass. Private identity adapter qualification remains later |
 | C08-C09 | Reusable durable append, fenced atomic projection/checkpoint, retry/dedup/conflict outcomes and authorized whole-batch envelope implemented; replay rejects missing/mismatched authorization. Actual distributed qualification remains later |
-| C10 | Local workspace and projection epochs, release/replacement and stale workspace/publication/execution/checkpoint rejection implemented; authority-verified candidate admission remains to be completed. Expiry/skew qualification remains later |
+| C10 | Local workspace/projection epochs and authority-verified admission implemented; reusable recovery and real local commit-exclusion/cancellation checks pass. Multi-host expiry/skew qualification remains later |
 | C11 | Explicit result/profile selection, canonical cells, scope/read/limit/artifact metadata and Python/agent consumers integrated. Shared twelve-category SQLite profile corpus runs under two scopes; local deadline/cancellation and reuse checked. Actual second-provider qualification remains later |
 | C12 | Path-free execution provider, immutable conditional publication, durable receipts and reusable recovery scenarios implemented; hosted isolation and cross-host execution qualification remain later |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |

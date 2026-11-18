@@ -918,9 +918,20 @@ async fn real_otlp_contains_bounded_contract_metrics_nested_spans_and_lifecycle_
         400
     );
     let path = version_path(&version);
+    let workspace_provider = flaggo_analysis_workspace::LocalWorkspaceProvider::new(
+        fixture.directory.path().join("workspaces"),
+    )
+    .unwrap();
+    let prepared = flaggo_core_conformance::admission::prepare_candidate(
+        &workspace_provider,
+        &version,
+        "export-owner",
+        submission("export", "true", 300)["rules"].clone(),
+    )
+    .await;
     let response = client
         .post(format!("{}{path}/candidates", server.base))
-        .json(&submission("export", "true", 300))
+        .json(&prepared.submission)
         .send()
         .await
         .unwrap();

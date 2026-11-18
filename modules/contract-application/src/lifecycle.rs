@@ -355,6 +355,7 @@ impl ContractLifecycle {
                 &provenance.workspace_id,
                 &provenance.cycle_id,
                 &provenance.attempt_id,
+                &submission.ownership.attempt_id,
             ] {
                 if text.trim().is_empty()
                     || text.encode_utf16().count() > 256
@@ -365,6 +366,14 @@ impl ContractLifecycle {
             }
             validate_digest(&provenance.workspace_id)?;
             validate_digest(&provenance.analysis_manifest_digest)?;
+            let epoch = &submission.ownership.epoch;
+            if epoch.is_empty()
+                || epoch.len() > 20
+                || epoch.starts_with('0')
+                || !epoch.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return Err(ServiceError::InvalidArgument);
+            }
             let accepted = self
                 .authority
                 .get_contract(resource, digest)
@@ -395,7 +404,7 @@ impl ContractLifecycle {
             };
             let result = self
                 .authority
-                .admit_current(&stored, &admission)
+                .admit_current(&stored, &admission, &submission.ownership)
                 .await.map_err(|error| match error {
                     AuthorityError::Executable(ExecutableStoreError::CurrentContractConflict { contract_name, expected, actual }) =>
                         ServiceError::Stale { name: contract_name, requested: expected, current: actual },

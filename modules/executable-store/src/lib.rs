@@ -38,6 +38,8 @@ use std::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutableStoreError {
+    #[error("Candidate submission does not hold current workspace/cycle ownership.")]
+    OwnershipConflict,
     #[error("{message} (Parameter '{parameter}')")]
     InvalidArgument {
         parameter: &'static str,

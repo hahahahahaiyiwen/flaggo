@@ -23,9 +23,13 @@ pub fn contract() -> Value {
 
 pub fn submission(cycle: &str, expression: &str, result: i32) -> Value {
     json!({"rules": [{"name": "learned", "when": {"expression": expression}, "return": {"value": result}}],
+        "ownership": {"attemptId": "attempt-1", "epoch": "1"},
         "provenance": {"workspaceId": format!("sha256:{}", "a".repeat(64)), "cycleId": cycle,
             "attemptId": "attempt-1", "analysisManifestDigest": format!("sha256:{}", "b".repeat(64))}})
 }
+
+mod ownership;
+use ownership::FixedOwnership;
 
 pub struct Fixture {
     pub directory: tempfile::TempDir,
@@ -43,7 +47,8 @@ impl Fixture {
         let authority = Arc::new(
             SqliteContractAuthority::open(&path, Some(canonicalizer))
                 .await
-                .unwrap(),
+                .unwrap()
+                .with_admission_fence(Arc::new(FixedOwnership)),
         );
         authority.initialize().await.unwrap();
         let pool = sqlx::SqlitePool::connect_with(
@@ -89,6 +94,10 @@ impl Server {
         let mut command = rust_command();
         command
             .env("FLAGGO_CONTRACT_DATABASE_PATH", database)
+            .env(
+                "FLAGGO_ANALYSIS_WORKSPACE_ROOT",
+                database.parent().unwrap().join("workspaces"),
+            )
             .env("FLAGGO_CONTRACT_LISTEN_ADDRESS", address.to_string())
             .env("FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS", poll);
         if let Some(endpoint) = telemetry {

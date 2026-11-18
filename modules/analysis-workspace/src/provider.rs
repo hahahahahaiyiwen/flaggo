@@ -16,6 +16,15 @@ pub struct WorkspaceClaim {
     pub epoch: u64,
 }
 
+impl WorkspaceClaim {
+    pub fn candidate_ownership(&self) -> flaggo_contract::CandidateOwnership {
+        flaggo_contract::CandidateOwnership {
+            attempt_id: self.attempt_id.clone(),
+            epoch: self.epoch.to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceArtifact {

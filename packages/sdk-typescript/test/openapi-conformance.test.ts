@@ -372,6 +372,11 @@ describe("OpenAPI shared-contract alignment", () => {
     expectRequired(managementModels.$defs!.AnalysisCandidateSubmission!, [
       "rules",
       "provenance",
+      "ownership",
+    ]);
+    expectRequired(managementModels.$defs!.CandidateOwnership!, [
+      "attemptId",
+      "epoch",
     ]);
     expectRequired(managementModels.$defs!.AnalysisCandidateProvenance!, [
       "workspaceId",

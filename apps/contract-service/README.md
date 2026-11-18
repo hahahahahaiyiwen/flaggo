@@ -47,6 +47,13 @@ route, recompiles the rules, rejects stale current digests, and persists only
 `Candidate` lifecycle state. Candidate activation is a separate Contract
 Service operation and is not part of this boundary.
 
+Submissions require current `ownership` (`attemptId`, decimal-string `epoch`)
+separately from original sealed `provenance`. Local admission verifies the live
+workspace claim and authorized cycle and holds its cross-process mutation gate
+through the SQLite commit. Released/replaced ownership and closed-cycle retries
+return 409; unavailable ownership authority fails closed. Request cancellation
+does not release that gate before an in-flight commit finishes.
+
 ## Interfaces
 
 The implemented HTTP surface is:
@@ -83,6 +90,9 @@ atomic migration described in [CORE_EXTRACTION](../../docs/design/architecture/C
 Both stores currently use the configured SQLite database. Physical
 co-location does not merge their semantic ownership. Configure the filesystem
 path with `FLAGGO_CONTRACT_DATABASE_PATH`; the default is `flaggo.db`.
+Contract Service and Async Analysis must also share
+`FLAGGO_ANALYSIS_WORKSPACE_ROOT`, defaulting to `flaggo-analysis-workspaces`.
+This local ownership adapter does not provide hosted lease or sandbox guarantees.
 
 Readiness requires both owned stores. It does not depend on Decision Service,
 OTel Ingestion, Evidence Materializer, Evidence Store, or Async Analysis.

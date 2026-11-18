@@ -35,6 +35,7 @@ pub trait ContractService: Send + Sync {
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        ownership: &flaggo_contract::CandidateOwnership,
         rules: Value,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError>;

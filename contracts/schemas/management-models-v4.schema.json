@@ -892,7 +892,7 @@
       "properties": {
         "workspaceId": {
           "$ref": "#/$defs/Sha256Digest",
-          "description": "Stable digest identity of the contract-name workspace."
+          "description": "Stable digest identity of the explicitly scoped workspace."
         },
         "cycleId": {
           "type": "string",
@@ -910,12 +910,30 @@
         }
       }
     },
+    "CandidateOwnership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attemptId", "epoch"],
+      "properties": {
+        "attemptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "epoch": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$",
+          "description": "Current workspace ownership epoch as canonical decimal text. It must match authority at admission commit, including retries."
+        }
+      }
+    },
     "AnalysisCandidateSubmission": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "rules",
-        "provenance"
+        "provenance",
+        "ownership"
       ],
       "properties": {
         "rules": {
@@ -927,6 +945,9 @@
         },
         "provenance": {
           "$ref": "#/$defs/AnalysisCandidateProvenance"
+        },
+        "ownership": {
+          "$ref": "#/$defs/CandidateOwnership"
         }
       }
     },

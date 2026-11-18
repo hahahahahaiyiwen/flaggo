@@ -72,7 +72,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let address = listener.local_addr()?;
     reject_own_receiver(address)?;
     let canonicalizer = Arc::new(ExpressionCompiler::default());
-    let authority = Arc::new(SqliteContractAuthority::open(&database, Some(canonicalizer)).await?);
+    let workspace_root = env::var_os("FLAGGO_ANALYSIS_WORKSPACE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("flaggo-analysis-workspaces"));
+    let admission_fence = Arc::new(flaggo_analysis_workspace::LocalWorkspaceProvider::new(
+        workspace_root,
+    )?);
+    let authority = Arc::new(
+        SqliteContractAuthority::open(&database, Some(canonicalizer))
+            .await?
+            .with_admission_fence(admission_fence),
+    );
     let result: Result<(), Box<dyn Error>> = async {
         authority.initialize().await?;
         let lifecycle = ContractLifecycle::new(authority.clone());

@@ -11,6 +11,7 @@ use flaggo_contract_store::{
 pub struct SqliteContractAuthority {
     contracts: SqliteContractVersionStore,
     executables: SqliteExecutableStore,
+    admission_fence: Option<Arc<dyn AdmissionFence>>,
 }
 
 impl SqliteContractAuthority {
@@ -24,7 +25,14 @@ impl SqliteContractAuthority {
         Ok(Self {
             contracts,
             executables,
+            admission_fence: None,
         })
+    }
+
+    /// Admission fails closed until a composition supplies its authoritative fence.
+    pub fn with_admission_fence(mut self, fence: Arc<dyn AdmissionFence>) -> Self {
+        self.admission_fence = Some(fence);
+        self
     }
 
     pub async fn initialize(&self) -> AuthorityResult<()> {
@@ -159,33 +167,53 @@ impl ContractAuthority for SqliteContractAuthority {
         &self,
         executable: &StoredExecutable,
         admission: &AnalysisCandidateAdmission,
+        ownership: &flaggo_contract::CandidateOwnership,
     ) -> AuthorityResult<AnalysisCandidateStoreResult> {
-        let mut tx = self.executables.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let current: Option<String> = sqlx::query_scalar(
-            "SELECT contract_digest FROM decision_contract_current WHERE resource_key = ?",
-        )
-        .bind(
-            admission
-                .resource
-                .resource_key()
-                .map_err(ExecutableStoreError::from)?,
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
-        if current.as_deref() != Some(&admission.contract_digest) {
-            return Err(ExecutableStoreError::CurrentContractConflict {
-                contract_name: admission.resource.name.clone(),
-                expected: admission.contract_digest.clone(),
-                actual: current,
-            }
-            .into());
-        }
-        let result = self
-            .executables
-            .put_analysis_candidate_in(&mut tx, executable, admission, None)
+        let authority = self.clone();
+        let executable = executable.clone();
+        let admission = admission.clone();
+        let ownership = ownership.clone();
+        // HTTP cancellation must not release the ownership gate while SQLx may
+        // still be completing an already-issued commit on its worker thread.
+        tokio::spawn(async move {
+            let _ownership_guard = authority
+                .admission_fence
+                .as_ref()
+                .ok_or(ExecutableStoreError::OwnershipConflict)?
+                .acquire(&admission, &ownership)?;
+            let mut tx = authority
+                .executables
+                .pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await?;
+            let current: Option<String> = sqlx::query_scalar(
+                "SELECT contract_digest FROM decision_contract_current WHERE resource_key = ?",
+            )
+            .bind(
+                admission
+                    .resource
+                    .resource_key()
+                    .map_err(ExecutableStoreError::from)?,
+            )
+            .fetch_optional(&mut *tx)
             .await?;
-        tx.commit().await?;
-        Ok(result)
+            if current.as_deref() != Some(&admission.contract_digest) {
+                return Err(ExecutableStoreError::CurrentContractConflict {
+                    contract_name: admission.resource.name.clone(),
+                    expected: admission.contract_digest.clone(),
+                    actual: current,
+                }
+                .into());
+            }
+            let result = authority
+                .executables
+                .put_analysis_candidate_in(&mut tx, &executable, &admission, None)
+                .await?;
+            tx.commit().await?;
+            Ok(result)
+        })
+        .await
+        .map_err(|error| ExecutableStoreError::Dependency(Box::new(error)))?
     }
 
     async fn get_contract(

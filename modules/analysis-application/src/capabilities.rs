@@ -413,6 +413,7 @@ impl AnalysisTools for ApplicationAnalysisTools {
                 .contract_service
                 .submit_candidate(
                     &proposal_context,
+                    &self.workspace.claim_token().candidate_ownership(),
                     proposal.rules,
                     &proposal.analysis_manifest_digest,
                 )
@@ -707,6 +708,7 @@ mod tests {
         async fn submit_candidate(
             &self,
             context: &AttemptContext,
+            _ownership: &flaggo_contract::CandidateOwnership,
             _rules: Value,
             analysis_manifest_digest: &str,
         ) -> Result<CandidateRecord, AnalysisError> {

@@ -8,13 +8,14 @@ rust-version.workspace = true
 
 [features]
 default = ["local"]
-local = ["dep:tempfile", "dep:uuid"]
+local = ["dep:tempfile", "dep:uuid", "dep:flaggo-executable-store"]
 
 [dependencies]
 async-trait = "0.1.89"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
 flaggo-analysis-domain = { version = "0.1.0", path = "../analysis-domain" }
 flaggo-contract = { version = "0.1.0", path = "../contract" }
+flaggo-executable-store = { version = "0.1.0", path = "../executable-store", default-features = false, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10.9"

@@ -69,7 +69,8 @@ impl ServiceError {
             }
             Self::Stale { .. } => ("stale", "conflict"),
             Self::ExecutableStore(
-                E::ActivationConflict { .. }
+                E::OwnershipConflict
+                | E::ActivationConflict { .. }
                 | E::CandidateConflict { .. }
                 | E::CurrentContractConflict { .. }
                 | E::AdmissionConflict { .. }
@@ -162,7 +163,7 @@ impl ServiceError {
                 "Stale contract digest",
                 self.to_string(),
             ),
-            Self::ExecutableStore(E::AdmissionConflict { .. }) => (
+            Self::ExecutableStore(E::OwnershipConflict | E::AdmissionConflict { .. }) => (
                 StatusCode::CONFLICT,
                 "candidate-admission-conflict",
                 "Candidate admission conflict",

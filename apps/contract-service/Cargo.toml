@@ -10,6 +10,7 @@ rust-version.workspace = true
 axum.workspace = true
 chrono = "0.4.45"
 flaggo-contract = { path = "../../modules/contract" }
+flaggo-analysis-workspace = { path = "../../modules/analysis-workspace" }
 flaggo-contract-application = { path = "../../modules/contract-application" }
 flaggo-contract-store = { path = "../../modules/contract-store" }
 flaggo-executable-store = { path = "../../modules/executable-store" }

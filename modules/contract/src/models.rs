@@ -458,6 +458,16 @@ pub struct DecisionContractValidationResult {
 pub struct AnalysisCandidateSubmission {
     pub rules: Vec<Option<ExecutableRule>>,
     pub provenance: AnalysisCandidateProvenance,
+    pub ownership: CandidateOwnership,
+}
+
+/// Current submitter, separate from the immutable original Candidate provenance.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CandidateOwnership {
+    pub attempt_id: String,
+    /// Canonical decimal text avoids loss through JavaScript JSON numbers.
+    pub epoch: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

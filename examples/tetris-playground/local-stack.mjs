@@ -217,6 +217,7 @@ export async function startFlaggoServices({
       {
         ...telemetryEnvironment,
         FLAGGO_CONTRACT_DATABASE_PATH: paths.database,
+        FLAGGO_ANALYSIS_WORKSPACE_ROOT: paths.analysisWorkspace,
         FLAGGO_CONTRACT_LISTEN_ADDRESS: "127.0.0.1:0",
         FLAGGO_CONTRACT_ACTIVATION_POLL_INTERVAL_MS: "250",
       },

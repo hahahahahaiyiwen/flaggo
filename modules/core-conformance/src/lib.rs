@@ -12,10 +12,11 @@ use flaggo_contract_application::{ContractLifecycle, ServiceError};
 use flaggo_executable_store::{ContractAuthority, ExecutableLifecycleState};
 use serde_json::json;
 
+pub mod admission;
 pub mod evidence;
 pub mod workspace;
 
-pub const FIXTURE_REVISION: &str = "flaggo.authority-conformance/v2";
+pub const FIXTURE_REVISION: &str = "flaggo.authority-conformance/v3";
 
 #[async_trait]
 pub trait AuthorityFixture {
@@ -44,6 +45,7 @@ pub fn contract() -> DecisionContract {
 fn candidate(cycle: &str, value: u32) -> AnalysisCandidateSubmission {
     strict_json::deserialize(&serde_json::to_vec(&json!({
         "rules": [{"name": "learned", "when": {"expression": "true"}, "return": {"value": value}}],
+        "ownership": {"attemptId": "attempt-1", "epoch": "1"},
         "provenance": {
             "workspaceId": format!("sha256:{}", "a".repeat(64)),
             "cycleId": cycle, "attemptId": "attempt-1",

@@ -182,6 +182,7 @@ impl ContractService for ContractServiceClient {
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        ownership: &flaggo_contract::CandidateOwnership,
         rules: Value,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
@@ -207,6 +208,7 @@ impl ContractService for ContractServiceClient {
             .post(url)
             .json(&CandidateSubmission {
                 rules,
+                ownership: ownership.clone(),
                 provenance: CandidateProvenance {
                     workspace_id: context.workspace_id.clone(),
                     cycle_id: context.cycle_id.clone(),
@@ -424,6 +426,7 @@ struct EvidenceSourceWire {
 #[serde(rename_all = "camelCase")]
 struct CandidateSubmission {
     rules: Value,
+    ownership: flaggo_contract::CandidateOwnership,
     provenance: CandidateProvenance,
 }
 
@@ -708,6 +711,10 @@ mod tests {
         let candidate = client
             .submit_candidate(
                 &context,
+                &flaggo_contract::CandidateOwnership {
+                    attempt_id: "current-owner".into(),
+                    epoch: "2".into(),
+                },
                 json!([{
                     "name": "learned",
                     "when": {"expression": "true"},
@@ -727,6 +734,10 @@ mod tests {
         let retry = client
             .submit_candidate(
                 &context,
+                &flaggo_contract::CandidateOwnership {
+                    attempt_id: "current-owner".into(),
+                    epoch: "2".into(),
+                },
                 json!([{
                     "name": "learned",
                     "when": {"expression": "true"},
@@ -741,6 +752,11 @@ mod tests {
 
         let submissions = state.submissions.lock().expect("submission lock");
         assert_eq!(submissions.len(), 2);
+        assert_eq!(
+            submissions[0]["ownership"],
+            json!({"attemptId": "current-owner", "epoch": "2"})
+        );
+        assert_eq!(submissions[0]["provenance"]["attemptId"], "attempt-1");
         assert_eq!(
             submissions[0]["provenance"]["workspaceId"],
             context.workspace_id

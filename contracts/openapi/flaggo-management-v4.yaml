@@ -483,7 +483,7 @@
         ],
         "operationId": "submitAnalysisCandidate",
         "summary": "Admit an analysis Candidate for one exact current contract digest.",
-        "description": "Validates and canonicalizes the proposed rules against the immutable contract version, fences first admission on that digest still being current, and atomically persists Candidate lifecycle state with workspace/cycle/attempt identity and the sealed analysisManifestDigest. The manifest records saved datasets and query times from live evidence queries; no cycle-wide evidence cutoff or watermark is accepted or implied. This operation never activates an executable. The contract name and digest come only from the route; retries must repeat the exact workspace-cycle submission. An exact retry returns the original admission with its current lifecycle without reopening or mutating it.",
+        "description": "Validates and canonicalizes proposed rules against the immutable contract version. Admission atomically checks current contract and authorized workspace/cycle ownership, including retries. ownership identifies the current submitting attempt and epoch; provenance retains the original sealed attempt and analysisManifestDigest during recovery. The manifest records saved datasets and query times; no cycle-wide evidence cutoff is implied. This operation never activates an executable. The full resource identity and digest come only from the route. An exact retry with current ownership returns the original admission and its current lifecycle without reopening it. Released, replaced or closed-cycle ownership returns 409; unavailable ownership authority fails closed.",
         "parameters": [
           {
             "$ref": "#/components/parameters/TenantPath"

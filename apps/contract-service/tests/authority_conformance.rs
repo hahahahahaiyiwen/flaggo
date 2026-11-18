@@ -8,6 +8,9 @@ use flaggo_executable_store::{ContractAuthority, SqliteContractAuthority};
 use flaggo_expression::ExpressionCompiler;
 use sqlx::SqlSafeStr;
 
+#[path = "support/ownership.rs"]
+mod ownership;
+
 struct Fixture {
     _directory: tempfile::TempDir,
     first: Arc<SqliteContractAuthority>,
@@ -22,13 +25,15 @@ impl Fixture {
         let first = Arc::new(
             SqliteContractAuthority::open(&path, Some(Arc::new(ExpressionCompiler::default())))
                 .await
-                .unwrap(),
+                .unwrap()
+                .with_admission_fence(Arc::new(ownership::FixedOwnership)),
         );
         first.initialize().await.unwrap();
         let second = Arc::new(
             SqliteContractAuthority::open(&path, Some(Arc::new(ExpressionCompiler::default())))
                 .await
-                .unwrap(),
+                .unwrap()
+                .with_admission_fence(Arc::new(ownership::FixedOwnership)),
         );
         let pool = sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(path),
@@ -95,6 +100,7 @@ async fn legacy_fixture(fixture: &Fixture) -> flaggo_contract::ContractResourceI
     let submission: AnalysisCandidateSubmission = strict_json::deserialize(
         &serde_json::to_vec(&serde_json::json!({
             "rules": [{"name": "learned", "when": {"expression": "true"}, "return": {"value": 400}}],
+            "ownership": {"attemptId": "attempt-1", "epoch": "1"},
             "provenance": {
                 "workspaceId": format!("sha256:{}", "a".repeat(64)),
                 "cycleId": "legacy-cycle", "attemptId": "legacy-attempt",

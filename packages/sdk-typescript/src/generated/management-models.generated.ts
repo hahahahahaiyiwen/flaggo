@@ -501,7 +501,7 @@ export interface DecisionExecutable {
  */
 export interface AnalysisCandidateProvenance {
   /**
-   * Stable digest identity of the contract-name workspace.
+   * Stable digest identity of the explicitly scoped workspace.
    */
   workspaceId: string;
   cycleId: string;
@@ -513,6 +513,17 @@ export interface AnalysisCandidateProvenance {
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
+ * via the `definition` "CandidateOwnership".
+ */
+export interface CandidateOwnership {
+  attemptId: string;
+  /**
+   * Current workspace ownership epoch as canonical decimal text. It must match authority at admission commit, including retries.
+   */
+  epoch: string;
+}
+/**
+ * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema
  * via the `definition` "AnalysisCandidateSubmission".
  */
 export interface AnalysisCandidateSubmission {
@@ -521,6 +532,7 @@ export interface AnalysisCandidateSubmission {
    */
   rules: ExecutableRule[];
   provenance: AnalysisCandidateProvenance;
+  ownership: CandidateOwnership;
 }
 /**
  * This interface was referenced by `FlaggoManagementModelsV4`'s JSON-Schema

@@ -96,6 +96,7 @@ impl ContractService for FakeContractService {
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        _ownership: &flaggo_contract::CandidateOwnership,
         _rules: Value,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
@@ -742,6 +743,7 @@ impl ContractService for LostReplyService {
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        ownership: &flaggo_contract::CandidateOwnership,
         rules: Value,
         manifest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
@@ -756,7 +758,7 @@ impl ContractService for LostReplyService {
         }
         let candidate = self
             .inner
-            .submit_candidate(context, rules.clone(), manifest)
+            .submit_candidate(context, ownership, rules.clone(), manifest)
             .await?;
         *admitted = Some((context.clone(), rules, candidate));
         Err(AnalysisError::Contract(
@@ -794,10 +796,13 @@ impl ContractService for RecoverySupersessionService {
     async fn submit_candidate(
         &self,
         context: &AttemptContext,
+        ownership: &flaggo_contract::CandidateOwnership,
         rules: Value,
         manifest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
-        self.inner.submit_candidate(context, rules, manifest).await
+        self.inner
+            .submit_candidate(context, ownership, rules, manifest)
+            .await
     }
 }
 
