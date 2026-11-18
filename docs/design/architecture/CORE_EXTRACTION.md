@@ -181,6 +181,13 @@ Its retained lockfile SHA-256 is
 `21264245686982643a88f2cee9183209b8b88cabfcca727591344eafe1d0e764`.
 This remains local Git consumption, not public remote publication.
 
+The latest consumer pin is
+`c27f99f79524fa60d5a7c38324cf65d9f47a5f18`, which additionally exercises
+the public canonical int64 codec. The same 14-package/no-SQLite checks passed.
+Its retained lockfile SHA-256 is
+`c87557f211a63a3f801141eed04b11febea0c416dffa2a645f2f659a3a62c617`.
+The query-result integration remains outside that consumer's qualification.
+
 The first standalone run exposed a fixture helper's accidental reliance on
 workspace-unified `serde_json/preserve_order`. The helper now deserializes the
 typed fixture directly, retaining required schema discriminator order without
