@@ -63,8 +63,11 @@ pub struct PythonExecution {
 }
 
 const BOOTSTRAP: &str = r#"
-import json, platform, runpy, sys
-script, runtime_file, source_directory = sys.argv[1:]
+import json, platform, runpy, sys, types
+script, runtime_file, source_directory, evidence_decoder = sys.argv[1:]
+evidence_module = types.ModuleType("flaggo_evidence")
+exec(compile(evidence_decoder, "<flaggo_evidence>", "exec"), evidence_module.__dict__)
+sys.modules["flaggo_evidence"] = evidence_module
 with open(runtime_file, "w", encoding="utf-8") as stream:
     json.dump({"executable": sys.executable, "version": sys.version,
                "implementation": platform.python_implementation()}, stream)
@@ -99,6 +102,7 @@ impl PythonConfig {
             .arg(script)
             .arg(runtime_file)
             .arg(source_directory)
+            .arg(flaggo_evidence_store::PYTHON_EVIDENCE_DECODER)
             .current_dir(directory)
             .env("PYTHONIOENCODING", "utf-8")
             .stdin(Stdio::null())

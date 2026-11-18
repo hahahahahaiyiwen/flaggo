@@ -50,9 +50,10 @@ conditional artifact publication protocol.
 
 The evidence and raw-inbox crates likewise separate their contracts from
 optional local adapters; the OTLP codec no longer enables SQLite transitively.
-Their existing semantics, query envelope and local limits are unchanged. This
-is dependency extraction, not new query negotiation, authorized ingestion or
-distributed projection fencing.
+Their local defaults remain unchanged. The subsequent query slice integrates
+explicit versioned profile selection, canonical cells, saved scope/read/limit
+metadata and Python/deterministic consumers. It does not yet add authorized
+ingestion or distributed projection fencing.
 
 ## Approved next wire cutover
 
@@ -80,9 +81,9 @@ it must not silently reinterpret v3 names.
 | Expression/canonical identity | `flaggo.cel/v1`; unchanged contract/executable digest algorithms and fixtures |
 | SQLite schemas | Contract **3**, executable **5**, evidence **4**, raw inbox **1**; no reset or new migration |
 | Authority capability | `flaggo.authority/v1`: globally name-keyed atomic ready publication/current admission and existing activation/read contracts |
-| Reusable fixture revision | `flaggo.authority-conformance/v1`, local subsets of C03-C05 |
-| Evidence query | Existing SQLite dialect/type envelope, **not** the approved future portable profile |
-| Canonical evidence cells | `flaggo.evidence.value/v1` scalar schema/codec and shared corpus; not yet integrated into query results or negotiated profiles |
+| Reusable fixture revision | `flaggo.authority-conformance/v1` (C03-C05) and `flaggo.evidence-conformance/v1` (local C08/C09/C11 outcomes) |
+| Evidence query | Explicit `flaggo.evidence.sqlite/v1` selection and `flaggo.evidence.query-result/v1` saved artifacts; provider SQL semantics are labelled, not arbitrary-SQL portable |
+| Canonical evidence cells | `flaggo.evidence.value/v1` integrated into typed rows, Python/agent guidance and deterministic consumers |
 | Workspace/execution | Path-free lease contract plus explicit local projection; existing local filesystem/lock/Python behavior, **not** a durable remote execution protocol or sandbox |
 | First hosted slice | Not qualified: scoped API/security revision and private distributed adapter still required |
 
@@ -154,9 +155,9 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C03-C05 | Reusable local publication/failure/admission/activation outcomes added; existing store ABA/rollback coverage retained. Multi-process barrier/failure matrix and actual distributed proof remain outstanding |
 | C06 | Local injected-reader behavior only; multi-host acknowledgement/outage qualification remains phase 3 |
 | C07 | V4 and explicit breaking cutover approved above; scoped routes, resource keys, independent authentication/security/error artifacts, SDK and migration are not implemented |
-| C08-C09 | Existing inbox/evidence tests retained, but their outcome suites are not yet extracted; authorized whole-batch envelope and fenced projection protocol remain outstanding |
+| C08-C09 | Reusable durable append, atomic projection/checkpoint, retry/dedup/conflict outcomes extracted; authorized whole-batch envelope and fenced projection protocol remain outstanding |
 | C10 | Durable monotonic worker fences and authoritative stale-write rejection are not implemented |
-| C11 | Tagged scalar cells approved and implemented in [EVIDENCE_VALUES](../contracts/EVIDENCE_VALUES.md), with shared Rust/JavaScript corpus. Containing result/profile negotiation, adapter/consumer integration and required query scenario corpus remain unimplemented |
+| C11 | Explicit result/profile selection, canonical cells, scope/read/limit/artifact metadata and Python/agent consumers integrated. Shared twelve-category SQLite profile corpus runs under two scopes; local deadline/cancellation and reuse checked. Actual second-provider qualification remains later |
 | C12 | Host paths removed from the lease contract and exact-claim local projection tested; durable conditional publication/fence/execution receipts and reusable recovery scenarios remain outstanding |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
 | Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
@@ -212,7 +213,16 @@ The canonical-cell codec additionally passed its shared Rust corpus and
 JavaScript schema tests (two tests in each runner), including exact int64
 boundaries, non-finite double payload bits and malformed encodings. Evidence
 all-targets Clippy and SDK type-checking passed. This validates the scalar
-contract, not the still-pending query/result/profile integration.
+contract; that older pin does not qualify the later query integration.
+
+The integrated evidence-profile slice passed **76 Rust tests** across local
+analysis, deterministic Tetris analysis, evidence and shared conformance,
+plus **3 JavaScript schema tests** and **2 Python decoder tests**. The C11
+conformance test executes the twelve required profile categories under two
+independent scopes. Focused all-targets Clippy, SDK type-checking and the
+contract-only evidence build passed. A query-drop regression additionally
+verifies that cancellation interrupts backend work instead of leaving it
+running until the original deadline.
 
 The deterministic Tetris full-loop passed against the extracted runnable apps:
 contract acceptance, SDK decisions, OTLP durable ingestion, evidence

@@ -14,8 +14,9 @@ use flaggo_analysis_workspace::{
     LocalWorkspaceProvider, WorkspaceFileSystem, WorkspaceLease, sha256_digest,
 };
 use flaggo_evidence_store::{
-    AuthorityScope, EvidenceAnalysisStore, EvidenceQueryLimits, EvidenceQueryRequest,
-    EvidenceQueryScope, EvidenceSignal, EvidenceSourceSelector, EvidenceStoreError,
+    AuthorityScope, EVIDENCE_RESULT_FORMAT, EVIDENCE_VALUE_FORMAT, EvidenceAnalysisStore,
+    EvidenceQueryLimits, EvidenceQueryRequest, EvidenceQueryScope, EvidenceSignal,
+    EvidenceSourceSelector, EvidenceStoreError,
 };
 use serde_json::{Value, json};
 use tracing::Instrument as _;
@@ -160,7 +161,7 @@ impl AnalysisTools for LocalAnalysisTools {
                 "defaultRowLimit": DEFAULT_QUERY_ROWS.min(self.query_limits.max_rows.get()),
                 "resultBytesLimited": self.query_limits.max_bytes,
                 "queryTimeoutMs": self.query_limits.timeout.as_millis(),
-                "results": "run_sql returns metadata, not rows. resultPath and historyPath reference saved JSON results and query history, relative to the cycle analysis directory. totalRows is null when truncated."
+                "results": "run_sql returns metadata, not rows. resultPath and historyPath reference versioned saved JSON results and query history, relative to the cycle analysis directory. Cells are tagged canonical values, not raw JSON numbers. In code_interpreter use `from flaggo_evidence import load_rows` then `rows = load_rows(resultPath)`. Integers remain exact; float64 payload bits are preserved; JSON cells decode with Decimal. totalRows is null when truncated. projectedObservationIds are only explicitly projected IDs, not complete aggregate lineage."
             }
         }))
         }.instrument(action.span()).await;
@@ -190,26 +191,56 @@ impl AnalysisTools for LocalAnalysisTools {
                 .filesystem(&self.context.cycle_id, &self.context.attempt_id)
                 .await?;
             let query_started_at = self.clock.now();
-            let result = self
-                .evidence_store
-                .query(
-                    &self.scope,
-                    EvidenceQueryRequest {
-                        sql: sql.to_owned(),
-                        limits: EvidenceQueryLimits {
-                            max_rows: row_limit,
-                            ..self.query_limits
+            let query_id = uuid::Uuid::new_v4().to_string();
+            let capabilities = self.evidence_store.query_capabilities();
+            let result = if capabilities.result_format != EVIDENCE_RESULT_FORMAT
+                || capabilities.value_format != EVIDENCE_VALUE_FORMAT
+            {
+                Err(EvidenceStoreError::InvalidQuery(
+                    "unsupported evidence result/value capability; no legacy fallback".to_owned(),
+                ))
+            } else {
+                self.evidence_store
+                    .query(
+                        &self.scope,
+                        EvidenceQueryRequest {
+                            profile: capabilities.profile.to_owned(),
+                            sql: sql.to_owned(),
+                            limits: EvidenceQueryLimits {
+                                max_rows: row_limit,
+                                ..self.query_limits
+                            },
                         },
-                    },
-                )
-                .await;
+                    )
+                    .await
+                    .and_then(|result| {
+                        if result.profile == capabilities.profile {
+                            Ok(result)
+                        } else {
+                            Err(EvidenceStoreError::CorruptData(
+                                "query response profile does not match the selected capability"
+                                    .to_owned(),
+                            ))
+                        }
+                    })
+            };
             let query_completed_at = self.clock.now();
             let result = match result {
                 Ok(result) => result,
                 Err(error) => {
                     let (outcome, category) = evidence_query_failure(&error);
                     let record = json!({
-                        "queryId": uuid::Uuid::new_v4().to_string(),
+                        "queryId": query_id,
+                        "profile": capabilities.profile,
+                        "resultFormat": capabilities.result_format,
+                        "valueFormat": capabilities.value_format,
+                        "scope": self.scope,
+                        "limits": {
+                            "maxRows": row_limit.get(),
+                            "maxRowBytes": self.query_limits.max_bytes,
+                            "timeoutNanoseconds": self.query_limits.timeout.as_nanos().to_string()
+                        },
+                        "readConsistency": "live",
                         "requestedSql": sql,
                         "recordedAt": self.clock.now(),
                         "contractDigest": self.context.contract.digest,
@@ -226,17 +257,28 @@ impl AnalysisTools for LocalAnalysisTools {
             };
             action.result_size(result.rows.len(), result.result_bytes);
             self.ensure_not_yielding()?;
-            let query_id = uuid::Uuid::new_v4().to_string();
             let result_path = format!("queries/{query_id}.json");
             let content = serde_json::to_string(&json!({
+                "resultFormat": EVIDENCE_RESULT_FORMAT,
+                "valueFormat": EVIDENCE_VALUE_FORMAT,
+                "profile": result.profile,
                 "queryId": query_id,
                 "contractDigest": self.context.contract.digest,
+                "scope": self.scope,
+                "limits": {
+                    "maxRows": row_limit.get(),
+                    "maxRowBytes": self.query_limits.max_bytes,
+                    "timeoutNanoseconds": self.query_limits.timeout.as_nanos().to_string()
+                },
+                "readConsistency": "live",
                 "queryStartedAt": query_started_at,
                 "queryCompletedAt": query_completed_at,
                 "normalizedSql": result.normalized_sql,
                 "columns": result.columns,
                 "rows": result.rows,
-                "observationIds": result.observation_ids,
+                "projectedObservationIds": result.observation_ids,
+                "provenance": "projected-ids-only",
+                "rowBytes": result.result_bytes,
                 "truncated": result.truncated
             }))
             .map_err(evidence_error)?;
@@ -244,6 +286,10 @@ impl AnalysisTools for LocalAnalysisTools {
                 .write_text(&format!("/workspace/analysis/{result_path}"), &content)
                 .await?;
             let metadata = json!({
+                "resultFormat": EVIDENCE_RESULT_FORMAT,
+                "valueFormat": EVIDENCE_VALUE_FORMAT,
+                "profile": result.profile,
+                "scope": self.scope,
                 "queryId": query_id,
                 "resultPath": result_path,
                 "historyPath": QUERY_HISTORY_PATH,
@@ -570,7 +616,7 @@ mod tests {
     };
     use flaggo_evidence_store::{
         EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryResult, EvidenceStoreError,
-        SQLITE_EVIDENCE_QUERY_CAPABILITIES,
+        EvidenceValue, EvidenceValueKind, SQLITE_EVIDENCE_QUERY_CAPABILITIES,
     };
     use serde_json::json;
 
@@ -627,14 +673,22 @@ mod tests {
             if let QueryBehavior::Rows(count) = self.behavior {
                 let rows: Vec<_> = (0..count.min(limit))
                     .map(|index| {
-                        std::collections::BTreeMap::from([("value".to_owned(), json!(index))])
+                        std::collections::BTreeMap::from([(
+                            "value".to_owned(),
+                            EvidenceValue::Int64 {
+                                value: i64::from(index),
+                            },
+                        )])
                     })
                     .collect();
                 return Ok(EvidenceQueryResult {
+                    profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                     normalized_sql: "SELECT value FROM observations".to_owned(),
                     columns: vec![EvidenceColumn {
                         name: "value".to_owned(),
                         data_type: None,
+                        kind: EvidenceValueKind::Variant,
+                        nullable: None,
                     }],
                     result_bytes: serde_json::to_vec(&rows).unwrap().len(),
                     rows,
@@ -643,14 +697,17 @@ mod tests {
                 });
             }
             Ok(EvidenceQueryResult {
+                profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
                 normalized_sql: "SELECT count(*) AS count FROM observations".to_owned(),
                 columns: vec![EvidenceColumn {
                     name: "count".to_owned(),
                     data_type: None,
+                    kind: EvidenceValueKind::Variant,
+                    nullable: None,
                 }],
                 rows: vec![std::collections::BTreeMap::from([(
                     "count".to_owned(),
-                    json!(3),
+                    EvidenceValue::Int64 { value: 3 },
                 )])],
                 observation_ids: Vec::new(),
                 result_bytes: 11,
@@ -840,7 +897,10 @@ mod tests {
         assert!(result.get("rows").is_none());
         assert_eq!(result["savedRows"], 1);
         assert_eq!(result["totalRows"], 1);
-        assert_eq!(result["columns"], json!([{"name": "count", "type": null}]));
+        assert_eq!(
+            result["columns"],
+            json!([{"name": "count", "providerType": null, "kind":"variant", "nullable":null}])
+        );
         assert_eq!(result["queryStartedAt"], json!(now));
         assert_eq!(result["queryCompletedAt"], json!(now));
         assert!(result.get("cutoff").is_none());
@@ -857,7 +917,10 @@ mod tests {
             .await
             .unwrap();
         let saved: Value = serde_json::from_str(&saved).unwrap();
-        assert_eq!(saved["rows"][0]["count"], 3);
+        assert_eq!(
+            saved["rows"][0]["count"],
+            json!({"kind":"int64","value":"3"})
+        );
         assert_eq!(
             result["contentDigest"],
             sha256_digest(
@@ -883,7 +946,7 @@ mod tests {
         assert_eq!(history["result"], result);
         assert!(history["result"].get("rows").is_none());
         filesystem.write_text("/workspace/analysis/scripts/model.py", &format!(
-            "import json\nfrom pathlib import Path\nrows = json.loads(Path({:?}).read_text())['rows']\nPath('summary.json').write_text(json.dumps({{'count': rows[0]['count']}}))\nprint('modeled', len(rows))\n",
+            "import json\nfrom pathlib import Path\nfrom flaggo_evidence import load_rows\nrows = load_rows({:?})\nPath('summary.json').write_text(json.dumps({{'count': rows[0]['count']}}))\nprint('modeled', len(rows))\n",
             result["resultPath"].as_str().unwrap(),
         )).await.unwrap();
         let modeled = tools
@@ -1139,7 +1202,10 @@ mod tests {
         assert_eq!(result["savedRows"], 0);
         assert_eq!(result["totalRows"], 0);
         assert_eq!(result["truncated"], false);
-        assert_eq!(result["columns"], json!([{"name": "value", "type": null}]));
+        assert_eq!(
+            result["columns"],
+            json!([{"name": "value", "providerType": null, "kind":"variant", "nullable":null}])
+        );
         let saved: Value = serde_json::from_str(
             &filesystem
                 .read_text(&format!(
@@ -1500,7 +1566,7 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
             .await
             .unwrap();
         filesystem.write_text("/workspace/analysis/model.py", &format!(
-            "import json\nfrom pathlib import Path\nrows = json.loads(Path({:?}).read_text())['rows']\nPath('summary.json').write_text(json.dumps({{'count': rows[0]['count']}}))\nprint('SQLite -> Python')\n",
+            "import json\nfrom pathlib import Path\nfrom flaggo_evidence import load_rows\nrows = load_rows({:?})\nPath('summary.json').write_text(json.dumps({{'count': rows[0]['count']}}))\nprint('SQLite -> Python')\n",
             result["resultPath"].as_str().unwrap(),
         )).await.unwrap();
         let execution = tools
@@ -1639,7 +1705,10 @@ print(json.dumps({"venv": sys.prefix != sys.base_prefix,
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(refreshed_rows["rows"][0]["count"], 1);
+        assert_eq!(
+            refreshed_rows["rows"][0]["count"],
+            json!({"kind":"int64","value":"1"})
+        );
         assert_ne!(refreshed["resultPath"], result["resultPath"]);
         assert_eq!(
             filesystem

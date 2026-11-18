@@ -121,6 +121,7 @@ impl AgentSession for TetrisPlaygroundAgentSession {
             let page = serde_json::from_str(&saved).map_err(|error| {
                 AnalysisError::Evidence(format!("invalid saved query result: {error}"))
             })?;
+            let page = decode_query_page(page)?;
             match append_evidence_page(&mut rows, &page, cursor, page_size)? {
                 Some(next) => cursor = next,
                 None => break,
@@ -227,6 +228,40 @@ fn evidence_page_size(description: &Value) -> Result<u32, AnalysisError> {
             )
         })?;
     Ok(EVIDENCE_PAGE_SIZE.min(max_rows))
+}
+
+fn decode_query_page(mut result: Value) -> Result<Value, AnalysisError> {
+    use flaggo_evidence_store::{EVIDENCE_RESULT_FORMAT, EVIDENCE_VALUE_FORMAT, EvidenceValue};
+    if result["resultFormat"] != EVIDENCE_RESULT_FORMAT
+        || result["valueFormat"] != EVIDENCE_VALUE_FORMAT
+    {
+        return Err(AnalysisError::Evidence(
+            "unsupported saved evidence result/value format".to_owned(),
+        ));
+    }
+    let rows = result["rows"]
+        .as_array_mut()
+        .ok_or_else(|| AnalysisError::Evidence("query result has no rows".to_owned()))?;
+    for row in rows {
+        let fields = row
+            .as_object_mut()
+            .ok_or_else(|| AnalysisError::Evidence("query row is not an object".to_owned()))?;
+        for cell in fields.values_mut() {
+            let value: EvidenceValue = serde_json::from_value(cell.take()).map_err(|error| {
+                AnalysisError::Evidence(format!("invalid evidence cell: {error}"))
+            })?;
+            *cell = match value {
+                EvidenceValue::Int64 { value } => Value::from(value),
+                EvidenceValue::Text { value } => Value::from(value),
+                _ => {
+                    return Err(AnalysisError::Evidence(
+                        "Tetris projection requires int64/text cells".to_owned(),
+                    ));
+                }
+            };
+        }
+    }
+    Ok(result)
 }
 
 fn append_evidence_page(

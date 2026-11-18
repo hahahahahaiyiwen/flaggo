@@ -2,6 +2,7 @@ use std::{error::Error, num::NonZeroU16};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use thiserror::Error;
 
 mod analysis;
@@ -12,9 +13,10 @@ mod sqlite_analysis;
 mod value;
 
 pub use analysis::{
-    EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryLimits,
-    EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope, EvidenceRelation,
-    EvidenceRelationColumn, EvidenceSourceSelector,
+    EVIDENCE_RESULT_FORMAT, EVIDENCE_VALUE_FORMAT, EvidenceAnalysisStore, EvidenceColumn,
+    EvidenceQueryCapabilities, EvidenceQueryLimits, EvidenceQueryRequest, EvidenceQueryResult,
+    EvidenceQueryScope, EvidenceRelation, EvidenceRelationColumn, EvidenceSourceSelector,
+    EvidenceValueKind, PYTHON_EVIDENCE_DECODER,
 };
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteEvidenceStore;
@@ -22,7 +24,7 @@ pub use sqlite::SqliteEvidenceStore;
 pub use sqlite_analysis::{SQLITE_EVIDENCE_QUERY_CAPABILITIES, SqliteEvidenceAnalysisStore};
 pub use value::EvidenceValue;
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AuthorityScope {
     pub tenant: String,
     pub application: String,
@@ -54,7 +56,8 @@ impl AuthorityScope {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum EvidenceSignal {
     Log,
     Metric,

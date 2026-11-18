@@ -12,9 +12,18 @@ flaggo-contract = { path = "../contract" }
 flaggo-contract-application = { path = "../contract-application" }
 flaggo-contract-store = { path = "../contract-store", default-features = false }
 flaggo-executable-store = { path = "../executable-store", default-features = false }
+flaggo-evidence-store = { path = "../evidence-store", default-features = false }
+flaggo-raw-otlp-inbox = { path = "../raw-otlp-inbox", default-features = false }
+sha2 = "0.10.9"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+flaggo-evidence-store = { path = "../evidence-store", features = ["sqlite"] }
+flaggo-raw-otlp-inbox = { path = "../raw-otlp-inbox", features = ["sqlite"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

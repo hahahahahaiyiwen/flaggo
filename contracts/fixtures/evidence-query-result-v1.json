@@ -1,0 +1,25 @@
+{
+  "resultFormat": "flaggo.evidence.query-result/v1",
+  "valueFormat": "flaggo.evidence.value/v1",
+  "profile": "flaggo.evidence.sqlite/v1",
+  "queryId": "c1c72081-c46b-425a-86da-0a0abb8cab0f",
+  "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "scope": {
+    "authority": { "tenant": "local", "application": "example", "environment": "test" },
+    "contractDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sources": [
+      { "signal": "log", "instrumentationScope": "example", "signalName": "latency", "metricKind": null, "metricUnit": null, "parentSpanName": null }
+    ]
+  },
+  "limits": { "maxRows": 10, "maxRowBytes": 4096, "timeoutNanoseconds": "1000000000" },
+  "readConsistency": "live",
+  "queryStartedAt": "2026-11-18T00:00:00Z",
+  "queryCompletedAt": "2026-11-18T00:00:01Z",
+  "normalizedSql": "SELECT 9007199254740993 AS value FROM observations",
+  "columns": [{ "name": "value", "providerType": null, "kind": "variant", "nullable": null }],
+  "rows": [{ "value": { "kind": "int64", "value": "9007199254740993" } }],
+  "projectedObservationIds": [],
+  "provenance": "projected-ids-only",
+  "rowBytes": 53,
+  "truncated": false
+}

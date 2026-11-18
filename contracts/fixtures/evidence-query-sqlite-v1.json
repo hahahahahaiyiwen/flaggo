@@ -1,0 +1,75 @@
+{
+  "profile": "flaggo.evidence.sqlite/v1",
+  "cases": [
+    {
+      "name": "source-time-filter",
+      "sql": "SELECT observed_at_unix_nano AS time FROM observations WHERE length(observed_at_unix_nano) > 3 OR (length(observed_at_unix_nano) = 3 AND observed_at_unix_nano > '150')",
+      "expect": { "rows": [{ "time": { "kind": "text", "value": "200" } }] }
+    },
+    {
+      "name": "ordered-projection",
+      "sql": "SELECT observed_at_unix_nano AS time FROM observations ORDER BY length(observed_at_unix_nano), observed_at_unix_nano",
+      "expect": { "rows": [{ "time": { "kind": "text", "value": "100" } }, { "time": { "kind": "text", "value": "200" } }] }
+    },
+    {
+      "name": "grouped-count",
+      "sql": "SELECT signal_name, count(*) AS samples FROM observations GROUP BY signal_name ORDER BY signal_name",
+      "expect": { "rows": [{ "signal_name": { "kind": "text", "value": "sample" }, "samples": { "kind": "int64", "value": "2" } }] }
+    },
+    {
+      "name": "json-extraction",
+      "sql": "SELECT json_extract(payload_json, '$.value') AS value FROM observations ORDER BY observation_sequence",
+      "expect": { "rows": [{ "value": { "kind": "int64", "value": "1" } }, { "value": { "kind": "int64", "value": "3" } }] }
+    },
+    {
+      "name": "named-cte",
+      "sql": "WITH values_by_source AS (SELECT json_extract(payload_json, '$.value') AS value FROM observations) SELECT avg(value) AS average FROM values_by_source",
+      "expect": { "rows": [{ "average": { "kind": "float64", "bits": "4000000000000000" } }] }
+    },
+    {
+      "name": "empty-with-types",
+      "sql": "SELECT signal_name, observation_id FROM observations WHERE 0",
+      "expect": { "rows": [] }
+    },
+    {
+      "name": "int64-extremes",
+      "sql": "SELECT 9223372036854775807 AS largest, -9223372036854775808 AS smallest FROM observations LIMIT 1",
+      "expect": { "rows": [{ "largest": { "kind": "int64", "value": "9223372036854775807" }, "smallest": { "kind": "int64", "value": "-9223372036854775808" } }] }
+    },
+    {
+      "name": "numeric-looking-text",
+      "sql": "SELECT json_extract(payload_json, '$.numeric') AS text_value FROM observations ORDER BY observation_sequence",
+      "expect": { "rows": [{ "text_value": { "kind": "text", "value": "1" } }, { "text_value": { "kind": "text", "value": "3" } }] }
+    },
+    {
+      "name": "finite-non-finite",
+      "sql": "SELECT 1.5 AS finite, 1e999 AS infinity, -1e999 AS negative_infinity, 0.0 / 0.0 AS undefined, json_extract(payload_json, '$.bits') AS original_bits FROM observations WHERE json_extract(payload_json, '$.value') = 1",
+      "expect": { "rows": [{
+        "finite": { "kind": "float64", "bits": "3ff8000000000000" },
+        "infinity": { "kind": "float64", "bits": "7ff0000000000000" },
+        "negative_infinity": { "kind": "float64", "bits": "fff0000000000000" },
+        "undefined": { "kind": "null" },
+        "original_bits": { "kind": "text", "value": "7ff8000000000042" }
+      }] }
+    },
+    {
+      "name": "null-missing-json",
+      "sql": "SELECT NULL AS null_value, json_extract(payload_json, '$.absent') AS missing, json_type(payload_json, '$.absent') AS missing_type FROM observations LIMIT 1",
+      "expect": { "rows": [{ "null_value": { "kind": "null" }, "missing": { "kind": "null" }, "missing_type": { "kind": "null" } }] }
+    },
+    {
+      "name": "division-overflow-collation",
+      "sql": "SELECT 1 / 2 AS quotient, 9223372036854775807 + 1 AS overflow, 'A' < 'a' COLLATE BINARY AS ordered FROM observations LIMIT 1",
+      "expect": { "rows": [{
+        "quotient": { "kind": "int64", "value": "0" },
+        "overflow": { "kind": "float64", "bits": "43e0000000000000" },
+        "ordered": { "kind": "int64", "value": "1" }
+      }] }
+    },
+    {
+      "name": "duplicate-aliases",
+      "sql": "SELECT observation_id AS duplicate, signal_name AS duplicate FROM observations",
+      "expect": "invalidQuery"
+    }
+  ]
+}

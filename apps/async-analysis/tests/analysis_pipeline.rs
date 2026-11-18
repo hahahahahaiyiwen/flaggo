@@ -31,7 +31,7 @@ use flaggo_async_analysis::{
 use flaggo_evidence_store::{
     EvidenceAnalysisStore, EvidenceColumn, EvidenceQueryCapabilities, EvidenceQueryLimits,
     EvidenceQueryRequest, EvidenceQueryResult, EvidenceQueryScope, EvidenceStoreError,
-    SQLITE_EVIDENCE_QUERY_CAPABILITIES,
+    EvidenceValue, EvidenceValueKind, SQLITE_EVIDENCE_QUERY_CAPABILITIES,
 };
 use serde_json::{Value, json};
 
@@ -129,12 +129,18 @@ impl EvidenceAnalysisStore for FakeEvidenceStore {
     ) -> Result<EvidenceQueryResult, EvidenceStoreError> {
         self.queries.fetch_add(1, Ordering::Relaxed);
         Ok(EvidenceQueryResult {
+            profile: SQLITE_EVIDENCE_QUERY_CAPABILITIES.profile.to_owned(),
             normalized_sql: "SELECT count(*) AS count FROM observations".to_owned(),
             columns: vec![EvidenceColumn {
                 name: "count".to_owned(),
                 data_type: None,
+                kind: EvidenceValueKind::Variant,
+                nullable: None,
             }],
-            rows: vec![BTreeMap::from([("count".to_owned(), json!(12))])],
+            rows: vec![BTreeMap::from([(
+                "count".to_owned(),
+                EvidenceValue::Int64 { value: 12 },
+            )])],
             observation_ids: Vec::new(),
             result_bytes: 12,
             truncated: false,

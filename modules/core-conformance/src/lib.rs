@@ -11,6 +11,8 @@ use flaggo_contract_application::{ContractLifecycle, ServiceError};
 use flaggo_executable_store::{ContractAuthority, ExecutableLifecycleState};
 use serde_json::json;
 
+pub mod evidence;
+
 pub const FIXTURE_REVISION: &str = "flaggo.authority-conformance/v1";
 
 #[async_trait]

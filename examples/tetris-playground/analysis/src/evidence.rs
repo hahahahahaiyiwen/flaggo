@@ -527,11 +527,26 @@ mod tests {
                 .skip(cursor)
                 .take(37)
                 .cloned()
+                .map(|mut row| {
+                    for cell in row.as_object_mut().unwrap().values_mut() {
+                        *cell = if let Some(value) = cell.as_i64() {
+                            json!({"kind":"int64","value":value.to_string()})
+                        } else {
+                            json!({"kind":"text","value":cell.as_str().unwrap()})
+                        };
+                    }
+                    row
+                })
                 .collect::<Vec<_>>();
             self.filesystem
                 .write_text(
                     &format!("/workspace/analysis/{path}"),
-                    &json!({"rows": rows}).to_string(),
+                    &json!({
+                        "resultFormat": flaggo_evidence_store::EVIDENCE_RESULT_FORMAT,
+                        "valueFormat": flaggo_evidence_store::EVIDENCE_VALUE_FORMAT,
+                        "rows": rows
+                    })
+                    .to_string(),
                 )
                 .await?;
             Ok(json!({"resultPath": path}))

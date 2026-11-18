@@ -806,9 +806,14 @@ dependencies = [
  "flaggo-contract",
  "flaggo-contract-application",
  "flaggo-contract-store",
+ "flaggo-evidence-store",
  "flaggo-executable-store",
+ "flaggo-raw-otlp-inbox",
  "serde",
  "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
  "tokio",
 ]
 
@@ -1044,6 +1049,7 @@ dependencies = [
  "flaggo-analysis-domain",
  "flaggo-analysis-workspace",
  "flaggo-async-analysis",
+ "flaggo-evidence-store",
  "flaggo-service-observability",
  "serde_json",
  "tempfile",

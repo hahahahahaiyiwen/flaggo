@@ -116,6 +116,7 @@ async fn materialized_numeric_attributes_support_sql_eligibility_without_casts()
         }],
     };
     let result = reader.query(&scope, EvidenceQueryRequest {
+        profile: reader.query_capabilities().profile.to_owned(),
         sql: "SELECT
             json_extract(payload_json, '$.signal.payload.attributes[0].value.value') AS pieces,
             json_extract(payload_json, '$.signal.payload.attributes[1].value.value') AS duration,
@@ -133,17 +134,40 @@ async fn materialized_numeric_attributes_support_sql_eligibility_without_casts()
         },
     }).await.unwrap();
     assert_eq!(result.rows.len(), 3);
+    use flaggo_evidence_store::EvidenceValue;
     for (index, row) in result.rows.iter().enumerate() {
-        assert_eq!(row["pieces"], json!(if index == 0 { 0 } else { 2 }));
+        assert_eq!(
+            row["pieces"],
+            EvidenceValue::Int64 {
+                value: if index == 0 { 0 } else { 2 }
+            }
+        );
         assert_eq!(
             row["duration"],
-            json!(if index == 1 { 0.0 } else { 81.5114 })
+            EvidenceValue::Float64 {
+                bits: (if index == 1 { 0.0_f64 } else { 81.5114_f64 }).to_bits()
+            }
         );
-        assert_eq!(row["text_zero"], json!("0"));
-        assert_eq!(row["maximum"], json!(i64::MAX));
-        assert_eq!(row["minimum"], json!(i64::MIN));
-        assert_eq!(row["no_history"], json!(i64::from(index != 2)));
-        assert_eq!(row["eligible"], json!(i64::from(index == 2)));
+        assert_eq!(
+            row["text_zero"],
+            EvidenceValue::Text {
+                value: "0".to_owned()
+            }
+        );
+        assert_eq!(row["maximum"], EvidenceValue::Int64 { value: i64::MAX });
+        assert_eq!(row["minimum"], EvidenceValue::Int64 { value: i64::MIN });
+        assert_eq!(
+            row["no_history"],
+            EvidenceValue::Int64 {
+                value: i64::from(index != 2)
+            }
+        );
+        assert_eq!(
+            row["eligible"],
+            EvidenceValue::Int64 {
+                value: i64::from(index == 2)
+            }
+        );
     }
     let retained: Vec<_> = fixture
         .inbox
