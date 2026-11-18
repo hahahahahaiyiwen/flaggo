@@ -54,6 +54,17 @@ async fn main() {
     let _workspace_contract = |lease: Arc<dyn flaggo_analysis_workspace::WorkspaceLease>| {
         lease.workspace_id().to_owned()
     };
+    let _analysis_composition = |
+        contracts: Arc<dyn flaggo_analysis_application::ContractService>,
+        evidence: Arc<dyn flaggo_evidence_store::EvidenceAnalysisStore>,
+        execution: Arc<dyn flaggo_analysis_execution::ExecutionProvider>,
+        limits: flaggo_evidence_store::EvidenceQueryLimits,
+    | {
+        flaggo_analysis_application::CapabilityFactory::new(
+            contracts, evidence, limits,
+            Arc::new(flaggo_analysis_application::SystemClock), execution,
+        )
+    };
     let _evidence_contract = |store: Arc<dyn flaggo_evidence_store::EvidenceStore>| store;
     let _inbox_contract = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| inbox;
     let _ingestion = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| {

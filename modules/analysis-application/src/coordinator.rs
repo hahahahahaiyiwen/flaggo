@@ -29,7 +29,7 @@ pub trait ContractService: Send + Sync {
 
     async fn get_current_contract(
         &self,
-        contract_name: &str,
+        resource: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError>;
 
     async fn submit_candidate(
@@ -155,7 +155,7 @@ impl AnalysisCoordinator {
         for catalog_contract in contracts {
             let Some(contract) = self
                 .contract_service
-                .get_current_contract(&catalog_contract.name)
+                .get_current_contract(&catalog_contract.resource()?)
                 .await?
             else {
                 continue;
@@ -219,7 +219,7 @@ impl AnalysisCoordinator {
         let attempt_id = Uuid::new_v4().to_string();
         let workspace = match self
             .workspace_provider
-            .claim(&contract.name, &attempt_id)
+            .claim(&contract.resource()?, &attempt_id)
             .await
         {
             Ok(workspace) => workspace,
@@ -327,7 +327,7 @@ impl AnalysisCoordinator {
             };
             let current_digest = self
                 .contract_service
-                .get_current_contract(&contract.name)
+                .get_current_contract(&contract.resource()?)
                 .await?
                 .map(|current| current.contract_digest);
             let outcome = if submitted
@@ -362,6 +362,8 @@ impl AnalysisCoordinator {
         let task = AnalysisTask {
             prompt: analysis_task_prompt(&context),
         };
+        let handoff = workspace.latest_handoff(&cycle.cycle_id).await?;
+        let expected_previous = handoff.as_ref().map(|handoff| handoff.attempt_id.clone());
         let acquisition = tokio::time::timeout_at(
             deadline,
             self.agent_pool.acquire(AgentSessionSpec {
@@ -370,7 +372,7 @@ impl AnalysisCoordinator {
                 filesystem,
                 tools: tools.clone(),
                 task: task.clone(),
-                handoff: workspace.latest_handoff(&cycle.cycle_id).await?,
+                handoff,
                 cycle_limits: self.config.cycle_limits.clone(),
             }),
         )
@@ -426,7 +428,7 @@ impl AnalysisCoordinator {
                 () = tokio::time::sleep(self.config.supersession_poll_interval) => {
                     let current = match self
                         .contract_service
-                        .get_current_contract(&contract.name)
+                        .get_current_contract(&contract.resource()?)
                         .await
                     {
                         Ok(current) => current,
@@ -542,7 +544,7 @@ impl AnalysisCoordinator {
         let agent_outcome = match agent_outcome {
             Ok(AgentRunOutcome::Handoff { summary, metadata }) => {
                 workspace
-                    .record_handoff(&cycle.cycle_id, &context.attempt_id, &summary, metadata)
+                    .record_handoff(&cycle.cycle_id, &context.attempt_id, &summary, metadata, expected_previous.as_deref())
                     .await?;
                 lease.close().await?;
                 return Ok(CoordinatorRunOutcome::Recoverable {
@@ -573,7 +575,7 @@ impl AnalysisCoordinator {
 
         let current = match self
             .contract_service
-            .get_current_contract(&contract.name)
+            .get_current_contract(&contract.resource()?)
             .await
         {
             Ok(current) => current,

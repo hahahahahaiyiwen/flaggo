@@ -2,7 +2,75 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub const WORKSPACE_CAPABILITY: &str = "flaggo.workspace/v2";
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceClaim {
+    pub resource: flaggo_contract::ContractResourceId,
+    pub workspace_id: String,
+    pub attempt_id: String,
+    pub epoch: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceArtifact {
+    pub resource: flaggo_contract::ContractResourceId,
+    pub workspace_id: String,
+    pub cycle_id: String,
+    pub attempt_id: String,
+    pub digest: String,
+    pub byte_length: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HandoffPublication {
+    pub summary: String,
+    pub metadata: Option<Value>,
+}
+
+pub const EXECUTION_CAPABILITY: &str = "flaggo.execution/v1";
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionRequest {
+    pub execution_id: String,
+    pub source: WorkspaceArtifact,
+    /// Analysis-relative virtual directory for module imports, not a host path.
+    pub source_directory: String,
+    pub profile: String,
+    pub timeout_ms: u64,
+    pub output_limit_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ExecutionState {
+    /// A process may have started. Absence of a receipt is never permission to rerun.
+    Pending,
+    Completed {
+        result: WorkspaceArtifact,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionReceipt {
+    pub request: ExecutionRequest,
+    pub epoch: u64,
+    pub state: ExecutionState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExecutionReservation {
+    Granted(ExecutionReceipt),
+    Existing(ExecutionReceipt),
+}
 
 use flaggo_analysis_domain::{
     AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
@@ -17,7 +85,7 @@ pub struct CyclePreparation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PrepareCycleResult {
-    Ready(CyclePreparation),
+    Ready(Box<CyclePreparation>),
     NotEligible { eligible_at: DateTime<Utc> },
 }
 
@@ -64,6 +132,13 @@ pub trait WorkspaceFileSystem: Send + Sync {
 
 #[async_trait]
 pub trait WorkspaceLease: Send + Sync {
+    fn resource(&self) -> &flaggo_contract::ContractResourceId;
+
+    fn claim_token(&self) -> WorkspaceClaim;
+
+    /// Revoke this claim and every capability derived from it before returning.
+    async fn release(&self) -> Result<(), AnalysisError>;
+
     fn workspace_id(&self) -> &str;
 
     fn contract_name(&self) -> &str;
@@ -121,7 +196,54 @@ pub trait WorkspaceLease: Send + Sync {
         attempt_id: &str,
         summary: &str,
         metadata: Option<Value>,
+        expected_previous: Option<&str>,
+    ) -> Result<(), AnalysisError> {
+        let content = serde_json::to_vec(&HandoffPublication {
+            summary: summary.into(),
+            metadata,
+        })
+        .map_err(|error| AnalysisError::workspace(error.to_string()))?;
+        let artifact = self.put_artifact(cycle_id, attempt_id, &content).await?;
+        self.commit_handoff(&artifact, expected_previous).await
+    }
+
+    /// Upload immutable, scoped bytes without changing committed workflow state.
+    async fn put_artifact(
+        &self,
+        cycle_id: &str,
+        attempt_id: &str,
+        bytes: &[u8],
+    ) -> Result<WorkspaceArtifact, AnalysisError>;
+
+    async fn read_artifact(&self, artifact: &WorkspaceArtifact) -> Result<Vec<u8>, AnalysisError>;
+
+    /// Compare the previous committed attempt and publish under the current fence.
+    /// Identical retries reconcile an interrupted publication; conflicting retries fail.
+    async fn commit_handoff(
+        &self,
+        artifact: &WorkspaceArtifact,
+        expected_previous: Option<&str>,
     ) -> Result<(), AnalysisError>;
+
+    /// Atomically reserve a scoped idempotency key before any external execution.
+    async fn reserve_execution(
+        &self,
+        request: &ExecutionRequest,
+    ) -> Result<ExecutionReservation, AnalysisError>;
+
+    async fn execution_receipt(
+        &self,
+        cycle_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<ExecutionReceipt>, AnalysisError>;
+
+    /// Publish an immutable result under the original execution's still-current fence.
+    async fn complete_execution(
+        &self,
+        cycle_id: &str,
+        execution_id: &str,
+        result: &WorkspaceArtifact,
+    ) -> Result<ExecutionReceipt, AnalysisError>;
 
     async fn latest_handoff(
         &self,
@@ -168,7 +290,7 @@ pub trait WorkspaceLease: Send + Sync {
 pub trait WorkspaceProvider: Send + Sync {
     async fn claim(
         &self,
-        contract_name: &str,
+        resource: &flaggo_contract::ContractResourceId,
         attempt_id: &str,
     ) -> Result<Arc<dyn WorkspaceLease>, AnalysisError>;
 }

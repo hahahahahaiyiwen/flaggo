@@ -17,10 +17,10 @@ The shared operational telemetry contract is
 | [Decision Service](decision-service/README.md) | Web API | Stateless exact-version runtime evaluation |
 | [OTel Ingestion](otel-ingestion/README.md) | Web API plus background worker | Append-before-acknowledgement OTLP ingress and Raw OTLP Inbox retention |
 | [Evidence Materializer](evidence-materializer/README.md) | Background worker | Forward-only Raw OTLP Inbox to Evidence Store projection |
+| [Async Analysis](async-analysis/README.md) | Background worker | Shared analysis orchestration with local workspace, evidence and Python adapters |
 
 [Operator Console](operator-console/README.md) is a planned client, not a
-current runnable server composition root. Async Analysis is also planned and
-will receive its own app boundary when implemented.
+current runnable server composition root.
 
 ## Boundary rules
 

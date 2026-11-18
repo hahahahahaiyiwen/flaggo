@@ -308,8 +308,9 @@ pub(crate) mod tests {
             )
         }
 
-        async fn code_interpreter(
+        async fn execute_python(
             &self,
+            _execution_id: &str,
             input: crate::PythonInput<'_>,
         ) -> Result<serde_json::Value, AnalysisError> {
             Ok(match input {
@@ -657,6 +658,12 @@ pub(crate) mod tests {
             cycle_id: "cycle".to_owned(),
             attempt_id: "attempt".to_owned(),
             contract: AnalysisContractIdentity {
+                scope: flaggo_analysis_domain::AnalysisAuthority::new(
+                    "local".into(),
+                    "test".into(),
+                    "test".into(),
+                )
+                .unwrap(),
                 name: contract.name.clone(),
                 digest: contract.contract_digest.clone(),
             },

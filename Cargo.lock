@@ -663,13 +663,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "flaggo-analysis-application"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "flaggo-analysis-agent",
+ "flaggo-analysis-domain",
+ "flaggo-analysis-execution",
+ "flaggo-analysis-workspace",
+ "flaggo-contract",
+ "flaggo-evidence-store",
+ "flaggo-service-observability",
+ "opentelemetry",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "flaggo-analysis-domain"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "flaggo-contract",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "flaggo-analysis-execution"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "flaggo-analysis-agent",
+ "flaggo-analysis-domain",
+ "flaggo-analysis-workspace",
+ "flaggo-evidence-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -679,11 +720,13 @@ dependencies = [
  "async-trait",
  "chrono",
  "flaggo-analysis-domain",
+ "flaggo-contract",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -695,7 +738,9 @@ dependencies = [
  "axum",
  "chrono",
  "flaggo-analysis-agent",
+ "flaggo-analysis-application",
  "flaggo-analysis-domain",
+ "flaggo-analysis-execution",
  "flaggo-analysis-workspace",
  "flaggo-contract",
  "flaggo-evidence-store",
@@ -804,6 +849,9 @@ name = "flaggo-core-conformance"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
+ "flaggo-analysis-domain",
+ "flaggo-analysis-workspace",
  "flaggo-contract",
  "flaggo-contract-application",
  "flaggo-contract-store",

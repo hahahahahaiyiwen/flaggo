@@ -13,6 +13,8 @@ pub use identity::{sha256_digest, workspace_id};
 #[cfg(feature = "local")]
 pub use local::LocalWorkspaceProvider;
 pub use provider::{
-    CyclePreparation, PrepareCycleResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFileInfo,
-    WorkspaceFileSystem, WorkspaceLease, WorkspaceProvider,
+    CyclePreparation, EXECUTION_CAPABILITY, ExecutionReceipt, ExecutionRequest,
+    ExecutionReservation, ExecutionState, HandoffPublication, PrepareCycleResult,
+    WORKSPACE_CAPABILITY, WorkspaceArtifact, WorkspaceClaim, WorkspaceEntry, WorkspaceEntryKind,
+    WorkspaceFileInfo, WorkspaceFileSystem, WorkspaceLease, WorkspaceProvider,
 };

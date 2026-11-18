@@ -551,8 +551,9 @@ mod tests {
                 .await?;
             Ok(json!({"resultPath": path}))
         }
-        async fn code_interpreter(
+        async fn execute_python(
             &self,
+            _execution_id: &str,
             _input: flaggo_analysis_agent::PythonInput<'_>,
         ) -> Result<Value, flaggo_analysis_domain::AnalysisError> {
             unreachable!("deterministic analysis requires no Python")
@@ -623,7 +624,10 @@ mod tests {
                 contract: json!({}),
             };
             let workspaces = LocalWorkspaceProvider::new(root.path()).unwrap();
-            let lease = workspaces.claim(&contract.name, "proposer").await.unwrap();
+            let lease = workspaces
+                .claim(&contract.resource().unwrap(), "proposer")
+                .await
+                .unwrap();
             let PrepareCycleResult::Ready(preparation) = lease
                 .prepare_cycle(
                     &contract,
@@ -726,7 +730,10 @@ mod tests {
                     let manifest: Value = serde_json::from_slice(
                         &std::fs::read(
                             root.path()
-                                .join(workspace_id(&contract.name).trim_start_matches("sha256:"))
+                                .join(
+                                    workspace_id(&contract.resource().unwrap())
+                                        .trim_start_matches("sha256:"),
+                                )
                                 .join("cycles")
                                 .join(&preparation.cycle.cycle_id)
                                 .join("analysis-manifest.json"),

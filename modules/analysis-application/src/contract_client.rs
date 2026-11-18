@@ -152,6 +152,7 @@ impl ContractService for ContractServiceClient {
             }
             if projection.learning.is_some() {
                 contracts.push(AnalysisContractIdentity {
+                    scope: projection.authority,
                     name: projection.name,
                     digest: entry.contract_digest,
                 });
@@ -165,9 +166,14 @@ impl ContractService for ContractServiceClient {
 
     async fn get_current_contract(
         &self,
-        contract_name: &str,
+        resource: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError> {
-        let Some(version) = self.current_response(contract_name).await? else {
+        if resource.scope != self.scope {
+            return Err(AnalysisError::Contract(
+                "Requested resource is outside the configured client scope.".into(),
+            ));
+        }
+        let Some(version) = self.current_response(&resource.name).await? else {
             return Ok(None);
         };
         parse_learning_contract(version)
@@ -179,6 +185,11 @@ impl ContractService for ContractServiceClient {
         rules: Value,
         analysis_manifest_digest: &str,
     ) -> Result<CandidateRecord, AnalysisError> {
+        if context.contract.scope != self.scope {
+            return Err(AnalysisError::Candidate(
+                "Candidate context is outside the configured client scope.".into(),
+            ));
+        }
         if !rules.is_array() {
             return Err(AnalysisError::Candidate(
                 "Candidate rules must be a JSON array".to_owned(),
@@ -621,6 +632,8 @@ mod tests {
             CatalogUpdate::Updated {
                 revision: "\"revision-1\"".to_owned(),
                 contracts: vec![AnalysisContractIdentity {
+                    scope: ResourceScope::new("local".into(), "checkout".into(), "test".into())
+                        .unwrap(),
                     name: "checkout.delay".to_owned(),
                     digest:
                         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -637,7 +650,13 @@ mod tests {
         );
 
         let contract = client
-            .get_current_contract("checkout.delay")
+            .get_current_contract(
+                &flaggo_contract::ContractResourceId::new(
+                    client.scope.clone(),
+                    "checkout.delay".into(),
+                )
+                .unwrap(),
+            )
             .await
             .expect("current contract")
             .expect("learning contract");
@@ -649,7 +668,13 @@ mod tests {
         );
         assert!(
             client
-                .get_current_contract("missing")
+                .get_current_contract(
+                    &flaggo_contract::ContractResourceId::new(
+                        client.scope.clone(),
+                        "missing".into()
+                    )
+                    .unwrap()
+                )
                 .await
                 .expect("missing current")
                 .is_none()
@@ -673,6 +698,8 @@ mod tests {
             cycle_id: "cycle-1".to_owned(),
             attempt_id: "attempt-1".to_owned(),
             contract: AnalysisContractIdentity {
+                scope: ResourceScope::new("local".into(), "checkout".into(), "test".into())
+                    .unwrap(),
                 name: "checkout.delay".to_owned(),
                 digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     .to_owned(),

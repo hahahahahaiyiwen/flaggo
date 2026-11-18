@@ -19,6 +19,8 @@ revisions recorded below.
 | Existing runnable apps | Local configuration, adapter initialization, listener and shutdown composition |
 | `flaggo-core-conformance` | Reusable authority outcome scenarios, independent of SQL |
 | `flaggo-analysis-workspace`, without default features | Path-free workflow and virtual filesystem contracts; local adapter remains feature-gated |
+| `flaggo-analysis-application` | Shared coordinator, scoped Contract Service client, evidence/tools and observability with injected execution; no app or SQLite dependency |
+| `flaggo-analysis-execution`, without default features | Path-free execution/reconciliation capability; default local adapter owns Python processes and host paths |
 | `flaggo-evidence-store` and `flaggo-raw-otlp-inbox`, without default features | Evidence/query and durable inbox contracts without SQLx or SQLite query-parser dependencies; existing local adapters remain defaults |
 
 `ContractAuthority` v2 uses an explicit validated
@@ -47,8 +49,29 @@ directory. The local capability factory receives the local provider separately;
 its execution-path projection accepts only the exact live claim from that
 provider and preserves active/writable/sealed-cycle checks. The provider keeps
 weak references so projection cannot extend ownership. This separates the
-local convenience without pretending that filesystem rename is a portable
-conditional artifact publication protocol.
+local convenience without treating a host path as an execution contract.
+
+`flaggo.workspace/v2` binds identity to the full resource, uses persisted
+monotonic claim epochs, and revokes derived capabilities on explicit release or
+drop. Released capabilities cannot read, write, settle budgets, publish handoffs
+or finalize executions. Overflow fails closed. The local adapter uses OS lock
+exclusion, not expiring multi-host leases.
+
+Immutable artifact references bind resource, workspace, cycle, attempt, content
+digest and byte length. Upload does not commit a workflow transition.
+Publication compares the previous handoff identity under the live fence;
+identical retries reconcile the record/pointer boundary, while stale revisions,
+cross-scope references and changed bytes fail. Metadata-free checkpoints do not
+advance the workflow.
+
+`flaggo.execution/v1` reserves a scoped execution idempotency key before running.
+Completed receipts reference immutable results; retries reconcile without
+repeating side effects. Pending receipts represent a possibly executed request,
+not permission to rerun. A replacement fence cannot finalize that old execution.
+Copilot invocation identity supplies the stable retry key; direct tool calls
+without a supplied key deliberately create a new execution. Local Python remains
+trusted host execution, with bounded captured output and cancellation; it is
+not the malicious-tenant sandbox required for hosted qualification.
 
 The evidence and raw-inbox crates likewise separate their contracts from
 optional local adapters; the OTLP codec no longer enables SQLite transitively.
@@ -99,6 +122,23 @@ authorized re-ingestion is required to project them. Materializer decoder
 revision 5 does not claim that existing projection/checkpoint revisions were
 automatically replayed. Keep sealed historical runs unchanged.
 
+Before using a pre-scoped local workspace, stop its writer and explicitly bind
+the historical name-only directory:
+
+```powershell
+$env:FLAGGO_ANALYSIS_WORKSPACE_ROOT = "<existing workspace root>"
+$env:FLAGGO_ANALYSIS_TENANT = "<tenant>"
+$env:FLAGGO_ANALYSIS_APPLICATION = "<application>"
+$env:FLAGGO_ANALYSIS_ENVIRONMENT = "<environment>"
+cargo run -p flaggo-async-analysis -- --bind-legacy-workspace <contractName>
+```
+
+This command runs before any agent/provider initialization. It checks every
+stored cycle's scope, preserves the old directory/workspace ID and exact sealed
+bytes, and records an explicit sidecar binding. It refuses incompatible scopes
+or an existing separate scoped history. Unbound legacy history is never silently
+abandoned. New workspaces use the `flaggo.workspace/v2` full-resource hash domain.
+
 ## Compatibility record
 
 | Surface | This slice |
@@ -113,7 +153,7 @@ automatically replayed. Keep sealed historical runs unchanged.
 | Reusable fixture revision | `flaggo.authority-conformance/v2` (namespace and C03-C05) and `flaggo.evidence-conformance/v2` (local C08/C09/C11 outcomes) |
 | Evidence query | Explicit `flaggo.evidence.sqlite/v1` selection and `flaggo.evidence.query-result/v1` saved artifacts; provider SQL semantics are labelled, not arbitrary-SQL portable |
 | Canonical evidence cells | `flaggo.evidence.value/v1` integrated into typed rows, Python/agent guidance and deterministic consumers |
-| Workspace/execution | Path-free lease contract plus explicit local projection; existing local filesystem/lock/Python behavior, **not** a durable remote execution protocol or sandbox |
+| Workspace/execution | `flaggo.workspace/v2`, `flaggo.execution/v1`, `flaggo.workspace-conformance/v1`; local fenced publication, durable execution reconciliation and explicit trusted-local Python profile |
 | First hosted slice | Not qualified: private identity/distributed adapters, isolation and actual multi-host scenarios remain required |
 
 Concurrency strengthens persistence without changing PUT retry semantics:
@@ -138,6 +178,13 @@ clients and publication-failure injection. Run every advertised scenario and
 record unsupported capabilities separately. The SQLite fixture demonstrates
 one implementation, not a requirement for physical tables or SQL.
 
+Implement `WorkspaceFixture` with independently constructed providers over
+shared clean storage. Run `c10_c12_fenced_publication` for claim exclusion,
+conditional publication, stale-capability rejection, completed-result recovery
+and pending-execution non-replay. Execution adapters implement `ExecutionProvider`
+and must honor durable reservation before starting work. Local conformance is
+not evidence of multi-host expiry, scheduler isolation or hosted sandbox safety.
+
 Focused checks:
 
 ```powershell
@@ -146,6 +193,7 @@ cargo check -p flaggo-contract-application -p flaggo-decision-http --locked
 cargo clippy -p flaggo-contract-application -p flaggo-decision-http -p flaggo-core-conformance --all-targets --locked -- -D warnings
 cargo test -p flaggo-async-analysis packaged_skills_override --locked
 cargo test -p flaggo-analysis-workspace -p flaggo-async-analysis -p flaggo-evidence-store -p flaggo-raw-otlp-inbox -p flaggo-otlp-codec --locked
+cargo test -p flaggo-analysis-application -p flaggo-analysis-execution -p flaggo-core-conformance --locked
 cargo check -p flaggo-analysis-agent -p flaggo-analysis-workspace -p flaggo-evidence-store -p flaggo-raw-otlp-inbox -p flaggo-otlp-codec --no-default-features --locked
 npm run test:tetris-full-loop
 ```
@@ -185,9 +233,9 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C06 | Local injected-reader behavior only; multi-host acknowledgement/outage qualification remains phase 3 |
 | C07 | Scoped v4 keys/routes/SDK/artifacts, injected authentication and local migration implemented; namespace, security denial/no-write and migration preservation/rollback tests pass. Private identity adapter qualification remains later |
 | C08-C09 | Reusable durable append, atomic projection/checkpoint, retry/dedup/conflict outcomes and authorized whole-batch envelope implemented; replay rejects missing/mismatched authorization. Distributed fenced projection protocol remains outstanding |
-| C10 | Durable monotonic worker fences and authoritative stale-write rejection are not implemented |
+| C10 | Local workspace epochs, release/reacquisition and stale workspace/publication/execution rejection implemented; authority-verified admission and distributed projection fencing remain to be completed |
 | C11 | Explicit result/profile selection, canonical cells, scope/read/limit/artifact metadata and Python/agent consumers integrated. Shared twelve-category SQLite profile corpus runs under two scopes; local deadline/cancellation and reuse checked. Actual second-provider qualification remains later |
-| C12 | Host paths removed from the lease contract and exact-claim local projection tested; durable conditional publication/fence/execution receipts and reusable recovery scenarios remain outstanding |
+| C12 | Path-free execution provider, immutable conditional publication, durable receipts and reusable recovery scenarios implemented; hosted isolation and cross-host execution qualification remain later |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
 | Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
 
@@ -201,7 +249,10 @@ dispatched through the actual shared receiver, including scoped binary/gzip
 payloads. The deterministic real-host Tetris loop verified scoped deployment,
 SDK/REST parity, authorized telemetry, proposal/review/admission, activation
 and restart persistence. These are local results, not distributed qualification
-or a new remote consumer pin. Scoped workspace/fencing/execution work remains.
+or a new remote consumer pin. The subsequent workflow slice passes scoped
+migration/preservation, release/reacquisition, conditional artifact publication,
+receipt reconciliation, real-Python no-repeat execution, local workflow
+regressions and strict all-target Clippy.
 
 The source pinned by the successful standalone consumer is
 `ef2541081231a2e12c738731a6bcf14bbf8d33c3` (authority/HTTP extraction plus its
@@ -221,12 +272,20 @@ Its retained lockfile SHA-256 is
 `21264245686982643a88f2cee9183209b8b88cabfcca727591344eafe1d0e764`.
 This remains local Git consumption, not public remote publication.
 
-The latest consumer pin is
+An earlier canonical-cell consumer pin is
 `c27f99f79524fa60d5a7c38324cf65d9f47a5f18`, which additionally exercises
 the public canonical int64 codec. The same 14-package/no-SQLite checks passed.
 Its retained lockfile SHA-256 is
 `c87557f211a63a3f801141eed04b11febea0c416dffa2a645f2f659a3a62c617`.
-The query-result integration remains outside that consumer's qualification.
+The query-result integration remains outside that earlier consumer's qualification.
+
+The scoped-v4 consumer subsequently passed at
+`8919ceaddf301d0c55aeeee12d4c62e3a2bb1edb`: all 16 product packages resolved to
+that immutable local Git revision, all three HTTP compositions compiled, and
+the graph contained no SQLx/SQLite. Its retained lock SHA-256 is
+`e06f3a8696c459c078fc185627c18baf64c54f928160d335d3f401aef3697f19`.
+This is not remote publication. The newly extracted analysis/execution libraries
+still require their own final committed consumer qualification.
 
 The first standalone run exposed a fixture helper's accidental reliance on
 workspace-unified `serde_json/preserve_order`. The helper now deserializes the

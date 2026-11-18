@@ -3,7 +3,8 @@
 Run `check.py` with an exact committed product revision, a Git repository URL and
 a **new** output directory outside this workspace's Cargo package tree. It builds
 an independent client, retains `Cargo.lock`, runs canonical digest/evaluation
-checks, compiles both HTTP compositions, and rejects SQLite or unpinned product
+checks, compiles all three HTTP compositions and shared analysis/execution
+capabilities, and rejects SQLite, app composition roots or unpinned product
 dependencies. It never imports runnable apps or copies product implementation.
 
 ```powershell

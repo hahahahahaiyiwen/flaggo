@@ -67,6 +67,7 @@ impl ContractService for FakeContractService {
             .expect("current contract lock")
             .iter()
             .map(|contract| AnalysisContractIdentity {
+                scope: contract.authority.clone(),
                 name: contract.name.clone(),
                 digest: contract.contract_digest.clone(),
             })
@@ -79,14 +80,16 @@ impl ContractService for FakeContractService {
 
     async fn get_current_contract(
         &self,
-        contract_name: &str,
+        resource: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError> {
         Ok(self
             .current
             .read()
             .expect("current contract lock")
             .as_ref()
-            .filter(|contract| contract.name == contract_name)
+            .filter(|contract| {
+                contract.name == resource.name && contract.authority == resource.scope
+            })
             .cloned())
     }
 
@@ -646,7 +649,10 @@ async fn collaborates_across_fresh_coordinators_for_approval_revision_and_reject
         }
         let root = directory
             .path()
-            .join(workspace_id("checkout.delay").trim_start_matches("sha256:"))
+            .join(
+                workspace_id(&contract('a', Utc::now()).resource().unwrap())
+                    .trim_start_matches("sha256:"),
+            )
             .join("cycles")
             .join(cycle_id.unwrap());
         let manifest: Value =
@@ -729,7 +735,7 @@ impl ContractService for LostReplyService {
     }
     async fn get_current_contract(
         &self,
-        name: &str,
+        name: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError> {
         self.inner.get_current_contract(name).await
     }
@@ -777,7 +783,7 @@ impl ContractService for RecoverySupersessionService {
 
     async fn get_current_contract(
         &self,
-        name: &str,
+        name: &flaggo_contract::ContractResourceId,
     ) -> Result<Option<AnalysisContract>, AnalysisError> {
         if self.reads.fetch_add(1, Ordering::SeqCst) == 1 {
             *self.service.current.write().unwrap() = self.replacement.clone();
@@ -867,9 +873,10 @@ async fn submission_recovery_finalizes_supersession_before_replacement_is_eligib
                     ..
                 } if id == cycle_id && digest == replacement_digest
             ));
-            let root = directory
-                .path()
-                .join(workspace_id("checkout.delay").trim_start_matches("sha256:"));
+            let root = directory.path().join(
+                workspace_id(&contract('a', Utc::now()).resource().unwrap())
+                    .trim_start_matches("sha256:"),
+            );
             let cycle: Value = serde_json::from_slice(
                 &std::fs::read(root.join("cycles").join(&cycle_id).join("cycle.json")).unwrap(),
             )
@@ -924,7 +931,10 @@ async fn reviewer_and_general_cannot_submit_rules_different_from_the_committed_d
                 assert_eq!(failure_category, "integrity");
                 let cycle_root = directory
                     .path()
-                    .join(workspace_id("checkout.delay").trim_start_matches("sha256:"))
+                    .join(
+                        workspace_id(&contract('a', Utc::now()).resource().unwrap())
+                            .trim_start_matches("sha256:"),
+                    )
                     .join("cycles")
                     .join(cycle_id);
                 assert!(!cycle_root.join("proposal.pending.json").exists());
@@ -979,11 +989,14 @@ async fn cached_submission_retries_succeed_changed_rules_conflict_and_superseded
     let directory = tempfile::tempdir().unwrap();
     let workspaces = LocalWorkspaceProvider::new(directory.path()).unwrap();
     let bound = service
-        .get_current_contract("checkout.delay")
+        .get_current_contract(&contract('a', now).resource().unwrap())
         .await
         .unwrap()
         .unwrap();
-    let lease = workspaces.claim(&bound.name, "author").await.unwrap();
+    let lease = workspaces
+        .claim(&bound.resource().unwrap(), "author")
+        .await
+        .unwrap();
     let PrepareCycleResult::Ready(preparation) = lease
         .prepare_cycle(
             &bound,
@@ -1223,7 +1236,7 @@ async fn checkpoints_workspace_during_graceful_supersession() {
         Some(new_contract.contract_digest.as_str())
     );
 
-    let directory_name = workspace_id("checkout.delay")
+    let directory_name = workspace_id(&contract('a', Utc::now()).resource().unwrap())
         .strip_prefix("sha256:")
         .expect("workspace digest")
         .to_owned();
@@ -1382,6 +1395,7 @@ async fn checkpoints_and_retains_cycle_during_graceful_shutdown() {
         .expect("valid timestamp");
     let now = accepted_at + chrono::Duration::hours(2);
     let contract = contract('a', accepted_at);
+    let resource = contract.resource().unwrap();
     let service = Arc::new(FakeContractService {
         current: RwLock::new(Some(contract)),
         submissions: Mutex::new(Vec::new()),
@@ -1424,7 +1438,7 @@ async fn checkpoints_and_retains_cycle_during_graceful_shutdown() {
     assert_eq!(reason, "agent committed a handoff checkpoint");
 
     let workspace_root = directory.path().join(
-        workspace_id("checkout.delay")
+        workspace_id(&resource)
             .strip_prefix("sha256:")
             .expect("workspace digest"),
     );

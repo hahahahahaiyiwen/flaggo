@@ -1,0 +1,36 @@
+[package]
+name = "flaggo-analysis-application"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
+flaggo-analysis-agent = { path = "../analysis-agent" }
+flaggo-analysis-domain = { path = "../analysis-domain" }
+flaggo-analysis-execution = { path = "../analysis-execution", default-features = false }
+flaggo-analysis-workspace = { path = "../analysis-workspace", default-features = false }
+flaggo-contract = { path = "../contract" }
+flaggo-evidence-store = { path = "../evidence-store", default-features = false }
+flaggo-service-observability.workspace = true
+opentelemetry.workspace = true
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+uuid = { version = "1.18.1", features = ["v4"] }
+
+[dev-dependencies]
+axum.workspace = true
+flaggo-analysis-workspace = { path = "../analysis-workspace", features = ["local"] }
+flaggo-analysis-execution = { path = "../analysis-execution", features = ["local"] }
+flaggo-evidence-store = { path = "../evidence-store", features = ["sqlite"] }
+tempfile = "3.27.0"
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

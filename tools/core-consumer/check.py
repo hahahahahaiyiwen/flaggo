@@ -28,6 +28,7 @@ def main():
         "flaggo-evidence-store", "flaggo-raw-otlp-inbox",
         "flaggo-service-hosting",
         "flaggo-otlp-http",
+        "flaggo-analysis-application", "flaggo-analysis-execution",
     ]
     manifest = '[package]\nname = "flaggo-pinned-consumer"\nversion = "0.1.0"\nedition = "2024"\n\n[workspace]\n\n[dependencies]\n'
     for crate in crates:
@@ -49,6 +50,10 @@ def main():
     forbidden = [item["name"] for item in metadata["packages"] if item["name"].startswith(("sqlx", "libsqlite3"))]
     if forbidden:
         raise RuntimeError(f"Portable consumer unexpectedly depends on SQLite: {forbidden}")
+    apps = {"flaggo-async-analysis", "flaggo-contract-service", "flaggo-decision-service",
+            "flaggo-otel-ingestion", "flaggo-evidence-materializer"}
+    if apps.intersection(item["name"] for item in products):
+        raise RuntimeError("Portable consumer unexpectedly depends on an app composition root")
     report = {
         "repository": args.repository, "revision": args.revision,
         "scope": "local-git-consumer" if args.repository.startswith("file:") else "remote-git-consumer",
@@ -57,6 +62,9 @@ def main():
         "securityCapability": "flaggo.security.resource/v1",
         "evidenceProfile": "flaggo.evidence.sqlite/v1",
         "conformanceFixtures": "flaggo.authority-conformance/v2",
+        "workspaceCapability": "flaggo.workspace/v2",
+        "executionCapability": "flaggo.execution/v1",
+        "workspaceFixtures": "flaggo.workspace-conformance/v1",
         "distributedQualification": False,
     }
     (output / "result.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
