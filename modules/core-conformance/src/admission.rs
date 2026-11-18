@@ -4,7 +4,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 use flaggo_analysis_domain::{AnalysisContract, AnalysisProfile, CandidateRecord, CycleOutcome};
 use flaggo_analysis_workspace::{PrepareCycleResult, WorkspaceLease, WorkspaceProvider};
-use flaggo_contract::{AnalysisCandidateSubmission, ContractResourceId, DecisionContract};
+use flaggo_contract::{AnalysisCandidateSubmission, ContractResourceId};
 use flaggo_contract_application::ContractLifecycle;
 use flaggo_executable_store::ContractAuthority;
 use serde_json::{Value, json};
@@ -24,8 +24,11 @@ pub async fn prepare_candidate(
     attempt_id: &str,
     rules: Value,
 ) -> PreparedCandidate {
-    let document: DecisionContract = serde_json::from_value(version["contract"].clone()).unwrap();
-    let resource = ContractResourceId::try_from(&document).unwrap();
+    let resource = ContractResourceId::new(
+        serde_json::from_value(version["contract"]["authority"].clone()).unwrap(),
+        version["contract"]["name"].as_str().unwrap().into(),
+    )
+    .unwrap();
     let contract = AnalysisContract {
         name: resource.name.clone(),
         authority: resource.scope.clone(),

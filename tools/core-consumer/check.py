@@ -65,6 +65,8 @@ def main():
         "projectionCapability": "flaggo.evidence.projection/v2",
         "conformanceFixtures": "flaggo.authority-conformance/v3",
         "admissionFixtures": "flaggo.admission-conformance/v1",
+        "canonicalFixtures": "flaggo.canonical-conformance/v1",
+        "runtimeFixtures": "flaggo.runtime-conformance/v1",
         "workspaceCapability": "flaggo.workspace/v2",
         "executionCapability": "flaggo.execution/v1",
         "workspaceFixtures": "flaggo.workspace-conformance/v1",

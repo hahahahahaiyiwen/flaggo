@@ -177,6 +177,7 @@ abandoned. New workspaces use the `flaggo.workspace/v2` full-resource hash domai
 | Security capability | `flaggo.security.resource/v1`, independently injected policy; `flaggo.otlp.authorization/v1` retained producer/scope envelope |
 | OTLP profile | `flaggo.otlp-http` **2.0.0**; standard OTLP payloads/endpoints, whole-batch authorization, explicitly local numeric defaults |
 | Reusable fixture revision | `flaggo.authority-conformance/v3` (C07 namespace and C03-C05), `flaggo.admission-conformance/v1` (C04/C10 ownership/recovery), `flaggo.evidence-conformance/v3` (local C08/C09/C11 plus projection fencing outcomes) |
+| Canonical/runtime corpus | `flaggo.canonical-conformance/v1`, `flaggo.runtime-conformance/v1`; shared canonical/evaluator cases and injectable exact-reader/cache/failure scenarios |
 | Projection capability | `flaggo.evidence.projection/v2`, explicit ordered claim replacement, atomic epoch/checkpoint preconditions; materializer revision 3 |
 | Evidence query | Explicit `flaggo.evidence.sqlite/v1` selection and `flaggo.evidence.query-result/v1` saved artifacts; provider SQL semantics are labelled, not arbitrary-SQL portable |
 | Canonical evidence cells | `flaggo.evidence.value/v1` integrated into typed rows, Python/agent guidance and deterministic consumers |
@@ -204,6 +205,15 @@ Implement `AuthorityFixture` with clean storage, independently constructed
 clients and publication-failure injection. Run every advertised scenario and
 record unsupported capabilities separately. The SQLite fixture demonstrates
 one implementation, not a requirement for physical tables or SQL.
+
+Run `canonical::c01_canonical` in every independently pinned consumer. It covers
+published digest identity, named-collection ordering, descriptions versus literal
+content, rule ordering, scope changes, expression normalization, exact numeric
+boundaries, malformed JSON and ordered-rule/default evaluation.
+Implement `runtime::RuntimeFixture` to run `c02_exact_runtime` against real
+readers: changing management current cannot select a different exact version,
+scope mismatches fail, outages never use cached activation, and persisted
+corruption fails on both cached and fresh runtimes.
 
 Run `admission::c04_c10_fenced_admission` with independent authority clients
 and a workflow provider coordinated with admission authority. It checks
@@ -258,12 +268,12 @@ Historical runtime source remains
 `1354e61bb0fa2698056ac9bcbf57f5a60f5df5d5`. New local builds are not those
 artifacts and cannot inherit their diagnostics or deployment identities.
 
-## Remaining acceptance gaps
+## Conformance coverage and remaining qualification
 
 | Gate | Actual state |
 | --- | --- |
-| C01-C02 | Existing domain/compiler/runtime tests retained; injected-reader HTTP cache/failure test added. Full reusable cross-adapter corpus remains incomplete |
-| C03-C05 | Reusable local publication/failure/admission/activation outcomes added; existing store ABA/rollback coverage retained. Multi-process barrier/failure matrix and actual distributed proof remain outstanding |
+| C01-C02 | Shared canonical/evaluator corpus and reusable exact-runtime fixture implemented; real SQLite current-pointer/cache/outage/corruption scenarios pass. Pinned consumer executes canonical/evaluation parity; other adapters must run the same corpus |
+| C03-C05 | Reusable local publication/failure/admission/activation outcomes implemented; store ABA/rollback coverage retained; candidate ownership gate additionally checked while SQL is blocked/caller cancelled. Actual distributed barrier/failure qualification remains phase 3 |
 | C06 | Local injected-reader behavior only; multi-host acknowledgement/outage qualification remains phase 3 |
 | C07 | Scoped v4 keys/routes/SDK/artifacts, injected authentication and local migration implemented; namespace, security denial/no-write and migration preservation/rollback tests pass. Private identity adapter qualification remains later |
 | C08-C09 | Reusable durable append, fenced atomic projection/checkpoint, retry/dedup/conflict outcomes and authorized whole-batch envelope implemented; replay rejects missing/mismatched authorization. Actual distributed qualification remains later |
@@ -274,6 +284,13 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | Consumer/publication | Local immutable consumer verified below with a retained lock; public remote reachability remains unverified |
 
 ## Observed local verification
+
+The completed local core additionally passes the entire Rust workspace suite and
+strict all-target Clippy, all 76 SDK tests, SDK/example type checks, generated
+artifact checks, eight Python conformance tests and all 1,201 offline checks.
+Ignored historical/live fixtures remain ignored, not reported as passes.
+Final end-to-end rerun and final committed/remote consumer pins are recorded
+separately below when verified.
 
 The scoped-v4/authorized-ingress slice passes the complete workspace suite
 (330 tests, four explicitly ignored historical/live fixtures), workspace Clippy,

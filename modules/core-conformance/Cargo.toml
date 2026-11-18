@@ -12,6 +12,8 @@ chrono = { version = "0.4.42", default-features = false, features = ["clock", "s
 flaggo-analysis-domain = { path = "../analysis-domain" }
 flaggo-analysis-workspace = { path = "../analysis-workspace", default-features = false }
 flaggo-contract = { path = "../contract" }
+flaggo-decision = { path = "../decision" }
+flaggo-expression = { path = "../expression" }
 flaggo-contract-application = { path = "../contract-application" }
 flaggo-contract-store = { path = "../contract-store", default-features = false }
 flaggo-executable-store = { path = "../executable-store", default-features = false }

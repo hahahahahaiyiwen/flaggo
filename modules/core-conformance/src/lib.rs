@@ -13,7 +13,9 @@ use flaggo_executable_store::{ContractAuthority, ExecutableLifecycleState};
 use serde_json::json;
 
 pub mod admission;
+pub mod canonical;
 pub mod evidence;
+pub mod runtime;
 pub mod workspace;
 
 pub const FIXTURE_REVISION: &str = "flaggo.authority-conformance/v3";

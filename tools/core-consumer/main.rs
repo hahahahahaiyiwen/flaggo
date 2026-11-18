@@ -31,6 +31,7 @@ impl ReadinessProbe for Source {
 
 #[tokio::main]
 async fn main() {
+    flaggo_core_conformance::canonical::c01_canonical();
     let contract = flaggo_core_conformance::contract();
     let resource = ContractResourceId::try_from(&contract).unwrap();
     let digest = flaggo_contract::digests::contract_digest(&contract, Some(&flaggo_expression::ExpressionCompiler::default())).unwrap();
@@ -38,6 +39,7 @@ async fn main() {
     let compiled = ExecutableCompiler::default().compile(&contract, &flaggo_contract::DecisionExecutable {
         contract_digest: digest.clone(), kind: "rules".into(), rules: vec![],
     }).unwrap();
+    let expected = flaggo_decision::evaluate(&contract, &compiled.compiled_executable, &flaggo_core_conformance::runtime::input(), None).unwrap();
     let source = Source {
         contract: Arc::new(ContractVersion { contract_digest: digest.clone(), contract }),
         executable: Arc::new(ActiveExecutable {
@@ -80,6 +82,7 @@ async fn main() {
         "recent_placement_time_ms":500,"recovery_failures":0,"session_id":"consumer"
     }}"#).unwrap();
     let runtime = DecisionRuntime::new(source.clone(), source);
+    flaggo_core_conformance::runtime::assert_exact_decision(&runtime, &resource, &digest, &expected).await;
     let decision = runtime.decide(&resource, &digest, &input, None).await.unwrap();
     assert_eq!(serde_json::to_value(&decision).unwrap()["result"], 500);
     println!("Pinned core digest/evaluation and HTTP composition passed (no SQLite).");

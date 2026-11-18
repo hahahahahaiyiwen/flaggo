@@ -2,7 +2,7 @@
 
 `validate.py` performs the offline executable-contract gate:
 
-- validates all seven Draft 2020-12 schemas;
+- validates all nine Draft 2020-12 schemas;
 - parses both OpenAPI 3.1 documents and resolves local references;
 - requires every fixture to be indexed exactly once;
 - checks fixture methods, paths, statuses, and secured-operation coverage;
@@ -19,7 +19,7 @@
   RFC 3339 values;
 - verifies RFC 8785 canonicalization vectors;
 - requires correlation headers on HTTP fixtures; and
-- verifies consistent contract and executable identities in v3 fixtures.
+- verifies consistent contract and executable identities in v4 fixtures.
 
 Install and run:
 

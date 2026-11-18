@@ -857,8 +857,10 @@ dependencies = [
  "flaggo-contract",
  "flaggo-contract-application",
  "flaggo-contract-store",
+ "flaggo-decision",
  "flaggo-evidence-store",
  "flaggo-executable-store",
+ "flaggo-expression",
  "flaggo-raw-otlp-inbox",
  "serde",
  "serde_json",
@@ -902,10 +904,12 @@ dependencies = [
 name = "flaggo-decision-service"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "chrono",
  "flaggo-contract",
  "flaggo-contract-store",
+ "flaggo-core-conformance",
  "flaggo-decision",
  "flaggo-decision-http",
  "flaggo-executable-store",

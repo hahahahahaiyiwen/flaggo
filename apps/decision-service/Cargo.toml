@@ -24,6 +24,8 @@ tracing.workspace = true
 tracing-opentelemetry.workspace = true
 
 [dev-dependencies]
+async-trait = "0.1.89"
+flaggo-core-conformance = { path = "../../modules/core-conformance" }
 futures-util = "0.3.31"
 opentelemetry-proto = { version = "0.33.0", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace"] }
 prost = "0.14.1"
