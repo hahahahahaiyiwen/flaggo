@@ -172,6 +172,14 @@ contained no SQLx/SQLite package. Both HTTP compositions compiled, the canonical
 fixture digest matched, and exact-contract evaluation returned the expected
 default. Public remote reachability has **not** been tested or claimed.
 
+The expanded consumer subsequently passed at
+`587985c2ec6e65be72c6bf32ec3658d84a0b0b77`, compiling path-free workspace,
+evidence and raw-inbox ports as well. All **14** transitive product crates
+resolved to that immutable local Git revision, with no SQLx/SQLite package.
+Its retained lockfile SHA-256 is
+`21264245686982643a88f2cee9183209b8b88cabfcca727591344eafe1d0e764`.
+This remains local Git consumption, not public remote publication.
+
 The first standalone run exposed a fixture helper's accidental reliance on
 workspace-unified `serde_json/preserve_order`. The helper now deserializes the
 typed fixture directly, retaining required schema discriminator order without
