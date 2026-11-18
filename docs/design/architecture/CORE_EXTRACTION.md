@@ -1,7 +1,7 @@
 # Shared-core extraction: authority, HTTP and workspace boundaries
 
-Status: **local implementation and qualification complete; remote publication
-and remote pinned-consumer qualification pending**. #94 remains open.
+Status: **#94 implementation, local qualification and public remote
+pinned-consumer qualification complete**. #94 remains open for review.
 This is not hosted qualification.
 Based on the approved architecture revision
 `83088e825a0380a2a629b3bdd37cf8ffaaf1ae80`. The accepted design models in
@@ -283,7 +283,7 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | C11 | Explicit result/profile selection, canonical cells, scope/read/limit/artifact metadata and Python/agent consumers integrated. Shared twelve-category SQLite profile corpus runs under two scopes; local deadline/cancellation and reuse checked. Actual second-provider qualification remains later |
 | C12 | Path-free execution provider, immutable conditional publication, durable receipts and reusable recovery scenarios implemented; hosted isolation and cross-host execution qualification remain later |
 | C13-C14 | Hosted isolation, operational envelope, migration/restore/data-lifecycle qualification remain later gates; no numeric policy inferred |
-| Consumer/publication | Complete 20-crate immutable local consumer verified below with a retained lock; public remote reachability remains unverified pending publication authorization |
+| Consumer/publication | Complete 20-crate immutable local and public remote consumers verified below; both retain distinct locks and exact source revisions |
 
 ## Issue #94 acceptance record
 
@@ -293,11 +293,11 @@ artifacts and cannot inherit their diagnostics or deployment identities.
 | Local behavior and deliberate compatibility changes | Scoped v4/schema migrations are explicit; complete Rust, SDK/wire and deterministic real-host closed-loop gates pass |
 | Reusable adapter conformance | Canonical/runtime, publication/admission/activation, scoped evidence/query and workflow/execution recovery scenarios exported by `flaggo-core-conformance`; provider fault controls stay in fixtures |
 | Portable workspace/execution with retained local safety | Path-free handles, conditional artifacts, revocable epochs, cancellation-safe admission coordination and durable execution receipts; local trusted execution remains explicit |
-| Separately pinned consumer | `caab95c7623fafbe8c5fcdfb25f2d324085ca80d` builds independently with 20 uniformly pinned public crates and no SQLite/app dependency; remote verification still pending |
+| Separately pinned consumer | Local `caab95c7623fafbe8c5fcdfb25f2d324085ca80d` and public remote `3a49467692aa282769b83459fe5741a536eb6429` build independently with 20 uniformly pinned public crates and no SQLite/app dependency |
 | Contributor guidance | This guide, `CONTRIBUTING.md`, module READMEs and `tools/core-consumer/README.md` document ownership, adapter invariants and focused checks |
 | Revision/API/schema/capability record | Compatibility table above and consumer `result.json` bind the exact implemented revisions; hosted-only qualification is not implied |
 
-## Observed local verification
+## Verification record
 
 The completed local core additionally passes the entire Rust workspace suite and
 strict all-target Clippy, all 76 SDK tests, SDK/example type checks, generated
@@ -321,6 +321,22 @@ is `ba3c18fc1035ce4f5b01fb39c6cb3990a64decca954e17f760b16c071dcd5ea2`.
 This is **local Git consumption**, not remote publication. The release-review
 cleanup restores baseline line endings without changing logical source content.
 
+After explicit publication approval, branch
+`hahahahahaiyiwen-shared-core-extraction` was pushed to the public
+`https://github.com/hahahahahaiyiwen/flaggo.git` repository. A fresh standalone
+consumer then fetched and passed at remote revision
+`3a49467692aa282769b83459fe5741a536eb6429`, independently of the earlier
+file-URL source. All **20** product packages resolved to that same remote
+revision; the graph contains neither SQLx/SQLite nor runnable apps.
+Its retained lock SHA-256 is
+`514dc77d4e8ffc2f85c9c0839f9dbef4d474c71a13a76b4e9c279402e7e13ef3`.
+The generated manifest, lockfile and `result.json` are retained in the session's
+`files/pinned-consumer-remote-3a49467` evidence directory. Subsequent changes to
+this qualification record are documentation-only. No PR, merge, issue closure
+or cloud deployment was performed.
+
+### Earlier slice checks
+
 The scoped-v4/authorized-ingress slice passes the complete workspace suite
 (330 tests, four explicitly ignored historical/live fixtures), workspace Clippy,
 76 SDK tests, nine focused deployment/provider tests, and 1,201 offline
@@ -342,7 +358,7 @@ remote branch or a path dependency. Its retained `Cargo.lock` SHA-256 is
 All ten transitive product crates resolved to that same Git revision; metadata
 contained no SQLx/SQLite package. Both HTTP compositions compiled, the canonical
 fixture digest matched, and exact-contract evaluation returned the expected
-default. Public remote reachability has **not** been tested or claimed.
+default. That earlier file-URL run did **not** test public remote reachability.
 
 The expanded consumer subsequently passed at
 `587985c2ec6e65be72c6bf32ec3658d84a0b0b77`, compiling path-free workspace,
