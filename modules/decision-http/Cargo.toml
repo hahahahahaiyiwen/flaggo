@@ -20,6 +20,7 @@ tracing.workspace = true
 tracing-opentelemetry.workspace = true
 
 [dev-dependencies]
+async-trait = "0.1.89"
 tokio.workspace = true
 tower.workspace = true
 

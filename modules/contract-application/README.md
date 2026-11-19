@@ -8,6 +8,11 @@ types and `ContractAuthority`, not SQLx, SQLite, host paths or runnable apps.
 Construct `ContractLifecycle::new(Arc<dyn ContractAuthority>)` and pass it to
 `router` (with an independent `RequestSecurity`) and `worker::ActivationWorker`.
 One adapter owns the whole authority transaction domain.
+The shared [authorized request-admission hook](../hosting/README.md#authorized-request-admission)
+runs before handler validation or lookup, including HEAD and conditional catalog
+reads. It is separate from Candidate admission: metered adapters charge accepted
+authorized attempts even when the handler later returns an error. Existing
+security adapters remain non-metered by default; health is excluded.
 `publish_ready` commits full-resource ownership, immutable acceptance,
 bootstrap activation and current selection together; `admit_current` checks
 currentness and current workspace/cycle ownership with immutable admission.

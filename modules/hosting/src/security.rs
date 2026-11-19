@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use axum::{
     Router,
@@ -37,6 +37,18 @@ pub enum Access {
     Forbidden,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestAdmission {
+    Accepted,
+    Limited { retry_after_seconds: NonZeroU32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum RequestAdmissionError {
+    #[error("The request admission authority is unavailable.")]
+    Unavailable,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SecurityError {
     #[error("Authentication is required.")]
@@ -57,6 +69,22 @@ pub trait RequestSecurity: Send + Sync {
         contract_name: Option<&str>,
         operation: Operation,
     ) -> Result<Access, SecurityError>;
+
+    /// Admit one authorized product-request attempt before handler validation or lookup.
+    ///
+    /// Metered adapters charge one unit on acceptance. Later errors or cancellation
+    /// do not refund it; retries are new attempts. Adapters own atomic accounting
+    /// and cancellation safety, including commits that outlive this future.
+    /// The default is non-metered, including for `TrustedLocal`.
+    async fn admit_authorized(
+        &self,
+        _principal: &Principal,
+        _scope: &ResourceScope,
+        _contract_name: Option<&str>,
+        _operation: Operation,
+    ) -> Result<RequestAdmission, RequestAdmissionError> {
+        Ok(RequestAdmission::Accepted)
+    }
 }
 
 /// Explicit opt-in for trusted local composition, not a hosted identity adapter.
@@ -196,6 +224,36 @@ async fn authorize_resource(
                 error.problem()
             })?;
         require_access(access)?;
+        match security
+            .admit_authorized(
+                &principal,
+                &scope,
+                parameters.get("contractName").map(String::as_str),
+                operation,
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "Request admission failed");
+                Problem::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "request-admission-unavailable",
+                    "Request admission unavailable",
+                    "The request admission authority is unavailable.",
+                )
+            })? {
+            RequestAdmission::Accepted => {}
+            RequestAdmission::Limited {
+                retry_after_seconds,
+            } => {
+                return Err(Problem::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "request-quota-exceeded",
+                    "Request quota exceeded",
+                    "The authorized request quota is exhausted.",
+                )
+                .retry_after(retry_after_seconds.get()));
+            }
+        }
         Ok(principal)
     }
     .await;

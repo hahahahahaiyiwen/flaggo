@@ -88,8 +88,11 @@ Shared conformance and SQLite corruption/error-parity cases exercise the seam.
 Existing public cursor codecs carry only timestamp/digest, not scope.
 Authorization and scoped resource/exact-contract queries provide isolation;
 neither token encoding nor cross-scope token acceptance changes here.
-Capacity admission (429 plus Retry-After) remains a separate, pending shared
-HTTP behavior change and is not included in this pure-policy correction.
+Capacity admission (429 plus Retry-After) is not included in this pure-policy
+correction. The subsequent storage-neutral
+[authorized request-admission seam](../../../modules/hosting/README.md#authorized-request-admission)
+is a separate change, with default non-metered behavior and per-authorized-attempt
+accounting for metered adapters. It does not qualify hosted budgets or operations.
 
 Shared `flaggo.authority-policy-conformance/v1` scenarios exercise those decisions,
 persisted-artifact integrity and policy-versus-committed-adapter parity. The
