@@ -70,7 +70,7 @@ impl LocalWorkspaceProvider {
             .write(true)
             .open(root.join("claim.lock"))
             .map_err(workspace_error)?;
-        lock.try_lock().map_err(|error| {
+        let _lock = WorkspaceLock::try_lock(lock).map_err(|error| {
             AnalysisError::workspace(format!("legacy workspace must be idle: {error}"))
         })?;
         for entry in fs::read_dir(root.join("cycles")).map_err(workspace_error)? {
@@ -232,15 +232,11 @@ impl LocalWorkspaceProvider {
             .write(true)
             .open(&lock_path)
             .map_err(workspace_error)?;
-        if let Err(error) = lock_file.try_lock() {
-            return match error {
-                std::fs::TryLockError::WouldBlock => {
-                    Err(AnalysisError::WorkspaceBusy(id.to_owned()))
-                }
+        let lock_file = WorkspaceLock::try_lock(lock_file).map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => AnalysisError::WorkspaceBusy(id.to_owned()),
 
-                std::fs::TryLockError::Error(error) => Err(workspace_error(error)),
-            };
-        }
+            std::fs::TryLockError::Error(error) => workspace_error(error),
+        })?;
         let _authority_guard = authority_gate(&root)?;
 
         let binding = ResourceBinding {
@@ -333,7 +329,7 @@ pub struct LocalWorkspaceLease {
     workspace_id: String,
     contract_name: String,
     process_claims: LocalClaims,
-    lock_file: Mutex<Option<File>>,
+    lock_file: Mutex<Option<WorkspaceLock>>,
     state: Arc<Mutex<LeaseState>>,
     io_gate: Arc<Mutex<()>>,
 }
@@ -1186,7 +1182,10 @@ impl LocalWorkspaceLease {
             state.writable = false;
             state.active_cycle_id = None;
         }
-        mutex_lock(&self.lock_file)?.take();
+        let unlock_result = match mutex_lock(&self.lock_file)?.take() {
+            Some(mut lock) => lock.unlock(),
+            None => Ok(()),
+        };
         let mut claims = mutex_lock(&self.process_claims)?;
         if claims
             .get(&self.workspace_id)
@@ -1194,7 +1193,7 @@ impl LocalWorkspaceLease {
         {
             claims.remove(&self.workspace_id);
         }
-        Ok(())
+        unlock_result
     }
 
     fn cycle_path(&self, cycle_id: &str) -> PathBuf {
@@ -1844,13 +1843,42 @@ struct ClaimRecord {
     cycle_id: Option<String>,
 }
 
+struct WorkspaceLock {
+    file: File,
+    locked: bool,
+}
+
+impl WorkspaceLock {
+    fn try_lock(file: File) -> Result<Self, std::fs::TryLockError> {
+        file.try_lock()?;
+        Ok(Self { file, locked: true })
+    }
+
+    fn unlock(&mut self) -> Result<(), AnalysisError> {
+        if self.locked {
+            self.file.unlock().map_err(workspace_error)?;
+            self.locked = false;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for WorkspaceLock {
+    fn drop(&mut self) {
+        // Close alone can leave a Unix flock held by a concurrently forked child.
+        if let Err(error) = self.unlock() {
+            tracing::error!(%error, "Local workspace file unlock failed");
+        }
+    }
+}
+
 struct LocalAdmissionGuard {
-    _file: File,
+    _file: WorkspaceLock,
 }
 
 impl AdmissionGuard for LocalAdmissionGuard {}
 
-fn authority_gate(root: &Path) -> Result<File, AnalysisError> {
+fn authority_gate(root: &Path) -> Result<WorkspaceLock, AnalysisError> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -1858,13 +1886,12 @@ fn authority_gate(root: &Path) -> Result<File, AnalysisError> {
         .write(true)
         .open(root.join("authority.lock"))
         .map_err(workspace_error)?;
-    file.try_lock().map_err(|error| match error {
+    WorkspaceLock::try_lock(file).map_err(|error| match error {
         std::fs::TryLockError::WouldBlock => {
             AnalysisError::WorkspaceBusy("workspace authority mutation in progress".into())
         }
         std::fs::TryLockError::Error(error) => workspace_error(error),
-    })?;
-    Ok(file)
+    })
 }
 
 impl AdmissionFence for LocalWorkspaceProvider {
@@ -1873,7 +1900,7 @@ impl AdmissionFence for LocalWorkspaceProvider {
         admission: &AnalysisCandidateAdmission,
         ownership: &CandidateOwnership,
     ) -> AuthorityResult<Box<dyn AdmissionGuard>> {
-        let verified = (|| -> Result<Option<File>, AnalysisError> {
+        let verified = (|| -> Result<Option<WorkspaceLock>, AnalysisError> {
             admission.resource.resource_key().map_err(workspace_error)?;
             validate_segment(&admission.cycle_id, "cycle ID")?;
             validate_segment(&ownership.attempt_id, "attempt ID")?;
@@ -1903,8 +1930,8 @@ impl AdmissionFence for LocalWorkspaceProvider {
                 .write(true)
                 .open(root.join("claim.lock"))
                 .map_err(workspace_error)?;
-            match live.try_lock() {
-                Ok(()) => return Ok(None),
+            match WorkspaceLock::try_lock(live) {
+                Ok(_unowned) => return Ok(None),
                 Err(std::fs::TryLockError::WouldBlock) => {}
                 Err(std::fs::TryLockError::Error(error)) => return Err(workspace_error(error)),
             }
@@ -2162,6 +2189,260 @@ mod tests {
             PrepareCycleResult::Ready(preparation) => *preparation,
             PrepareCycleResult::NotEligible { eligible_at } => {
                 panic!("expected ready cycle, next eligible at {eligible_at}")
+            }
+        }
+    }
+
+    #[test]
+    fn authority_gate_releases_duplicated_descriptor_on_error_and_unwind() {
+        for unwind in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let gate = authority_gate(directory.path()).unwrap();
+            let duplicate = gate.file.try_clone().unwrap();
+            assert!(matches!(
+                authority_gate(directory.path()),
+                Err(AnalysisError::WorkspaceBusy(_))
+            ));
+            let result = std::panic::catch_unwind(|| -> Result<(), AnalysisError> {
+                let _gate = gate;
+                if unwind {
+                    panic!("exercise lock cleanup during unwinding");
+                }
+                Err(AnalysisError::workspace("exercise early error cleanup"))
+            });
+            if unwind {
+                assert!(result.is_err());
+            } else {
+                assert!(result.unwrap().is_err());
+            }
+            let _replacement = authority_gate(directory.path()).unwrap();
+            drop(duplicate);
+            assert!(matches!(
+                authority_gate(directory.path()),
+                Err(AnalysisError::WorkspaceBusy(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn released_claim_unlocks_duplicated_descriptor_without_unfencing_successor() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        let resource = contract('a', Utc::now()).resource().unwrap();
+        let lease = provider.claim(&resource, "first").await.unwrap();
+        let local = mutex_lock(&provider.process_claims)
+            .unwrap()
+            .get(lease.workspace_id())
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let duplicate = mutex_lock(&local.lock_file)
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .file
+            .try_clone()
+            .unwrap();
+        drop(local);
+        lease.release().await.unwrap();
+        let replacement = provider.claim(&resource, "replacement").await.unwrap();
+        assert!(replacement.claim_token().epoch > lease.claim_token().epoch);
+        drop(duplicate);
+        drop(lease);
+        let independent = LocalWorkspaceProvider::new(directory.path()).unwrap();
+        assert!(matches!(
+            independent.claim(&resource, "contender").await,
+            Err(AnalysisError::WorkspaceBusy(_))
+        ));
+    }
+
+    mod inherited_descriptors {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+
+        use super::*;
+
+        #[test]
+        #[ignore = "subprocess fixture for inherited-descriptor tests"]
+        fn descriptor_child() {
+            assert_eq!(
+                std::env::var("FLAGGO_LOCK_DESCRIPTOR_CHILD").as_deref(),
+                Ok("1")
+            );
+            println!("\nworkspace-lock-child-ready");
+            let mut release = String::new();
+            std::io::stdin().read_line(&mut release).unwrap();
+        }
+
+        struct DescriptorChild(Child);
+
+        impl DescriptorChild {
+            fn inherit(file: &File) -> Self {
+                // Keep the locked open-file description across exec, extending the
+                // fork-to-exec inheritance window deterministically without unsafe code.
+                let mut child = Self(
+                    Command::new(std::env::current_exe().unwrap())
+                        .args([
+                            "--exact",
+                            "local::tests::inherited_descriptors::descriptor_child",
+                            "--ignored",
+                            "--nocapture",
+                        ])
+                        .env("FLAGGO_LOCK_DESCRIPTOR_CHILD", "1")
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::from(file.try_clone().unwrap()))
+                        .spawn()
+                        .unwrap(),
+                );
+                let mut output = BufReader::new(child.0.stdout.as_mut().unwrap());
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(
+                        output.read_line(&mut line).unwrap(),
+                        0,
+                        "child exited before ready"
+                    );
+                    if line.trim() == "workspace-lock-child-ready" {
+                        break;
+                    }
+                }
+                child.assert_alive();
+                child
+            }
+
+            fn assert_alive(&mut self) {
+                assert!(self.0.try_wait().unwrap().is_none());
+            }
+        }
+
+        impl Drop for DescriptorChild {
+            fn drop(&mut self) {
+                // EOF ends the child's read, including when a parent assertion panics.
+                self.0.stdin.take();
+                if let Err(error) = self.0.wait() {
+                    eprintln!("failed to reap descriptor child: {error}");
+                }
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn close_only_control_retains_lock_until_inheriting_child_exits() {
+            let directory = tempfile::tempdir().unwrap();
+            let file = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(directory.path().join("authority.lock"))
+                .unwrap();
+            file.try_lock().unwrap();
+            let mut child = DescriptorChild::inherit(&file);
+            drop(file);
+            child.assert_alive();
+            assert!(matches!(
+                authority_gate(directory.path()),
+                Err(AnalysisError::WorkspaceBusy(_))
+            ));
+            drop(child);
+            let _gate = authority_gate(directory.path()).unwrap();
+        }
+
+        #[tokio::test]
+        async fn authority_and_admission_guards_unlock_while_inheriting_child_lives() {
+            let directory = tempfile::tempdir().unwrap();
+            let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+            let now = Utc::now();
+            let contract = contract('a', now - Duration::hours(2));
+            let resource = contract.resource().unwrap();
+            let lease = provider.claim(&resource, "first").await.unwrap();
+            let root = directory
+                .path()
+                .join(lease.workspace_id().trim_start_matches("sha256:"));
+
+            for unwind in [false, true] {
+                let gate = authority_gate(&root).unwrap();
+                let mut child = DescriptorChild::inherit(&gate.file);
+                let guard: Box<dyn AdmissionGuard> = Box::new(LocalAdmissionGuard { _file: gate });
+                assert!(matches!(
+                    lease
+                        .prepare_cycle(&contract, &profile(), "first", now)
+                        .await,
+                    Err(AnalysisError::WorkspaceBusy(_))
+                ));
+                if unwind {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _guard = guard;
+                        panic!("exercise inherited lock cleanup during unwinding");
+                    }));
+                    assert!(result.is_err());
+                } else {
+                    drop(guard);
+                }
+                child.assert_alive();
+                ready(
+                    lease
+                        .prepare_cycle(&contract, &profile(), "first", now)
+                        .await
+                        .unwrap(),
+                );
+                child.assert_alive();
+            }
+        }
+
+        #[tokio::test]
+        async fn claim_release_and_drop_allow_recovery_while_inheriting_child_lives() {
+            for explicit_release in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let provider = LocalWorkspaceProvider::new(directory.path()).unwrap();
+                let now = Utc::now();
+                let contract = contract('a', now - Duration::hours(2));
+                let resource = contract.resource().unwrap();
+                let lease = provider.claim(&resource, "first").await.unwrap();
+                let cycle = ready(
+                    lease
+                        .prepare_cycle(&contract, &profile(), "first", now)
+                        .await
+                        .unwrap(),
+                )
+                .cycle;
+                let filesystem = lease.filesystem(&cycle.cycle_id, "first").await.unwrap();
+                let epoch = lease.claim_token().epoch;
+                let local = mutex_lock(&provider.process_claims)
+                    .unwrap()
+                    .get(lease.workspace_id())
+                    .unwrap()
+                    .upgrade()
+                    .unwrap();
+                let mut child = DescriptorChild::inherit(
+                    &mutex_lock(&local.lock_file).unwrap().as_ref().unwrap().file,
+                );
+                drop(local);
+                if explicit_release {
+                    lease.release().await.unwrap();
+                }
+                drop(lease);
+                child.assert_alive();
+                let recovered = provider.claim(&resource, "recovery").await.unwrap();
+                assert!(recovered.claim_token().epoch > epoch);
+                let resumed = ready(
+                    recovered
+                        .prepare_cycle(&contract, &profile(), "recovery", now)
+                        .await
+                        .unwrap(),
+                )
+                .cycle;
+                assert!(resumed.resumed);
+                assert_eq!(resumed.cycle_id, cycle.cycle_id);
+                assert!(filesystem.read_directory("/workspace").await.is_err());
+                child.assert_alive();
+                drop(child);
+                let independent = LocalWorkspaceProvider::new(directory.path()).unwrap();
+                assert!(matches!(
+                    independent.claim(&resource, "contender").await,
+                    Err(AnalysisError::WorkspaceBusy(_))
+                ));
             }
         }
     }
