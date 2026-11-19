@@ -315,6 +315,49 @@ pub fn persisted_artifact_integrity() {
     ));
 }
 
+pub fn persisted_contract_integrity() {
+    use flaggo_contract_store::{ContractStoreError, artifacts::decode_persisted_contract};
+    let (version, _, _) = artifacts_fixture();
+    let canonical =
+        digests::canonicalize_expressions(&version.contract, &ExpressionCompiler::default())
+            .unwrap();
+    let key = ContractResourceId::try_from(&canonical)
+        .unwrap()
+        .resource_key()
+        .unwrap();
+    let bytes = strict_json::serialize(&canonical).unwrap();
+    let decoded = decode_persisted_contract(&key, &version.contract_digest, &bytes).unwrap();
+    assert_eq!(strict_json::serialize(&decoded).unwrap(), bytes);
+    for (key, digest) in [
+        (
+            "different/resource/scope/name",
+            version.contract_digest.as_str(),
+        ),
+        (key.as_str(), "wrong-digest"),
+    ] {
+        assert!(matches!(
+            decode_persisted_contract(key, digest, &bytes),
+            Err(ContractStoreError::Integrity(_))
+        ));
+    }
+    let mut invalid_scope = canonical;
+    invalid_scope.authority.tenant = Some(" ".into());
+    assert!(matches!(
+        decode_persisted_contract(
+            &key,
+            &version.contract_digest,
+            &strict_json::serialize(&invalid_scope).unwrap()
+        ),
+        Err(ContractStoreError::Integrity(_))
+    ));
+    assert!(matches!(
+        decode_persisted_contract(&key, &version.contract_digest, b"{"),
+        Err(ContractStoreError::Contract(
+            flaggo_contract::ContractError::Json(_)
+        ))
+    ));
+}
+
 /// Compare shared decisions with an adapter's committed results. No SQL or row
 /// layout is assumed; fixture setup is the same as the existing authority gates.
 pub async fn c05_adapter_policy_parity(fixture: &impl crate::AuthorityFixture) {
@@ -453,5 +496,6 @@ mod tests {
     fn portable_policy_and_artifact_corpus() {
         super::c03_c05_policy();
         super::persisted_artifact_integrity();
+        super::persisted_contract_integrity();
     }
 }

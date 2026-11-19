@@ -17,7 +17,7 @@ revisions recorded below.
 | `flaggo-contract-application` | Shared validation, compilation, management HTTP/projections, Candidate admission and activation worker |
 | `flaggo-decision-http` | Shared runtime HTTP, telemetry and injected readiness; uses the existing `DecisionRuntime` |
 | `flaggo-otlp-http` | Shared OTLP transport, independent authentication, whole-batch authorization and durable append; no SQLite dependency |
-| `flaggo-contract-store`, without default features | Accepted-version types, errors, timestamp/cursor contracts |
+| `flaggo-contract-store`, without default features | Accepted-version types, persisted-contract integrity decoder, errors, timestamp/cursor contracts |
 | `flaggo-executable-store`, without default features | Lifecycle types/errors, `ContractAuthority`, shared `policy` decisions and `artifacts` integrity validation |
 | `SqliteContractAuthority` | Local atomic authority adapter over one shared SQLite pool |
 | Existing runnable apps | Local configuration, adapter initialization, listener and shutdown composition |
@@ -79,6 +79,17 @@ The byte-oriented artifact decoder preserves checked DTO parsing and error
 classification without requiring SQLite rows or its timestamp representation.
 See the [exported seams and adapter invariants](../../../modules/executable-store/README.md).
 
+The same correction also exports
+`flaggo_contract_store::artifacts::decode_persisted_contract(resource_key, digest, payload)`.
+It verifies original accepted-contract bytes, full resource identity/scope and
+digest without SQLx; SQLite reuses it and retains timestamp/row decoding.
+Shared conformance and SQLite corruption/error-parity cases exercise the seam.
+Existing public cursor codecs carry only timestamp/digest, not scope.
+Authorization and scoped resource/exact-contract queries provide isolation;
+neither token encoding nor cross-scope token acceptance changes here.
+Capacity admission (429 plus Retry-After) remains a separate, pending shared
+HTTP behavior change and is not included in this pure-policy correction.
+
 Shared `flaggo.authority-policy-conformance/v1` scenarios exercise those decisions,
 persisted-artifact integrity and policy-versus-committed-adapter parity. The
 standalone consumer additionally executes the database-free corpus. Existing v4
@@ -86,7 +97,7 @@ wire formats, digests, schemas and `flaggo.authority/v3` are unchanged. Historic
 remote consumer pins below do not qualify this correction; its exact local or
 published revision and consumer evidence must be reported separately.
 
-The correction's source revision is
+The executable-policy correction's earlier source revision is
 `79974bb950f90b65dfae0b82b7a3b7b7cd2aa341`. Focused executable-store,
 Contract Service, Decision Service and shared conformance tests pass (56 passed,
 two historical fixtures ignored); no-default-feature checked-parser tests and
@@ -99,6 +110,8 @@ manifest, lock and result are in session `files/pinned-consumer-policy-79974bb`.
 This is not remote publication, private-adapter integration or distributed
 qualification. Publication and downstream adoption remain pending coordinator
 review and authorization.
+This earlier pin does not qualify the subsequently added accepted-contract
+decoder; its exact source and independent consumer must be recorded separately.
 
 Core crates disable store default features. SQLx and SQLite are absent from
 their normal dependency graph. Local store defaults still enable SQLite for

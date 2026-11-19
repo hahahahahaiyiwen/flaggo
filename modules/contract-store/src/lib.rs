@@ -1,3 +1,4 @@
+pub mod artifacts;
 pub mod cursor;
 pub mod timestamp;
 
@@ -8,9 +9,9 @@ use flaggo_contract::digests::{
 };
 #[cfg(feature = "sqlite")]
 use flaggo_contract::strict_json;
-#[cfg(feature = "sqlite")]
-use flaggo_contract::{AuthorityScope, ContractResourceId, ResourceScope};
 use flaggo_contract::{ContractError, DecisionContract};
+#[cfg(feature = "sqlite")]
+use flaggo_contract::{ContractResourceId, ResourceScope};
 #[cfg(feature = "sqlite")]
 use flaggo_decision::{Cancellation, ContractVersion, ContractVersionReader, StoreReadError};
 use serde::{Deserialize, Serialize};
@@ -138,6 +139,7 @@ pub use sqlite::SqliteContractVersionStore;
 #[cfg(feature = "sqlite")]
 mod sqlite {
     use super::*;
+    use crate::artifacts::validate_scope;
     mod migration;
 
     #[derive(Clone)]
@@ -540,51 +542,13 @@ mod sqlite {
     ) -> Result<AcceptedContractVersion, ContractStoreError> {
         let accepted_at = timestamp::parse_exact(row.try_get("accepted_at")?)?;
         let bytes: Vec<u8> = row.try_get("contract_json")?;
-        let contract: DecisionContract = strict_json::deserialize(&bytes)?;
-        let actual = ContractResourceId::try_from(&contract)
-            .and_then(|resource| resource.resource_key())
-            .map_err(|error| {
-                ContractStoreError::Integrity(format!(
-                    "Stored contract resource identity is invalid: {error}"
-                ))
-            })?;
-        if actual != key {
-            return Err(ContractStoreError::Integrity(format!(
-                "Stored contract resource '{actual}' does not match key '{key}'.",
-            )));
-        }
-        validate_scope(&contract.authority)?;
         let digest: String = row.try_get("contract_digest")?;
-        let computed = contract_digest(&contract, None)?;
-        if computed != digest {
-            return Err(ContractStoreError::Integrity(format!(
-                "Stored contract digest '{digest}' does not match payload '{computed}'.",
-            )));
-        }
+        let contract = artifacts::decode_persisted_contract(key, &digest, &bytes)?;
         Ok(AcceptedContractVersion {
             accepted_at,
             contract_digest: digest,
             contract,
         })
-    }
-
-    fn validate_scope(scope: &AuthorityScope) -> Result<(), ContractStoreError> {
-        for (parameter, value) in [
-            ("scope.Tenant", &scope.tenant),
-            ("scope.Application", &scope.application),
-            ("scope.Environment", &scope.environment),
-        ] {
-            let Some(value) = value else {
-                return Err(ContractStoreError::NullArgument(parameter));
-            };
-            if value.trim().is_empty() {
-                return Err(argument(
-                    parameter,
-                    "The value cannot be an empty string or composed entirely of whitespace.",
-                ));
-            }
-        }
-        Ok(())
     }
 
     fn argument(parameter: &'static str, message: impl Into<String>) -> ContractStoreError {

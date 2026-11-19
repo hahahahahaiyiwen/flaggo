@@ -4,7 +4,7 @@ Run `check.py` with an exact committed product revision, a Git repository URL an
 a **new** output directory outside this workspace's Cargo package tree. It builds
 an independent client, retains `Cargo.lock`, runs canonical digest/evaluation
 checks (including the reusable C01 corpus and C02 exact-evaluation parity),
-executes shared bootstrap/admission/activation/resolution and persisted-artifact
+executes shared bootstrap/admission/activation/resolution and persisted-contract/executable
 integrity policy without SQLite,
 compiles all three HTTP compositions and shared materialization/analysis/execution
 capabilities, and rejects SQLite, app composition roots or unpinned product
