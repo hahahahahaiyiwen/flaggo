@@ -6,8 +6,15 @@ use axum::{
 };
 use flaggo_contract::{ContractResourceId, DecisionContract, ResourceScope};
 use flaggo_contract_service::{ContractLifecycle, worker::ActivationWorker};
+use flaggo_service_hosting::{
+    Access, CORRELATION_HEADER, Operation, Principal, RequestAdmission, RequestAdmissionError,
+    RequestSecurity, SecurityError, TrustedLocal,
+};
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use support::{Fixture, Server, contract, submission};
 use tower::ServiceExt as _;
 
@@ -27,6 +34,367 @@ fn router(lifecycle: ContractLifecycle) -> axum::Router {
         lifecycle,
         std::sync::Arc::new(flaggo_service_hosting::TrustedLocal),
     )
+}
+
+struct RequestQuota {
+    result: Result<RequestAdmission, RequestAdmissionError>,
+    calls: Mutex<Vec<(Option<String>, Operation)>>,
+}
+
+#[async_trait::async_trait]
+impl RequestSecurity for RequestQuota {
+    async fn authenticate(&self, headers: &HeaderMap) -> Result<Principal, SecurityError> {
+        TrustedLocal.authenticate(headers).await
+    }
+
+    async fn authorize(
+        &self,
+        principal: &Principal,
+        scope: &ResourceScope,
+        name: Option<&str>,
+        operation: Operation,
+    ) -> Result<Access, SecurityError> {
+        TrustedLocal
+            .authorize(principal, scope, name, operation)
+            .await
+    }
+
+    async fn admit_authorized(
+        &self,
+        principal: &Principal,
+        scope: &ResourceScope,
+        name: Option<&str>,
+        operation: Operation,
+    ) -> Result<RequestAdmission, RequestAdmissionError> {
+        assert_eq!(principal.subject, "trusted-local");
+        assert_eq!(scope, &resource(NAME).scope);
+        self.calls
+            .lock()
+            .unwrap()
+            .push((name.map(str::to_owned), operation));
+        self.result
+    }
+}
+
+fn request_quota(result: Result<RequestAdmission, RequestAdmissionError>) -> Arc<RequestQuota> {
+    Arc::new(RequestQuota {
+        result,
+        calls: Mutex::new(Vec::new()),
+    })
+}
+
+fn quota_exceeded() -> Result<RequestAdmission, RequestAdmissionError> {
+    Ok(RequestAdmission::Limited {
+        retry_after_seconds: std::num::NonZeroU32::new(13).unwrap(),
+    })
+}
+
+#[tokio::test]
+async fn request_quota_precedes_management_missing_resource_invalid_body_and_conflict() {
+    let fixture = Fixture::new().await;
+    let missing_version = format!("{BASE}/versions/sha256:{}", "0".repeat(64));
+    let mut mismatch = contract();
+    mismatch["authority"]["tenant"] = "different".into();
+    let mismatch = serde_json::to_string(&mismatch).unwrap();
+    for (result, admission_status, admission_kind) in [
+        (
+            quota_exceeded(),
+            Some(StatusCode::TOO_MANY_REQUESTS),
+            "request-quota-exceeded",
+        ),
+        (
+            Err(RequestAdmissionError::Unavailable),
+            Some(StatusCode::SERVICE_UNAVAILABLE),
+            "request-admission-unavailable",
+        ),
+        (Ok(RequestAdmission::Accepted), None, ""),
+    ] {
+        let security = request_quota(result);
+        let router = flaggo_contract_service::router(fixture.lifecycle.clone(), security.clone());
+        for path in ["/HEALTH/LIVE/", "/health/ready"] {
+            let response = router
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        assert!(security.calls.lock().unwrap().is_empty());
+        for (method, path, body, operation, downstream_status, downstream_kind) in [
+            (
+                "GET",
+                BASE.to_owned(),
+                "",
+                Operation::ReadContract,
+                StatusCode::NOT_FOUND,
+                "contract-version-not-found",
+            ),
+            (
+                "PUT",
+                BASE.to_owned(),
+                "{",
+                Operation::DeployContract,
+                StatusCode::BAD_REQUEST,
+                "invalid-request",
+            ),
+            (
+                "POST",
+                format!("{BASE}/validate"),
+                mismatch.as_str(),
+                Operation::ValidateContract,
+                StatusCode::CONFLICT,
+                "contract-resource-mismatch",
+            ),
+            (
+                "POST",
+                format!("{missing_version}/candidates"),
+                "{",
+                Operation::SubmitCandidate,
+                StatusCode::BAD_REQUEST,
+                "invalid-request",
+            ),
+            (
+                "POST",
+                format!(
+                    "{missing_version}/executables/sha256:{}/activate",
+                    "1".repeat(64)
+                ),
+                "{",
+                Operation::ActivateCandidate,
+                StatusCode::BAD_REQUEST,
+                "invalid-request",
+            ),
+            (
+                "GET",
+                format!("{BASE}/versions?limit=0"),
+                "",
+                Operation::ReadContract,
+                StatusCode::BAD_REQUEST,
+                "invalid-request",
+            ),
+            (
+                "GET",
+                format!("{BASE}/versions/invalid-digest"),
+                "",
+                Operation::ReadContract,
+                StatusCode::BAD_REQUEST,
+                "invalid-request",
+            ),
+            (
+                "GET",
+                format!("{missing_version}/executables"),
+                "",
+                Operation::ReadContract,
+                StatusCode::NOT_FOUND,
+                "contract-version-not-found",
+            ),
+            (
+                "GET",
+                format!("{missing_version}/executables/history"),
+                "",
+                Operation::ReadContract,
+                StatusCode::NOT_FOUND,
+                "contract-version-not-found",
+            ),
+        ] {
+            security.calls.lock().unwrap().clear();
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(&path)
+                        .header("content-type", "application/json")
+                        .header(CORRELATION_HEADER, "management-admission")
+                        .body(Body::from(body.to_owned()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let expected = admission_status.unwrap_or(downstream_status);
+            assert_eq!(response.status(), expected, "{method} {path}");
+            assert_eq!(
+                response.headers()[CORRELATION_HEADER],
+                "management-admission"
+            );
+            assert_eq!(
+                response.headers()["content-type"],
+                "application/problem+json"
+            );
+            if expected == StatusCode::TOO_MANY_REQUESTS {
+                assert_eq!(response.headers()["retry-after"], "13");
+            } else {
+                assert!(!response.headers().contains_key("retry-after"));
+            }
+            assert_eq!(
+                *security.calls.lock().unwrap(),
+                vec![(Some(NAME.into()), operation)]
+            );
+            let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+            let problem: Value = serde_json::from_slice(&bytes).unwrap();
+            let kind = if admission_status.is_some() {
+                admission_kind
+            } else {
+                downstream_kind
+            };
+            assert_eq!(
+                problem["type"],
+                format!("https://flaggo.dev/problems/{kind}")
+            );
+            assert_eq!(problem["instance"], path.split('?').next().unwrap());
+            assert_eq!(problem["status"], expected.as_u16());
+        }
+    }
+    assert!(
+        fixture
+            .lifecycle
+            .get(&resource(NAME), None)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn request_quota_counts_head_and_conditional_catalog_attempts() {
+    let fixture = Fixture::new().await;
+    fixture.deploy(&contract()).await;
+    let catalog = "/v4/tenants/local/applications/tetris/environments/integration/decision-contract-catalog/current";
+    for result in [quota_exceeded(), Ok(RequestAdmission::Accepted)] {
+        let security = request_quota(result);
+        let router = flaggo_contract_service::router(fixture.lifecycle.clone(), security.clone());
+        for (method, path, name, operation, downstream) in [
+            (
+                "HEAD",
+                BASE,
+                Some(NAME),
+                Operation::ReadContract,
+                StatusCode::OK,
+            ),
+            (
+                "GET",
+                catalog,
+                None,
+                Operation::ReadCatalog,
+                StatusCode::NOT_MODIFIED,
+            ),
+            (
+                "HEAD",
+                catalog,
+                None,
+                Operation::ReadCatalog,
+                StatusCode::NOT_MODIFIED,
+            ),
+        ] {
+            security.calls.lock().unwrap().clear();
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("if-none-match", "*")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if result == Ok(RequestAdmission::Accepted) {
+                    downstream
+                } else {
+                    StatusCode::TOO_MANY_REQUESTS
+                }
+            );
+            assert_eq!(
+                *security.calls.lock().unwrap(),
+                vec![(name.map(str::to_owned), operation)]
+            );
+            if result == Ok(RequestAdmission::Accepted) {
+                if operation == Operation::ReadCatalog {
+                    assert!(response.headers().contains_key("etag"));
+                }
+                assert!(
+                    to_bytes(response.into_body(), 4096)
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+            } else {
+                assert_eq!(response.headers()["retry-after"], "13");
+                assert!(!response.headers().contains_key("etag"));
+                if method == "HEAD" {
+                    assert!(
+                        to_bytes(response.into_body(), 4096)
+                            .await
+                            .unwrap()
+                            .is_empty()
+                    );
+                }
+            }
+        }
+    }
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn request_quota_does_not_preempt_route_and_scope_failures() {
+    let fixture = Fixture::new().await;
+    let security = request_quota(quota_exceeded());
+    let router = flaggo_contract_service::router(fixture.lifecycle.clone(), security.clone());
+    for (method, path, expected) in [
+        ("GET", "/not-a-product-route".into(), StatusCode::NOT_FOUND),
+        (
+            "GET",
+            BASE.replace("/local/", "/%20/"),
+            StatusCode::BAD_REQUEST,
+        ),
+        ("GET", BASE.replace(NAME, "%FF"), StatusCode::BAD_REQUEST),
+        (
+            "GET",
+            format!("{BASE}/versions/%FF"),
+            StatusCode::BAD_REQUEST,
+        ),
+        ("DELETE", BASE.into(), StatusCode::BAD_REQUEST),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{method} {path}");
+        assert!(!response.headers().contains_key("retry-after"));
+        assert!(security.calls.lock().unwrap().is_empty());
+    }
+    // The existing route middleware infers an operation before method dispatch.
+    let catalog = "/v4/tenants/local/applications/tetris/environments/integration/decision-contract-catalog/current";
+    for (result, expected) in [
+        (quota_exceeded(), StatusCode::TOO_MANY_REQUESTS),
+        (
+            Ok(RequestAdmission::Accepted),
+            StatusCode::METHOD_NOT_ALLOWED,
+        ),
+    ] {
+        let security = request_quota(result);
+        let response = flaggo_contract_service::router(fixture.lifecycle.clone(), security.clone())
+            .oneshot(Request::put(catalog).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(
+            *security.calls.lock().unwrap(),
+            vec![(None, Operation::DeployContract)]
+        );
+    }
+    fixture.close().await;
 }
 
 async fn request(

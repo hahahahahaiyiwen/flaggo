@@ -51,7 +51,12 @@ async fn main() {
             checked_executable: compiled.checked_executable,
         }),
     };
-    let _router = flaggo_decision_http::router(source.clone(), source.clone(), Arc::new(flaggo_service_hosting::TrustedLocal));
+    let security: Arc<dyn flaggo_service_hosting::RequestSecurity> = Arc::new(flaggo_service_hosting::TrustedLocal);
+    let principal = flaggo_service_hosting::Principal { subject: "consumer".into() };
+    let admission: Result<flaggo_service_hosting::RequestAdmission, flaggo_service_hosting::RequestAdmissionError> =
+        security.admit_authorized(&principal, &resource.scope, Some(&resource.name), flaggo_service_hosting::Operation::Evaluate).await;
+    assert_eq!(admission, Ok(flaggo_service_hosting::RequestAdmission::Accepted));
+    let _router = flaggo_decision_http::router(source.clone(), source.clone(), security);
     // Compile the management composition without linking any local application or SQLite adapter.
     let _management = |authority: Arc<dyn flaggo_executable_store::ContractAuthority>| {
         flaggo_contract_application::router(flaggo_contract_application::ContractLifecycle::new(authority), Arc::new(flaggo_service_hosting::TrustedLocal))
@@ -88,5 +93,5 @@ async fn main() {
     flaggo_core_conformance::runtime::assert_exact_decision(&runtime, &resource, &digest, &expected).await;
     let decision = runtime.decide(&resource, &digest, &input, None).await.unwrap();
     assert_eq!(serde_json::to_value(&decision).unwrap()["result"], 500);
-    println!("Pinned core digest/evaluation and HTTP composition passed (no SQLite).");
+    println!("Pinned core digest/evaluation, default request admission and HTTP composition passed (no SQLite).");
 }

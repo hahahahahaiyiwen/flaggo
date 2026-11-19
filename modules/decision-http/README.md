@@ -6,6 +6,12 @@ responses. `router` and `instrumented_router` accept implementations of existing
 independently injected `RequestSecurity`.
 The shared `DecisionRuntime` remains the only evaluator orchestrator.
 
+The shared [authorized request-admission hook](../hosting/README.md#authorized-request-admission)
+runs after resource/action authorization and before runtime input validation or
+authority lookup. A metered adapter may return 429 before a later handler error;
+accepted attempts are not refunded on failure or cancellation, and retries are
+new attempts. The default is non-metered and health routes bypass the hook.
+
 There is no SQLx, SQLite or runnable-app dependency. The local Decision Service
 supplies SQLite readers; another composition supplies its own authoritative
 readers and probes. A probe checks required schema/capabilities, not every artifact.

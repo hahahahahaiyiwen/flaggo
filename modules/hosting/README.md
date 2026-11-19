@@ -28,6 +28,59 @@ database or port during cutover. It never interprets legacy values or logs them.
 Both shared HTTP and domain instruments use the emitting application's registered
 scope and package version. No new exporter or telemetry platform is introduced.
 
+## Authorized request admission
+
+The shared Contract and Decision HTTP routers call
+`RequestSecurity::admit_authorized(&Principal, &ResourceScope, Option<&str>, Operation)`
+exactly once after authentication and successful resource/action authorization,
+before invoking the handler. The trait uses `async_trait`; `RequestAdmission`
+and `RequestAdmissionError` are exported from `flaggo_service_hosting`.
+The callback receives the same authenticated principal, decoded routed scope,
+optional contract name (`None` for catalog), and operation as authorization.
+Body declarations never select the charged resource.
+
+The default returns `RequestAdmission::Accepted` without metering, preserving
+existing implementations and explicit `TrustedLocal` composition. A metered
+adapter charges **one unit per accepted authorized request attempt**, not per
+successful response or logical SDK operation. Later validation errors, missing
+resources, conflicts, dependency failures and cancellation do not refund a
+charge. Retrying, including a retry with identical input, is a new attempt.
+HEAD and conditional catalog requests are attempts even if the handler would
+return an empty body or 304.
+
+| Callback result | Shared HTTP result |
+| --- | --- |
+| `Accepted` | Continue to the existing handler, retaining its success/error behavior |
+| `Limited { retry_after_seconds: NonZeroU32 }` | 429 `request-quota-exceeded`, with positive delay-seconds `Retry-After` |
+| `Err(RequestAdmissionError::Unavailable)` | Sanitized 503 `request-admission-unavailable`, without an invented `Retry-After` |
+
+Both rejection outcomes stop before the handler and use the existing RFC 9457
+`Problem` response and correlation header. Quota exhaustion can therefore take
+precedence over a handler's 400/404/409/415/422. Authentication failures (401 with
+challenge), concealed resources (404), forbidden operations (403), and identity
+or authorization authority failures (503) never invoke admission.
+
+This is **not** a promise that quota precedes all request failures. Route matching
+happens first. After authentication, the middleware decodes all route captures,
+validates the scope and resolves an operation before authorization/admission.
+Unmatched paths, non-UTF-8 captures (including a digest), invalid scope identifiers
+and unrecognized operations never invoke admission. Handler-level digest, name,
+query, media-type and body validation comes later. Existing method inference is
+unchanged: for example DELETE on a management resource fails operation resolution
+with 400, whereas PUT on the catalog resolves `DeployContract`, is authorized and
+admitted, then returns 405 if accepted (or 429 if limited).
+
+Health routes bypass identity, authorization and admission. Hosted provisioning
+and usage endpoints must remain outside `with_resource_security`; this hook is
+not global HTTP middleware. OTLP's separate whole-batch authorization path is
+unchanged and does not invoke it.
+
+Adapters own atomic budget decisions and cancellation-safe accounting. Dropping
+the request or admission future does not imply a pending commit rolled back.
+There is deliberately no refund/settlement callback, persistence dependency,
+numeric budget or production quota policy in this seam. Public HTTP qualification
+does not establish distributed accounting guarantees for an adapter.
+
 Verify from the repository root:
 
 ```powershell
