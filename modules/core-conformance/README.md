@@ -14,6 +14,10 @@ each scenario on fresh storage. The functions panic on conformance violations.
 | `c03_atomic_failure` | Failure after staging exposes no contract/current/active/artifact or name reservation |
 | `c04_admission` | Independent-client idempotency, conflicting retry without orphan, stale retry/new admission rejection |
 | `c05_activation` | Competing fenced activation, acknowledged active read, learned executable survives redeploy |
+| `policy::c03_c05_policy` | Database-free bootstrap/redeploy, admission retries, manual/automatic tokens, ABA, rejection and all resolution outcomes |
+| `policy::persisted_artifact_integrity` | Shared raw-artifact binding/digest/checked alignment and integrity-versus-native JSON errors |
+| `policy::persisted_contract_integrity` | Raw accepted-contract bytes, full resource/scope and digest integrity without SQLite |
+| `policy::c05_adapter_policy_parity` | Shared manual/automatic plans match adapter-committed results and resolved retries |
 | `evidence::c08_durable_acceptance` | Failed append has no receipt/effect, independent reads preserve payload/receipt, raw transport retries remain distinct |
 | `evidence::c09_atomic_projection` | Epoch/checkpoint preconditions, stale-writer rejection, atomic failure, retries, observation dedup and content-conflict effects |
 | `evidence::c11_negotiated_queries` | Profile selection, full scope/exact-or-null/source filtering, limits, typed results, projected-only IDs, live late arrivals and required profile corpus under two scopes |

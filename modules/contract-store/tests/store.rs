@@ -73,6 +73,13 @@ async fn immutable_canonical_versions_persist_with_exact_timestamps_and_schema()
             .fetch_one(&pool)
             .await
             .unwrap();
+    let decoded = flaggo_contract_store::artifacts::decode_persisted_contract(
+        &resource().resource_key().unwrap(),
+        &first.contract_digest,
+        &stored_bytes,
+    )
+    .unwrap();
+    assert_eq!(strict_json::serialize(&decoded).unwrap(), stored_bytes);
     let mut duplicate = first.clone();
     duplicate.accepted_at = timestamp::parse_exact("2026-03-02T10:00:00.0000000Z").unwrap();
     duplicate.contract.attributes[0]
@@ -358,6 +365,7 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
             .await,
         Err(DecisionError::Integrity { .. })
     ));
+    assert_shared_contract_error(&store, &pool, &version.contract_digest).await;
     sqlx::query("UPDATE decision_contract_versions SET contract_json=?")
         .bind(b"{".as_slice())
         .execute(&pool)
@@ -372,6 +380,7 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
         DecisionError::Store(StoreReadError::Native(_))
     ));
     assert_eq!(error.telemetry_classification(), ("failure", "internal"));
+    assert_shared_contract_error(&store, &pool, &version.contract_digest).await;
     changed.name = version.contract.name;
     changed.authority.tenant = Some(" ".into());
     sqlx::query("UPDATE decision_contract_versions SET contract_json=?")
@@ -385,7 +394,8 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
         .unwrap_err();
     assert!(matches!(error, DecisionError::Integrity { .. }));
     assert_eq!(error.telemetry_classification(), ("failure", "integrity"));
-    let overflow = String::from_utf8(bytes).unwrap().replace(
+    assert_shared_contract_error(&store, &pool, &version.contract_digest).await;
+    let overflow = String::from_utf8(bytes.clone()).unwrap().replace(
         "\"type\":\"integer\"",
         "\"type\":\"integer\",\"minimum\":1e400",
     );
@@ -403,8 +413,46 @@ async fn runtime_reader_distinguishes_stored_integrity_from_native_json_and_scop
         DecisionError::Store(StoreReadError::InvalidArgument(_))
     ));
     assert_eq!(error.telemetry_classification(), ("invalid", "validation"));
+    assert_shared_contract_error(&store, &pool, &version.contract_digest).await;
+    let mut changed: DecisionContract = strict_json::deserialize(&bytes).unwrap();
+    changed.result.default = json!(98).into();
+    sqlx::query("UPDATE decision_contract_versions SET contract_json=?")
+        .bind(strict_json::serialize(&changed).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        runtime
+            .decide(&resource(), &version.contract_digest, &input, None)
+            .await,
+        Err(DecisionError::Integrity { .. })
+    ));
+    assert_shared_contract_error(&store, &pool, &version.contract_digest).await;
     store.close().await;
     pool.close().await;
+}
+
+async fn assert_shared_contract_error(
+    store: &SqliteContractVersionStore,
+    pool: &sqlx::SqlitePool,
+    digest: &str,
+) {
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT contract_json FROM decision_contract_versions")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let shared = flaggo_contract_store::artifacts::decode_persisted_contract(
+        &resource().resource_key().unwrap(),
+        digest,
+        &bytes,
+    )
+    .unwrap_err();
+    let adapter = store.get(&resource(), digest, None).await.unwrap_err();
+    assert_eq!(
+        std::mem::discriminant(&shared),
+        std::mem::discriminant(&adapter)
+    );
+    assert_eq!(shared.to_string(), adapter.to_string());
 }
 
 #[tokio::test]

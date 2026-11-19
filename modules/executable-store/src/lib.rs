@@ -1,7 +1,8 @@
+pub mod artifacts;
 mod authority;
-#[cfg(feature = "sqlite")]
 mod checked;
 mod models;
+pub mod policy;
 #[cfg(feature = "sqlite")]
 mod schema;
 
@@ -14,16 +15,14 @@ pub use schema::SCHEMA_VERSION;
 use chrono::{DateTime, FixedOffset, Utc};
 use flaggo_contract::ContractError;
 #[cfg(feature = "sqlite")]
-use flaggo_contract::digests::{ExpressionCanonicalizer, executable_digest, is_sha256_digest};
+use flaggo_contract::digests::ExpressionCanonicalizer;
 #[cfg(feature = "sqlite")]
-use flaggo_contract::{ContractResourceId, DecisionExecutable, strict_json};
+use flaggo_contract::{ContractResourceId, strict_json};
 #[cfg(feature = "sqlite")]
 use flaggo_contract_store::cursor;
 use flaggo_contract_store::timestamp;
 #[cfg(feature = "sqlite")]
 use flaggo_decision::{ActiveExecutable, ActiveExecutableReader, Cancellation, StoreReadError};
-#[cfg(feature = "sqlite")]
-use flaggo_expression::CheckedDecisionExecutable;
 #[cfg(feature = "sqlite")]
 use sqlx::{
     Row, SqliteConnection, SqlitePool, TypeInfo, ValueRef,
@@ -133,6 +132,7 @@ pub use sqlite::authority::SqliteContractAuthority;
 #[cfg(feature = "sqlite")]
 mod sqlite {
     use super::*;
+    use crate::policy::{argument, integrity, parse_state, range, validate_admission};
 
     pub(super) mod authority;
     mod lifecycle;
@@ -262,45 +262,27 @@ mod sqlite {
             .bind(&admission.cycle_id)
             .fetch_optional(&mut *connection)
             .await?;
-            if let Some(row) = existing {
-                let existing = read_admission(&row, false)?;
-                if !existing.identity_matches(admission) {
-                    return Err(ExecutableStoreError::AdmissionConflict {
-                        workspace_id: admission.workspace_id.clone(),
-                        cycle_id: admission.cycle_id.clone(),
-                    });
-                }
-                let state: Option<String> = sqlx::query_scalar(
-                    "SELECT lifecycle_state FROM decision_executables WHERE executable_digest = ?",
-                )
-                .bind(&existing.executable_digest)
-                .fetch_optional(&mut *connection)
-                .await?;
-                let state = parse_state(state.as_deref().ok_or_else(|| {
-                    integrity("Candidate admission references a missing executable.")
-                })?)?;
-                check(&cancellation)?;
-                return Ok(AnalysisCandidateStoreResult {
-                    executable_digest: existing.executable_digest,
-                    created_at: existing.created_at,
-                    lifecycle_state: state,
-                    created: false,
-                });
-            }
+            let existing = existing
+                .as_ref()
+                .map(|row| read_admission(row, false))
+                .transpose()?;
             let state: Option<String> = sqlx::query_scalar(
                 "SELECT lifecycle_state FROM decision_executables WHERE executable_digest = ?",
             )
-            .bind(&stored.executable_digest)
+            .bind(
+                existing
+                    .as_ref()
+                    .map_or(&stored.executable_digest, |value| &value.executable_digest),
+            )
             .fetch_optional(&mut *connection)
             .await?;
-            if let Some(state) = state {
-                let state = parse_state(&state)?;
-                if state != ExecutableLifecycleState::Candidate {
-                    return Err(ExecutableStoreError::LifecycleConflict {
-                        executable_digest: stored.executable_digest.clone(),
-                        state,
-                    });
-                }
+            if let Some(result) = policy::plan_admission(
+                admission,
+                existing.as_ref(),
+                state.as_deref().map(parse_state).transpose()?,
+            )? {
+                check(&cancellation)?;
+                return Ok(result);
             }
             insert_candidate(connection, stored).await?;
             let created_at = timestamp::format_exact(admission.created_at)?;
@@ -445,44 +427,11 @@ mod sqlite {
         }
 
         fn validate_stored(&self, stored: &StoredExecutable) -> Result<()> {
-            if stored.state != ExecutableLifecycleState::Candidate
-                || stored.state_version != 0
-                || stored.activated_at.is_some()
-            {
-                return Err(argument(
-                    "stored",
-                    "New executables must enter the store as version-zero candidates.",
-                ));
-            }
-            if !rules_align(&stored.executable, &stored.checked_executable)? {
-                return Err(argument(
-                    "stored",
-                    "Checked executable rules must align with executable rules.",
-                ));
-            }
             let canonicalizer = self
                 .canonicalizer
                 .as_deref()
                 .map(|value| value as &dyn ExpressionCanonicalizer);
-            let digest = executable_digest(&stored.executable, canonicalizer)?;
-            if digest != stored.executable_digest {
-                return Err(argument(
-                    "stored",
-                    format!(
-                        "Executable digest mismatch: expected {digest}, received {}.",
-                        stored.executable_digest
-                    ),
-                ));
-            }
-            if canonicalizer.is_some()
-                && executable_digest(&stored.executable, None)? != stored.executable_digest
-            {
-                return Err(argument(
-                    "stored",
-                    "Executable expressions must use their canonical stored form.",
-                ));
-            }
-            Ok(())
+            artifacts::validate_new_executable(stored, canonicalizer)
         }
     }
 
@@ -556,33 +505,15 @@ mod sqlite {
 
     fn read_executable(row: &SqliteRow) -> Result<StoredExecutable> {
         let contract_digest: String = row.try_get("contract_digest")?;
-        let executable: DecisionExecutable =
-            strict_json::deserialize(&row.try_get::<Vec<u8>, _>("executable_json")?)?;
-        if executable.contract_digest != contract_digest {
-            return Err(integrity(format!(
-                "Stored executable contract digest '{contract_digest}' does not match payload '{}'.",
-                executable.contract_digest
-            )));
-        }
         let digest: String = row.try_get("executable_digest")?;
-        let computed = executable_digest(&executable, None)?;
-        if computed != digest {
-            return Err(integrity(format!(
-                "Stored executable digest '{digest}' does not match payload '{computed}'."
-            )));
-        }
-        // Checked DTOs use JsonSerializer directly in the reference, not StrictJson token validation.
-        let checked = checked::read(&row.try_get::<Vec<u8>, _>("checked_executable_json")?)?
-            .ok_or_else(|| integrity("Stored checked executable representation is null."))?;
-        if !rules_align(&executable, &checked)? {
-            return Err(integrity(
-                "Stored checked executable rules do not match executable rules.",
-            ));
-        }
-        let provenance = row
-            .try_get::<Option<Vec<u8>>, _>("provenance_json")?
-            .map(|bytes| strict_json::deserialize(&bytes))
-            .transpose()?;
+        let artifacts = artifacts::decode_persisted_artifacts(
+            &digest,
+            &contract_digest,
+            &row.try_get::<Vec<u8>, _>("executable_json")?,
+            &row.try_get::<Vec<u8>, _>("checked_executable_json")?,
+            row.try_get::<Option<Vec<u8>>, _>("provenance_json")?
+                .as_deref(),
+        )?;
         let state = parse_state(row.try_get("lifecycle_state")?)?;
         let created_at = timestamp::parse_exact(row.try_get("created_at")?)?;
         let activated_at = row
@@ -591,67 +522,14 @@ mod sqlite {
             .transpose()?;
         Ok(StoredExecutable {
             executable_digest: digest,
-            executable,
-            checked_executable: checked,
+            executable: artifacts.executable,
+            checked_executable: artifacts.checked_executable,
             state,
             state_version: row.try_get("state_version")?,
             created_at,
             activated_at,
-            provenance,
+            provenance: artifacts.provenance,
         })
-    }
-
-    fn rules_align(
-        executable: &DecisionExecutable,
-        checked: &CheckedDecisionExecutable,
-    ) -> Result<bool> {
-        if executable.rules.len() != checked.rules.len() {
-            return Ok(false);
-        }
-        for (rule, checked) in executable.rules.iter().zip(&checked.rules) {
-            let rule = rule
-                .as_ref()
-                .ok_or_else(|| ContractError::InvalidModel("Null executable rule.".into()))?;
-            let checked = checked.as_ref().ok_or_else(|| {
-                ContractError::InvalidModel("Null checked executable rule.".into())
-            })?;
-            if rule.name != checked.name {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    fn validate_admission(
-        stored: &StoredExecutable,
-        admission: &AnalysisCandidateAdmission,
-    ) -> Result<()> {
-        admission.resource.resource_key()?;
-        if admission.contract_digest != stored.executable.contract_digest
-            || admission.executable_digest != stored.executable_digest
-            || admission.created_at != stored.created_at
-        {
-            return Err(argument(
-                "admission",
-                "Candidate admission identity must match the stored executable.",
-            ));
-        }
-        if [
-            &admission.workspace_id,
-            &admission.cycle_id,
-            &admission.attempt_id,
-            &admission.resource.name,
-        ]
-        .iter()
-        .any(|value| value.trim().is_empty())
-            || !is_sha256_digest(&admission.analysis_manifest_digest)
-        {
-            return Err(argument(
-                "admission",
-                "Candidate admission identity and a valid analysis manifest digest are required.",
-            ));
-        }
-        Ok(())
     }
 
     fn read_admission(row: &SqliteRow, exact: bool) -> Result<AnalysisCandidateAdmission> {
@@ -681,33 +559,6 @@ mod sqlite {
         })
     }
 
-    fn parse_state(value: &str) -> Result<ExecutableLifecycleState> {
-        match value {
-            "candidate" => Ok(ExecutableLifecycleState::Candidate),
-            "active" => Ok(ExecutableLifecycleState::Active),
-            "inactive" => Ok(ExecutableLifecycleState::Inactive),
-            invalid => Err(integrity(format!(
-                "Unknown executable lifecycle state '{invalid}'."
-            ))),
-        }
-    }
-
-    fn argument(parameter: &'static str, message: impl Into<String>) -> ExecutableStoreError {
-        ExecutableStoreError::InvalidArgument {
-            parameter,
-            message: message.into(),
-            out_of_range: false,
-        }
-    }
-
-    fn range(parameter: &'static str, message: impl Into<String>) -> ExecutableStoreError {
-        ExecutableStoreError::InvalidArgument {
-            parameter,
-            message: message.into(),
-            out_of_range: true,
-        }
-    }
-
     fn page_limit(size: i32, maximum: i32) -> Result<()> {
         if !(1..=maximum).contains(&size) {
             return Err(range(
@@ -716,10 +567,6 @@ mod sqlite {
             ));
         }
         Ok(())
-    }
-
-    fn integrity(message: impl Into<String>) -> ExecutableStoreError {
-        ExecutableStoreError::Integrity(message.into())
     }
 
     fn check(cancellation: &Cancellation) -> Result<()> {

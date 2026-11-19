@@ -1,7 +1,10 @@
 # Shared-core extraction: authority, HTTP and workspace boundaries
 
-Status: **#94 implementation, local qualification and public remote
-pinned-consumer qualification complete**. #94 remains open for review.
+Status: initial #94 extraction merged through #95 at
+`db44dc9ea35c3c50109e2e65ba2a536eab753971`. Downstream adapter integration
+identified a missed public-policy boundary; the acceptance correction below
+is published and independently remote-consumer qualified, but does not inherit
+#95's approval and has not been merged.
 This is not hosted qualification.
 Based on the approved architecture revision
 `83088e825a0380a2a629b3bdd37cf8ffaaf1ae80`. The accepted design models in
@@ -15,8 +18,8 @@ revisions recorded below.
 | `flaggo-contract-application` | Shared validation, compilation, management HTTP/projections, Candidate admission and activation worker |
 | `flaggo-decision-http` | Shared runtime HTTP, telemetry and injected readiness; uses the existing `DecisionRuntime` |
 | `flaggo-otlp-http` | Shared OTLP transport, independent authentication, whole-batch authorization and durable append; no SQLite dependency |
-| `flaggo-contract-store`, without default features | Accepted-version types, errors, timestamp/cursor contracts |
-| `flaggo-executable-store`, without default features | Lifecycle types/errors and `ContractAuthority` semantic capability |
+| `flaggo-contract-store`, without default features | Accepted-version types, persisted-contract integrity decoder, errors, timestamp/cursor contracts |
+| `flaggo-executable-store`, without default features | Lifecycle types/errors, `ContractAuthority`, shared `policy` decisions and `artifacts` integrity validation |
 | `SqliteContractAuthority` | Local atomic authority adapter over one shared SQLite pool |
 | Existing runnable apps | Local configuration, adapter initialization, listener and shutdown composition |
 | `flaggo-core-conformance` | Reusable authority outcome scenarios, independent of SQL |
@@ -57,6 +60,105 @@ transactions; the app no longer sequences separate writes or uses a
 process-local current/admission mutex. A failed operation is not a claim that a
 remote commit rolled back: future adapters must preserve explicit dependency
 errors and reconciliation guarantees. No remote retry protocol is certified here.
+
+### Acceptance correction: reusable product policy
+
+At merged #95, `ContractAuthority` was portable but bootstrap/redeploy,
+activation/resolution and persisted-executable validation still lived under the
+SQLite feature. That was a missed #94 acceptance boundary: a second adapter would
+otherwise copy product rules. The additive `flaggo.authority.policy/v1` capability
+now exposes those decisions in `flaggo_executable_store::policy` and artifact
+checks in `flaggo_executable_store::artifacts`, with SQLite calling the same code.
+
+`plan_bootstrap` returns ordered default/authored steps without resetting learned
+authority. `plan_admission`, `plan_activation`, `plan_candidate_activation` and
+`plan_resolution` consume transactionally read state and return decisions rather
+than performing I/O. Resolution retains all five outcomes, active-token ABA
+checks, rejection independence and the existing distinct manual/automatic
+version rules. Adapters keep atomicity, ownership fences, CAS and full rollback.
+The byte-oriented artifact decoder preserves checked DTO parsing and error
+classification without requiring SQLite rows or its timestamp representation.
+See the [exported seams and adapter invariants](../../../modules/executable-store/README.md).
+
+The same correction also exports
+`flaggo_contract_store::artifacts::decode_persisted_contract(resource_key, digest, payload)`.
+It verifies original accepted-contract bytes, full resource identity/scope and
+digest without SQLx; SQLite reuses it and retains timestamp/row decoding.
+Shared conformance and SQLite corruption/error-parity cases exercise the seam.
+Existing public cursor codecs carry only timestamp/digest, not scope.
+Authorization and scoped resource/exact-contract queries provide isolation;
+neither token encoding nor cross-scope token acceptance changes here.
+Capacity admission (429 plus Retry-After) remains a separate, pending shared
+HTTP behavior change and is not included in this pure-policy correction.
+
+Shared `flaggo.authority-policy-conformance/v1` scenarios exercise those decisions,
+persisted-artifact integrity and policy-versus-committed-adapter parity. The
+standalone consumer additionally executes the database-free corpus. Existing v4
+wire formats, digests, schemas and `flaggo.authority/v3` are unchanged. Historical
+remote consumer pins below do not qualify this correction; its exact local or
+published revision and consumer evidence must be reported separately.
+
+The executable-policy correction's earlier source revision is
+`79974bb950f90b65dfae0b82b7a3b7b7cd2aa341`. Focused executable-store,
+Contract Service, Decision Service and shared conformance tests pass (56 passed,
+two historical fixtures ignored); no-default-feature checked-parser tests and
+strict Clippy also pass. A fresh standalone **local Git** consumer executes the
+shared policy/integrity corpus, canonical/evaluation checks and compositions:
+all 20 product crates resolve to that exact revision, with no SQLx/SQLite or
+runnable-app dependency. Its retained lock SHA-256 is
+`4a1e3448f07d7bde85ca3fe7c4e04990697f56418752bc5bb14bd4cdba5d3bec`;
+manifest, lock and result are in session `files/pinned-consumer-policy-79974bb`.
+This earlier run is not remote publication, private-adapter integration or
+distributed qualification. Its publication was pending at that milestone;
+the main-based public qualification is recorded below.
+This earlier pin does not qualify the subsequently added accepted-contract
+decoder; its exact source and independent consumer must be recorded separately.
+
+The cumulative correction including the accepted-contract decoder is locally
+qualified at `5cf6aab8dab98e846753b3993cc98538d6aef359`: the five-package
+contract-store/executable-store/Contract Service/Decision Service/conformance
+suite passes **65 tests**, with **2 historical fixtures ignored**. Strict
+all-target Clippy and no-default-feature store checks pass. A fresh standalone
+local Git consumer executes both persisted-integrity corpora and pins all
+**20** product crates to that revision without SQLx/SQLite or runnable apps.
+Its lock SHA-256 is
+`6b7d7bc794e39436d7451bad0ae0bd0f31bab56e4388b3c4b1bb27f39031ab63`;
+the manifest, lock and result are retained in session
+`files/pinned-consumer-contract-5cf6aab`. This remains historical local-only
+qualification, separate from the main-based public remote consumer below.
+
+### Main-based correction publication
+
+The four focused correction commits were reapplied, in order, onto current
+`origin/main` at `db44dc9ea35c3c50109e2e65ba2a536eab753971`, producing
+`f873ad91aa97771845ac4974628385a3f86c44d3`. After explicit publication approval,
+that revision was non-force pushed to the public repository on branch
+`hahahahahaiyiwen-portable-policy-correction`; no merge was performed.
+
+At that exact revision the five-package suite passes **65 tests**, with
+**2 historical fixtures ignored**, and strict all-target Clippy, formatting,
+no-default-feature store checks and all **4** portable checked-parser tests pass:
+
+```powershell
+cargo test --locked -p flaggo-contract-store -p flaggo-executable-store -p flaggo-contract-service -p flaggo-decision-service -p flaggo-core-conformance
+cargo clippy --locked -p flaggo-contract-store -p flaggo-executable-store -p flaggo-contract-service -p flaggo-decision-service -p flaggo-core-conformance --all-targets -- -D warnings
+cargo check --locked -p flaggo-contract-store -p flaggo-executable-store --no-default-features
+cargo test --locked -p flaggo-executable-store --no-default-features --lib
+cargo fmt --all --check
+python tools\core-consumer\check.py --repository https://github.com/hahahahahaiyiwen/flaggo.git --revision f873ad91aa97771845ac4974628385a3f86c44d3 --output <new-external-directory>
+```
+
+The fresh **public remote Git** consumer passes both persisted-integrity corpora,
+shared lifecycle policy, canonical/evaluation checks and HTTP compositions.
+All **20** product packages resolve to that exact revision, with no SQLx,
+SQLite or runnable-app dependency. Its retained lock SHA-256 is
+`7a54ba73aa185f100acfda6ac615cddc786c15ecc0cdf5228e4f6663b517ddb2`.
+The generated manifest, lock and result are retained in publication session
+`b738c4a7-a548-401b-afc7-9875b7c2fada`, under
+`files/remote-consumer-f873ad9`. This publication record is documentation-only;
+subsequent exact-head consumer and CI results belong to the correction PR.
+Public consumption does not establish private-adapter adoption, hosted
+qualification or multi-host readiness. Capacity admission remains separate.
 
 Core crates disable store default features. SQLx and SQLite are absent from
 their normal dependency graph. Local store defaults still enable SQLite for
@@ -176,6 +278,7 @@ abandoned. New workspaces use the `flaggo.workspace/v2` full-resource hash domai
 | Expression/canonical identity | `flaggo.cel/v1`; unchanged contract/executable digest algorithms and fixtures |
 | SQLite schemas | Contract **4**, executable **6**, evidence **5**, raw inbox **2**; explicit authority/inbox/evidence migrations, no reset |
 | Authority capability | `flaggo.authority/v3`: full-scope atomic ready publication/fenced current admission, scoped catalog/pagination and activation/read contracts |
+| Shared authority policy | `flaggo.authority.policy/v1`: SQLx-free transition plans and persisted-artifact validation; `flaggo.authority-policy-conformance/v1` corpus and adapter parity |
 | Security capability | `flaggo.security.resource/v1`, independently injected policy; `flaggo.otlp.authorization/v1` retained producer/scope envelope |
 | OTLP profile | `flaggo.otlp-http` **2.0.0**; standard OTLP payloads/endpoints, whole-batch authorization, explicitly local numeric defaults |
 | Reusable fixture revision | `flaggo.authority-conformance/v3` (C07 namespace and C03-C05), `flaggo.admission-conformance/v1` (C04/C10 ownership/recovery), `flaggo.evidence-conformance/v3` (local C08/C09/C11 plus projection fencing outcomes) |
@@ -458,7 +561,8 @@ Node was absent from PATH; a session-local checksum-verified Node 22.23.5 and
 the repository lockfile's missing npm dependencies were used for this check.
 No machine-global runtime configuration or cloud resource was changed.
 
-Thus #94 must remain open. The next protocol work needs reviewed concrete
-scoped API/security, evidence-result/profile and artifact/execution capability
-artifacts before claiming those capabilities. The deferred hosted workload/SLO
-and retention policies do not block these public contract/extraction tasks.
+Issue #94 was subsequently completed by merged PR #95. The missed portable-policy
+and contract-decoder boundary is corrected and qualified separately above;
+that publication does not reopen or inherit approval from the historical PR.
+Hosted workload/SLO, retention and distributed-adapter qualification remain
+separate from these public contract/extraction tasks.
