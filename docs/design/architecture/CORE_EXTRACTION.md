@@ -113,6 +113,20 @@ review and authorization.
 This earlier pin does not qualify the subsequently added accepted-contract
 decoder; its exact source and independent consumer must be recorded separately.
 
+The cumulative correction including the accepted-contract decoder is locally
+qualified at `5cf6aab8dab98e846753b3993cc98538d6aef359`: the five-package
+contract-store/executable-store/Contract Service/Decision Service/conformance
+suite passes **65 tests**, with **2 historical fixtures ignored**. Strict
+all-target Clippy and no-default-feature store checks pass. A fresh standalone
+local Git consumer executes both persisted-integrity corpora and pins all
+**20** product crates to that revision without SQLx/SQLite or runnable apps.
+Its lock SHA-256 is
+`6b7d7bc794e39436d7451bad0ae0bd0f31bab56e4388b3c4b1bb27f39031ab63`;
+the manifest, lock and result are retained in session
+`files/pinned-consumer-contract-5cf6aab`. This remains unpublished local
+qualification. A clean main-based correction and public remote consumer pin
+must be verified separately before downstream adoption.
+
 Core crates disable store default features. SQLx and SQLite are absent from
 their normal dependency graph. Local store defaults still enable SQLite for
 existing runnable apps. `ReadinessProbe` returns capability availability or
