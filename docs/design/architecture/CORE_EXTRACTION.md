@@ -3,7 +3,8 @@
 Status: initial #94 extraction merged through #95 at
 `db44dc9ea35c3c50109e2e65ba2a536eab753971`. Downstream adapter integration
 identified a missed public-policy boundary; the acceptance correction below
-is locally qualified but not published, and does not inherit #95's approval.
+is published and independently remote-consumer qualified, but does not inherit
+#95's approval and has not been merged.
 This is not hosted qualification.
 Based on the approved architecture revision
 `83088e825a0380a2a629b3bdd37cf8ffaaf1ae80`. The accepted design models in
@@ -107,9 +108,9 @@ all 20 product crates resolve to that exact revision, with no SQLx/SQLite or
 runnable-app dependency. Its retained lock SHA-256 is
 `4a1e3448f07d7bde85ca3fe7c4e04990697f56418752bc5bb14bd4cdba5d3bec`;
 manifest, lock and result are in session `files/pinned-consumer-policy-79974bb`.
-This is not remote publication, private-adapter integration or distributed
-qualification. Publication and downstream adoption remain pending coordinator
-review and authorization.
+This earlier run is not remote publication, private-adapter integration or
+distributed qualification. Its publication was pending at that milestone;
+the main-based public qualification is recorded below.
 This earlier pin does not qualify the subsequently added accepted-contract
 decoder; its exact source and independent consumer must be recorded separately.
 
@@ -123,9 +124,41 @@ local Git consumer executes both persisted-integrity corpora and pins all
 Its lock SHA-256 is
 `6b7d7bc794e39436d7451bad0ae0bd0f31bab56e4388b3c4b1bb27f39031ab63`;
 the manifest, lock and result are retained in session
-`files/pinned-consumer-contract-5cf6aab`. This remains unpublished local
-qualification. A clean main-based correction and public remote consumer pin
-must be verified separately before downstream adoption.
+`files/pinned-consumer-contract-5cf6aab`. This remains historical local-only
+qualification, separate from the main-based public remote consumer below.
+
+### Main-based correction publication
+
+The four focused correction commits were reapplied, in order, onto current
+`origin/main` at `db44dc9ea35c3c50109e2e65ba2a536eab753971`, producing
+`f873ad91aa97771845ac4974628385a3f86c44d3`. After explicit publication approval,
+that revision was non-force pushed to the public repository on branch
+`hahahahahaiyiwen-portable-policy-correction`; no merge was performed.
+
+At that exact revision the five-package suite passes **65 tests**, with
+**2 historical fixtures ignored**, and strict all-target Clippy, formatting,
+no-default-feature store checks and all **4** portable checked-parser tests pass:
+
+```powershell
+cargo test --locked -p flaggo-contract-store -p flaggo-executable-store -p flaggo-contract-service -p flaggo-decision-service -p flaggo-core-conformance
+cargo clippy --locked -p flaggo-contract-store -p flaggo-executable-store -p flaggo-contract-service -p flaggo-decision-service -p flaggo-core-conformance --all-targets -- -D warnings
+cargo check --locked -p flaggo-contract-store -p flaggo-executable-store --no-default-features
+cargo test --locked -p flaggo-executable-store --no-default-features --lib
+cargo fmt --all --check
+python tools\core-consumer\check.py --repository https://github.com/hahahahahaiyiwen/flaggo.git --revision f873ad91aa97771845ac4974628385a3f86c44d3 --output <new-external-directory>
+```
+
+The fresh **public remote Git** consumer passes both persisted-integrity corpora,
+shared lifecycle policy, canonical/evaluation checks and HTTP compositions.
+All **20** product packages resolve to that exact revision, with no SQLx,
+SQLite or runnable-app dependency. Its retained lock SHA-256 is
+`7a54ba73aa185f100acfda6ac615cddc786c15ecc0cdf5228e4f6663b517ddb2`.
+The generated manifest, lock and result are retained in publication session
+`b738c4a7-a548-401b-afc7-9875b7c2fada`, under
+`files/remote-consumer-f873ad9`. This publication record is documentation-only;
+subsequent exact-head consumer and CI results belong to the correction PR.
+Public consumption does not establish private-adapter adoption, hosted
+qualification or multi-host readiness. Capacity admission remains separate.
 
 Core crates disable store default features. SQLx and SQLite are absent from
 their normal dependency graph. Local store defaults still enable SQLite for
@@ -528,7 +561,8 @@ Node was absent from PATH; a session-local checksum-verified Node 22.23.5 and
 the repository lockfile's missing npm dependencies were used for this check.
 No machine-global runtime configuration or cloud resource was changed.
 
-Thus #94 must remain open. The next protocol work needs reviewed concrete
-scoped API/security, evidence-result/profile and artifact/execution capability
-artifacts before claiming those capabilities. The deferred hosted workload/SLO
-and retention policies do not block these public contract/extraction tasks.
+Issue #94 was subsequently completed by merged PR #95. The missed portable-policy
+and contract-decoder boundary is corrected and qualified separately above;
+that publication does not reopen or inherit approval from the historical PR.
+Hosted workload/SLO, retention and distributed-adapter qualification remain
+separate from these public contract/extraction tasks.
