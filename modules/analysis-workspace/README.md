@@ -27,6 +27,23 @@ coordinates claim/cycle transitions with the Contract Service SQLite admission
 commit. Both apps must share `FLAGGO_ANALYSIS_WORKSPACE_ROOT`. This local proof
 does not qualify distributed lease expiry, cross-host storage or hosted execution.
 
+Successfully acquired local file locks use an explicitly unlocking RAII guard,
+not close-only release: on Linux, a concurrent fork can retain the same locked
+open-file description until exec or exit, even with close-on-exec enabled.
+Authority guards remain held for their existing mutation scope; admission guards
+remain held through the owning transaction, including caller cancellation.
+Lifetime claims, legacy-binding locks and successful idle-claim probes use the
+same guard. Contention remains nonblocking, with no sleeps or retries. Explicit
+claim release propagates unlock errors after revoking local capabilities;
+drop-time unlock failures are logged.
+
+Regression tests retain the real Rust-locked descriptor in a synchronized
+Rust test subprocess to deterministically extend that inheritance window. They
+check close-only contention, guard release/unwinding, admission exclusion and
+claim recovery while the child remains alive. The ignored subprocess fixture is
+invoked by those tests, not skipped coverage. Windows execution is not Linux
+qualification; neither identifies a particular CI process-spawn interleaving.
+
 ```powershell
 cargo test -p flaggo-analysis-workspace --locked
 cargo check -p flaggo-analysis-workspace --no-default-features --locked
