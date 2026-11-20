@@ -38,6 +38,15 @@ no invented retry delay. JSON and protobuf retain their wire format/content type
 Neither outcome appends; validation/authentication/authorization denials do not
 invoke admission. Existing inbox capacity/unavailability responses are unchanged.
 
+Known inbox row/metadata exhaustion is
+`RawOtlpInboxError::ResourceCapacityExceeded { resource, retained, incoming, maximum }`,
+with `InboxCapacityResource::{Rows, MetadataBytes}` and `u64` counters in the
+selected unit. It maps to the same sanitized HTTP 429/code 8 capacity message,
+without resource names/counters or an invented `Retry-After`. The adapter must
+reject atomically without persisting the batch. Dependency `Unavailable`
+remains 503, not quota exhaustion. The original payload-byte `CapacityExceeded`
+variant and its existing wire response remain unchanged.
+
 The public seam does not implement a distributed ledger or certify cancellation
 safety of a private adapter. Empty batches still consume rows/metadata:
 **payload-byte limits alone are insufficient**. Hosted enablement requires

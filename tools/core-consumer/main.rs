@@ -81,6 +81,14 @@ async fn main() {
     let _evidence_contract = |store: Arc<dyn flaggo_evidence_store::EvidenceStore>| store;
     let _projection_catalog = flaggo_evidence_materialization::CompiledContractCatalog::empty();
     let _inbox_contract = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| inbox;
+    let _capacity_error = |resource: flaggo_raw_otlp_inbox::InboxCapacityResource| {
+        flaggo_raw_otlp_inbox::RawOtlpInboxError::ResourceCapacityExceeded {
+            resource, retained: 1, incoming: 1, maximum: 1,
+        }
+    };
+    for resource in [flaggo_raw_otlp_inbox::InboxCapacityResource::Rows, flaggo_raw_otlp_inbox::InboxCapacityResource::MetadataBytes] {
+        assert!(matches!(_capacity_error(resource), flaggo_raw_otlp_inbox::RawOtlpInboxError::ResourceCapacityExceeded { .. }));
+    }
     let _ingestion = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| {
         flaggo_otlp_http::router_with_private_health(inbox, Default::default(), Arc::new(flaggo_service_hosting::TrustedLocal))
     };

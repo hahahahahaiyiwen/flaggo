@@ -360,6 +360,21 @@ async fn ingest_with_span(
             )
             .retry_after(),
         ),
+        Err(RawOtlpInboxError::ResourceCapacityExceeded { .. }) => reject_request(
+            &state,
+            signal,
+            wire_encoding.as_str(),
+            transport_compression.as_str(),
+            "capacity_exhausted",
+            "capacity",
+            Some(payload_size),
+            OtlpHttpError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                RESOURCE_EXHAUSTED,
+                "Raw OTLP inbox capacity is exhausted.",
+                wire_encoding,
+            ),
+        ),
         Err(_) => reject_request(
             &state,
             signal,
@@ -669,9 +684,9 @@ mod tests {
         },
     };
     use flaggo_raw_otlp_inbox::{
-        DEFAULT_OTLP_PROFILE_VERSION, InboxAppendReceipt, InboxBatchId, InboxClock,
-        NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression, OtlpWireEncoding, PayloadSha256,
-        RawOtlpInbox, RawOtlpInboxBacklog, RawOtlpInboxBatch, RawOtlpInboxError,
+        DEFAULT_OTLP_PROFILE_VERSION, InboxAppendReceipt, InboxBatchId, InboxCapacityResource,
+        InboxClock, NewRawOtlpBatch, OtlpSignal, OtlpTransportCompression, OtlpWireEncoding,
+        PayloadSha256, RawOtlpInbox, RawOtlpInboxBacklog, RawOtlpInboxBatch, RawOtlpInboxError,
         RawOtlpInboxHealth, RawOtlpInboxLimits, SqliteRawOtlpInbox, SystemInboxClock,
     };
     use flate2::{Compression, write::GzEncoder};
@@ -696,6 +711,7 @@ mod tests {
     enum AppendBehavior {
         Success,
         Capacity,
+        ResourceCapacity(InboxCapacityResource),
         Unavailable,
     }
 
@@ -753,6 +769,14 @@ mod tests {
                         retained_payload_bytes: 10,
                         incoming_payload_bytes: batch.payload.len() as u64,
                         max_retained_payload_bytes: 10,
+                    });
+                }
+                AppendBehavior::ResourceCapacity(resource) => {
+                    return Err(RawOtlpInboxError::ResourceCapacityExceeded {
+                        resource,
+                        retained: 123_456,
+                        incoming: 7_891,
+                        maximum: 123_999,
                     });
                 }
                 AppendBehavior::Unavailable => {
@@ -1216,7 +1240,7 @@ mod tests {
     async fn maps_capacity_and_storage_failures_to_retryable_otlp_statuses() {
         let capacity = TestInbox::new(AppendBehavior::Capacity);
         let response = send(
-            capacity,
+            capacity.clone(),
             OtlpReceiverConfig::default(),
             "/v1/logs",
             Some("application/x-protobuf"),
@@ -1230,10 +1254,11 @@ mod tests {
         let status = RpcStatus::decode(response_bytes(response).await.as_slice())
             .expect("protobuf google.rpc.Status");
         assert_eq!(status.code, 8);
+        assert!(capacity.batches().is_empty());
 
         let unavailable = TestInbox::new(AppendBehavior::Unavailable);
         let response = send(
-            unavailable,
+            unavailable.clone(),
             OtlpReceiverConfig::default(),
             "/v1/logs",
             Some("application/json"),
@@ -1249,6 +1274,76 @@ mod tests {
             OtlpWireEncoding::ProtobufJson,
         )
         .await;
+        assert!(unavailable.batches().is_empty());
+    }
+
+    #[tokio::test]
+    async fn maps_row_and_metadata_exhaustion_without_leaking_counts_or_inventing_retry_delay() {
+        for resource in [
+            InboxCapacityResource::Rows,
+            InboxCapacityResource::MetadataBytes,
+        ] {
+            for path in ["/v1/logs", "/v1/metrics", "/v1/traces"] {
+                for encoding in [OtlpWireEncoding::ProtobufJson, OtlpWireEncoding::Protobuf] {
+                    for empty in [true, false] {
+                        let inbox = TestInbox::new(AppendBehavior::ResourceCapacity(resource));
+                        let security = Arc::new(MeteredSecurity::new(1, 1));
+                        let app = crate::router_with_private_health(
+                            inbox.clone(),
+                            OtlpReceiverConfig::default(),
+                            security.clone(),
+                        );
+                        let payload = if !empty {
+                            admission_payload(path, encoding)
+                        } else if encoding == OtlpWireEncoding::ProtobufJson {
+                            b"{}".to_vec()
+                        } else {
+                            vec![]
+                        };
+                        let response = app
+                            .oneshot(authenticated_request(path, encoding, payload))
+                            .await
+                            .unwrap();
+                        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+                        assert_eq!(response.headers()[CONTENT_TYPE], encoding.media_type());
+                        assert!(!response.headers().contains_key(RETRY_AFTER));
+                        let body = response_bytes(response).await;
+                        if encoding == OtlpWireEncoding::Protobuf {
+                            assert_eq!(
+                                RpcStatus::decode(body.as_slice()).unwrap(),
+                                RpcStatus {
+                                    code: 8,
+                                    message: "Raw OTLP inbox capacity is exhausted.".into(),
+                                }
+                            );
+                        } else {
+                            assert_eq!(
+                                serde_json::from_slice::<Value>(&body).unwrap(),
+                                serde_json::json!({
+                                    "code": 8, "message": "Raw OTLP inbox capacity is exhausted.",
+                                })
+                            );
+                        }
+                        assert_eq!(inbox.append_calls.load(Ordering::SeqCst), 1);
+                        assert!(
+                            inbox.batches().is_empty(),
+                            "capacity rejection must not persist a batch"
+                        );
+                        assert_eq!(security.admitted_scopes.lock().unwrap().len(), 1);
+                        let remaining = u32::from(empty);
+                        assert!(
+                            security
+                                .quotas
+                                .lock()
+                                .unwrap()
+                                .values()
+                                .all(|quota| *quota == remaining),
+                            "empty batches are uncharged; accepted nonempty attempts are not refunded"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[tokio::test]
