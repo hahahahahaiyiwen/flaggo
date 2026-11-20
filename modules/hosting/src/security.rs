@@ -85,6 +85,23 @@ pub trait RequestSecurity: Send + Sync {
     ) -> Result<RequestAdmission, RequestAdmissionError> {
         Ok(RequestAdmission::Accepted)
     }
+
+    /// Admit one complete OTLP batch after validation and authorization of every scope.
+    ///
+    /// Metered adapters atomically charge one unit per distinct tenant, not per
+    /// scope: either all tenants have quota and are charged, or none are charged.
+    /// An empty scope slice incurs no tenant charge (do not infer a caller tenant).
+    /// Later append failures or cancellation do not refund acceptance; retries
+    /// are new attempts. Adapters own cancellation-safe accounting and separate
+    /// row/metadata capacity protections, including for empty batches.
+    /// The default accepts without metering; authorization must never charge.
+    async fn admit_authorized_otlp(
+        &self,
+        _principal: &Principal,
+        _scopes: &[ResourceScope],
+    ) -> Result<RequestAdmission, RequestAdmissionError> {
+        Ok(RequestAdmission::Accepted)
+    }
 }
 
 /// Explicit opt-in for trusted local composition, not a hosted identity adapter.

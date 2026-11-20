@@ -26,7 +26,7 @@ pub const INSTRUMENTATION_SCOPE: &str = "flaggo.otel-ingestion";
 pub(crate) struct AppState {
     security: Arc<dyn flaggo_service_hosting::RequestSecurity>,
     inbox: Arc<dyn RawOtlpInbox>,
-    inbox_limits: RawOtlpInboxLimits,
+    inbox_limits: Option<RawOtlpInboxLimits>,
     observability: OtlpIngestionObservability,
     receiver: OtlpReceiverConfig,
 }
@@ -50,6 +50,32 @@ pub fn instrumented_router(
     inbox: Arc<dyn RawOtlpInbox>,
     receiver: OtlpReceiverConfig,
     inbox_limits: RawOtlpInboxLimits,
+    observability: OtlpIngestionObservability,
+    security: Arc<dyn flaggo_service_hosting::RequestSecurity>,
+) -> Router {
+    compose_router(inbox, receiver, Some(inbox_limits), observability, security)
+}
+
+/// Compose ingress with inventory-free health, without selecting a retention policy.
+/// Local health detail flags in `receiver` do not expose inventory through this router.
+pub fn router_with_private_health(
+    inbox: Arc<dyn RawOtlpInbox>,
+    receiver: OtlpReceiverConfig,
+    security: Arc<dyn flaggo_service_hosting::RequestSecurity>,
+) -> Router {
+    compose_router(
+        inbox,
+        receiver,
+        None,
+        OtlpIngestionObservability::new(),
+        security,
+    )
+}
+
+fn compose_router(
+    inbox: Arc<dyn RawOtlpInbox>,
+    receiver: OtlpReceiverConfig,
+    inbox_limits: Option<RawOtlpInboxLimits>,
     observability: OtlpIngestionObservability,
     security: Arc<dyn flaggo_service_hosting::RequestSecurity>,
 ) -> Router {
@@ -78,11 +104,14 @@ async fn readiness(State(state): State<AppState>) -> Response {
     match state.inbox.inspect().await {
         Ok(health) => {
             state.observability.record_health(&health);
-            if !state.receiver.expose_inbox_health {
+            let Some(limits) = state
+                .inbox_limits
+                .filter(|_| state.receiver.expose_inbox_health)
+            else {
                 return (StatusCode::OK, Json(json!({
                     "service": SERVICE_NAME, "status": "ready", "version": env!("CARGO_PKG_VERSION")
                 }))).into_response();
-            }
+            };
             (
                 StatusCode::OK,
                 Json(json!({
@@ -92,10 +121,8 @@ async fn readiness(State(state): State<AppState>) -> Response {
                             .map(|value| value.to_rfc3339()),
                         "expiredBatchCount": health.expired_batch_count,
                         "expiredPayloadBytes": health.expired_payload_bytes,
-                        "hardRetentionSeconds": state.inbox_limits.hard_retention().as_secs(),
-                        "maximumRetainedPayloadBytes": state
-                            .inbox_limits
-                            .max_retained_payload_bytes(),
+                        "hardRetentionSeconds": limits.hard_retention().as_secs(),
+                        "maximumRetainedPayloadBytes": limits.max_retained_payload_bytes(),
                         "newestRetainedAt": health
                             .newest_retained_at
                             .map(|value| value.to_rfc3339()),
@@ -371,6 +398,42 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let payload = response_json(response).await;
         assert_eq!(payload["status"], "not_ready");
+    }
+
+    #[tokio::test]
+    async fn private_health_needs_no_retention_and_never_exposes_inventory() {
+        for available in [true, false] {
+            let app = super::router_with_private_health(
+                stub_inbox(available),
+                OtlpReceiverConfig::default().with_local_health_details(),
+                Arc::new(flaggo_service_hosting::TrustedLocal),
+            );
+            for path in ["/health/live", "/health/ready"] {
+                let response = app
+                    .clone()
+                    .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                let ready = available || path == "/health/live";
+                assert_eq!(
+                    response.status(),
+                    if ready {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                );
+                let payload = response_json(response).await;
+                assert_eq!(
+                    payload,
+                    serde_json::json!({
+                        "service": SERVICE_NAME,
+                        "status": if path == "/health/live" { "live" } else if available { "ready" } else { "not_ready" },
+                        "version": env!("CARGO_PKG_VERSION")
+                    })
+                );
+            }
+        }
     }
 
     fn stub_inbox(available: bool) -> Arc<dyn RawOtlpInbox> {

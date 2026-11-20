@@ -212,6 +212,34 @@ Starting a local materializer explicitly replaces ownership; a stale worker
 fails closed rather than reacquiring on each poll. This is ordered replacement,
 not hosted time-expiring lease or failover qualification.
 
+## Evidence integration seams
+
+The [portable receiver](../../../modules/otlp-http/README.md) additionally offers
+`router_with_private_health(inbox, receiver, security)` without a retention
+parameter or default. Existing local detailed-health composition is unchanged.
+After validating and authorizing the full batch, it calls
+`RequestSecurity::admit_authorized_otlp` once before append. Metered adapters
+charge one unit per distinct tenant atomically, all or none; empty-scope batches
+retain their behavior without a tenant charge. Subsequent append failure or
+cancellation does not refund; retries are new attempts. The default is unmetered.
+Hosted empty-batch acceptance still requires row/metadata capacity protections,
+not payload-byte quota alone.
+
+[Evidence Store policy exports](../../../modules/evidence-store/README.md#shared-projection-policy)
+now share catalog/commit/observation validation, identity verification and
+insert/duplicate/conflict planning without SQLx. Accepted-observation lookup is
+by logical source ID **alone**, preserving dedup/conflict across producer versions;
+decoder/identity/projection versions remain inputs to the unchanged conflict hash,
+not a composite lookup key. SQLite retains SQL, uniqueness, transactions, ownership
+fences and checkpoint CAS. The database-free
+`flaggo.evidence-policy-conformance/v1` corpus complements existing C09 adapter
+scenarios and explicit persisted-policy parity checks.
+
+These are public integration boundaries, not private adapter implementation,
+remote-consumer adoption, separate-host qualification or production readiness.
+No retention policy or numeric production budget is introduced. Exact source
+revision and qualification evidence must be reported separately.
+
 ## Implemented breaking wire cutover
 
 After reviewing this slice, the user selected

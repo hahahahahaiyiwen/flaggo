@@ -2,7 +2,6 @@ use std::{num::NonZeroU16, str::FromStr, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
-use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
     sqlite::{
@@ -10,11 +9,13 @@ use sqlx::{
     },
 };
 
+use crate::policy::validate_diagnostic;
 use crate::{
     AuthorityScope, EvidenceDiagnostic, EvidenceMaterializationCommit, EvidenceObservation,
     EvidenceSignal, EvidenceStore, EvidenceStoreCommitResult, EvidenceStoreError,
-    EvidenceStoreHealth, ForwardMaterializationKey, MaterializerVersions, ProjectionClaim,
-    SourceKey, StoredContractCatalog, StoredEvidenceObservation,
+    EvidenceStoreHealth, ExistingLogicalObservation, MaterializerVersions, ObservationDisposition,
+    ProjectionClaim, SourceKey, StoredContractCatalog, StoredEvidenceObservation, plan_observation,
+    validate_catalog, validate_commit, validate_observation, verify_observation_identity,
 };
 
 const COMPONENT_NAME: &str = "evidence-store";
@@ -410,21 +411,11 @@ impl SqliteEvidenceStore {
     async fn insert_conflict(
         transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         observation: &EvidenceObservation,
-        accepted_observation_id: &str,
-        accepted_content_digest: &str,
-        inbox_batch_id: u64,
-        candidate_ordinal: u32,
+        accepted: ExistingLogicalObservation<'_>,
+        conflict_id: &str,
+        diagnostic: &EvidenceDiagnostic,
         created_at_unix_ms: i64,
     ) -> Result<(u64, u64), EvidenceStoreError> {
-        let conflict_id = digest_parts(&[
-            "evidence-conflict/v2",
-            &observation.logical_source_id,
-            accepted_content_digest,
-            &observation.content_digest,
-            &observation.versions.decoder,
-            &observation.versions.identity,
-            &observation.versions.projection,
-        ]);
         let inserted = sqlx::query(
             "INSERT INTO evidence_observation_conflicts(
                 conflict_id,
@@ -442,13 +433,13 @@ impl SqliteEvidenceStore {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(conflict_id) DO NOTHING",
         )
-        .bind(&conflict_id)
+        .bind(conflict_id)
         .bind(&observation.logical_source_id)
-        .bind(accepted_observation_id)
-        .bind(accepted_content_digest)
+        .bind(accepted.observation_id)
+        .bind(accepted.content_digest)
         .bind(&observation.content_digest)
-        .bind(to_i64("inbox batch ID", inbox_batch_id)?)
-        .bind(i64::from(candidate_ordinal))
+        .bind(to_i64("inbox batch ID", diagnostic.inbox_batch_id)?)
+        .bind(diagnostic.candidate_ordinal.map(i64::from))
         .bind(&observation.versions.decoder)
         .bind(&observation.versions.identity)
         .bind(&observation.versions.projection)
@@ -458,28 +449,7 @@ impl SqliteEvidenceStore {
         .map_err(EvidenceStoreError::unavailable)?
         .rows_affected();
         let diagnostics_created = if inserted == 1 {
-            Self::insert_diagnostic(
-                transaction,
-                &EvidenceDiagnostic {
-                    diagnostic_id: conflict_id,
-                    inbox_batch_id,
-                    candidate_ordinal: Some(candidate_ordinal),
-                    code: "logical-source-conflict".to_owned(),
-                    message: "Candidate content conflicts with the accepted logical source."
-                        .to_owned(),
-                    detail_json: Some(
-                        serde_json::to_vec(&serde_json::json!({
-                            "acceptedContentDigest": accepted_content_digest,
-                            "acceptedObservationId": accepted_observation_id,
-                            "logicalSourceId": observation.logical_source_id,
-                            "rejectedContentDigest": observation.content_digest
-                        }))
-                        .expect("conflict detail JSON must serialize"),
-                    ),
-                },
-                created_at_unix_ms,
-            )
-            .await?
+            Self::insert_diagnostic(transaction, diagnostic, created_at_unix_ms).await?
         } else {
             0
         };
@@ -660,26 +630,36 @@ impl EvidenceStore for SqliteEvidenceStore {
         let mut result = EvidenceStoreCommitResult::default();
         for write in &commit.observations {
             let observation = &write.observation;
-            if let Some((accepted_id, accepted_digest)) =
-                Self::stored_logical_observation(&mut transaction, observation).await?
-            {
-                if accepted_digest == observation.content_digest {
+            let stored = Self::stored_logical_observation(&mut transaction, observation).await?;
+            let accepted = stored
+                .as_ref()
+                .map(|(id, digest)| ExistingLogicalObservation {
+                    observation_id: id,
+                    content_digest: digest,
+                });
+            match plan_observation(write, commit.inbox_batch_id, accepted, None)? {
+                ObservationDisposition::Insert => {}
+                ObservationDisposition::Duplicate => {
                     result.duplicate_observations += 1;
-                } else {
+                    continue;
+                }
+                ObservationDisposition::Conflict {
+                    conflict_id,
+                    diagnostic,
+                } => {
                     let (conflicts, diagnostics) = Self::insert_conflict(
                         &mut transaction,
                         observation,
-                        &accepted_id,
-                        &accepted_digest,
-                        commit.inbox_batch_id,
-                        write.candidate_ordinal,
+                        accepted.expect("conflict requires an accepted logical source"),
+                        &conflict_id,
+                        &diagnostic,
                         created_at_unix_ms,
                     )
                     .await?;
                     result.conflicts_created += conflicts;
                     result.diagnostics_created += diagnostics;
+                    continue;
                 }
-                continue;
             }
 
             let inserted = sqlx::query(
@@ -939,50 +919,7 @@ async fn verify_existing_observation(
     .fetch_one(&mut **transaction)
     .await
     .map_err(EvidenceStoreError::unavailable)?;
-    let mut existing = decode_observation(&row)?.observation;
-    existing.versions.routing = observation.versions.routing.clone();
-    if existing.observed_time_source == "inbox.received_at"
-        && observation.observed_time_source == "inbox.received_at"
-    {
-        existing.observed_at_unix_nano = observation.observed_at_unix_nano;
-    }
-    if existing != *observation {
-        return Err(EvidenceStoreError::CorruptData(format!(
-            "observation {} has inconsistent content",
-            observation.observation_id
-        )));
-    }
-    Ok(())
-}
-
-fn validate_catalog(catalog: &StoredContractCatalog) -> Result<(), EvidenceStoreError> {
-    if catalog.etag.is_empty() || catalog.etag.chars().any(char::is_control) {
-        return Err(EvidenceStoreError::InvalidWrite(
-            "catalog ETag must be non-empty and contain no control characters".to_owned(),
-        ));
-    }
-    validate_json("contract catalog", &catalog.payload)
-}
-
-fn validate_commit(commit: &EvidenceMaterializationCommit) -> Result<(), EvidenceStoreError> {
-    validate_key(&commit.key)?;
-    if commit.inbox_batch_id == 0 {
-        return Err(EvidenceStoreError::InvalidWrite(
-            "inbox batch ID must be positive".to_owned(),
-        ));
-    }
-    for write in &commit.observations {
-        validate_observation(&write.observation)?;
-    }
-    for diagnostic in &commit.diagnostics {
-        validate_diagnostic(diagnostic)?;
-        if diagnostic.inbox_batch_id != commit.inbox_batch_id {
-            return Err(EvidenceStoreError::InvalidWrite(
-                "diagnostic batch must equal the committed batch".to_owned(),
-            ));
-        }
-    }
-    Ok(())
+    verify_observation_identity(&decode_observation(&row)?.observation, observation)
 }
 
 async fn validate_projection_claim(
@@ -999,126 +936,6 @@ async fn validate_projection_claim(
         return Err(EvidenceStoreError::ProjectionConflict);
     }
     Ok(())
-}
-
-fn validate_key(key: &ForwardMaterializationKey) -> Result<(), EvidenceStoreError> {
-    validate_versions(&key.versions)
-}
-
-fn validate_versions(versions: &MaterializerVersions) -> Result<(), EvidenceStoreError> {
-    for (name, value) in [
-        ("materializer version", &versions.materializer),
-        ("decoder version", &versions.decoder),
-        ("identity version", &versions.identity),
-        ("projection version", &versions.projection),
-        ("routing version", &versions.routing),
-    ] {
-        if value.is_empty() || value.len() > 64 || value.chars().any(char::is_control) {
-            return Err(EvidenceStoreError::InvalidWrite(format!(
-                "{name} must be 1-64 non-control characters"
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn validate_observation(observation: &EvidenceObservation) -> Result<(), EvidenceStoreError> {
-    for (name, digest) in [
-        ("observation ID", &observation.observation_id),
-        ("logical source ID", &observation.logical_source_id),
-        ("content digest", &observation.content_digest),
-    ] {
-        validate_digest(name, digest)?;
-    }
-    if let Some(contract_digest) = &observation.contract_digest {
-        validate_digest("observation contract digest", contract_digest)?;
-    }
-    AuthorityScope::new(
-        observation.authority.tenant.clone(),
-        observation.authority.application.clone(),
-        observation.authority.environment.clone(),
-    )?;
-    validate_source(&observation.source)?;
-    if observation.observed_time_source.is_empty() {
-        return Err(EvidenceStoreError::InvalidWrite(
-            "observation time source must not be empty".to_owned(),
-        ));
-    }
-    validate_json("observation payload", &observation.payload_json)?;
-    validate_versions(&observation.versions)
-}
-
-fn validate_source(source: &SourceKey) -> Result<(), EvidenceStoreError> {
-    if source.instrumentation_scope.is_empty() || source.signal_name.is_empty() {
-        return Err(EvidenceStoreError::InvalidWrite(
-            "source instrumentation scope and signal name must not be empty".to_owned(),
-        ));
-    }
-    let shape_is_valid = match source.signal {
-        EvidenceSignal::Metric => {
-            source
-                .metric_kind
-                .as_ref()
-                .is_some_and(|value| !value.is_empty())
-                && source.metric_unit.is_some()
-                && source.parent_span_name.is_none()
-        }
-        EvidenceSignal::SpanEvent => {
-            source.metric_kind.is_none()
-                && source.metric_unit.is_none()
-                && source
-                    .parent_span_name
-                    .as_ref()
-                    .is_some_and(|value| !value.is_empty())
-        }
-        EvidenceSignal::Log | EvidenceSignal::Span => {
-            source.metric_kind.is_none()
-                && source.metric_unit.is_none()
-                && source.parent_span_name.is_none()
-        }
-    };
-    if !shape_is_valid {
-        return Err(EvidenceStoreError::InvalidWrite(
-            "source fields do not match the signal kind".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_diagnostic(diagnostic: &EvidenceDiagnostic) -> Result<(), EvidenceStoreError> {
-    validate_digest("diagnostic ID", &diagnostic.diagnostic_id)?;
-    if diagnostic.inbox_batch_id == 0 || diagnostic.code.is_empty() || diagnostic.message.is_empty()
-    {
-        return Err(EvidenceStoreError::InvalidWrite(
-            "diagnostic provenance, code, and message are required".to_owned(),
-        ));
-    }
-    if let Some(detail) = &diagnostic.detail_json {
-        validate_json("diagnostic detail", detail)?;
-    }
-    Ok(())
-}
-
-fn validate_digest(name: &str, value: &str) -> Result<(), EvidenceStoreError> {
-    if value.len() != 71
-        || !value.starts_with("sha256:")
-        || !value[7..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        return Err(EvidenceStoreError::InvalidWrite(format!(
-            "{name} must be a lowercase sha256 digest"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_json(name: &str, value: &[u8]) -> Result<(), EvidenceStoreError> {
-    serde_json::from_slice::<serde_json::Value>(value)
-        .map(|_| ())
-        .map_err(|error| {
-            EvidenceStoreError::InvalidWrite(format!("{name} is invalid JSON: {error}"))
-        })
 }
 
 fn decode_observation(row: &SqliteRow) -> Result<StoredEvidenceObservation, EvidenceStoreError> {
@@ -1250,17 +1067,4 @@ fn datetime_from_millis(name: &str, value: i64) -> Result<DateTime<Utc>, Evidenc
     Utc.timestamp_millis_opt(value).single().ok_or_else(|| {
         EvidenceStoreError::CorruptData(format!("{name} is outside the supported range"))
     })
-}
-
-fn digest_parts(parts: &[&str]) -> String {
-    let mut hasher = Sha256::new();
-    for part in parts {
-        hasher.update(
-            u64::try_from(part.len())
-                .expect("digest component length must fit in u64")
-                .to_be_bytes(),
-        );
-        hasher.update(part.as_bytes());
-    }
-    format!("sha256:{:x}", hasher.finalize())
 }

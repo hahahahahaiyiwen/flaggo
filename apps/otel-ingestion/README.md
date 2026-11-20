@@ -50,6 +50,14 @@ omits inbox inventory; the local binary explicitly opts into detailed health.
 Inbox schema 1 requires the [explicit migration](../../docs/design/architecture/CORE_EXTRACTION.md#implemented-breaking-wire-cutover);
 legacy bytes remain unverified rather than being relabelled authenticated.
 
+Non-local composition can use
+`flaggo_otlp_http::router_with_private_health(inbox, receiver, security)` without
+supplying a retention policy. The [shared receiver](../../modules/otlp-http/README.md)
+also calls the default-accepting batch admission hook after full authorization
+and before append. Metered adapters charge atomically once per distinct tenant;
+empty exports charge no tenant and retain existing append behavior. Local
+`TrustedLocal` remains unmetered with the same detailed health and retention.
+
 ## Interfaces
 
 ```text

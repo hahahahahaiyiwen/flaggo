@@ -20,6 +20,7 @@ each scenario on fresh storage. The functions panic on conformance violations.
 | `policy::c05_adapter_policy_parity` | Shared manual/automatic plans match adapter-committed results and resolved retries |
 | `evidence::c08_durable_acceptance` | Failed append has no receipt/effect, independent reads preserve payload/receipt, raw transport retries remain distinct |
 | `evidence::c09_atomic_projection` | Epoch/checkpoint preconditions, stale-writer rejection, atomic failure, retries, observation dedup and content-conflict effects |
+| `evidence_policy::c09_projection_policy` | Database-free validation, logical-source-only dedup, exact conflict identity/diagnostic, producer-version changes and routing/receipt-time identity exceptions |
 | `evidence::c11_negotiated_queries` | Profile selection, full scope/exact-or-null/source filtering, limits, typed results, projected-only IDs, live late arrivals and required profile corpus under two scopes |
 | `admission::c04_c10_fenced_admission` | Released/replaced ownership, original-provenance recovery, idempotency and closed-cycle rejection |
 | `workspace::c10_c12_fenced_publication` | Claim exclusion, immutable artifacts, conditional handoffs, execution receipt recovery and uncertain-execution non-replay |
@@ -40,6 +41,12 @@ is explicit rather than assumed portable. The SQLite corpus is
 no table or connection assumptions; only `tests/sqlite_evidence.rs` implements
 SQLite fault controls. Existing SQLite tests additionally verify real backend
 deadline/cancellation interruption and connection reuse.
+
+`flaggo.evidence-policy-conformance/v1` is an adapter-independent policy corpus,
+also executed by the separate immutable consumer without SQLx. It does not
+replace C09 transaction/fencing qualification. SQLite store tests compare the
+planned conflict diagnostic against persisted rows and verify first provenance
+and rollback on an inconsistent observation-ID collision.
 
 ```powershell
 cargo test -p flaggo-contract-service --test authority_conformance --locked

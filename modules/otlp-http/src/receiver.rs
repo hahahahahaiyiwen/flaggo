@@ -17,7 +17,7 @@ use flaggo_raw_otlp_inbox::{
     DEFAULT_OTLP_PROFILE_VERSION, NewRawOtlpBatch, OtlpAuthorizationEnvelope, OtlpSignal,
     OtlpTransportCompression, OtlpWireEncoding, RawOtlpInboxError,
 };
-use flaggo_service_hosting::{Access, Operation, SecurityError};
+use flaggo_service_hosting::{Access, Operation, RequestAdmission, SecurityError};
 use futures_util::TryStreamExt;
 use mime::Mime;
 use opentelemetry::global;
@@ -252,7 +252,7 @@ async fn ingest_with_span(
             error,
         );
     }
-    let authorization = match OtlpAuthorizationEnvelope::new(principal.subject, scopes) {
+    let authorization = match OtlpAuthorizationEnvelope::new(principal.subject.clone(), scopes) {
         Ok(envelope) => envelope,
         Err(error) => {
             tracing::error!(%error, "Identity provider returned an invalid OTLP producer");
@@ -273,6 +273,52 @@ async fn ingest_with_span(
             );
         }
     };
+
+    let admission_error = match state
+        .security
+        .admit_authorized_otlp(&principal, authorization.scopes())
+        .await
+    {
+        Ok(RequestAdmission::Accepted) => None,
+        Ok(RequestAdmission::Limited {
+            retry_after_seconds,
+        }) => Some((
+            "limited",
+            "capacity",
+            OtlpHttpError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                RESOURCE_EXHAUSTED,
+                "The authorized request quota is exhausted.",
+                wire_encoding,
+            )
+            .retry_after_seconds(retry_after_seconds),
+        )),
+        Err(error) => {
+            tracing::error!(%error, "OTLP request admission failed");
+            Some((
+                "unavailable",
+                "dependency",
+                OtlpHttpError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    UNAVAILABLE,
+                    "The request admission authority is unavailable.",
+                    wire_encoding,
+                ),
+            ))
+        }
+    };
+    if let Some((outcome, category, error)) = admission_error {
+        return reject_request(
+            &state,
+            signal,
+            wire_encoding.as_str(),
+            transport_compression.as_str(),
+            outcome,
+            category,
+            Some(payload_size),
+            error,
+        );
+    }
 
     let profile_version = DEFAULT_OTLP_PROFILE_VERSION
         .parse()
@@ -488,7 +534,7 @@ fn success_response(encoding: OtlpWireEncoding) -> Response {
         OtlpWireEncoding::Protobuf => Vec::new(),
         OtlpWireEncoding::ProtobufJson => b"{}".to_vec(),
     };
-    response(StatusCode::OK, encoding, body, false)
+    response(StatusCode::OK, encoding, body, None)
 }
 
 fn unsupported_media_type() -> OtlpHttpError {
@@ -513,7 +559,7 @@ fn response(
     status: StatusCode,
     encoding: OtlpWireEncoding,
     body: Vec<u8>,
-    retry_after: bool,
+    retry_after: Option<std::num::NonZeroU32>,
 ) -> Response {
     let mut response = Response::new(Body::from(body));
     *response.status_mut() = status;
@@ -521,10 +567,10 @@ fn response(
         CONTENT_TYPE,
         HeaderValue::from_static(encoding.media_type()),
     );
-    if retry_after {
+    if let Some(seconds) = retry_after {
         response
             .headers_mut()
-            .insert(RETRY_AFTER, HeaderValue::from_static("1"));
+            .insert(RETRY_AFTER, HeaderValue::from(seconds.get()));
     }
     response
 }
@@ -535,7 +581,7 @@ struct OtlpHttpError {
     rpc_code: i32,
     message: &'static str,
     response_encoding: OtlpWireEncoding,
-    retry_after: bool,
+    retry_after: Option<std::num::NonZeroU32>,
 }
 
 impl OtlpHttpError {
@@ -551,12 +597,17 @@ impl OtlpHttpError {
             rpc_code,
             message,
             response_encoding,
-            retry_after: false,
+            retry_after: None,
         }
     }
 
     const fn retry_after(mut self) -> Self {
-        self.retry_after = true;
+        self.retry_after = std::num::NonZeroU32::new(1);
+        self
+    }
+
+    const fn retry_after_seconds(mut self, seconds: std::num::NonZeroU32) -> Self {
+        self.retry_after = Some(seconds);
         self
     }
 
@@ -602,7 +653,10 @@ mod tests {
         io::{self, Write},
         num::{NonZeroU16, NonZeroU64},
         path::Path,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use async_trait::async_trait;
@@ -646,6 +700,7 @@ mod tests {
     }
 
     struct TestInbox {
+        append_calls: AtomicUsize,
         append_behavior: AppendBehavior,
         append_started: Notify,
         batches: Mutex<Vec<NewRawOtlpBatch>>,
@@ -656,6 +711,7 @@ mod tests {
     impl TestInbox {
         fn new(append_behavior: AppendBehavior) -> Arc<Self> {
             Arc::new(Self {
+                append_calls: AtomicUsize::new(0),
                 append_behavior,
                 append_started: Notify::new(),
                 batches: Mutex::new(Vec::new()),
@@ -666,6 +722,7 @@ mod tests {
 
         fn blocking() -> Arc<Self> {
             Arc::new(Self {
+                append_calls: AtomicUsize::new(0),
                 append_behavior: AppendBehavior::Success,
                 append_started: Notify::new(),
                 batches: Mutex::new(Vec::new()),
@@ -685,6 +742,7 @@ mod tests {
             &self,
             batch: NewRawOtlpBatch,
         ) -> Result<InboxAppendReceipt, RawOtlpInboxError> {
+            self.append_calls.fetch_add(1, Ordering::SeqCst);
             self.append_started.notify_one();
             if self.block_append {
                 self.release_append.notified().await;
@@ -1401,6 +1459,411 @@ mod tests {
     }
 
     struct ScopeSecurity(super::Access);
+
+    struct MeteredSecurity {
+        quotas: Mutex<std::collections::BTreeMap<String, u32>>,
+        events: Mutex<Vec<&'static str>>,
+        admitted_scopes: Mutex<Vec<Vec<flaggo_contract::ResourceScope>>>,
+        access: super::Access,
+        unavailable: bool,
+        authorization_unavailable: bool,
+    }
+
+    impl MeteredSecurity {
+        fn new(a: u32, b: u32) -> Self {
+            Self {
+                quotas: Mutex::new([("tenant-a".into(), a), ("tenant-b".into(), b)].into()),
+                events: Mutex::new(vec![]),
+                admitted_scopes: Mutex::new(vec![]),
+                access: super::Access::Allowed,
+                unavailable: false,
+                authorization_unavailable: false,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl flaggo_service_hosting::RequestSecurity for MeteredSecurity {
+        async fn authenticate(
+            &self,
+            headers: &axum::http::HeaderMap,
+        ) -> Result<flaggo_service_hosting::Principal, super::SecurityError> {
+            flaggo_service_hosting::RequestSecurity::authenticate(
+                &ScopeSecurity(self.access),
+                headers,
+            )
+            .await
+        }
+
+        async fn authorize(
+            &self,
+            principal: &flaggo_service_hosting::Principal,
+            scope: &flaggo_contract::ResourceScope,
+            name: Option<&str>,
+            operation: super::Operation,
+        ) -> Result<super::Access, super::SecurityError> {
+            self.events.lock().unwrap().push("authorize");
+            if self.authorization_unavailable {
+                return Err(super::SecurityError::Unavailable(
+                    "private authority detail".into(),
+                ));
+            }
+            flaggo_service_hosting::RequestSecurity::authorize(
+                &ScopeSecurity(self.access),
+                principal,
+                scope,
+                name,
+                operation,
+            )
+            .await
+        }
+
+        async fn admit_authorized(
+            &self,
+            _: &flaggo_service_hosting::Principal,
+            _: &flaggo_contract::ResourceScope,
+            _: Option<&str>,
+            _: super::Operation,
+        ) -> Result<super::RequestAdmission, flaggo_service_hosting::RequestAdmissionError>
+        {
+            panic!("OTLP must use only the batch admission callback")
+        }
+
+        async fn admit_authorized_otlp(
+            &self,
+            principal: &flaggo_service_hosting::Principal,
+            scopes: &[flaggo_contract::ResourceScope],
+        ) -> Result<super::RequestAdmission, flaggo_service_hosting::RequestAdmissionError>
+        {
+            assert_eq!(principal.subject, "producer-a");
+            self.events.lock().unwrap().push("admit");
+            self.admitted_scopes.lock().unwrap().push(scopes.to_vec());
+            if self.unavailable {
+                return Err(flaggo_service_hosting::RequestAdmissionError::Unavailable);
+            }
+            let tenants: std::collections::BTreeSet<_> =
+                scopes.iter().map(|scope| &scope.tenant).collect();
+            let mut quotas = self.quotas.lock().unwrap();
+            if tenants.iter().any(|tenant| quotas[*tenant] == 0) {
+                return Ok(super::RequestAdmission::Limited {
+                    retry_after_seconds: std::num::NonZeroU32::new(17).unwrap(),
+                });
+            }
+            for tenant in tenants {
+                *quotas.get_mut(tenant).unwrap() -= 1;
+            }
+            Ok(super::RequestAdmission::Accepted)
+        }
+    }
+
+    fn authenticated_request(
+        path: &str,
+        encoding: OtlpWireEncoding,
+        payload: Vec<u8>,
+    ) -> Request<Body> {
+        let mut input = request(path, Some(encoding.media_type()), None, payload);
+        input.headers_mut().insert(
+            "authorization",
+            axum::http::HeaderValue::from_static("Bearer test-key"),
+        );
+        input
+    }
+
+    fn admission_payload(path: &str, encoding: OtlpWireEncoding) -> Vec<u8> {
+        let original: Value = serde_json::from_slice(mixed_authority_logs_json()).unwrap();
+        let a = original["resourceLogs"][0]["resource"].clone();
+        let b = original["resourceLogs"][1]["resource"].clone();
+        let mut second_a = a.clone();
+        for attribute in second_a["attributes"].as_array_mut().unwrap() {
+            if attribute["key"] == "flaggo.application" {
+                attribute["value"]["stringValue"] = Value::String("another-app".into());
+            }
+        }
+        let field = match path {
+            "/v1/logs" => "resourceLogs",
+            "/v1/metrics" => "resourceMetrics",
+            _ => "resourceSpans",
+        };
+        let value = serde_json::json!({field: [
+            {"resource": a}, {"resource": second_a}, {"resource": b}, {"resource": a}
+        ]});
+        if encoding == OtlpWireEncoding::ProtobufJson {
+            serde_json::to_vec(&value).unwrap()
+        } else {
+            match path {
+                "/v1/logs" => serde_json::from_value::<ExportLogsServiceRequest>(value)
+                    .unwrap()
+                    .encode_to_vec(),
+                "/v1/metrics" => serde_json::from_value::<ExportMetricsServiceRequest>(value)
+                    .unwrap()
+                    .encode_to_vec(),
+                _ => serde_json::from_value::<ExportTraceServiceRequest>(value)
+                    .unwrap()
+                    .encode_to_vec(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn admits_one_atomic_batch_after_all_scopes_and_charges_distinct_tenants() {
+        for path in ["/v1/logs", "/v1/metrics", "/v1/traces"] {
+            for encoding in [OtlpWireEncoding::ProtobufJson, OtlpWireEncoding::Protobuf] {
+                let inbox = TestInbox::new(AppendBehavior::Success);
+                let security = Arc::new(MeteredSecurity::new(2, 1));
+                let app = crate::router_with_private_health(
+                    inbox.clone(),
+                    OtlpReceiverConfig::default(),
+                    security.clone(),
+                );
+                let payload = admission_payload(path, encoding);
+                let response = app
+                    .clone()
+                    .oneshot(authenticated_request(path, encoding, payload.clone()))
+                    .await
+                    .unwrap();
+                assert_success(response, encoding).await;
+                assert_eq!(
+                    *security.events.lock().unwrap(),
+                    ["authorize", "authorize", "authorize", "admit"]
+                );
+                assert_eq!(security.admitted_scopes.lock().unwrap()[0].len(), 3);
+                assert_eq!(security.quotas.lock().unwrap()["tenant-a"], 1);
+                assert_eq!(security.quotas.lock().unwrap()["tenant-b"], 0);
+                assert_eq!(inbox.batches().len(), 1);
+                assert_eq!(inbox.batches()[0].payload, payload);
+                let response = app
+                    .oneshot(authenticated_request(path, encoding, payload))
+                    .await
+                    .unwrap();
+                assert_eq!(response.headers()[RETRY_AFTER], "17");
+                assert_otlp_status(response, StatusCode::TOO_MANY_REQUESTS, 8, encoding).await;
+                assert_eq!(
+                    security.quotas.lock().unwrap()["tenant-a"],
+                    1,
+                    "no partial charge"
+                );
+                assert_eq!(security.admitted_scopes.lock().unwrap().len(), 2);
+                assert_eq!(inbox.append_calls.load(Ordering::SeqCst), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_batches_have_no_invented_tenant_or_charge() {
+        let inbox = TestInbox::new(AppendBehavior::Success);
+        let security = Arc::new(MeteredSecurity::new(0, 0));
+        let app = crate::router_with_private_health(
+            inbox.clone(),
+            OtlpReceiverConfig::default(),
+            security.clone(),
+        );
+        for path in ["/v1/logs", "/v1/metrics", "/v1/traces"] {
+            for encoding in [OtlpWireEncoding::ProtobufJson, OtlpWireEncoding::Protobuf] {
+                let payload = if encoding == OtlpWireEncoding::ProtobufJson {
+                    b"{}".to_vec()
+                } else {
+                    vec![]
+                };
+                assert_success(
+                    app.clone()
+                        .oneshot(authenticated_request(path, encoding, payload))
+                        .await
+                        .unwrap(),
+                    encoding,
+                )
+                .await;
+            }
+        }
+        assert_eq!(*security.events.lock().unwrap(), vec!["admit"; 6]);
+        assert!(
+            security
+                .admitted_scopes
+                .lock()
+                .unwrap()
+                .iter()
+                .all(Vec::is_empty)
+        );
+        assert!(
+            security
+                .quotas
+                .lock()
+                .unwrap()
+                .values()
+                .all(|quota| *quota == 0)
+        );
+        assert_eq!(inbox.append_calls.load(Ordering::SeqCst), 6);
+    }
+
+    #[tokio::test]
+    async fn admission_unavailability_is_sanitized_and_never_appends() {
+        for encoding in [OtlpWireEncoding::ProtobufJson, OtlpWireEncoding::Protobuf] {
+            let inbox = TestInbox::new(AppendBehavior::Success);
+            let mut security = MeteredSecurity::new(1, 1);
+            security.unavailable = true;
+            let security = Arc::new(security);
+            let app = crate::router_with_private_health(
+                inbox.clone(),
+                OtlpReceiverConfig::default(),
+                security.clone(),
+            );
+            let response = app
+                .oneshot(authenticated_request(
+                    "/v1/logs",
+                    encoding,
+                    admission_payload("/v1/logs", encoding),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()[CONTENT_TYPE], encoding.media_type());
+            assert!(!response.headers().contains_key(RETRY_AFTER));
+            let body = to_bytes(response.into_body(), 4096).await.unwrap();
+            let status = if encoding == OtlpWireEncoding::Protobuf {
+                RpcStatus::decode(body).unwrap()
+            } else {
+                let value: Value = serde_json::from_slice(&body).unwrap();
+                RpcStatus {
+                    code: value["code"].as_i64().unwrap() as i32,
+                    message: value["message"].as_str().unwrap().into(),
+                }
+            };
+            assert_eq!(status.code, 14);
+            assert_eq!(
+                status.message,
+                "The request admission authority is unavailable."
+            );
+            assert_eq!(inbox.append_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(security.quotas.lock().unwrap()["tenant-a"], 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn validation_and_authorization_failures_never_admit_or_append() {
+        for case in [
+            "authentication",
+            "hidden",
+            "forbidden",
+            "dependency",
+            "scope",
+            "body",
+            "size",
+        ] {
+            let inbox = TestInbox::new(AppendBehavior::Success);
+            let mut security = MeteredSecurity::new(1, 1);
+            security.access = match case {
+                "hidden" => super::Access::Hidden,
+                "forbidden" => super::Access::Forbidden,
+                _ => super::Access::Allowed,
+            };
+            security.authorization_unavailable = case == "dependency";
+            let security = Arc::new(security);
+            let config = if case == "size" {
+                OtlpReceiverConfig::new(2).unwrap()
+            } else {
+                OtlpReceiverConfig::default()
+            };
+            let app = crate::router_with_private_health(inbox.clone(), config, security.clone());
+            let mut payload = admission_payload("/v1/logs", OtlpWireEncoding::ProtobufJson);
+            if case == "scope" {
+                let mut value: Value = serde_json::from_slice(&payload).unwrap();
+                value["resourceLogs"][2]["resource"] = serde_json::json!({});
+                payload = serde_json::to_vec(&value).unwrap();
+            } else if case == "body" {
+                payload = b"{".to_vec();
+            }
+            let mut input =
+                authenticated_request("/v1/logs", OtlpWireEncoding::ProtobufJson, payload);
+            if case == "authentication" {
+                input.headers_mut().remove("authorization");
+            }
+            let response = app.oneshot(input).await.unwrap();
+            let expected = match case {
+                "authentication" => StatusCode::UNAUTHORIZED,
+                "hidden" => StatusCode::NOT_FOUND,
+                "forbidden" => StatusCode::FORBIDDEN,
+                "dependency" => StatusCode::SERVICE_UNAVAILABLE,
+                "size" => StatusCode::PAYLOAD_TOO_LARGE,
+                _ => StatusCode::BAD_REQUEST,
+            };
+            assert_eq!(response.status(), expected, "{case}");
+            assert!(!response.headers().contains_key(RETRY_AFTER));
+            assert!(
+                security.admitted_scopes.lock().unwrap().is_empty(),
+                "{case}"
+            );
+            if matches!(case, "authentication" | "scope" | "body" | "size") {
+                assert!(security.events.lock().unwrap().is_empty(), "{case}");
+            }
+            assert_eq!(inbox.append_calls.load(Ordering::SeqCst), 0, "{case}");
+            assert!(
+                security
+                    .quotas
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .all(|quota| *quota == 1)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn accepted_attempts_are_not_refunded_after_append_failure_or_cancellation() {
+        for behavior in [AppendBehavior::Capacity, AppendBehavior::Unavailable] {
+            let inbox = TestInbox::new(behavior);
+            let security = Arc::new(MeteredSecurity::new(2, 2));
+            let app = crate::router_with_private_health(
+                inbox.clone(),
+                OtlpReceiverConfig::default(),
+                security.clone(),
+            );
+            for remaining in [1, 0] {
+                let response = app
+                    .clone()
+                    .oneshot(authenticated_request(
+                        "/v1/logs",
+                        OtlpWireEncoding::ProtobufJson,
+                        mixed_authority_logs_json().to_vec(),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    match behavior {
+                        AppendBehavior::Capacity => StatusCode::TOO_MANY_REQUESTS,
+                        _ => StatusCode::SERVICE_UNAVAILABLE,
+                    }
+                );
+                assert_eq!(security.quotas.lock().unwrap()["tenant-a"], remaining);
+                assert_eq!(security.quotas.lock().unwrap()["tenant-b"], remaining);
+            }
+            assert_eq!(inbox.append_calls.load(Ordering::SeqCst), 2);
+        }
+        let inbox = TestInbox::blocking();
+        let security = Arc::new(MeteredSecurity::new(1, 1));
+        let app = crate::router_with_private_health(
+            inbox.clone(),
+            OtlpReceiverConfig::default(),
+            security.clone(),
+        );
+        let pending = tokio::spawn(app.oneshot(authenticated_request(
+            "/v1/logs",
+            OtlpWireEncoding::ProtobufJson,
+            mixed_authority_logs_json().to_vec(),
+        )));
+        inbox.append_started.notified().await;
+        assert!(!pending.is_finished(), "no acknowledgement before append");
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+        assert!(
+            security
+                .quotas
+                .lock()
+                .unwrap()
+                .values()
+                .all(|quota| *quota == 0)
+        );
+        assert!(inbox.batches().is_empty());
+    }
 
     #[async_trait]
     impl flaggo_service_hosting::RequestSecurity for ScopeSecurity {
