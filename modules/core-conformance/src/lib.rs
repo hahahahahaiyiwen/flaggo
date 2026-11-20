@@ -15,6 +15,7 @@ use serde_json::json;
 pub mod admission;
 pub mod canonical;
 pub mod evidence;
+pub mod evidence_policy;
 pub mod policy;
 pub mod runtime;
 pub mod workspace;

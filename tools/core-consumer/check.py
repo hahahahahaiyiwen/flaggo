@@ -65,6 +65,7 @@ def main():
         "securityCapability": "flaggo.security.resource/v1",
         "evidenceProfile": "flaggo.evidence.sqlite/v1",
         "projectionCapability": "flaggo.evidence.projection/v2",
+        "evidencePolicyFixtures": "flaggo.evidence-policy-conformance/v1",
         "conformanceFixtures": "flaggo.authority-conformance/v3",
         "admissionFixtures": "flaggo.admission-conformance/v1",
         "canonicalFixtures": "flaggo.canonical-conformance/v1",

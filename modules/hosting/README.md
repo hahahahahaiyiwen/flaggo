@@ -73,7 +73,28 @@ admitted, then returns 405 if accepted (or 429 if limited).
 Health routes bypass identity, authorization and admission. Hosted provisioning
 and usage endpoints must remain outside `with_resource_security`; this hook is
 not global HTTP middleware. OTLP's separate whole-batch authorization path is
-unchanged and does not invoke it.
+not routed through this single-resource hook.
+
+## OTLP batch admission
+
+`RequestSecurity::admit_authorized_otlp(&Principal, &[ResourceScope])` uses the
+same async trait and `Result<RequestAdmission, RequestAdmissionError>` exports.
+The [OTLP receiver](../otlp-http/README.md) calls it once **after** complete
+transport/scope validation and successful authorization of every scope, before
+appending the unsplit batch. The slice contains distinct scopes, not a single
+representative scope per tenant. Authorization is non-metering.
+
+A metered adapter atomically charges one unit per **distinct tenant**, all or
+none if any tenant lacks quota. An empty slice charges nobody and does not infer
+a tenant from the principal; existing empty exports are still accepted/appended.
+The default accepts without metering. Append failures/cancellation do not refund;
+retries are new attempts. The adapter owns atomicity and cancellation safety.
+
+OTLP keeps its own `google.rpc.Status` wire responses: Limited maps to 429/code 8
+with the supplied positive `Retry-After`; Unavailable maps to sanitized 503/code
+14 without an invented retry delay. Neither appends. This is separate from the
+single-resource RFC 9457 mapping above. Empty-batch row/metadata capacity must be
+bounded before hosted enablement; payload-byte quota alone is not sufficient.
 
 Adapters own atomic budget decisions and cancellation-safe accounting. Dropping
 the request or admission future does not imply a pending commit rolled back.

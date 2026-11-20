@@ -6,6 +6,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 mod analysis;
+mod policy;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 #[cfg(feature = "sqlite")]
@@ -17,6 +18,10 @@ pub use analysis::{
     EvidenceQueryCapabilities, EvidenceQueryLimits, EvidenceQueryRequest, EvidenceQueryResult,
     EvidenceQueryScope, EvidenceRelation, EvidenceRelationColumn, EvidenceSourceSelector,
     EvidenceValueKind, PYTHON_EVIDENCE_DECODER,
+};
+pub use policy::{
+    ExistingLogicalObservation, ObservationDisposition, plan_observation, validate_catalog,
+    validate_commit, validate_observation, verify_observation_identity,
 };
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteEvidenceStore;

@@ -28,6 +28,35 @@ stores payloads in `raw_otlp_inbox_batches`.
 
 ## Invariants
 
+### Capacity failures
+
+`RawOtlpInboxError::CapacityExceeded` retains its existing payload-byte fields
+and behavior. Do not put row counts or metadata bytes in those fields.
+Adapters can instead return:
+
+```rust
+RawOtlpInboxError::ResourceCapacityExceeded {
+    resource: InboxCapacityResource::Rows, // or MetadataBytes
+    retained,
+    incoming,
+    maximum,
+}
+```
+
+`InboxCapacityResource` is a root export; all three counters are `u64` in the
+selected unit. This is known exhaustion, distinct from dependency
+`Unavailable`. Capacity rejection must atomically leave no persisted batch or
+partial inbox-capacity charge. It does not refund an earlier request-admission
+charge. The shared OTLP receiver returns sanitized HTTP 429/code 8 without
+exposing the resource or counters and without inventing `Retry-After`.
+Existing payload-byte 429 and dependency 503 responses retain their headers.
+
+The seam adds no production limits or retention policy and does not implement
+row/metadata accounting in SQLite. Hosted adapters must supply that accounting,
+including for empty exports; payload-byte limits alone cannot bound empty rows.
+
+### Storage behavior
+
 - The stored payload is the exact decompressed request body.
 - Receipt time and the monotonic batch ID are assigned inside the serialized
   append transaction; receipt time never moves backward.

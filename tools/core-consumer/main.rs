@@ -35,6 +35,7 @@ async fn main() {
     flaggo_core_conformance::policy::c03_c05_policy();
     flaggo_core_conformance::policy::persisted_artifact_integrity();
     flaggo_core_conformance::policy::persisted_contract_integrity();
+    flaggo_core_conformance::evidence_policy::c09_projection_policy();
     let contract = flaggo_core_conformance::contract();
     let resource = ContractResourceId::try_from(&contract).unwrap();
     let digest = flaggo_contract::digests::contract_digest(&contract, Some(&flaggo_expression::ExpressionCompiler::default())).unwrap();
@@ -56,6 +57,8 @@ async fn main() {
     let admission: Result<flaggo_service_hosting::RequestAdmission, flaggo_service_hosting::RequestAdmissionError> =
         security.admit_authorized(&principal, &resource.scope, Some(&resource.name), flaggo_service_hosting::Operation::Evaluate).await;
     assert_eq!(admission, Ok(flaggo_service_hosting::RequestAdmission::Accepted));
+    assert_eq!(security.admit_authorized_otlp(&principal, &[]).await, Ok(flaggo_service_hosting::RequestAdmission::Accepted));
+    assert_eq!(security.admit_authorized_otlp(&principal, &[resource.scope.clone()]).await, Ok(flaggo_service_hosting::RequestAdmission::Accepted));
     let _router = flaggo_decision_http::router(source.clone(), source.clone(), security);
     // Compile the management composition without linking any local application or SQLite adapter.
     let _management = |authority: Arc<dyn flaggo_executable_store::ContractAuthority>| {
@@ -78,8 +81,16 @@ async fn main() {
     let _evidence_contract = |store: Arc<dyn flaggo_evidence_store::EvidenceStore>| store;
     let _projection_catalog = flaggo_evidence_materialization::CompiledContractCatalog::empty();
     let _inbox_contract = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| inbox;
+    let _capacity_error = |resource: flaggo_raw_otlp_inbox::InboxCapacityResource| {
+        flaggo_raw_otlp_inbox::RawOtlpInboxError::ResourceCapacityExceeded {
+            resource, retained: 1, incoming: 1, maximum: 1,
+        }
+    };
+    for resource in [flaggo_raw_otlp_inbox::InboxCapacityResource::Rows, flaggo_raw_otlp_inbox::InboxCapacityResource::MetadataBytes] {
+        assert!(matches!(_capacity_error(resource), flaggo_raw_otlp_inbox::RawOtlpInboxError::ResourceCapacityExceeded { .. }));
+    }
     let _ingestion = |inbox: Arc<dyn flaggo_raw_otlp_inbox::RawOtlpInbox>| {
-        flaggo_otlp_http::router(inbox, Default::default(), Default::default(), Arc::new(flaggo_service_hosting::TrustedLocal))
+        flaggo_otlp_http::router_with_private_health(inbox, Default::default(), Arc::new(flaggo_service_hosting::TrustedLocal))
     };
     let cell = flaggo_evidence_store::EvidenceValue::Int64 { value: i64::MAX };
     let wire = serde_json::to_string(&cell).unwrap();
@@ -93,5 +104,5 @@ async fn main() {
     flaggo_core_conformance::runtime::assert_exact_decision(&runtime, &resource, &digest, &expected).await;
     let decision = runtime.decide(&resource, &digest, &input, None).await.unwrap();
     assert_eq!(serde_json::to_value(&decision).unwrap()["result"], 500);
-    println!("Pinned core digest/evaluation, default request admission and HTTP composition passed (no SQLite).");
+    println!("Pinned core digest/evaluation, projection policy, default single/batch admission and retention-independent HTTP composition passed (no SQLite).");
 }

@@ -368,6 +368,13 @@ impl InboxClock for SystemInboxClock {
     }
 }
 
+/// The unit of an adapter's non-payload capacity accounting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InboxCapacityResource {
+    Rows,
+    MetadataBytes,
+}
+
 #[derive(Debug, Error)]
 pub enum RawOtlpInboxError {
     #[error(transparent)]
@@ -380,6 +387,19 @@ pub enum RawOtlpInboxError {
         retained_payload_bytes: u64,
         incoming_payload_bytes: u64,
         max_retained_payload_bytes: u64,
+    },
+    /// Known exhaustion, not a dependency failure. All counts use `resource` units.
+    /// The rejected append must leave no persisted batch or partial capacity charge.
+    /// These internal facts do not supply a recovery time or an HTTP retry delay.
+    #[error(
+        "raw OTLP inbox {resource:?} capacity exceeded: retained {retained}, incoming \
+         {incoming}, maximum {maximum}"
+    )]
+    ResourceCapacityExceeded {
+        resource: InboxCapacityResource,
+        retained: u64,
+        incoming: u64,
+        maximum: u64,
     },
     #[error("unsupported {component} schema version {found}; expected schema version {expected}")]
     UnsupportedSchemaVersion {

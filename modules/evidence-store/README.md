@@ -13,6 +13,58 @@ metadata through the explicit materializer `--migrate-v4-to-v5` command, without
 rewriting or replaying existing evidence. Ordered claim replacement is not a
 time-expiring distributed lease.
 
+## Shared projection policy
+
+The following root exports are available with `default-features = false`;
+SQLite reuses the same rules rather than maintaining adapter-specific policy:
+
+```rust
+validate_catalog(&StoredContractCatalog) -> Result<(), EvidenceStoreError>
+validate_commit(&EvidenceMaterializationCommit) -> Result<(), EvidenceStoreError>
+validate_observation(&EvidenceObservation) -> Result<(), EvidenceStoreError>
+verify_observation_identity(&EvidenceObservation, &EvidenceObservation)
+    -> Result<(), EvidenceStoreError>
+plan_observation(
+    &EvidenceObservationWrite,
+    u64, // inbox batch ID
+    Option<ExistingLogicalObservation<'_>>,
+    Option<&EvidenceObservation>,
+) -> Result<ObservationDisposition, EvidenceStoreError>
+```
+
+`ExistingLogicalObservation { observation_id: &str, content_digest: &str }`
+represents the **first accepted row by logical_source_id alone**, without a
+decoder/identity/projection version filter. This preserves current behavior:
+same logical source/content is a duplicate across producer-version changes;
+changed content conflicts rather than starting a new versioned logical key.
+Logical lookup takes precedence over an observation-ID collision.
+
+`ObservationDisposition` is `Insert`, `Duplicate`, or
+`Conflict { conflict_id: String, diagnostic: EvidenceDiagnostic }`.
+Insert records the observation and first provenance. Duplicate keeps both
+unchanged. Conflict inserts once by conflict ID; insert its diagnostic only
+when the conflict row is first inserted, preserving first conflict provenance.
+The unchanged conflict hash uses length-prefixed UTF-8 parts:
+`evidence-conflict/v2`, logical source ID, accepted content digest, rejected
+content digest, decoder version, identity version, projection version.
+Routing/materializer versions, observation IDs and retry provenance are not
+conflict-hash inputs. Lookup identity and conflict identity are different.
+
+When no logical row exists, adapters can supply the observation-ID row to the
+planner, or attempt a unique insert and use `verify_observation_identity` on a
+collision, as SQLite does. That comparison ignores routing-version differences
+and ignores receipt timestamps only when **both** time sources are
+`inbox.received_at`; other differing fields fail as corrupt data.
+
+Adapters retain transaction-consistent lookups (including earlier writes in
+the same batch), SQL row decoding, uniqueness, timestamps, ownership fencing,
+checkpoint CAS and atomic commit/rollback. The policy does not perform I/O or
+certify a remote adapter. `flaggo_core_conformance::evidence_policy::c09_projection_policy`
+provides the database-free `flaggo.evidence-policy-conformance/v1` corpus;
+the existing C09 adapter scenarios and SQLite parity tests remain separate.
+
+## Query profiles
+
 Queries explicitly select `flaggo.evidence.sqlite/v1`. Results use
 `EvidenceValue` [canonical cells and the versioned saved-result envelope](../../docs/design/contracts/EVIDENCE_VALUES.md).
 Provider type strings remain diagnostic metadata, separate from canonical

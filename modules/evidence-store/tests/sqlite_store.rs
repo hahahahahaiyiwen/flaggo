@@ -3,8 +3,9 @@ use std::{num::NonZeroU16, path::Path, time::Duration};
 use chrono::{DateTime, Utc};
 use flaggo_evidence_store::{
     AuthorityScope, EvidenceMaterializationCommit, EvidenceObservation, EvidenceObservationWrite,
-    EvidenceSignal, EvidenceStore, EvidenceStoreError, ForwardMaterializationKey,
-    MaterializerVersions, SourceKey, SqliteEvidenceStore, StoredContractCatalog,
+    EvidenceSignal, EvidenceStore, EvidenceStoreError, ExistingLogicalObservation,
+    ForwardMaterializationKey, MaterializerVersions, ObservationDisposition, SourceKey,
+    SqliteEvidenceStore, StoredContractCatalog, plan_observation,
 };
 use sha2::{Digest, Sha256};
 use sqlx::{Connection, SqliteConnection};
@@ -204,6 +205,105 @@ async fn waits_for_a_competing_writer_before_starting_a_commit() {
     assert_eq!(result.observations_created, 1);
 
     blocker.close().await.expect("close blocking connection");
+    store.close().await;
+}
+
+#[tokio::test]
+async fn shared_policy_matches_stored_conflict_diagnostics_and_first_provenance() {
+    let directory = tempfile::tempdir().unwrap();
+    let url = sqlite_url(&directory.path().join("policy.db"));
+    let store = SqliteEvidenceStore::connect(&url).await.unwrap();
+    let claim = store.replace_projection_claim(None).await.unwrap();
+    let first = observation("first", "logical", br#"{"value":1}"#);
+    store
+        .commit(claim, None, commit(1, &key(), first.clone()))
+        .await
+        .unwrap();
+    let mut conflicting = commit(
+        2,
+        &key(),
+        observation("second", "logical", br#"{"value":2}"#),
+    );
+    conflicting.observations[0].candidate_ordinal = 7;
+    let ObservationDisposition::Conflict {
+        conflict_id,
+        diagnostic,
+    } = plan_observation(
+        &conflicting.observations[0],
+        2,
+        Some(ExistingLogicalObservation {
+            observation_id: &first.observation_id,
+            content_digest: &first.content_digest,
+        }),
+        None,
+    )
+    .unwrap()
+    else {
+        panic!("conflict plan")
+    };
+    let result = store
+        .commit(claim, Some(1), conflicting.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.conflicts_created, 1);
+    assert_eq!(result.diagnostics_created, 1);
+    conflicting.inbox_batch_id = 3;
+    conflicting.observations[0].candidate_ordinal = 9;
+    let retry = store.commit(claim, Some(2), conflicting).await.unwrap();
+    assert_eq!(retry.conflicts_created, 0);
+    assert_eq!(retry.diagnostics_created, 0);
+    assert_eq!(retry.provenance_created, 0);
+    let mut connection = SqliteConnection::connect(&url).await.unwrap();
+    let stored: (String, i64, i64, String, String, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT diagnostic_id, inbox_batch_id, candidate_ordinal, code, message, detail_json
+         FROM evidence_materializer_diagnostics",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        (
+            diagnostic.diagnostic_id,
+            2,
+            7,
+            diagnostic.code,
+            diagnostic.message,
+            diagnostic.detail_json
+        )
+    );
+    let conflict: (String, String, String, String, i64, i64) = sqlx::query_as(
+        "SELECT conflict_id, accepted_observation_id, accepted_content_digest, rejected_content_digest,
+         rejected_inbox_batch_id, rejected_candidate_ordinal FROM evidence_observation_conflicts",
+    ).fetch_one(&mut connection).await.unwrap();
+    assert_eq!(
+        conflict,
+        (
+            conflict_id,
+            first.observation_id.clone(),
+            first.content_digest.clone(),
+            digest(br#"{"value":2}"#),
+            2,
+            7
+        )
+    );
+    let provenance: (String, i64, i64) = sqlx::query_as(
+        "SELECT observation_id, inbox_batch_id, candidate_ordinal FROM evidence_observation_provenance",
+    ).fetch_one(&mut connection).await.unwrap();
+    assert_eq!(provenance, (first.observation_id.clone(), 1, 0));
+
+    // A different logical key with the same observation ID must roll back, not dedup.
+    let mut collision = observation("first", "different-logical", br#"{"value":1}"#);
+    collision.versions.routing = "next".into();
+    assert!(matches!(
+        store
+            .commit(claim, Some(3), commit(4, &key(), collision))
+            .await,
+        Err(EvidenceStoreError::CorruptData(_))
+    ));
+    assert_eq!(store.forward_checkpoint().await.unwrap(), Some(3));
+    assert_eq!(store.inspect().await.unwrap().observation_count, 1);
+    connection.close().await.unwrap();
     store.close().await;
 }
 

@@ -6,6 +6,9 @@ an independent client, retains `Cargo.lock`, runs canonical digest/evaluation
 checks (including the reusable C01 corpus and C02 exact-evaluation parity),
 executes shared bootstrap/admission/activation/resolution and persisted-contract/executable
 integrity policy without SQLite,
+executes the database-free evidence projection policy corpus and default
+single-resource/batch admission, composes retention-independent private OTLP health,
+checks typed row/metadata capacity exports,
 compiles all three HTTP compositions and shared materialization/analysis/execution
 capabilities, and rejects SQLite, app composition roots or unpinned product
 dependencies. It never imports runnable apps or copies product implementation.
