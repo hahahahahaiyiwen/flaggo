@@ -10,8 +10,8 @@ use std::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use flaggo_analysis_domain::{
-    AnalysisContract, AnalysisCycle, AnalysisError, AnalysisProfile, CandidateProposal,
-    CandidateRecord, CycleLimits, CycleOutcome, WorkflowHandoff,
+    AnalysisContract, AnalysisError, AnalysisProfile, CandidateProposal, CandidateRecord,
+    CycleLimits, CycleOutcome, WorkflowHandoff,
 };
 use flaggo_contract::{CandidateOwnership, ContractResourceId};
 use flaggo_executable_store::{
@@ -23,6 +23,7 @@ use serde_json::Value;
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
+use crate::policy::*;
 use crate::{
     CyclePreparation, ExecutionReceipt, ExecutionRequest, ExecutionReservation, ExecutionState,
     HandoffPublication, PrepareCycleResult, WorkspaceArtifact, WorkspaceEntry, WorkspaceEntryKind,
@@ -30,7 +31,6 @@ use crate::{
     workspace_id,
 };
 
-const WORKSPACE_SCHEMA_VERSION: u32 = 1;
 const VIRTUAL_ROOT: &str = "workspace";
 type LocalClaims = Arc<Mutex<HashMap<String, Weak<LocalWorkspaceLease>>>>;
 
@@ -355,6 +355,16 @@ struct LeaseState {
     sealed: bool,
 }
 
+impl LeaseState {
+    fn access(&self) -> CycleAccess<'_> {
+        CycleAccess {
+            active_cycle_id: self.active_cycle_id.as_deref(),
+            writable: self.writable,
+            sealed: self.sealed,
+        }
+    }
+}
+
 #[async_trait]
 impl WorkspaceLease for LocalWorkspaceLease {
     fn resource(&self) -> &ContractResourceId {
@@ -406,17 +416,25 @@ impl WorkspaceLease for LocalWorkspaceLease {
             CurrentCycle::empty()
         };
         if let Some(cycle_id) = pointer.cycle_id.as_deref()
-            && self.cycle_path(cycle_id).join("outcome.json").exists()
+            && plan_current_cycle(
+                None,
+                &contract.contract_digest,
+                self.cycle_path(cycle_id).join("outcome.json").exists(),
+            ) == CurrentCyclePlan::ReconcileTerminal
         {
             self.reconcile_terminal_cycle(cycle_id)?;
             pointer = CurrentCycle::empty();
         }
-        let mut schedule = self.load_or_create_schedule(contract)?;
+        let schedule = self.load_or_create_schedule(contract)?;
 
         if let Some(cycle_id) = pointer.cycle_id.clone() {
             let mut cycle = self.read_cycle(&cycle_id)?;
-            if cycle.status == CycleStatus::Active || cycle.status == CycleStatus::Superseding {
-                if cycle.contract_digest == contract.contract_digest {
+            match plan_current_cycle(
+                Some(&cycle),
+                &contract.contract_digest,
+                false,
+            ) {
+                CurrentCyclePlan::Resume => {
                     self.record_attempt(&cycle_id, attempt_id, now)?;
                     let sealed = self
                         .cycle_path(&cycle_id)
@@ -426,28 +444,31 @@ impl WorkspaceLease for LocalWorkspaceLease {
                             .cycle_path(&cycle_id)
                             .join("proposal.pending.json")
                             .exists();
-                    self.set_active_state(&cycle_id, !sealed, sealed)?;
+                    let access = CycleAccess::resumed(&cycle_id, sealed);
+                    self.set_active_state(&cycle_id, access.writable, access.sealed)?;
                     return Ok(PrepareCycleResult::Ready(Box::new(CyclePreparation {
                         cycle: cycle.as_analysis_cycle(&self.resource.scope, true),
                         eligible_at: schedule.next_eligible_at,
                     })));
                 }
-
-                self.finish_superseded_cycle(
+                CurrentCyclePlan::Supersede => self.finish_superseded_cycle(
                     &mut cycle,
                     Some(contract.contract_digest.clone()),
                     now,
-                )?;
+                )?,
+                CurrentCyclePlan::Clear => {}
+                CurrentCyclePlan::ReconcileTerminal => self.reconcile_terminal_cycle(&cycle_id)?,
             }
             pointer.cycle_id = None;
             write_json_atomic(&pointer_path, &pointer)?;
         }
 
-        if schedule.contract_digest != contract.contract_digest {
-            schedule = ScheduleState::new(contract)?;
+        let eligibility = plan_eligibility(&schedule, contract, now)?;
+        let schedule = eligibility.schedule;
+        if eligibility.replace_schedule {
             write_json_atomic(&self.root.join("schedule.json"), &schedule)?;
         }
-        if now < schedule.next_eligible_at {
+        if !eligibility.eligible {
             self.clear_active_state()?;
             return Ok(PrepareCycleResult::NotEligible {
                 eligible_at: schedule.next_eligible_at,
@@ -456,18 +477,13 @@ impl WorkspaceLease for LocalWorkspaceLease {
 
         let cycle_id = Uuid::new_v4().to_string();
         let cycle_root = self.cycle_path(&cycle_id);
-        let cycle = StoredCycle {
-            schema_version: WORKSPACE_SCHEMA_VERSION,
-            workspace_id: self.workspace_id.clone(),
-            cycle_id: cycle_id.clone(),
-            contract_name: contract.name.clone(),
-            contract_digest: contract.contract_digest.clone(),
-            analysis_profile: analysis_profile.clone(),
-            opened_at: now,
-            status: CycleStatus::Active,
-            replacement_digest: None,
-            latest_handoff: None,
-        };
+        let cycle = StoredCycle::new(
+            &self.workspace_id,
+            &cycle_id,
+            contract,
+            analysis_profile,
+            now,
+        );
         let initialization = (|| {
             fs::create_dir_all(cycle_root.join("analysis")).map_err(workspace_error)?;
             fs::create_dir_all(cycle_root.join("handoffs")).map_err(workspace_error)?;
@@ -554,54 +570,37 @@ impl WorkspaceLease for LocalWorkspaceLease {
         let proposal_path = cycle_root.join("proposal.json");
 
         let proposal = if pending_path.exists() {
-            let existing = read_json::<CandidateProposal>(&pending_path)?;
-            if existing.rules != rules {
-                return Err(AnalysisError::ProposalConflict(
-                    "a different Candidate proposal is already committed for this cycle".to_owned(),
-                ));
-            }
+            let existing = decode_proposal(&fs::read(&pending_path).map_err(workspace_error)?)?;
+            validate_proposal_rules(&existing, &rules)?;
             let manifest_path = cycle_root.join("analysis-manifest.json");
             if !manifest_path.exists() {
                 let manifest = self.build_manifest(cycle_id)?;
-                let manifest_bytes = serde_json::to_vec(&manifest).map_err(workspace_error)?;
-                if sha256_digest(&manifest_bytes) != existing.analysis_manifest_digest {
-                    return Err(AnalysisError::workspace(
-                        "recovered analysis manifest does not match the durable proposal",
-                    ));
-                }
+                let manifest_bytes = manifest.encode()?;
+                plan_proposal(Some(&existing), attempt_id, rules.clone(), &manifest_bytes)?;
                 write_bytes_atomic(&manifest_path, &manifest_bytes)?;
             }
             existing
         } else {
             self.require_writable(cycle_id)?;
             let manifest = self.build_manifest(cycle_id)?;
-            let manifest_bytes = serde_json::to_vec(&manifest).map_err(workspace_error)?;
-            let proposal = CandidateProposal {
-                attempt_id: attempt_id.to_owned(),
-                rules,
-                analysis_manifest_digest: sha256_digest(&manifest_bytes),
-            };
-            write_json_atomic(&pending_path, &proposal)?;
+            let manifest_bytes = manifest.encode()?;
+            let proposal = plan_proposal(None, attempt_id, rules, &manifest_bytes)?;
+            write_bytes_atomic(&pending_path, &encode_proposal(&proposal)?)?;
             write_bytes_atomic(&cycle_root.join("analysis-manifest.json"), &manifest_bytes)?;
             proposal
         };
 
         self.verify_manifest(cycle_id)?;
-        let actual_digest = digest_file(&cycle_root.join("analysis-manifest.json"))?;
-        if actual_digest != proposal.analysis_manifest_digest {
-            return Err(AnalysisError::workspace(
-                "sealed analysis manifest does not match the durable proposal",
-            ));
-        }
+        verify_proposal_manifest(
+            &proposal,
+            &fs::read(cycle_root.join("analysis-manifest.json")).map_err(workspace_error)?,
+            false,
+        )?;
         if proposal_path.exists() {
-            let existing = read_json::<CandidateProposal>(&proposal_path)?;
-            if existing != proposal {
-                return Err(AnalysisError::workspace(
-                    "Candidate proposal record conflicts with its recovery journal",
-                ));
-            }
+            let existing = decode_proposal(&fs::read(&proposal_path).map_err(workspace_error)?)?;
+            verify_proposal_record(&proposal, &existing)?;
         } else {
-            write_json_atomic(&proposal_path, &proposal)?;
+            write_bytes_atomic(&proposal_path, &encode_proposal(&proposal)?)?;
         }
         let mut state = mutex_lock(&self.state)?;
         state.writable = false;
@@ -631,27 +630,26 @@ impl WorkspaceLease for LocalWorkspaceLease {
     ) -> Result<(), AnalysisError> {
         let _io_guard = mutex_lock(&self.io_gate)?;
         self.require_active_cycle(cycle_id)?;
-        let proposal: CandidateProposal =
-            read_json(&self.cycle_path(cycle_id).join("proposal.json"))?;
+        let proposal = decode_proposal(
+            &fs::read(self.cycle_path(cycle_id).join("proposal.json")).map_err(workspace_error)?,
+        )?;
         let cycle = self.read_cycle(cycle_id)?;
-        if candidate.contract_name != self.resource.name
-            || candidate.contract_digest != cycle.contract_digest
-            || proposal.analysis_manifest_digest != candidate.analysis_manifest_digest
-        {
-            return Err(AnalysisError::workspace(
-                "Candidate response does not match the sealed analysis manifest",
-            ));
-        }
+        validate_candidate_binding(
+            &self.resource.name,
+            &cycle.contract_digest,
+            &proposal,
+            candidate,
+        )?;
         let path = self.cycle_path(cycle_id).join("candidate.json");
-        if path.exists() {
-            if read_json::<CandidateRecord>(&path)? != *candidate {
-                return Err(AnalysisError::workspace(
-                    "Candidate response conflicts with the durable cycle record",
-                ));
-            }
-            return Ok(());
+        let existing = if path.exists() {
+            Some(read_json::<CandidateRecord>(&path)?)
+        } else {
+            None
+        };
+        match plan_candidate_record(existing.as_ref(), candidate)? {
+            CandidateRecordPlan::Append => write_json_atomic(&path, candidate),
+            CandidateRecordPlan::Unchanged => Ok(()),
         }
-        write_json_atomic(&path, candidate)
     }
 
     async fn mark_superseding(
@@ -662,9 +660,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
         let _io_guard = mutex_lock(&self.io_gate)?;
         let _authority_guard = authority_gate(&self.root)?;
         self.require_active_cycle(cycle_id)?;
-        let mut cycle = self.read_cycle(cycle_id)?;
-        cycle.status = CycleStatus::Superseding;
-        cycle.replacement_digest = replacement_digest.map(ToOwned::to_owned);
+        let cycle = self.read_cycle(cycle_id)?.superseding(replacement_digest);
         write_json_atomic(&self.cycle_path(cycle_id).join("cycle.json"), &cycle)?;
         Ok(())
     }
@@ -712,29 +708,18 @@ impl WorkspaceLease for LocalWorkspaceLease {
         self.require_writable(cycle_id)?;
         self.read_artifact_bytes(&request.source)?;
         validate_segment(&request.execution_id, "execution ID")?;
-        if request.profile.is_empty() || request.timeout_ms == 0 || request.output_limit_bytes == 0
-        {
-            return Err(AnalysisError::InvalidState(
-                "execution requires a profile and positive bounds".into(),
-            ));
-        }
+        validate_execution_request(request)?;
         let path = self.execution_path(cycle_id, &request.execution_id)?;
-        if path.exists() {
-            let existing: ExecutionReceipt = read_json(&path)?;
-            if existing.request != *request {
-                return Err(AnalysisError::InvalidState(
-                    "execution idempotency key conflicts with its recorded request".into(),
-                ));
-            }
-            return Ok(ExecutionReservation::Existing(existing));
-        }
-        let receipt = ExecutionReceipt {
-            request: request.clone(),
-            epoch: self.epoch,
-            state: ExecutionState::Pending,
+        let existing = if path.exists() {
+            Some(read_json::<ExecutionReceipt>(&path)?)
+        } else {
+            None
         };
-        write_json_atomic(&path, &receipt)?;
-        Ok(ExecutionReservation::Granted(receipt))
+        let reservation = plan_execution_reservation(request, self.epoch, existing.as_ref())?;
+        if let ExecutionReservation::Granted(receipt) = &reservation {
+            write_json_atomic(&path, receipt)?;
+        }
+        Ok(reservation)
     }
 
     async fn execution_receipt(
@@ -749,13 +734,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
             return Ok(None);
         }
         let receipt: ExecutionReceipt = read_json(&path)?;
-        if receipt.request.execution_id != execution_id
-            || receipt.request.source.cycle_id != cycle_id
-        {
-            return Err(AnalysisError::InvalidState(
-                "execution receipt identity mismatch".into(),
-            ));
-        }
+        validate_execution_receipt(&receipt, cycle_id, execution_id)?;
         self.read_artifact_bytes(&receipt.request.source)?;
         if let ExecutionState::Completed { result } = &receipt.state {
             self.read_artifact_bytes(result)?;
@@ -774,26 +753,9 @@ impl WorkspaceLease for LocalWorkspaceLease {
         self.require_writable(cycle_id)?;
         self.read_artifact_bytes(result)?;
         let path = self.execution_path(cycle_id, execution_id)?;
-        let mut receipt: ExecutionReceipt = read_json(&path)?;
-        if receipt.epoch != self.epoch
-            || receipt.request.execution_id != execution_id
-            || receipt.request.source.cycle_id != cycle_id
-            || result.cycle_id != cycle_id
-            || result.attempt_id != receipt.request.source.attempt_id
-        {
-            return Err(AnalysisError::InvalidState(
-                "execution result has a stale fence or mismatched identity".into(),
-            ));
-        }
-        let completed = ExecutionState::Completed {
-            result: result.clone(),
-        };
-        if receipt.state != ExecutionState::Pending && receipt.state != completed {
-            return Err(AnalysisError::InvalidState(
-                "execution result conflicts with its committed receipt".into(),
-            ));
-        }
-        receipt.state = completed;
+        let receipt: ExecutionReceipt = read_json(&path)?;
+        let receipt =
+            plan_execution_completion(&receipt, self.epoch, cycle_id, execution_id, result)?;
         write_json_atomic(&path, &receipt)?;
         Ok(receipt)
     }
@@ -807,65 +769,33 @@ impl WorkspaceLease for LocalWorkspaceLease {
         let publication: HandoffPublication =
             serde_json::from_slice(&self.read_artifact_bytes(artifact)?)
                 .map_err(workspace_error)?;
-        let HandoffPublication { summary, metadata } = publication;
         let cycle_id = &artifact.cycle_id;
         let attempt_id = &artifact.attempt_id;
         self.require_writable(cycle_id)?;
-        if summary.trim().is_empty()
-            || metadata.as_ref().is_some_and(|value| !value.is_object())
-            || serde_json::to_vec(&metadata)
-                .map_err(workspace_error)?
-                .len()
-                > 16_384
-        {
-            return Err(AnalysisError::InvalidState(
-                "handoff requires a non-empty summary and at most 16 KiB of object metadata"
-                    .to_owned(),
-            ));
-        }
+        validate_handoff_publication(&publication)?;
         let mut cycle = self.read_cycle(cycle_id)?;
         let path = self
             .cycle_path(cycle_id)
             .join("handoffs")
             .join(format!("{attempt_id}.json"));
-        if path.exists() {
-            let existing: HandoffRecord = read_json(&path)?;
-            if existing.summary != summary
-                || existing.metadata != metadata
-                || existing.cycle_id.as_deref() != Some(cycle_id)
-                || existing.contract_digest.as_deref() != Some(cycle.contract_digest.as_str())
-                || existing.artifact.as_ref() != Some(artifact)
-                || existing.previous_handoff.as_deref() != expected_previous
-                || (cycle.latest_handoff.as_deref() != Some(attempt_id)
-                    && cycle.latest_handoff != existing.previous_handoff)
-            {
-                return Err(AnalysisError::InvalidState(
-                    "committed handoff cannot be changed or republished out of order".to_owned(),
-                ));
-            }
+        let existing = if path.exists() {
+            Some(read_json::<HandoffRecord>(&path)?)
         } else {
-            if cycle.latest_handoff.as_deref() != expected_previous {
-                return Err(AnalysisError::InvalidState(
-                    "workflow publication revision conflict".into(),
-                ));
-            }
-            write_json_atomic(
-                &path,
-                &HandoffRecord {
-                    schema_version: WORKSPACE_SCHEMA_VERSION,
-                    attempt_id: attempt_id.to_owned(),
-                    recorded_at: Utc::now(),
-                    summary: summary.to_owned(),
-                    metadata: metadata.clone(),
-                    cycle_id: Some(cycle_id.to_owned()),
-                    contract_digest: Some(cycle.contract_digest.clone()),
-                    previous_handoff: cycle.latest_handoff.clone(),
-                    artifact: Some(artifact.clone()),
-                },
-            )?;
+            None
+        };
+        let plan = plan_handoff(
+            &publication,
+            artifact,
+            &cycle,
+            existing.as_ref(),
+            expected_previous,
+            Utc::now(),
+        )?;
+        if let Some(record) = plan.append {
+            write_json_atomic(&path, &record)?;
         }
-        if metadata.is_some() {
-            cycle.latest_handoff = Some(attempt_id.to_owned());
+        if let Some(attempt_id) = plan.advance_to {
+            cycle.latest_handoff = Some(attempt_id);
             write_json_atomic(&self.cycle_path(cycle_id).join("cycle.json"), &cycle)?;
         }
         Ok(())
@@ -878,10 +808,10 @@ impl WorkspaceLease for LocalWorkspaceLease {
         let _io_guard = mutex_lock(&self.io_gate)?;
         self.require_active_cycle(cycle_id)?;
         let cycle = self.read_cycle(cycle_id)?;
-        let Some(attempt_id) = cycle.latest_handoff else {
+        let Some(attempt_id) = cycle.latest_handoff.as_deref() else {
             return Ok(None);
         };
-        validate_segment(&attempt_id, "handoff attempt ID")?;
+        validate_segment(attempt_id, "handoff attempt ID")?;
         let path = self
             .cycle_path(cycle_id)
             .join("handoffs")
@@ -898,36 +828,14 @@ impl WorkspaceLease for LocalWorkspaceLease {
                 "latest workflow handoff record is corrupt: {error}"
             ))
         })?;
-        if record.schema_version != WORKSPACE_SCHEMA_VERSION
-            || record.attempt_id != attempt_id
-            || record.cycle_id.as_deref() != Some(cycle_id)
-            || record.contract_digest.as_deref() != Some(cycle.contract_digest.as_str())
-        {
-            return Err(AnalysisError::InvalidState(
-                "latest handoff does not match its bound cycle and attempt".to_owned(),
-            ));
-        }
+        validate_handoff_binding(&record, cycle_id, &cycle.contract_digest, attempt_id)?;
         if let Some(artifact) = &record.artifact {
             let publication: HandoffPublication =
                 serde_json::from_slice(&self.read_artifact_bytes(artifact)?)
                     .map_err(workspace_error)?;
-            if artifact.attempt_id != attempt_id
-                || publication.summary != record.summary
-                || publication.metadata != record.metadata
-            {
-                return Err(AnalysisError::InvalidState(
-                    "committed handoff differs from its immutable artifact".into(),
-                ));
-            }
+            validate_handoff_artifact(&record, artifact, &publication, attempt_id)?;
         }
-        let metadata = record.metadata.filter(Value::is_object).ok_or_else(|| {
-            AnalysisError::InvalidState("latest workflow handoff has no object metadata".to_owned())
-        })?;
-        Ok(Some(WorkflowHandoff {
-            attempt_id,
-            summary: record.summary,
-            metadata,
-        }))
+        workflow_handoff(record).map(Some)
     }
 
     async fn pending_proposal(
@@ -938,7 +846,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
         self.require_active_cycle(cycle_id)?;
         let path = self.cycle_path(cycle_id).join("proposal.pending.json");
         if path.exists() {
-            read_json(&path).map(Some)
+            decode_proposal(&fs::read(&path).map_err(workspace_error)?).map(Some)
         } else {
             Ok(None)
         }
@@ -954,51 +862,17 @@ impl WorkspaceLease for LocalWorkspaceLease {
         let _io_guard = mutex_lock(&self.io_gate)?;
         self.require_active_cycle(cycle_id)?;
         validate_segment(attempt_id, "attempt ID")?;
-        if limits.max_attempts == 0 || limits.execution_seconds == 0 || timeout.is_zero() {
-            return Err(AnalysisError::InvalidState(
-                "cycle execution limits must be positive".to_owned(),
-            ));
-        }
+        validate_attempt_limits(limits, timeout)?;
         let path = self.cycle_path(cycle_id).join("budget.json");
-        let mut budget = if path.exists() {
-            read_json::<CycleBudget>(&path)?
+        let existing = if path.exists() {
+            Some(read_json::<CycleBudget>(&path)?)
         } else {
-            CycleBudget {
-                limits: limits.clone(),
-                attempts: 0,
-                execution_millis: 0,
-                reservation: None,
-            }
+            None
         };
-        if budget.limits != *limits {
-            return Err(AnalysisError::InvalidState(
-                "cycle limits differ from their durable configuration".to_owned(),
-            ));
-        }
-        let total = limits.execution_seconds.checked_mul(1_000).ok_or_else(|| {
-            AnalysisError::InvalidState("cycle time budget overflows milliseconds".to_owned())
-        })?;
-        if budget.attempts >= limits.max_attempts || budget.execution_millis >= total {
-            return Err(AnalysisError::LimitExceeded(
-                "attempt count or accumulated execution time exhausted".to_owned(),
-            ));
-        }
-        let requested = u64::try_from(timeout.as_millis()).map_err(workspace_error)?;
-        let allowance = requested.min(total - budget.execution_millis);
-        if allowance == 0 {
-            return Err(AnalysisError::InvalidState(
-                "attempt timeout is below one millisecond".to_owned(),
-            ));
-        }
-        // An unsettled prior reservation remains charged after a crash.
-        budget.attempts += 1;
-        budget.execution_millis += allowance;
-        budget.reservation = Some(AttemptReservation {
-            attempt_id: attempt_id.to_owned(),
-            millis: allowance,
-        });
+        let (budget, allowance) =
+            plan_attempt_reservation(existing.as_ref(), attempt_id, limits, timeout)?;
         write_json_atomic(&path, &budget)?;
-        Ok(Duration::from_millis(allowance))
+        Ok(allowance)
     }
 
     async fn settle_attempt(
@@ -1011,26 +885,8 @@ impl WorkspaceLease for LocalWorkspaceLease {
         validate_claim(&self.root, &self.state, self.epoch)?;
         validate_segment(cycle_id, "cycle ID")?;
         let path = self.cycle_path(cycle_id).join("budget.json");
-        let mut budget: CycleBudget = read_json(&path)?;
-        let reservation = budget.reservation.take().ok_or_else(|| {
-            AnalysisError::InvalidState("attempt has no execution reservation".to_owned())
-        })?;
-        if reservation.attempt_id != attempt_id {
-            return Err(AnalysisError::InvalidState(
-                "execution reservation belongs to another attempt".to_owned(),
-            ));
-        }
-        let elapsed = u64::try_from(elapsed.as_millis())
-            .map_err(workspace_error)?
-            .min(reservation.millis);
-        budget.execution_millis = budget
-            .execution_millis
-            .checked_sub(reservation.millis - elapsed)
-            .ok_or_else(|| {
-                AnalysisError::InvalidState(
-                    "execution reservation exceeds the charged budget".to_owned(),
-                )
-            })?;
+        let budget: CycleBudget = read_json(&path)?;
+        let budget = plan_attempt_settlement(&budget, attempt_id, elapsed)?;
         write_json_atomic(&path, &budget)
     }
 
@@ -1048,12 +904,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
                 .cycle_path(cycle_id)
                 .join("attempts")
                 .join(format!("{attempt_id}-failure.json")),
-            &AttemptFailure {
-                schema_version: WORKSPACE_SCHEMA_VERSION,
-                attempt_id: attempt_id.to_owned(),
-                recorded_at: Utc::now(),
-                error: error.to_owned(),
-            },
+            &AttemptFailure::new(attempt_id, error, Utc::now()),
         )
     }
 
@@ -1070,41 +921,20 @@ impl WorkspaceLease for LocalWorkspaceLease {
         let outcome_path = self.cycle_path(cycle_id).join("outcome.json");
         let stored_contract: AnalysisContract =
             read_json(&self.cycle_path(cycle_id).join("contract.json"))?;
-        if stored_contract.resource()? != contract.resource()?
-            || stored_contract.contract_digest != contract.contract_digest
-        {
-            return Err(AnalysisError::workspace(
-                "terminal cycle contract does not match its durable contract snapshot",
-            ));
-        }
+        validate_terminal_contract(&stored_contract, contract)?;
         if outcome_path.exists() {
             let existing = read_json::<StoredOutcome>(&outcome_path)?;
-            if existing.outcome != *outcome {
-                return Err(AnalysisError::workspace(
-                    "terminal cycle outcome cannot be changed",
-                ));
-            }
+            plan_outcome(Some(&existing), outcome, completed_at)?;
             return self.reconcile_terminal_cycle(cycle_id);
         }
 
         self.ensure_manifest(cycle_id)?;
-        if let CycleOutcome::Candidate { candidate } = outcome {
+        if let CycleOutcome::Candidate { .. } = outcome {
             let stored =
                 read_json::<CandidateRecord>(&self.cycle_path(cycle_id).join("candidate.json"))?;
-            if stored != *candidate {
-                return Err(AnalysisError::workspace(
-                    "terminal Candidate does not match the durable Candidate record",
-                ));
-            }
+            validate_terminal_candidate(outcome, Some(&stored))?;
         }
-        write_json_atomic(
-            &outcome_path,
-            &StoredOutcome {
-                schema_version: WORKSPACE_SCHEMA_VERSION,
-                completed_at,
-                outcome: outcome.clone(),
-            },
-        )?;
+        write_json_atomic(&outcome_path, &plan_outcome(None, outcome, completed_at)?)?;
         self.reconcile_terminal_cycle(cycle_id)
     }
 }
@@ -1225,31 +1055,15 @@ impl LocalWorkspaceLease {
         let contract = read_json::<AnalysisContract>(&cycle_root.join("contract.json"))?;
         self.verify_manifest(cycle_id)?;
 
-        if let CycleOutcome::Candidate { candidate } = &outcome.outcome {
+        if let CycleOutcome::Candidate { .. } = &outcome.outcome {
             let stored = read_json::<CandidateRecord>(&cycle_root.join("candidate.json"))?;
-            if stored != *candidate {
-                return Err(AnalysisError::workspace(
-                    "terminal Candidate does not match the durable Candidate record",
-                ));
-            }
+            validate_terminal_candidate(&outcome.outcome, Some(&stored))?;
         }
 
-        let mut cycle = self.read_cycle(cycle_id)?;
-        cycle.status = CycleStatus::Terminal;
-        if let CycleOutcome::Superseded { replacement_digest } = &outcome.outcome {
-            cycle.replacement_digest = replacement_digest.clone();
-        }
+        let cycle = self.read_cycle(cycle_id)?.terminal(&outcome.outcome);
         write_json_atomic(&cycle_root.join("cycle.json"), &cycle)?;
 
-        let schedule = ScheduleState {
-            schema_version: WORKSPACE_SCHEMA_VERSION,
-            contract_digest: contract.contract_digest.clone(),
-            accepted_at: contract.accepted_at,
-            last_terminal_completed_at: Some(outcome.completed_at),
-            next_eligible_at: contract
-                .eligible_after(outcome.completed_at)
-                .map_err(|error| AnalysisError::workspace(error.to_string()))?,
-        };
+        let schedule = ScheduleState::completed(&contract, outcome.completed_at)?;
         write_json_atomic(&self.root.join("schedule.json"), &schedule)?;
         write_json_atomic(
             &self.root.join("current-cycle.json"),
@@ -1289,22 +1103,12 @@ impl LocalWorkspaceLease {
         validate_claim(&self.root, &self.state, self.epoch)?;
         validate_segment(cycle_id, "cycle ID")?;
         let state = mutex_lock(&self.state)?;
-        if state.active_cycle_id.as_deref() != Some(cycle_id) {
-            return Err(AnalysisError::workspace(
-                "operation does not target the active claimed cycle",
-            ));
-        }
-        Ok(())
+        state.access().require_active(cycle_id)
     }
 
     fn require_writable(&self, cycle_id: &str) -> Result<(), AnalysisError> {
         let state = mutex_lock(&self.state)?;
-        if state.active_cycle_id.as_deref() != Some(cycle_id) || !state.writable || state.sealed {
-            return Err(AnalysisError::workspace(
-                "analysis workspace is no longer writable",
-            ));
-        }
-        Ok(())
+        state.access().require_writable(cycle_id)
     }
 
     fn record_attempt(
@@ -1338,16 +1142,15 @@ impl LocalWorkspaceLease {
     ) -> Result<(), AnalysisError> {
         let cycle_root = self.cycle_path(&cycle.cycle_id);
         self.ensure_manifest(&cycle.cycle_id)?;
-        let outcome = StoredOutcome {
-            schema_version: WORKSPACE_SCHEMA_VERSION,
-            completed_at,
-            outcome: CycleOutcome::Superseded {
+        let outcome = plan_outcome(
+            None,
+            &CycleOutcome::Superseded {
                 replacement_digest: replacement_digest.clone(),
             },
-        };
+            completed_at,
+        )?;
         write_json_atomic(&cycle_root.join("outcome.json"), &outcome)?;
-        cycle.status = CycleStatus::Terminal;
-        cycle.replacement_digest = replacement_digest;
+        *cycle = cycle.terminal(&outcome.outcome);
         write_json_atomic(&cycle_root.join("cycle.json"), cycle)
     }
 
@@ -1358,7 +1161,7 @@ impl LocalWorkspaceLease {
             return digest_file(&path);
         }
         let manifest = self.build_manifest(cycle_id)?;
-        let bytes = serde_json::to_vec(&manifest).map_err(workspace_error)?;
+        let bytes = manifest.encode()?;
         let digest = sha256_digest(&bytes);
         write_bytes_atomic(&path, &bytes)?;
         Ok(digest)
@@ -1366,14 +1169,9 @@ impl LocalWorkspaceLease {
 
     fn verify_manifest(&self, cycle_id: &str) -> Result<(), AnalysisError> {
         let path = self.cycle_path(cycle_id).join("analysis-manifest.json");
-        let stored = read_json::<AnalysisManifest>(&path)?;
+        let stored = AnalysisManifest::decode(&fs::read(&path).map_err(workspace_error)?)?;
         let actual = self.build_manifest(cycle_id)?;
-        if stored != actual {
-            return Err(AnalysisError::workspace(
-                "analysis workspace changed after its manifest was sealed",
-            ));
-        }
-        Ok(())
+        stored.verify(&actual)
     }
 
     fn build_manifest(&self, cycle_id: &str) -> Result<AnalysisManifest, AnalysisError> {
@@ -1381,14 +1179,12 @@ impl LocalWorkspaceLease {
         let cycle = self.read_cycle(cycle_id)?;
         let mut files = Vec::new();
         collect_manifest_files(&root, &root, &mut files)?;
-        files.sort_by(|left, right| left.path.cmp(&right.path));
-        Ok(AnalysisManifest {
-            schema_version: WORKSPACE_SCHEMA_VERSION,
-            workspace_id: self.workspace_id.clone(),
-            cycle_id: cycle_id.to_owned(),
-            analysis_profile: cycle.analysis_profile,
+        Ok(AnalysisManifest::new(
+            &self.workspace_id,
+            cycle_id,
+            cycle.analysis_profile,
             files,
-        })
+        ))
     }
 }
 
@@ -1694,20 +1490,6 @@ fn collect_manifest_files(
     Ok(())
 }
 
-fn is_manifest_control_file(relative: &str) -> bool {
-    matches!(
-        relative,
-        "cycle.json"
-            | "budget.json"
-            | "analysis-manifest.json"
-            | "proposal.pending.json"
-            | "proposal.json"
-            | "candidate.json"
-            | "outcome.json"
-    ) || relative.starts_with("attempts/")
-        || relative.starts_with("analysis/.copilot/")
-}
-
 fn ensure_parent_has_no_symlinks(root: &Path, target: &Path) -> Result<(), AnalysisError> {
     let relative = target
         .strip_prefix(root)
@@ -1829,20 +1611,6 @@ struct ResourceBinding {
     workspace_id: String,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaimRecord {
-    schema_version: u32,
-    #[serde(default)]
-    epoch: u64,
-    attempt_id: String,
-    claimed_at: DateTime<Utc>,
-    #[serde(default)]
-    active: bool,
-    #[serde(default)]
-    cycle_id: Option<String>,
-}
-
 struct WorkspaceLock {
     file: File,
     locked: bool,
@@ -1914,13 +1682,7 @@ impl AdmissionFence for LocalWorkspaceProvider {
             }
             let gate = authority_gate(&root)?;
             let claim: ClaimRecord = read_json(&root.join("claim.json"))?;
-            if claim.schema_version != WORKSPACE_SCHEMA_VERSION
-                || !claim.active
-                || claim.epoch == 0
-                || claim.epoch.to_string() != ownership.epoch
-                || claim.attempt_id != ownership.attempt_id
-                || claim.cycle_id.as_deref() != Some(&admission.cycle_id)
-            {
+            if !admission_owner_matches(&claim, ownership, &admission.cycle_id) {
                 return Ok(None);
             }
             // A crashed process cannot authorize delayed requests with its
@@ -1940,23 +1702,29 @@ impl AdmissionFence for LocalWorkspaceProvider {
             let cycle_root = root.join("cycles").join(&admission.cycle_id);
             let cycle: StoredCycle = read_json(&cycle_root.join("cycle.json"))?;
             let contract: AnalysisContract = read_json(&cycle_root.join("contract.json"))?;
-            if binding.resource != admission.resource
-                || binding.workspace_id != admission.workspace_id
-                || pointer.cycle_id.as_deref() != Some(&admission.cycle_id)
-                || cycle.status != CycleStatus::Active
-                || cycle.workspace_id != admission.workspace_id
-                || cycle.cycle_id != admission.cycle_id
-                || cycle.contract_digest != admission.contract_digest
-                || contract.resource()? != admission.resource
-                || contract.contract_digest != admission.contract_digest
-                || cycle_root.join("outcome.json").exists()
-            {
+            let identity = AdmissionIdentity {
+                resource: &admission.resource,
+                workspace_id: &admission.workspace_id,
+                cycle_id: &admission.cycle_id,
+                contract_digest: &admission.contract_digest,
+                attempt_id: &admission.attempt_id,
+                analysis_manifest_digest: &admission.analysis_manifest_digest,
+            };
+            if !admission_cycle_matches(
+                &identity,
+                &binding.resource,
+                &binding.workspace_id,
+                pointer.cycle_id.as_deref(),
+                &cycle,
+                &contract,
+                cycle_root.join("outcome.json").exists(),
+            )? {
                 return Ok(None);
             }
-            let proposal: CandidateProposal = read_json(&cycle_root.join("proposal.pending.json"))?;
-            if proposal.attempt_id != admission.attempt_id
-                || proposal.analysis_manifest_digest != admission.analysis_manifest_digest
-            {
+            let proposal = decode_proposal(
+                &fs::read(cycle_root.join("proposal.pending.json")).map_err(workspace_error)?,
+            )?;
+            if !admission_proposal_matches(&identity, &proposal) {
                 return Ok(None);
             }
             Ok(Some(gate))
@@ -1974,101 +1742,7 @@ fn validate_claim(root: &Path, state: &Mutex<LeaseState>, epoch: u64) -> Result<
         ));
     }
     let record: ClaimRecord = read_json(&root.join("claim.json"))?;
-    if record.schema_version != WORKSPACE_SCHEMA_VERSION || record.epoch != epoch {
-        return Err(AnalysisError::workspace("workspace fencing epoch is stale"));
-    }
-    Ok(())
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScheduleState {
-    schema_version: u32,
-    contract_digest: String,
-    accepted_at: DateTime<Utc>,
-    last_terminal_completed_at: Option<DateTime<Utc>>,
-    next_eligible_at: DateTime<Utc>,
-}
-
-impl ScheduleState {
-    fn new(contract: &AnalysisContract) -> Result<Self, AnalysisError> {
-        Ok(Self {
-            schema_version: WORKSPACE_SCHEMA_VERSION,
-            contract_digest: contract.contract_digest.clone(),
-            accepted_at: contract.accepted_at,
-            last_terminal_completed_at: None,
-            next_eligible_at: contract
-                .eligible_after(contract.accepted_at)
-                .map_err(|error| AnalysisError::workspace(error.to_string()))?,
-        })
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CurrentCycle {
-    schema_version: u32,
-    cycle_id: Option<String>,
-}
-
-impl CurrentCycle {
-    fn empty() -> Self {
-        Self {
-            schema_version: WORKSPACE_SCHEMA_VERSION,
-            cycle_id: None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum CycleStatus {
-    Active,
-    Superseding,
-    Terminal,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredCycle {
-    schema_version: u32,
-    workspace_id: String,
-    cycle_id: String,
-    contract_name: String,
-    contract_digest: String,
-    analysis_profile: AnalysisProfile,
-    opened_at: DateTime<Utc>,
-    status: CycleStatus,
-    replacement_digest: Option<String>,
-    #[serde(default)]
-    latest_handoff: Option<String>,
-}
-
-impl StoredCycle {
-    fn as_analysis_cycle(
-        &self,
-        scope: &flaggo_analysis_domain::AnalysisAuthority,
-        resumed: bool,
-    ) -> AnalysisCycle {
-        AnalysisCycle {
-            scope: scope.clone(),
-            workspace_id: self.workspace_id.clone(),
-            cycle_id: self.cycle_id.clone(),
-            contract_name: self.contract_name.clone(),
-            contract_digest: self.contract_digest.clone(),
-            analysis_profile: self.analysis_profile.clone(),
-            opened_at: self.opened_at,
-            resumed,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredOutcome {
-    schema_version: u32,
-    completed_at: DateTime<Utc>,
-    outcome: CycleOutcome,
+    validate_claim_epoch(&record, epoch)
 }
 
 #[derive(Serialize)]
@@ -2081,72 +1755,10 @@ struct AttemptRecord {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AttemptFailure {
-    schema_version: u32,
-    attempt_id: String,
-    recorded_at: DateTime<Utc>,
-    error: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HandoffRecord {
-    schema_version: u32,
-    attempt_id: String,
-    recorded_at: DateTime<Utc>,
-    summary: String,
-    #[serde(default)]
-    metadata: Option<Value>,
-    #[serde(default)]
-    cycle_id: Option<String>,
-    #[serde(default)]
-    contract_digest: Option<String>,
-    #[serde(default)]
-    previous_handoff: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    artifact: Option<WorkspaceArtifact>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CycleBudget {
-    limits: CycleLimits,
-    attempts: u32,
-    execution_millis: u64,
-    reservation: Option<AttemptReservation>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct AttemptReservation {
-    attempt_id: String,
-    millis: u64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct AuditRecord {
     schema_version: u32,
     recorded_at: DateTime<Utc>,
     record: Value,
-}
-
-#[derive(Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AnalysisManifest {
-    schema_version: u32,
-    workspace_id: String,
-    cycle_id: String,
-    analysis_profile: AnalysisProfile,
-    files: Vec<ManifestFile>,
-}
-
-#[derive(Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ManifestFile {
-    path: String,
-    size: u64,
-    digest: String,
 }
 
 #[cfg(test)]
