@@ -429,11 +429,7 @@ impl WorkspaceLease for LocalWorkspaceLease {
 
         if let Some(cycle_id) = pointer.cycle_id.clone() {
             let mut cycle = self.read_cycle(&cycle_id)?;
-            match plan_current_cycle(
-                Some(&cycle),
-                &contract.contract_digest,
-                false,
-            ) {
+            match plan_current_cycle(Some(&cycle), &contract.contract_digest, false) {
                 CurrentCyclePlan::Resume => {
                     self.record_attempt(&cycle_id, attempt_id, now)?;
                     let sealed = self
