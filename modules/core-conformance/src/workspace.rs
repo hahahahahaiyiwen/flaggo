@@ -1,4 +1,5 @@
-//! Path-free workflow outcomes. Local lock tests do not qualify distributed lease expiry.
+//! Workspace workflow outcomes, with full and path-free capability coverage.
+//! Local lock tests do not qualify distributed lease expiry.
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
@@ -17,6 +18,24 @@ pub trait WorkspaceFixture {
 }
 
 pub async fn c10_c12_fenced_publication(fixture: &impl WorkspaceFixture) {
+    fenced_publication(fixture, FilesystemCoverage::Required).await;
+}
+
+/// The full corpus except filesystem acquisition and stale filesystem read/write checks.
+/// Passing this scenario does not qualify the provider's filesystem capabilities.
+pub async fn c10_c12_path_free_fenced_publication(fixture: &impl WorkspaceFixture) {
+    fenced_publication(fixture, FilesystemCoverage::Excluded).await;
+}
+
+enum FilesystemCoverage {
+    Required,
+    Excluded,
+}
+
+async fn fenced_publication(
+    fixture: &impl WorkspaceFixture,
+    filesystem_coverage: FilesystemCoverage,
+) {
     let contract = AnalysisContract {
         name: "shared-name".into(),
         contract_digest: format!("sha256:{}", "a".repeat(64)),
@@ -51,7 +70,10 @@ pub async fn c10_c12_fenced_publication(fixture: &impl WorkspaceFixture) {
         panic!("expected eligible cycle")
     };
     let cycle = &preparation.cycle.cycle_id;
-    let filesystem = first.filesystem(cycle, "first").await.unwrap();
+    let filesystem = match filesystem_coverage {
+        FilesystemCoverage::Required => Some(first.filesystem(cycle, "first").await.unwrap()),
+        FilesystemCoverage::Excluded => None,
+    };
     let payload = serde_json::to_vec(&HandoffPublication {
         summary: "reviewable".into(),
         metadata: Some(json!({"outcome": "draftReady", "revision": 0})),
@@ -193,18 +215,20 @@ pub async fn c10_c12_fenced_publication(fixture: &impl WorkspaceFixture) {
     assert_eq!(second.read_artifact(&orphan).await.unwrap(), payload);
     assert!(first.commit_handoff(&orphan, Some("first")).await.is_err());
     assert!(first.put_artifact(cycle, "stale", &payload).await.is_err());
-    assert!(
-        filesystem
-            .read_text("/workspace/contract.json")
-            .await
-            .is_err()
-    );
-    assert!(
-        filesystem
-            .write_text("/workspace/analysis/stale.txt", "stale")
-            .await
-            .is_err()
-    );
+    if let Some(filesystem) = filesystem {
+        assert!(
+            filesystem
+                .read_text("/workspace/contract.json")
+                .await
+                .is_err()
+        );
+        assert!(
+            filesystem
+                .write_text("/workspace/analysis/stale.txt", "stale")
+                .await
+                .is_err()
+        );
+    }
     second.commit_handoff(&orphan, Some("first")).await.unwrap();
     assert_eq!(
         second
@@ -225,7 +249,18 @@ pub async fn c10_c12_fenced_publication(fixture: &impl WorkspaceFixture) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flaggo_analysis_workspace::LocalWorkspaceProvider;
+    use async_trait::async_trait;
+    use chrono::DateTime;
+    use flaggo_analysis_domain::{
+        AnalysisError, CandidateProposal, CandidateRecord, CycleLimits, CycleOutcome,
+        WorkflowHandoff,
+    };
+    use flaggo_analysis_workspace::{
+        ExecutionReceipt, LocalWorkspaceProvider, WorkspaceArtifact, WorkspaceClaim,
+        WorkspaceFileSystem, WorkspaceLease,
+    };
+    use flaggo_contract::ContractResourceId;
+    use serde_json::Value;
 
     struct LocalFixture(tempfile::TempDir);
 
@@ -241,5 +276,249 @@ mod tests {
     #[tokio::test]
     async fn local_adapter_satisfies_fenced_publication_outcomes() {
         c10_c12_fenced_publication(&LocalFixture(tempfile::tempdir().unwrap())).await;
+    }
+
+    struct NoFilesystemFixture(LocalFixture);
+
+    impl WorkspaceFixture for NoFilesystemFixture {
+        fn client(&self) -> Arc<dyn WorkspaceProvider> {
+            Arc::new(NoFilesystemProvider(self.0.client()))
+        }
+
+        fn independent_client(&self) -> Arc<dyn WorkspaceProvider> {
+            Arc::new(NoFilesystemProvider(self.0.independent_client()))
+        }
+    }
+
+    struct NoFilesystemProvider(Arc<dyn WorkspaceProvider>);
+
+    #[async_trait]
+    impl WorkspaceProvider for NoFilesystemProvider {
+        async fn claim(
+            &self,
+            resource: &ContractResourceId,
+            attempt_id: &str,
+        ) -> Result<Arc<dyn WorkspaceLease>, AnalysisError> {
+            Ok(Arc::new(NoFilesystemLease(
+                self.0.claim(resource, attempt_id).await?,
+            )))
+        }
+    }
+
+    struct NoFilesystemLease(Arc<dyn WorkspaceLease>);
+
+    #[async_trait]
+    impl WorkspaceLease for NoFilesystemLease {
+        fn resource(&self) -> &ContractResourceId {
+            self.0.resource()
+        }
+
+        fn claim_token(&self) -> WorkspaceClaim {
+            self.0.claim_token()
+        }
+
+        fn workspace_id(&self) -> &str {
+            self.0.workspace_id()
+        }
+
+        fn contract_name(&self) -> &str {
+            self.0.contract_name()
+        }
+
+        async fn release(&self) -> Result<(), AnalysisError> {
+            self.0.release().await
+        }
+
+        async fn prepare_cycle(
+            &self,
+            contract: &AnalysisContract,
+            analysis_profile: &AnalysisProfile,
+            attempt_id: &str,
+            now: DateTime<Utc>,
+        ) -> Result<PrepareCycleResult, AnalysisError> {
+            self.0
+                .prepare_cycle(contract, analysis_profile, attempt_id, now)
+                .await
+        }
+
+        async fn filesystem(
+            &self,
+            _cycle_id: &str,
+            _attempt_id: &str,
+        ) -> Result<Arc<dyn WorkspaceFileSystem>, AnalysisError> {
+            panic!("filesystem must not be acquired");
+        }
+
+        async fn append_audit(
+            &self,
+            cycle_id: &str,
+            category: &str,
+            record: Value,
+        ) -> Result<(), AnalysisError> {
+            self.0.append_audit(cycle_id, category, record).await
+        }
+
+        async fn seal_analysis_manifest(&self, cycle_id: &str) -> Result<String, AnalysisError> {
+            self.0.seal_analysis_manifest(cycle_id).await
+        }
+
+        async fn prepare_candidate_proposal(
+            &self,
+            cycle_id: &str,
+            attempt_id: &str,
+            rules: Value,
+        ) -> Result<CandidateProposal, AnalysisError> {
+            self.0
+                .prepare_candidate_proposal(cycle_id, attempt_id, rules)
+                .await
+        }
+
+        async fn candidate_record(
+            &self,
+            cycle_id: &str,
+        ) -> Result<Option<CandidateRecord>, AnalysisError> {
+            self.0.candidate_record(cycle_id).await
+        }
+
+        async fn record_candidate(
+            &self,
+            cycle_id: &str,
+            candidate: &CandidateRecord,
+        ) -> Result<(), AnalysisError> {
+            self.0.record_candidate(cycle_id, candidate).await
+        }
+
+        async fn mark_superseding(
+            &self,
+            cycle_id: &str,
+            replacement_digest: Option<&str>,
+        ) -> Result<(), AnalysisError> {
+            self.0.mark_superseding(cycle_id, replacement_digest).await
+        }
+
+        async fn put_artifact(
+            &self,
+            cycle_id: &str,
+            attempt_id: &str,
+            bytes: &[u8],
+        ) -> Result<WorkspaceArtifact, AnalysisError> {
+            self.0.put_artifact(cycle_id, attempt_id, bytes).await
+        }
+
+        async fn read_artifact(
+            &self,
+            artifact: &WorkspaceArtifact,
+        ) -> Result<Vec<u8>, AnalysisError> {
+            self.0.read_artifact(artifact).await
+        }
+
+        async fn commit_handoff(
+            &self,
+            artifact: &WorkspaceArtifact,
+            expected_previous: Option<&str>,
+        ) -> Result<(), AnalysisError> {
+            self.0.commit_handoff(artifact, expected_previous).await
+        }
+
+        async fn reserve_execution(
+            &self,
+            request: &ExecutionRequest,
+        ) -> Result<ExecutionReservation, AnalysisError> {
+            self.0.reserve_execution(request).await
+        }
+
+        async fn execution_receipt(
+            &self,
+            cycle_id: &str,
+            execution_id: &str,
+        ) -> Result<Option<ExecutionReceipt>, AnalysisError> {
+            self.0.execution_receipt(cycle_id, execution_id).await
+        }
+
+        async fn complete_execution(
+            &self,
+            cycle_id: &str,
+            execution_id: &str,
+            result: &WorkspaceArtifact,
+        ) -> Result<ExecutionReceipt, AnalysisError> {
+            self.0
+                .complete_execution(cycle_id, execution_id, result)
+                .await
+        }
+
+        async fn latest_handoff(
+            &self,
+            cycle_id: &str,
+        ) -> Result<Option<WorkflowHandoff>, AnalysisError> {
+            self.0.latest_handoff(cycle_id).await
+        }
+
+        async fn pending_proposal(
+            &self,
+            cycle_id: &str,
+        ) -> Result<Option<CandidateProposal>, AnalysisError> {
+            self.0.pending_proposal(cycle_id).await
+        }
+
+        async fn reserve_attempt(
+            &self,
+            cycle_id: &str,
+            attempt_id: &str,
+            limits: &CycleLimits,
+            timeout: std::time::Duration,
+        ) -> Result<std::time::Duration, AnalysisError> {
+            self.0
+                .reserve_attempt(cycle_id, attempt_id, limits, timeout)
+                .await
+        }
+
+        async fn settle_attempt(
+            &self,
+            cycle_id: &str,
+            attempt_id: &str,
+            elapsed: std::time::Duration,
+        ) -> Result<(), AnalysisError> {
+            self.0.settle_attempt(cycle_id, attempt_id, elapsed).await
+        }
+
+        async fn record_attempt_failure(
+            &self,
+            cycle_id: &str,
+            attempt_id: &str,
+            error: &str,
+        ) -> Result<(), AnalysisError> {
+            self.0
+                .record_attempt_failure(cycle_id, attempt_id, error)
+                .await
+        }
+
+        async fn complete_cycle(
+            &self,
+            contract: &AnalysisContract,
+            cycle_id: &str,
+            outcome: &CycleOutcome,
+            completed_at: DateTime<Utc>,
+        ) -> Result<(), AnalysisError> {
+            self.0
+                .complete_cycle(contract, cycle_id, outcome, completed_at)
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn path_free_corpus_never_acquires_filesystem() {
+        c10_c12_path_free_fenced_publication(&NoFilesystemFixture(LocalFixture(
+            tempfile::tempdir().unwrap(),
+        )))
+        .await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "filesystem must not be acquired")]
+    async fn full_corpus_still_requires_filesystem() {
+        c10_c12_fenced_publication(&NoFilesystemFixture(LocalFixture(
+            tempfile::tempdir().unwrap(),
+        )))
+        .await;
     }
 }

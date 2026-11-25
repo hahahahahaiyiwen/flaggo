@@ -23,7 +23,17 @@ each scenario on fresh storage. The functions panic on conformance violations.
 | `evidence_policy::c09_projection_policy` | Database-free validation, logical-source-only dedup, exact conflict identity/diagnostic, producer-version changes and routing/receipt-time identity exceptions |
 | `evidence::c11_negotiated_queries` | Profile selection, full scope/exact-or-null/source filtering, limits, typed results, projected-only IDs, live late arrivals and required profile corpus under two scopes |
 | `admission::c04_c10_fenced_admission` | Released/replaced ownership, original-provenance recovery, idempotency and closed-cycle rejection |
-| `workspace::c10_c12_fenced_publication` | Claim exclusion, immutable artifacts, conditional handoffs, execution receipt recovery and uncertain-execution non-replay |
+| `workspace::c10_c12_fenced_publication` | Claim exclusion, immutable artifacts, conditional handoffs, execution receipt recovery, uncertain-execution non-replay and stale filesystem read/write rejection |
+| `workspace::c10_c12_path_free_fenced_publication` | The same corpus except filesystem acquisition and stale filesystem read/write checks |
+
+Both workspace entry points use the unchanged `workspace::WorkspaceFixture`
+and `flaggo.workspace-conformance/v1` revision. Each invocation needs fresh
+storage. The full wrapper requires filesystem acquisition to succeed and retains
+both stale-capability assertions; it never falls back to the path-free wrapper
+on failure. The path-free wrapper makes no filesystem calls and runs every other
+assertion in the same order through one shared internal runner. Passing it
+qualifies only those path-free outcomes, not filesystem support or full workspace
+capability conformance.
 
 `apps/contract-service/tests/authority_conformance.rs` supplies the SQLite
 fixture and failure injection. Scenario assertions do not query physical tables.
@@ -53,4 +63,5 @@ cargo test -p flaggo-contract-service --test authority_conformance --locked
 cargo test -p flaggo-contract-service --test admission_fencing --locked
 cargo test -p flaggo-decision-service --test runtime_conformance --locked
 cargo test -p flaggo-core-conformance --test sqlite_evidence --locked
+cargo test -p flaggo-core-conformance workspace:: --locked
 ```
