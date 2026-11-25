@@ -7,6 +7,7 @@
 mod identity;
 #[cfg(feature = "local")]
 mod local;
+pub mod policy;
 mod provider;
 
 pub use identity::{sha256_digest, workspace_id};

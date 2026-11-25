@@ -6,6 +6,69 @@ recovery and relative artifact access. They do not require a host directory.
 Use `default-features = false` to consume these contracts without the local
 filesystem implementation, temporary-file dependency or local UUID allocation.
 
+## Portable policy and codecs
+
+`flaggo_analysis_workspace::policy` is available without default features. Its
+serde snapshots retain the v1 local representation; they are storage facts, not
+a required journal layout or distributed protocol:
+
+| Operation | Shared facts and decisions |
+| --- | --- |
+| Prepare / complete | `CurrentCycle`, `StoredCycle`, `ScheduleState`, `StoredOutcome`; `plan_current_cycle`, `plan_eligibility`, `plan_outcome`, terminal contract/Candidate validation, `StoredCycle::terminal`, `ScheduleState::completed` |
+| Seal / propose / recover | `AnalysisManifest`, `ManifestFile`, manifest membership/codec, `plan_proposal`, proposal codecs and immutable rules/manifest/record checks |
+| Candidate receipt | Binding validation plus `plan_candidate_record` (`Append` or `Unchanged`; conflicting receipts fail) |
+| Handoff | `HandoffRecord`, `plan_handoff` (optional append and pointer advance), binding/artifact validation and `workflow_handoff` |
+| Execution | Existing request/receipt types, reservation and completion planners and receipt identity validation |
+| Attempts | `CycleBudget`, `AttemptReservation`, reservation/settlement planners and `AttemptFailure` |
+| Ownership | `ClaimRecord`, `CycleAccess`, `AdmissionIdentity`, claim epoch and admission owner/cycle/proposal predicates; `StoredCycle::superseding` |
+
+Adapters supply the allocated cycle ID and time. Reconcile an existing terminal
+outcome before scheduling or resuming; an identical completion keeps the journal's
+original timestamp. Same-digest active **or superseding** cycles resume their
+stored profile, but a manifest or pending proposal makes recovery read-only.
+Changed digests finish the old cycle before replacement eligibility is considered.
+Eligibility always uses `AnalysisContract::eligible_after`, including calendar
+intervals. Local completion retains its outcome -> cycle -> schedule -> pointer
+write order; these helpers do not prescribe that journal for other adapters.
+
+Manifest entries use cycle-relative logical `/` paths, never host paths.
+Adapters enumerate unique entries, validate paths/symlinks and hash actual bytes.
+`AnalysisManifest::new` excludes the exact legacy control paths and sorts ordinally
+by path. Its compact encoder preserves field order, including profile order and
+`path`, `size`, `digest` entry order. Its decoder retains legacy serde acceptance;
+`verify` checks schema, workspace/cycle/profile and full membership against a
+freshly built manifest. Hash the **stored bytes**, not a re-encoding, for an
+existing seal. Proposal encoding remains pretty JSON; recovery requires the
+rebuilt manifest digest to match and retains the original proposal attempt.
+`pending_proposal` decoding alone is not a membership/integrity verification.
+
+The adapter must verify live ownership, current cycle, writable/sealed state and
+artifact scope/byte integrity as appropriate **before** applying plans. Protect
+authoritative reads and persistence with its transaction/CAS and lifetime fence.
+`CycleAccess` and admission predicates only examine supplied facts; they do not
+grant ownership. Admission uses the live claim's attempt/epoch separately from
+the sealed proposal's original attempt, requires the active current cycle and no
+terminal marker, and rejects superseding cycles. Retain admission protection
+through the consuming transaction.
+
+Metadata-free handoffs never advance the pointer; retries check predecessor and
+content and cannot roll back newer workflow state. An existing pending execution
+is uncertain, **not** a new grant; completion still requires the original epoch,
+cycle and source attempt. Reservation plans charge before work; a crashed
+reservation remains charged, and settlement refunds only the unused portion of
+the matching reservation. Failure recording adds no separate charge or refund.
+Unlike execution IDs, budget reservations are not idempotency keys: accepting
+another reservation charges another attempt, even with the same attempt ID.
+
+The policies have no filesystem, SQLx, app, transaction, lease-duration, backoff,
+pause/cancel, billing or tenant-quota dependency. Pure consumer tests pin legacy
+manifest/proposal bytes and the manifest digest and exercise replay/conflict
+edges. The existing `flaggo-core-conformance::workspace::c10_c12_fenced_publication`
+remains the adapter-level reusable suite; passing pure tests alone does not
+qualify a provider's concurrency or durability.
+
+## Local adapter
+
 The default `local` feature supplies `LocalWorkspaceProvider`. Local Python
 composition receives that provider separately; only its
 `analysis_directory(&lease, cycle_id)` convenience resolves a host path. It
@@ -46,7 +109,10 @@ qualification; neither identifies a particular CI process-spawn interleaving.
 
 ```powershell
 cargo test -p flaggo-analysis-workspace --locked
-cargo check -p flaggo-analysis-workspace --no-default-features --locked
+cargo test -p flaggo-analysis-workspace --no-default-features --locked
+cargo clippy -p flaggo-analysis-workspace --all-targets --locked -- -D warnings
+cargo clippy -p flaggo-analysis-workspace --no-default-features --all-targets --locked -- -D warnings
+cargo test -p flaggo-core-conformance workspace:: --locked
 cargo test -p flaggo-async-analysis --locked
 ```
 
